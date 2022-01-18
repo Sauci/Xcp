@@ -1,0 +1,75 @@
+/* http://www.gimpel.com/html/lintops.htm */
+
+-wlib(1)
+-elib(1)
+-elibsym(1)
+-elibmacro(1)
+
++fff /* output full file path. */
+-width(0) /* keep output on a single line. */
+-restore_at_end /* enable/disable lint message in file scope. */
+-passes(2) /* perform 2 passes. */
+-summary() /* output summary report before exit. */
++libclass(angle) /* treat #include <xxx> as library headers. */
+
+/*------------------------------------------------------------------------------------------------*/
+/* rules related to AUTOSAR standard.                                                             */
+/*------------------------------------------------------------------------------------------------*/
+
+/**
+ * allow the prefix of preprocessor definitions to be the same, as defined in
+ * https://www.autosar.org/fileadmin/user_upload/standards/classic/4-3/AUTOSAR_SWS_MemoryMapping.pdf
+ *
+ * violated MISRA rules:
+ * - 5.1, required
+ * - 5.2, required
+ * - 5.4, required
+ * - 5.5, required
+ */
+-idlen(63, p)
+
+/**
+ * allow multiple inclusions of the same header file without include guards, as defined in
+ * https://www.autosar.org/fileadmin/user_upload/standards/classic/4-3/AUTOSAR_SWS_MemoryMapping.pdf
+ *
+ * violated MISRA rules:
+ * - 4.10, required
+ */
+-efile(451, Xcp_MemMap.h)
+
+/**
+ * allow repeated include file, as defined in
+ * https://www.autosar.org/fileadmin/user_upload/standards/classic/4-3/AUTOSAR_SWS_MemoryMapping.pdf
+ */
+-efile(537, Xcp_MemMap.h)
+
+/**
+ * if no specific memory sections are defined (for example when running on x86 arch) the file
+ * Xcp_MemMap.h does not alter the code
+ */
+-efile(766, Xcp_MemMap.h)
+
+
+/**
+ * allow declarations before #include directive, as defined in
+ * https://www.autosar.org/fileadmin/user_upload/standards/classic/4-3/AUTOSAR_SWS_MemoryMapping.pdf
+ *
+ * violated MISRA rules:
+ * - 20.1, advisory
+ *
+ * TODO: this violation might be removed by moving 'private' type definitions into a separated
+ *  header
+ */
+-e9019
+
+/**
+ * allow usage of '#undef' directive, as defined in
+ * https://www.autosar.org/fileadmin/user_upload/standards/classic/4-3/AUTOSAR_SWS_MemoryMapping.pdf
+ *
+ * violated MISRA rules:
+ * - 20.5, advisory
+ */
+-e9021
+
+/* violated rules. */
+-e934 /* taking address of near auto variable. */
