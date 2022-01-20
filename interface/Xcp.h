@@ -83,8 +83,8 @@ extern "C" {
  */
 
 typedef enum {
-    XCP_OFF = 0x00u,
-    XCP_ON,
+    XCP_UNINITIALIZED = 0x00u,
+    XCP_INITIALIZED,
 } Xcp_StateType;
 
 /** @} */

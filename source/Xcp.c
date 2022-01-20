@@ -751,7 +751,7 @@ static const Xcp_Type *Xcp_Ptr = NULL_PTR;
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-Xcp_StateType Xcp_State = XCP_OFF;
+Xcp_StateType Xcp_State = XCP_UNINITIALIZED;
 
 #define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -799,13 +799,13 @@ void Xcp_Init(const Xcp_Type *pConfig)
     {
         Xcp_Ptr = pConfig;
 
+        Xcp_State = XCP_INITIALIZED;
+
     }
     else
     {
         Xcp_ReportError(0x00u, XCP_INIT_API_ID, XCP_E_PARAM_POINTER);
     }
-
-    Xcp_State = XCP_ON;
 }
 
 #if (XCP_GET_VERSION_INFO_API == STD_ON)

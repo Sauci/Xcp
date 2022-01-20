@@ -177,7 +177,7 @@ class XcpTest(object):
                             build_dir=self.build_directory)
         if initialize:
             self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
-            if self.code.lib.Xcp_State != self.code.lib.XCP_ON:
+            if self.code.lib.Xcp_State != self.code.lib.XCP_INITIALIZED:
                 raise ValueError('Xcp module not initialized correctly...')
 
         self.can_if_transmit = MagicMock()
