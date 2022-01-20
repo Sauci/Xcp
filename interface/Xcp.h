@@ -230,9 +230,11 @@ typedef enum {
  * @{
  */
 
+#ifdef CFFI_ENABLE
+
 extern Xcp_StateType Xcp_State;
 
-#ifdef CFFI_ENABLE
+extern const Xcp_Type *Xcp_Ptr;
 
 #endif /* #ifndef CFFI_ENABLE */
 
