@@ -29,7 +29,10 @@ class TestSWS00825:
     def test_null_parameter(self):
         handle = XcpTest(DefaultConfig())
         handle.lib.Xcp_GetVersionInfo(handle.ffi.NULL)
-        handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_PARAM_POINTER'))
+        handle.det_report_error.assert_called_once_with(ANY,
+                                                        ANY,
+                                                        handle.define('XCP_GET_VERSION_INFO_API_ID'),
+                                                        handle.define('XCP_E_PARAM_POINTER'))
 
     def test_non_null_parameter(self):
         handle = XcpTest(DefaultConfig())
