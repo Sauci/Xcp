@@ -192,7 +192,7 @@ class XcpTest(object):
         self.det_report_runtime_error.return_value = self.define('E_OK')
         self.det_report_transient_fault.return_value = self.define('E_OK')
 
-    def get_pdu_info(self, payload, overridden_size=None, meta_data=None):
+    def get_pdu_info(self, payload, null_payload=False, overridden_size=None, meta_data=None):
         if isinstance(payload, str):
             payload = [ord(c) for c in payload]
         sdu_data = self.code.ffi.new('uint8 []', list(payload))
@@ -200,6 +200,8 @@ class XcpTest(object):
             sdu_length = overridden_size
         else:
             sdu_length = len(payload)
+        if null_payload:
+            sdu_data = self.code.ffi.NULL
         pdu_info = self.code.ffi.new('PduInfoType *')
         pdu_info.SduDataPtr = sdu_data
         pdu_info.SduLength = sdu_length
