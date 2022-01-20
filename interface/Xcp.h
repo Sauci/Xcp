@@ -152,6 +152,11 @@ typedef enum {
 #define XCP_MAIN_FUNCTION_API_ID (0x04u)
 
 /**
+ * @brief @ref Xcp_CanIfTxConfirmation API ID.
+ */
+#define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
+
+/**
  * @brief @ref Xcp_CanIfTriggerTransmit API ID.
  */
 #define XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID (0x41u)

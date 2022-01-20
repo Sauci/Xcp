@@ -903,6 +903,11 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
 void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 {
+    if (Xcp_State == XCP_INITIALIZED) {
+        
+    } else {
+        Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
+    }
 }
 
 

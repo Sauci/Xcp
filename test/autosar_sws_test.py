@@ -38,6 +38,18 @@ class TestSWS00825:
         handle.det_report_error.assert_not_called()
 
 
+def test_sws_00840():
+    """
+    If development error detection for the XCP module is enabled: if the function Xcp_<Lo>TxConfirmation is called
+    before the XCP was initialized successfully, the function Xcp_<Lo>TxConfirmation shall raise the development error
+    XCP_E_UNINIT and return.
+    """
+
+    handle = XcpTest(DefaultConfig(), initialize=False)
+    handle.lib.Xcp_CanIfTxConfirmation(0, handle.define('E_OK'))
+    handle.det_report_error.assert_called_once_with(ANY, ANY, handle.define('XCP_CAN_IF_TX_CONFIRMATION_API_ID'), handle.define('XCP_E_UNINIT'))
+
+
 def test_sws_00842():
     """
     If development error detection for the XCP module is enabled: if the function Xcp_<Lo>TriggerTransmit is called
