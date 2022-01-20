@@ -155,7 +155,7 @@ LOCAL_INLINE void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -164,7 +164,7 @@ static void Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPd
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -173,7 +173,7 @@ static void Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -182,7 +182,7 @@ static void Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -191,7 +191,7 @@ static void Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -200,7 +200,7 @@ static void Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -209,7 +209,7 @@ static void Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pP
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -218,7 +218,7 @@ static void Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoTy
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -227,7 +227,7 @@ static void Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoTyp
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -236,7 +236,7 @@ static void Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -245,7 +245,7 @@ static void Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduI
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -254,7 +254,7 @@ static void Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pP
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -263,7 +263,7 @@ static void Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -272,7 +272,7 @@ static void Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pP
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -281,7 +281,7 @@ static void Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pP
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -290,7 +290,7 @@ static void Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -299,7 +299,7 @@ static void Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInf
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -307,16 +307,7 @@ static void Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPdu
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
-
-#define Xcp_STOP_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-
-#define Xcp_START_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-static void Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -325,7 +316,7 @@ static void Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -334,7 +325,7 @@ static void Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -343,7 +334,7 @@ static void Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType 
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -352,7 +343,7 @@ static void Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPd
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -361,7 +352,7 @@ static void Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduI
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -370,7 +361,7 @@ static void Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -379,7 +370,7 @@ static void Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -388,7 +379,7 @@ static void Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -397,7 +388,7 @@ static void Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -406,7 +397,7 @@ static void Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduIn
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -415,7 +406,7 @@ static void Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -424,7 +415,7 @@ static void Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -433,7 +424,7 @@ static void Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -442,7 +433,7 @@ static void Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInf
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -451,7 +442,16 @@ static void Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduIn
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -470,7 +470,7 @@ static void Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_VAR_FAST_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static void (* Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType *pPduInfo) = {
+static uint8 (* Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType *pPduInfo) = {
     Xcp_DTODaqStimPacket, /* 0x00 */
     Xcp_DTODaqStimPacket, /* 0x01 */
     Xcp_DTODaqStimPacket, /* 0x02 */
@@ -938,28 +938,33 @@ Std_ReturnType Xcp_CanIfTriggerTransmit(PduIdType txPduId, PduInfoType *pPduInfo
  * @{
  */
 
-static void Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -971,8 +976,9 @@ static void Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *p
  * 3        BYTE MAX_ODT_ENTRIES Maximum number of entries in an ODT
  * 4,5      WORD FIXED_EVENT Number of the fixed event channel for this DAQ list
  */
-static void Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -986,8 +992,9 @@ static void Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pP
  * 5        BYTE TIMESTAMP_MODE Timestamp unit and size
  * 6,7      WORD TIMESTAMP_TICKS Timestamp ticks per unit
  */
-static void Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -1000,88 +1007,105 @@ static void Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoTy
  * 6        BYTE MIN_DAQ Total number of predefined DAQ lists
  * 7        BYTE DAQ_KEY_BYTE
  */
-static void Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -1092,28 +1116,33 @@ static void Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
  * 3        BYTE  Address extension
  * 4.7      DWORD Address
  */
-static void Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 /**
@@ -1127,8 +1156,9 @@ static void Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
  * 6        BYTE QUEUE_SIZE
  * 7        BYTE XCP Driver Version Number
  */
-static void Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -1137,8 +1167,9 @@ static void Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *p
  * 0        BYTE Packet ID: 0xFE
  * 1        BYTE Error Code = ERR_CMD_SYNCH
  */
-static void Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -1150,13 +1181,15 @@ static void Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
  * 3        BYTE Reserved
  * 4,5      WORD Session configuration ID
  */
-static void Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
-static void Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 
@@ -1166,15 +1199,16 @@ static void Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduIn
 /**
  * position type description
  * 0        BYTE Packet ID: 0xFF
- * 1        BYTE RESSOURCE
+ * 1        BYTE RESOURCE
  * 2        BYTE COMM_MODE_BASIC
  * 3        BYTE MAX_CTO, Maximum CTO size [BYTE]
  * 4,5      WORD MAX_DTO, Maximum DTO size [BYTE]
  * 6        BYTE XCP Protocol Layer Version Number (most significant byte only)
  * 7        BYTE XCP Transport Layer Version Number (most significant byte only)
  */
-static void Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    return E_OK;
 }
 
 /** @} */
