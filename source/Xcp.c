@@ -908,7 +908,15 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
 Std_ReturnType Xcp_CanIfTriggerTransmit(PduIdType txPduId, PduInfoType *pPduInfo)
 {
-    return E_OK;
+    Std_ReturnType result = E_NOT_OK;
+
+    if (Xcp_State == XCP_INITIALIZED) {
+        result = E_OK;
+    } else {
+        Xcp_ReportError(0x00u, XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID, XCP_E_UNINIT);
+    }
+
+    return result;
 }
 
 /** @} */

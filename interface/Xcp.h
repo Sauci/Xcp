@@ -152,7 +152,12 @@ typedef enum {
 #define XCP_MAIN_FUNCTION_API_ID (0x04u)
 
 /**
- * @brief @ref Xcp_MainFunction API ID.
+ * @brief @ref Xcp_CanIfTriggerTransmit API ID.
+ */
+#define XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID (0x41u)
+
+/**
+ * @brief @ref Xcp_CanIfRxIndication API ID.
  */
 #define XCP_CAN_IF_RX_INDICATION_API_ID (0x42u)
 

@@ -19,7 +19,6 @@ def test_sws_00802():
     assert handle.config.lib.Xcp == handle.lib.Xcp_Ptr
 
 
-
 class TestSWS00825:
     """
     If development error detection for the Xcp module is enabled, then the function Xcp_GetVersionInfo shall check
@@ -37,6 +36,17 @@ class TestSWS00825:
         version_info = handle.ffi.new('Std_VersionInfoType *')
         handle.lib.Xcp_GetVersionInfo(version_info)
         handle.det_report_error.assert_not_called()
+
+
+def test_sws_00842():
+    """
+    If development error detection for the XCP module is enabled: if the function Xcp_<Lo>TriggerTransmit is called
+    before the XCP was initialized successfully, the function Xcp_<Lo>TriggerTransmit shall raise the development error
+    XCP_E_UNINIT and return E_NOT_OK.
+    """
+    handle = XcpTest(DefaultConfig(), initialize=False)
+    assert handle.lib.Xcp_CanIfTriggerTransmit(0, handle.ffi.NULL) == handle.define(('E_NOT_OK'))
+    handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_UNINIT'))
 
 
 class TestSWS00847:
