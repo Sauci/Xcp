@@ -1,6 +1,7 @@
 import hashlib
 import json
-import pytest
+
+dummy_byte = 0xFF
 
 
 class Config(dict):

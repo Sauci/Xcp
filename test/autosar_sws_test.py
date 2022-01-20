@@ -3,20 +3,40 @@
 
 from unittest.mock import ANY
 
+import pytest
+
 from .parameter import *
 from .conftest import XcpTest
 
 
-def test_sws_00825():
+def test_sws_00802():
+    """
+    The function Xcp_Init shall internally store the configuration address to enable subsequent API calls to access the
+    configuration.
+    """
+
+    handle = XcpTest(DefaultConfig())
+    assert handle.config.lib.Xcp == handle.lib.Xcp_Ptr
+
+
+
+class TestSWS00825:
     """
     If development error detection for the Xcp module is enabled, then the function Xcp_GetVersionInfo shall check
     whether the parameter VersioninfoPtr is a NULL pointer (NULL_PTR). If VersioninfoPtr is a NULL pointer, then the
     function Xcp_GetVersionInfo shall raise the development error XCP_E_PARAM_POINTER and return.
     """
-    handle = XcpTest(DefaultConfig())
-    handle.lib.Xcp_GetVersionInfo(handle.ffi.NULL)
-    handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_PARAM_POINTER'))
 
+    def test_null_parameter(self):
+        handle = XcpTest(DefaultConfig())
+        handle.lib.Xcp_GetVersionInfo(handle.ffi.NULL)
+        handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_PARAM_POINTER'))
+
+    def test_non_null_parameter(self):
+        handle = XcpTest(DefaultConfig())
+        version_info = handle.ffi.new('Std_VersionInfoType *')
+        handle.lib.Xcp_GetVersionInfo(version_info)
+        handle.det_report_error.assert_not_called()
 
 
 class TestSWS00847:
