@@ -828,9 +828,13 @@ void Xcp_GetVersionInfo(Std_VersionInfoType *pVersionInfo)
 
 #endif /* #if (XCP_GET_VERSION_INFO_API == STD_ON) */
 
+#if (XCP_SUPPRESS_TX_SUPPORT == STD_ON)
+
 void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType mode) {
 
 }
+
+#endif /* #if (XCP_SUPPRESS_TX_SUPPORT == STD_ON) */
 
 /** @} */
 
@@ -899,7 +903,6 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
 void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 {
-
 }
 
 

@@ -277,6 +277,8 @@ void Xcp_GetVersionInfo(Std_VersionInfoType *pVersionInfo);
 
 #endif /* #if (XCP_GET_VERSION_INFO_API == STD_ON) */
 
+#if (XCP_SUPPRESS_TX_SUPPORT == STD_ON)
+
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
@@ -290,6 +292,8 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
+
+#endif /* #if (XCP_SUPPRESS_TX_SUPPORT == STD_ON) */
 
 /** @} */
 

@@ -11,7 +11,7 @@ option(ENABLE_DET "enables/disables development error detection." ON)
 option(ENABLE_DOC_GEN "enables/disables documentation generation." OFF)
 option(ENABLE_PC_LINT "enables/disables static code analysis." OFF)
 set(MISRA_C_VERSION 2012 CACHE STRING "MISRA standard.")
-option(OS_GET_TIME_API "indicates whether the OSEK API GetTime is available or not." OFF)
+option(XCP_SUPPRESS_TX_SUPPORT "enables/disables transmission functionality of the XCP module." ON)
 
 find_package(PythonInterp 3.6 REQUIRED)
 
@@ -39,7 +39,7 @@ target_compile_definitions(Xcp
     PUBLIC XCP_GET_VERSION_INFO_API=STD_ON # ECUC_Xcp_00283
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
-    PUBLIC OS_GET_TIME_API=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>)
 
 target_include_directories(Xcp
     PUBLIC interface
