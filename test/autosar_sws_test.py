@@ -92,3 +92,12 @@ class TestSWS00847:
         handle = XcpTest(DefaultConfig())
         handle.lib.Xcp_CanIfRxIndication(pdu_id, handle.get_pdu_info((dummy_byte,)))
         handle.det_report_error.assert_called_with(ANY, ANY, handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'), handle.define('XCP_E_INVALID_PDUID'))
+
+
+@pytest.mark.parametrize('definition, value', (('XCP_E_UNINIT', 0x02),
+                                                ('XCP_E_INIT_FAILED', 0x04),
+                                                ('XCP_E_PARAM_POINTER', 0x12),
+                                                ('XCP_E_INVALID_PDUID', 0x03)))
+def test_sws_00857(definition, value):
+    handle = XcpTest(DefaultConfig())
+    assert handle.define(definition) == value
