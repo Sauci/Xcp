@@ -175,6 +175,7 @@ class XcpTest(object):
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
                             build_dir=self.build_directory)
+        self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
             self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
             if self.code.lib.Xcp_State != self.code.lib.XCP_INITIALIZED:

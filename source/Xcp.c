@@ -743,7 +743,7 @@ static void (* Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType *pPduI
 #define Xcp_START_SEC_VAR_FAST_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static const Xcp_Type *Xcp_Ptr = NULL_PTR;
+const Xcp_Type *Xcp_Ptr = NULL_PTR;
 
 #define Xcp_STOP_SEC_VAR_FAST_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -860,9 +860,42 @@ void Xcp_MainFunction(void)
 
 void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
-}
+    uint8_least daq_idx;
+    uint32_least dto_idx;
 
+    boolean valid_pdu_id = FALSE;
+
+    if (Xcp_State == XCP_INITIALIZED)
+    {
+        if (pPduInfo != NULL_PTR)
+        {
+            for (daq_idx = 0x00u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+            {
+                for (dto_idx = 0x00u; dto_idx < Xcp_Ptr->config->daqList[daq_idx].dtoCount;
+                     dto_idx++)
+                {
+                    if ((Xcp_Ptr->config->daqList[daq_idx].dto[dto_idx].dto2PduMapping.rxPdu.id) == rxPduId)
+                    {
+                        valid_pdu_id = TRUE;
+                    }
+                }
+
+                if (valid_pdu_id == FALSE)
+                {
+                    Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_INVALID_PDUID);
+                }
+            }
+        }
+        else
+        {
+            Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_PARAM_POINTER);
+        }
+    }
+    else
+    {
+        Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_UNINIT);
+    }
+}
 
 void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 {

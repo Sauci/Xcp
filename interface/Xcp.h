@@ -151,6 +151,11 @@ typedef enum {
  */
 #define XCP_MAIN_FUNCTION_API_ID (0x04u)
 
+/**
+ * @brief @ref Xcp_MainFunction API ID.
+ */
+#define XCP_CAN_IF_RX_INDICATION_API_ID (0x42u)
+
 /** @} */
 
 /**
@@ -169,9 +174,14 @@ typedef enum {
 #define XCP_E_INIT_FAILED (0x04u)
 
 /**
- * @brief Null pointer has been passed as argument.
+ * @brief Null pointer has been passed as an argument.
  */
-#define XCP_E_PARAM_POINTER (0x03u)
+#define XCP_E_PARAM_POINTER (0x12u)
+
+/**
+ * @brief API call with wrong PDU ID.
+ */
+#define XCP_E_INVALID_PDUID (0x03u)
 
 /** @} */
 

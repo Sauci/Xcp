@@ -84,6 +84,7 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
         {{daq.max_odt}}, /* XcpMaxOdt */
         {{daq.max_odt_entries}}, /* XcpMaxOdtEntries */
         &Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDto */
+        {{'0x%08Xu' % daq.dtos|length}}, /* not part of the specification... */
         &Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[0x00u] /* reference to XcpOdt */
     },
     {%- endfor %}

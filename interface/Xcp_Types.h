@@ -299,6 +299,7 @@ typedef struct
     const uint8 maxOdt;
     const uint8 maxOdtEntries;
     const Xcp_DtoType *dto;
+    const uint32 dtoCount; /* TODO: check if this value can be retrieved from somewhere else... */
     Xcp_OdtType *odt;
 } Xcp_DaqListType;
 
