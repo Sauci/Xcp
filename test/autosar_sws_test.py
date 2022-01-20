@@ -44,9 +44,10 @@ def test_sws_00842():
     before the XCP was initialized successfully, the function Xcp_<Lo>TriggerTransmit shall raise the development error
     XCP_E_UNINIT and return E_NOT_OK.
     """
+
     handle = XcpTest(DefaultConfig(), initialize=False)
-    assert handle.lib.Xcp_CanIfTriggerTransmit(0, handle.ffi.NULL) == handle.define(('E_NOT_OK'))
-    handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_UNINIT'))
+    assert handle.lib.Xcp_CanIfTriggerTransmit(0, handle.ffi.NULL) == handle.define('E_NOT_OK')
+    handle.det_report_error.assert_called_once_with(ANY, ANY, handle.define('XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID'), handle.define('XCP_E_UNINIT'))
 
 
 class TestSWS00847:
@@ -61,15 +62,15 @@ class TestSWS00847:
     def test_not_initialized_error(self):
         handle = XcpTest(DefaultConfig(), initialize=False)
         handle.lib.Xcp_CanIfRxIndication(0, handle.get_pdu_info((dummy_byte,)))
-        handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_UNINIT'))
+        handle.det_report_error.assert_called_once_with(ANY, ANY, handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'), handle.define('XCP_E_UNINIT'))
 
     def test_null_pdu_info_pointer_error(self):
         handle = XcpTest(DefaultConfig())
         handle.lib.Xcp_CanIfRxIndication(0, handle.ffi.NULL)
-        handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_PARAM_POINTER'))
+        handle.det_report_error.assert_called_once_with(ANY, ANY, handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'), handle.define('XCP_E_PARAM_POINTER'))
 
     @pytest.mark.parametrize('pdu_id', range(1, 10))
     def test_invalid_pdu_id_error(self, pdu_id):
         handle = XcpTest(DefaultConfig())
         handle.lib.Xcp_CanIfRxIndication(pdu_id, handle.get_pdu_info((dummy_byte,)))
-        handle.det_report_error.assert_called_with(ANY, ANY, ANY, handle.define('XCP_E_INVALID_PDUID'))
+        handle.det_report_error.assert_called_with(ANY, ANY, handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'), handle.define('XCP_E_INVALID_PDUID'))
