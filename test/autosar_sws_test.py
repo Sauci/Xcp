@@ -62,6 +62,12 @@ def test_sws_00842():
     handle.det_report_error.assert_called_once_with(ANY, ANY, handle.define('XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID'), handle.define('XCP_E_UNINIT'))
 
 
+@pytest.mark.parametrize('enumeration, value', (('XCP_TX_OFF', 0), ('XCP_TX_ON', 1)))
+def test_sws_00846(enumeration, value):
+    handle = XcpTest(DefaultConfig())
+    assert getattr(handle.lib, enumeration) == value
+
+
 class TestSWS00847:
     """
     The callback function Xcp_<Lo>RxIndication shall inform the DET, if development error detection is enabled
