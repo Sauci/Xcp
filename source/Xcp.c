@@ -301,6 +301,9 @@ static void Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInf
 
 static void Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
