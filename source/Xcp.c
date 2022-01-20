@@ -867,6 +867,7 @@ void Xcp_MainFunction(void)
 
 void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    uint8 result;
     uint8_least daq_idx;
     uint32_least dto_idx;
 
@@ -884,13 +885,27 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                     if ((Xcp_Ptr->config->daqList[daq_idx].dto[dto_idx].dto2PduMapping.rxPdu.id) == rxPduId)
                     {
                         valid_pdu_id = TRUE;
+
+                        if ((pPduInfo->SduLength > 0x00u) && (pPduInfo->SduDataPtr != NULL_PTR)) {
+                            result = Xcp_PIDTable[pPduInfo->SduDataPtr[0x00u]](rxPduId, pPduInfo);
+
+                            if (result != E_OK) {
+                                Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, result);
+                            }
+                        }
+
+                        break;
                     }
                 }
 
-                if (valid_pdu_id == FALSE)
+                if (valid_pdu_id == TRUE)
                 {
-                    Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_INVALID_PDUID);
+                    break;
                 }
+            }
+
+            if (valid_pdu_id == FALSE) {
+                Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_INVALID_PDUID);
             }
         }
         else
