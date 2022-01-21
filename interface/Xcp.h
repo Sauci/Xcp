@@ -49,6 +49,8 @@ extern "C" {
 
 #include "Xcp_Types.h"
 
+#include "Xcp_Errors.h"
+
 #if defined(CFFI_ENABLE)
 
 /**

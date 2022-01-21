@@ -1223,7 +1223,19 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
  */
 static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
-    return E_OK;
+    uint8 result = E_OK;
+
+    uint8 resource;
+
+    (void)rxPduId;
+
+    if (pPduInfo->SduLength >= 0x02u) {
+        resource = pPduInfo->SduDataPtr[0x01u];
+    } else {
+        result = XCP_E_ASAM_INVALID_CTO_PACKET;
+    }
+
+    return result;
 }
 
 /** @} */
