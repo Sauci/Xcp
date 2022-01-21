@@ -16,8 +16,8 @@
     {%- for daq in configuration.daqs %}
         {%- for dto in daq.dtos %}
 #ifndef {{dto.pdu_mapping}}
-#warning {{dto.pdu_mapping}} not defined, assigning {{'0x%02Xu' % default_pdu_mapping.value}} as  default value. This definition should be passed trough the build system.
-#define {{dto.pdu_mapping}} ({{'0x%02Xu' % default_pdu_mapping.value}})
+#warning {{dto.pdu_mapping}} not defined, assigning {{'0x%04Xu' % default_pdu_mapping.value}} as default value. This definition should be passed trough the build system ({{dto.pdu_mapping}}=0xXXXX).
+#define {{dto.pdu_mapping}} ({{'0x%04Xu' % default_pdu_mapping.value}})
 #endif /* #ifndef {{dto.pdu_mapping}} */
             {%- set default_pdu_mapping.value = default_pdu_mapping.value + 1 %}
         {% endfor %}
@@ -99,8 +99,8 @@ static const Xcp_TxPduType Xcp_CommunicationChannelTxPduConfig{{'%02X' % loop.in
 static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[{{'0x%02Xu' % daq.dtos|length}}] = {
         {%- for dto in daq.dtos %}
     {
-        {{'0x%02Xu' % dto.pid}},
-        {{dto.pdu_mapping}}
+        {{'0x%04Xu' % dto.pid}}, /* XcpDtoPid */
+        {{dto.pdu_mapping}} /* XcpDto2PduMapping */
     },
         {%- endfor %}
 };
@@ -116,8 +116,8 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
     {
         {{'0x%04Xu' % loop.index0}}, /* XcpDaqListNumber */
         {{daq.type}}, /* XcpDaqListType */
-        {{daq.max_odt}}, /* XcpMaxOdt */
-        {{daq.max_odt_entries}}, /* XcpMaxOdtEntries */
+        {{'0x%02Xu' % daq.max_odt}}, /* XcpMaxOdt */
+        {{'0x%02Xu' % daq.max_odt_entries}}, /* XcpMaxOdtEntries */
         &Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDto */
         {{'0x%08Xu' % daq.dtos|length}}, /* not part of the specification... */
         &Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[0x00u] /* reference to XcpOdt */
