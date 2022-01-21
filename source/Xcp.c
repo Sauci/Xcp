@@ -88,21 +88,8 @@ extern "C" {
  * @{
  */
 
-#define XCP_CMD_STD_CONNECT (0xFFu)
-#define XCP_CMD_STD_DISCONNECT (0xFEu)
-#define XCP_CMD_STD_GET_STATUS (0xFDu)
-#define XCP_CMD_STD_SYNCH (0xFCu)
-#define XCP_CMD_STD_GET_COMM_MODE_INFO (0xFBu)
-#define XCP_CMD_STD_GET_ID (0xFAu)
-#define XCP_CMD_STD_SET_REQUEST (0xF9u)
-#define XCP_CMD_STD_GET_SEED (0xF8u)
-#define XCP_CMD_STD_UNLOCK (0xF7u)
-#define XCP_CMD_STD_SET_MTA (0x6Fu)
-#define XCP_CMD_STD_UPLOAD (0xF5u)
-#define XCP_CMD_STD_SHORT_UPLOAD (0xF4u)
-#define XCP_CMD_STD_BUILD_CHECKSUM (0xF3u)
-#define XCP_CMD_STD_TRANSPORT_LAYER_CMD (0xF2u)
-#define XCP_CMD_STD_USER_CMD (0xF1u)
+#define XCP_CONNECT_MODE_NORMAL (0x00u)
+#define XCP_CONNECT_MODE_USER_DEFINED (0x01u)
 
 /** @} */
 
@@ -1208,11 +1195,12 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
 }
 
 
-#define XCP_CONNECT_MODE_NORMAL (0x00u)
-#define XCP_CONNECT_MODE_USER_DEFINED (0x01u)
-
 /**
- * position type description
+ * request payload description:
+ * 0        BYTE Packet ID: 0xFF
+ * 1        BYTE Mode (00 = Normal 01 = user defined)
+ *
+ * positive response payload description:
  * 0        BYTE Packet ID: 0xFF
  * 1        BYTE RESOURCE
  * 2        BYTE COMM_MODE_BASIC
@@ -1225,12 +1213,18 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
 {
     uint8 result = E_OK;
 
-    uint8 resource;
+    uint8 mode;
 
     (void)rxPduId;
 
     if (pPduInfo->SduLength >= 0x02u) {
-        resource = pPduInfo->SduDataPtr[0x01u];
+        mode = pPduInfo->SduDataPtr[0x01u];
+
+        if ((mode == XCP_CONNECT_MODE_NORMAL) || (mode == XCP_CONNECT_MODE_USER_DEFINED)) {
+
+        } else {
+            result = XCP_E_ASAM_INVALID_CTO_PARAMETER;
+        }
     } else {
         result = XCP_E_ASAM_INVALID_CTO_PACKET;
     }
