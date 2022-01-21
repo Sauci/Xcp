@@ -96,6 +96,9 @@ static const Xcp_TxPduType Xcp_CommunicationChannelTxPduConfig{{'%02X' % loop.in
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
     {%- for daq in configuration.daqs %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
 static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[{{'0x%02Xu' % daq.dtos|length}}] = {
         {%- for dto in daq.dtos %}
     {
@@ -104,6 +107,9 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     },
         {%- endfor %}
 };
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
     {% endfor %}
 {%- endfor %}
 {%- for configuration in configurations %}
