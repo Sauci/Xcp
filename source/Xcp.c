@@ -864,34 +864,50 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
     {
         if (pPduInfo != NULL_PTR)
         {
-            for (daq_idx = 0x00u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+            /* First we check if the received PDU ID is the one which has been configured for CTO
+             * reception. */
+            if (rxPduId == Xcp_Ptr->config->communicationChannel->channel_rx_pdu_ref->id) {
+                valid_pdu_id = TRUE;
+            }
+            else
             {
-                for (dto_idx = 0x00u; dto_idx < Xcp_Ptr->config->daqList[daq_idx].dtoCount;
-                     dto_idx++)
+                for (daq_idx = 0x00u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
                 {
-                    if ((Xcp_Ptr->config->daqList[daq_idx].dto[dto_idx].dto2PduMapping.rxPdu.id) == rxPduId)
+                    /* Then, we check if the received PDU ID is one which has been configured for a
+                     * DAQ stimulation. */
+                    if ((Xcp_Ptr->config->daqList[daq_idx].type == STIM) ||
+                        (Xcp_Ptr->config->daqList[daq_idx].type == DAQ_STIM))
                     {
-                        valid_pdu_id = TRUE;
+                        for (dto_idx = 0x00u; dto_idx < Xcp_Ptr->config->daqList[daq_idx].dtoCount;
+                             dto_idx++)
+                        {
+                            if ((Xcp_Ptr->config->daqList[daq_idx]
+                                     .dto[dto_idx]
+                                     .dto2PduMapping.rxPdu.id) == rxPduId)
+                            {
+                                valid_pdu_id = TRUE;
 
-                        if ((pPduInfo->SduLength > 0x00u) && (pPduInfo->SduDataPtr != NULL_PTR)) {
-                            result = Xcp_PIDTable[pPduInfo->SduDataPtr[0x00u]](rxPduId, pPduInfo);
-
-                            if (result != E_OK) {
-                                Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, result);
+                                break;
                             }
                         }
+                    }
 
+                    if (valid_pdu_id == TRUE)
+                    {
                         break;
                     }
                 }
-
-                if (valid_pdu_id == TRUE)
-                {
-                    break;
-                }
             }
 
-            if (valid_pdu_id == FALSE) {
+            if (valid_pdu_id == TRUE) {
+                if ((pPduInfo->SduLength >= 0x01u) && (pPduInfo->SduDataPtr != NULL_PTR)) {
+                    result = Xcp_PIDTable[pPduInfo->SduDataPtr[0x00u]](rxPduId, pPduInfo);
+
+                    if (result != E_OK) {
+                        Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, result);
+                    }
+                }
+            } else {
                 Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_INVALID_PDUID);
             }
         }
@@ -914,7 +930,6 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
         Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
     }
 }
-
 
 Std_ReturnType Xcp_CanIfTriggerTransmit(PduIdType txPduId, PduInfoType *pPduInfo)
 {
