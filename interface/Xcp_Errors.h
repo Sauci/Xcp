@@ -12,13 +12,14 @@
 /*------------------------------------------------------------------------------------------------*/
 
 /**
-* @brief Invalid CTO packet received.
+* @brief Command syntax invalid (see ASAM protocol layer specification 1.7.3.1)
 */
-#define XCP_E_ASAM_INVALID_CTO_PACKET (0xF0u)
+#define XCP_E_ASAM_CMD_SYNTAX (0x21u)
 
 /**
-* @brief Invalid CTO packet received.
+* @brief Command syntax valid but command parameter(s) out of range (see ASAM protocol layer
+ * specification 1.7.3.1)
  */
-#define XCP_E_ASAM_INVALID_CTO_PARAMETER (0xF1u)
+#define XCP_E_ASAM_OUT_OF_RANGE (0x22u)
 
 #endif /* #ifndef XCP_ERRORS_H */

@@ -16,7 +16,7 @@ def test_command_connect_raises_e_asam_invalid_cto_packet_if_payload_size_is_too
     handle.det_report_error.assert_called_once_with(ANY,
                                                     ANY,
                                                     handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
-                                                    handle.define('XCP_E_ASAM_INVALID_CTO_PACKET'))
+                                                    handle.define('XCP_E_ASAM_CMD_SYNTAX'))
 
 
 @pytest.mark.parametrize('mode', range(0x02, 0xFF))
@@ -26,4 +26,4 @@ def test_command_connect_raises_e_asam_invalid_cto_parameter_if_a_parameter_is_n
     handle.det_report_error.assert_called_once_with(ANY,
                                                     ANY,
                                                     handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
-                                                    handle.define('XCP_E_ASAM_INVALID_CTO_PARAMETER'))
+                                                    handle.define('XCP_E_ASAM_OUT_OF_RANGE'))

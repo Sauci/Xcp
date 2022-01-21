@@ -1238,10 +1238,10 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
         if ((mode == XCP_CONNECT_MODE_NORMAL) || (mode == XCP_CONNECT_MODE_USER_DEFINED)) {
 
         } else {
-            result = XCP_E_ASAM_INVALID_CTO_PARAMETER;
+            result = XCP_E_ASAM_OUT_OF_RANGE;
         }
     } else {
-        result = XCP_E_ASAM_INVALID_CTO_PACKET;
+        result = XCP_E_ASAM_CMD_SYNTAX;
     }
 
     return result;
