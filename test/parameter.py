@@ -29,7 +29,11 @@ class Config(dict):
 
 
 class DefaultConfig(Config):
-    def __init__(self, channel_rx_pdu_ref=0x0001, channel_tx_pdu_ref=0x0002, default_daq_dto_pdu_mapping=0x0003):
+    def __init__(self,
+                 channel_rx_pdu_ref=0x0001,
+                 channel_tx_pdu_ref=0x0002,
+                 default_daq_dto_pdu_mapping=0x0003,
+                 daq_type="DAQ"):
         super(DefaultConfig, self).__init__({
             "configurations": [
                 {
@@ -40,24 +44,12 @@ class DefaultConfig(Config):
                     "daqs": [
                         {
                             "name": "DAQ1",
-                            "type": "DAQ",
-                            "max_odt": 3,
-                            "max_odt_entries": 9,
+                            "type": daq_type,
+                            "max_odt": 1,
+                            "max_odt_entries": 1,
                             "dtos": [
                                 {
                                     "pid": 0,
-                                    "pdu_mapping": "XCP_PDU_ID_TRANSMIT"
-                                }
-                            ]
-                        },
-                        {
-                            "name": "DAQ2",
-                            "type": "DAQ",
-                            "max_odt": 5,
-                            "max_odt_entries": 10,
-                            "dtos": [
-                                {
-                                    "pid": 1,
                                     "pdu_mapping": "XCP_PDU_ID_TRANSMIT"
                                 }
                             ]
