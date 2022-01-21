@@ -1,6 +1,10 @@
 {
   "configurations": [
     {
+      "communication": {
+        "channel_rx_pdu_ref": "XCP_PDU_ID_CTO_RX",
+        "channel_tx_pdu_ref": "XCP_PDU_ID_CTO_TX"
+      },
       "daqs": [
         {
           "name": "DAQ1",

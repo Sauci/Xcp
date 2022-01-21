@@ -1,5 +1,16 @@
 #include "Xcp_Cfg.h"
-{% set default_pdu_mapping = namespace(value=0) %}
+{% for configuration in configurations %}
+#ifndef {{configuration.communication.channel_rx_pdu_ref}}
+#warning {{configuration.communication.channel_rx_pdu_ref}} not defined, assigning 0x0001u as default value. This definition should be passed trough the build system ({{configuration.communication.channel_rx_pdu_ref}}=0xXXXX).
+#define {{configuration.communication.channel_rx_pdu_ref}} (0x0001u)
+#endif /* #ifndef {{configuration.communication.channel_rx_pdu_ref}} */
+
+#ifndef {{configuration.communication.channel_tx_pdu_ref}}
+#warning {{configuration.communication.channel_tx_pdu_ref}} not defined, assigning 0x0002u as default value. This definition should be passed trough the build system ({{configuration.communication.channel_tx_pdu_ref}}=0xXXXX).
+#define {{configuration.communication.channel_tx_pdu_ref}} (0x0002u)
+#endif /* #ifndef {{configuration.communication.channel_tx_pdu_ref}} */
+{%- endfor %}
+{% set default_pdu_mapping = namespace(value=3) %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
     {%- for daq in configuration.daqs %}
@@ -59,6 +70,30 @@ static Xcp_OdtType Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X
     {% endfor %}
 {%- endfor %}
 {%- for configuration in configurations %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_RxPduType Xcp_CommunicationChannelRxPduConfig{{'%02X' % loop.index0}} = {
+    {{configuration.communication.channel_rx_pdu_ref}}, /* XcpRxPduId */
+    NULL_PTR /* hard-coded XcpRxPduRef */
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{% endfor %}
+{%- for configuration in configurations %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_TxPduType Xcp_CommunicationChannelTxPduConfig{{'%02X' % loop.index0}} = {
+    {{configuration.communication.channel_tx_pdu_ref}}, /* XcpTxPduId */
+    NULL_PTR /* hard-coded XcpTxPduRef */
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{% endfor %}
+{%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
     {%- for daq in configuration.daqs %}
 static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[{{'0x%02Xu' % daq.dtos|length}}] = {
@@ -93,12 +128,27 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 {% endfor %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_CommunicationChannelType Xcp_CommunicationChannelConfig[{{'0x%02Xu' % configurations|length}}] = {
 {%- for configuration in configurations %}
+    {
+        &Xcp_CommunicationChannelRxPduConfig{{'%02X' % loop.index0}}, /* reference to XcpChannelRxPduRef */
+        &Xcp_CommunicationChannelTxPduConfig{{'%02X' % loop.index0}}, /* reference to XcpChannelTxPduRef */
+        NULL_PTR /* hard-coded XcpComMChannelRef */
+    },
+{%- endfor %}
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{% for configuration in configurations %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
 static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
-    NULL_PTR, /* reference to XcpCommunicationChannel */
+    &Xcp_CommunicationChannelConfig[{{'0x%02Xu' % loop.index0}}], /* reference to XcpCommunicationChannel */
     &Xcp_DaqListConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDaqList */
     NULL_PTR, /* reference to XcpEventChannel */
     NULL_PTR /* reference to XcpPdu */

@@ -213,11 +213,6 @@ typedef enum
 
 typedef struct
 {
-    const uint32 dummy;
-} Xcp_CommunicationChannelType;
-
-typedef struct
-{
     const uint16 id;
     const void *pdu;
 } Xcp_RxPduType;
@@ -227,6 +222,13 @@ typedef struct
     const uint16 id;
     const void *pdu;
 } Xcp_TxPduType;
+
+typedef struct
+{
+    const Xcp_RxPduType *channel_rx_pdu_ref;
+    const Xcp_TxPduType *channel_tx_pdu_ref;
+    const void *com_m_channel_ref;
+} Xcp_CommunicationChannelType;
 
 typedef struct
 {

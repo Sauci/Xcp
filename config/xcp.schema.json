@@ -6,6 +6,31 @@
       "items": {
         "type": "object",
         "properties": {
+          "communication": {
+            "description": "This container represents the configuration of the communication channel of XCP (see ECUC_Xcp_00183)",
+            "type": "object",
+            "properties": {
+              "channel_rx_pdu_ref": {
+                "description": "Optional reference to the XCP Rx PDU (see ECUC_Xcp_00185)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              },
+              "channel_tx_pdu_ref": {
+                "description": "Reference to the XCP Tx PDU (see ECUC_Xcp_00184)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              },
+              "com_m_channel_ref": {
+                "description": "Reference to the ComM channel the PDUs belong to (see ECUC_Xcp_00186)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              }
+            },
+            "required": [
+              "channel_rx_pdu_ref",
+              "channel_tx_pdu_ref"
+            ]
+          },
           "events": {
             "description": "This container contains the configuration of event channels on the XCP slave (see ECUC_Xcp_00150)",
             "type": "array",
@@ -150,6 +175,7 @@
           }
         },
         "required": [
+          "communication",
           "events",
           "daqs"
         ],

@@ -164,7 +164,10 @@ class XcpTest(object):
         self.config = MockGen('_cffi_xcp_cfg_{}'.format(config.get_id),
                               code_gen.source,
                               code_gen.header,
-                              define_macros=tuple(self.compile_definitions),
+                              define_macros=tuple(self.compile_definitions) +
+                                            ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu_ref),) +
+                                            ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu_ref),) +
+                                            ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(config.default_daq_dto_pdu_mapping),),
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               build_dir=self.build_directory)
         self.code = MockGen('_cffi_xcp',

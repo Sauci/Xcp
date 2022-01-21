@@ -102,9 +102,11 @@ class TestSWS00847:
                                                         handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
                                                         handle.define('XCP_E_PARAM_POINTER'))
 
-    @pytest.mark.parametrize('pdu_id', range(1, 10))
+    @pytest.mark.parametrize('pdu_id', [0x0002] + list(range(0x0004, 0x000F)))
     def test_invalid_pdu_id_error(self, pdu_id):
-        handle = XcpTest(DefaultConfig())
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       channel_tx_pdu_ref=0x0002,
+                                       default_daq_dto_pdu_mapping=0x0003))
         handle.lib.Xcp_CanIfRxIndication(pdu_id, handle.get_pdu_info((dummy_byte,)))
         handle.det_report_error.assert_called_once_with(ANY,
                                                         ANY,
