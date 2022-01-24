@@ -383,6 +383,31 @@ typedef struct
     /* TODO: pass a callback function here... */
     const void *counter;
     const void *nvRamBlockId;
+    const boolean xcpDownloadApiEnable; /* not part of the specification... */
+    const boolean xcpDownloadMaxApiEnable; /* not part of the specification... */
+    const boolean xcpShortDownloadApiEnable; /* not part of the specification... */
+    const boolean xcpSetCalPageApiEnable; /* not part of the specification... */
+    const boolean xcpGetCalPageApiEnable; /* not part of the specification... */
+    const boolean xcpClearDaqListApiEnable; /* not part of the specification... */
+    const boolean xcpSetDaqPtrApiEnable; /* not part of the specification... */
+    const boolean xcpWriteDaqApiEnable; /* not part of the specification... */
+    const boolean xcpSetDaqListModeApiEnable; /* not part of the specification... */
+    const boolean xcpGetDaqListModeApiEnable; /* not part of the specification... */
+    const boolean xcpStartStopDaqListApiEnable; /* not part of the specification... */
+    const boolean xcpStartStopSynchApiEnable; /* not part of the specification... */
+    const boolean xcpGetDaqClockApiEnable; /* not part of the specification... */
+    const boolean xcpReadDaqApiEnable; /* not part of the specification... */
+    const boolean xcpGetDaqProcessorInfoApiEnable; /* not part of the specification... */
+    const boolean xcpGetDaqResolutionInfoApiEnable; /* not part of the specification... */
+    const boolean xcpGetDaqListInfoApiEnable; /* not part of the specification... */
+    const boolean xcpGetDaqEventInfoApiEnable; /* not part of the specification... */
+    const boolean xcpFreeDaqApiEnable; /* not part of the specification... */
+    const boolean xcpAllocDaqApiEnable; /* not part of the specification... */
+    const boolean xcpAllocOdtApiEnable; /* not part of the specification... */
+    const boolean xcpAllocOdtEntryApiEnable; /* not part of the specification... */
+    const boolean xcpProgramClearApiEnable; /* not part of the specification... */
+    const boolean xcpProgramApiEnable; /* not part of the specification... */
+    const boolean xcpProgramMaxApiEnable; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

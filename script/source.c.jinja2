@@ -194,6 +194,31 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     TRUE, /* hard-coded XcpVersionInfoApi */
     NULL_PTR, /* hard-coded XcpCounterRef */
     NULL_PTR, /* hard-coded XcpNvRamBlockIdRef */
+    {% if configuration.apis.xcp_download_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpDownloadApiEnable */
+    {% if configuration.apis.xcp_download_max_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpDownloadMaxApiEnable */
+    {% if configuration.apis.xcp_short_download_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpShortDownloadApiEnable */
+    {% if configuration.apis.xcp_set_cal_page_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpSetCalPageApiEnable */
+    {% if configuration.apis.xcp_get_cal_page_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetCalPageApiEnable */
+    {% if configuration.apis.xcp_clear_daq_list_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpClearDaqListApiEnable */
+    {% if configuration.apis.xcp_set_daq_ptr_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpSetDaqPtrApiEnable */
+    {% if configuration.apis.xcp_write_daq_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpWriteDaqApiEnable */
+    {% if configuration.apis.xcp_set_daq_list_mode_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpSetDaqListModeApiEnable */
+    {% if configuration.apis.xcp_get_daq_list_mode_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetDaqListModeApiEnable */
+    {% if configuration.apis.xcp_start_stop_daq_list_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpStartStopDaqListApiEnable */
+    {% if configuration.apis.xcp_start_stop_synch_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpStartStopSynchApiEnable */
+    {% if configuration.apis.xcp_get_daq_clock_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetDaqClockApiEnable */
+    {% if configuration.apis.xcp_read_daq_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpReadDaqApiEnable */
+    {% if configuration.apis.xcp_get_daq_processor_info_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetDaqProcessorInfoApiEnable */
+    {% if configuration.apis.xcp_get_daq_resolution_info_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetDaqResolutionInfoApiEnable */
+    {% if configuration.apis.xcp_get_daq_list_info_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetDaqListInfoApiEnable */
+    {% if configuration.apis.xcp_get_daq_event_info_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetDaqEventInfoApiEnable */
+    {% if configuration.apis.xcp_free_daq_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpFreeDaqApiEnable */
+    {% if configuration.apis.xcp_alloc_daq_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpAllocDaqApiEnable */
+    {% if configuration.apis.xcp_alloc_odt_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpAllocOdtApiEnable */
+    {% if configuration.apis.xcp_alloc_odt_entry_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpAllocOdtEntryApiEnable */
+    {% if configuration.apis.xcp_program_clear_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpProgramClearApiEnable */
+    {% if configuration.apis.xcp_program_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpProgramApiEnable */
+    {% if configuration.apis.xcp_program_max_api_enable %}TRUE{% else %}FALSE{% endif %} /* xcpProgramMaxApiEnable */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

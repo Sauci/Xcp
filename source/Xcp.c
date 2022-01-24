@@ -59,8 +59,6 @@ extern "C" {
 #include "CanIf.h"
 #endif /* #ifndef CANIF_H */
 
-#include "Xcp_Cfg.h"
-
 #ifndef XCPONCAN_CBK_H
 #include "XcpOnCan_Cbk.h"
 #endif /* #ifndef XCPONCAN_CBK_H */
@@ -88,6 +86,8 @@ extern "C" {
  * @{
  */
 
+#define XCP_PID_CONNECT (0xFFu)
+
 #define XCP_CONNECT_MODE_NORMAL (0x00u)
 #define XCP_CONNECT_MODE_USER_DEFINED (0x01u)
 
@@ -101,6 +101,15 @@ extern "C" {
  * @addtogroup XCP_C_LTDEF
  * @{
  */
+
+typedef struct {
+    uint8 connect_mode;
+    struct {
+        boolean respond;
+        PduInfoType pdu_info;
+        uint8 _packet[0x08u];
+    } cto_response;
+} Xcp_RtType;
 
 /** @} */
 
@@ -746,6 +755,18 @@ Xcp_StateType Xcp_State = XCP_UNINITIALIZED;
 #define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+Xcp_RtType Xcp_Rt = {
+    XCP_CONNECT_MODE_NORMAL,
+    FALSE,
+    {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u}
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -788,6 +809,10 @@ void Xcp_Init(const Xcp_Type *pConfig)
     if (pConfig != NULL_PTR)
     {
         Xcp_Ptr = pConfig;
+
+        Xcp_Rt.cto_response.pdu_info.SduLength =  0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr = &Xcp_Rt.cto_response._packet[0x00u];
+        Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
         Xcp_State = XCP_INITIALIZED;
 
@@ -839,6 +864,12 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 
 void Xcp_MainFunction(void)
 {
+    if (Xcp_Rt.cto_response.respond == TRUE) {
+        Xcp_Rt.cto_response.pdu_info.SduLength = 0x08u;
+        Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
+
+        CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Rt.cto_response.pdu_info);
+    }
 }
 
 /** @} */
@@ -925,7 +956,9 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 {
     if (Xcp_State == XCP_INITIALIZED) {
-        
+        if ((Xcp_Rt.cto_response.respond == TRUE) && (result == E_OK)) {
+            Xcp_Rt.cto_response.respond = FALSE;
+        }
     } else {
         Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
     }
@@ -1228,7 +1261,10 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
 {
     uint8 result = E_OK;
 
+    uint8 resource = 0x00u;
+
     uint8 mode;
+    uint8 daq_idx;
 
     (void)rxPduId;
 
@@ -1236,7 +1272,83 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
         mode = pPduInfo->SduDataPtr[0x01u];
 
         if ((mode == XCP_CONNECT_MODE_NORMAL) || (mode == XCP_CONNECT_MODE_USER_DEFINED)) {
+            Xcp_Rt.connect_mode = mode;
 
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * CALibration and PAGing
+             * 0 = calibration/ paging not available
+             * 1 = calibration/ paging available
+             * The commands DOWNLOAD, DOWNLOAD_MAX, SHORT_DOWNLOAD, SET_CAL_PAGE, GET_CAL_PAGE are
+             * available. */
+            if ((Xcp_Ptr->general->xcpDownloadApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpDownloadMaxApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpShortDownloadApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpSetCalPageApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetCalPageApiEnable == STD_ON)) {
+                resource |= 0x01u;
+            }
+
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * DAQ lists supported
+             * 0 = DAQ lists not available
+             * 1 = DAQ lists available
+             * The DAQ commands (GET_DAQ_PROCESSOR_INFO, GET_DAQ_LIST_INFO, ...) are available. */
+            if ((Xcp_Ptr->general->xcpClearDaqListApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpSetDaqPtrApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpWriteDaqApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpSetDaqListModeApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetDaqListModeApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpStartStopDaqListApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpStartStopSynchApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetDaqClockApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpReadDaqApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetDaqProcessorInfoApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetDaqResolutionInfoApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetDaqListInfoApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpGetDaqEventInfoApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpFreeDaqApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpAllocDaqApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpAllocOdtApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpAllocOdtEntryApiEnable == STD_ON)) {
+                resource |= (0x01u << 0x02u);
+            }
+
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * STIMulation
+             * 0 = stimulation not available
+             * 1 = stimulation available
+             * data stimulation mode of a DAQ list available. */
+            for (daq_idx = 0x00u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx ++) {
+                if ((Xcp_Ptr->config->daqList[daq_idx].type == STIM) ||
+                    (Xcp_Ptr->config->daqList[daq_idx].type == DAQ_STIM))
+                {
+                    resource |= (0x01u << 0x03u);
+
+                    break;
+                }
+            }
+
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * ProGraMming
+             * 0 = Flash programming not available
+             * 1 = Flash programming available
+             * The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are available. */
+            if ((Xcp_Ptr->general->xcpProgramClearApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpProgramApiEnable == STD_ON) &&
+                (Xcp_Ptr->general->xcpProgramMaxApiEnable == STD_ON)) {
+                resource |= (0x01u << 0x04u);
+            }
+
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_CONNECT;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = resource;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+
+            Xcp_Rt.cto_response.respond = TRUE;
         } else {
             result = XCP_E_ASAM_OUT_OF_RANGE;
         }
