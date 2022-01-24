@@ -276,6 +276,10 @@
               "xcp_program_max_api_enable": {
                 "type": "boolean",
                 "default": true
+              },
+              "xcp_get_comm_mode_info_api_enable": {
+                "type": "boolean",
+                "default": true
               }
             },
             "required": [
@@ -303,7 +307,53 @@
               "xcp_alloc_odt_entry_api_enable",
               "xcp_program_clear_api_enable",
               "xcp_program_api_enable",
-              "xcp_program_max_api_enable"
+              "xcp_program_max_api_enable",
+              "xcp_get_comm_mode_info_api_enable"
+            ]
+          },
+          "protocol_layer":{
+            "description": "This container allows the user to specify protocol layer specific parameters. This is not part of the specification",
+            "type": "object",
+            "properties": {
+              "byte_order": {
+                "type": "string",
+                "enum": [
+                  "LITTLE_ENDIAN",
+                  "BIG_ENDIAN"
+                ],
+                "default": "LITTLE_ENDIAN"
+              },
+              "address_granularity": {
+                "type": "string",
+                "enum": [
+                  "BYTE",
+                  "WORD",
+                  "DWORD"
+                ],
+                "default": "DWORD"
+              },
+              "slave_block_mode": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_cto": {
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 255,
+                "default": 8
+              },
+              "max_dto": {
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 65535
+              }
+            },
+            "required": [
+              "byte_order",
+              "address_granularity",
+              "slave_block_mode",
+              "max_cto",
+              "max_dto"
             ]
           }
         },
@@ -311,7 +361,8 @@
           "communication",
           "events",
           "daqs",
-          "apis"
+          "apis",
+          "protocol_layer"
         ],
         "additionalProperties": false
       },

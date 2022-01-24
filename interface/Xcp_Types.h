@@ -211,6 +211,34 @@ typedef enum
     EVENT
 } Xcp_EventChannelConsistencyType;
 
+/**
+ * @brief BYTE_ORDER indicates the byte order used for transferring multi-byte parameters in an XCP
+ * Packet. BYTE_ORDER = 0 means Intel format, BYTE_ORDER = 1 means Motorola format. Motorola format
+ * means MSB on lower address/position.
+ *
+ * @note This enumeration is not specified in the AUTOSAR specification, but in the ASAM XCP part
+ * 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+ */
+typedef enum
+{
+    LITTLE_ENDIAN = 0x00u,
+    BIG_ENDIAN = 0x01u
+} Xcp_ByteOrderType;
+
+/**
+ * @brief The address granularity indicates the size of an element contained at a single address. It
+ * is needed if the master has to do address calculation.
+ *
+ * @note This enumeration is not specified in the AUTOSAR specification, but in the ASAM XCP part
+ * 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+ */
+typedef enum
+{
+    BYTE = 0x00u,
+    WORD = 0x01u,
+    DWORD = 0x02u
+} Xcp_AddressGranularityType;
+
 typedef struct
 {
     const uint16 id;
@@ -408,6 +436,10 @@ typedef struct
     const boolean xcpProgramClearApiEnable; /* not part of the specification... */
     const boolean xcpProgramApiEnable; /* not part of the specification... */
     const boolean xcpProgramMaxApiEnable; /* not part of the specification... */
+    const boolean xcpGetCommModeInfoApiEnable; /* not part of the specification... */
+    const Xcp_ByteOrderType byteOrder; /* not part of the specification... */
+    const Xcp_AddressGranularityType addressGranularity; /* not part of the specification... */
+    const boolean slaveBlockModeSupported; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

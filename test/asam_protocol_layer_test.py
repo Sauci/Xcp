@@ -138,3 +138,80 @@ def test_command_connect_sets_the_resource_cal_pag_bit_according_to_enabled_apis
     handle.lib.Xcp_MainFunction()
     handle.can_if_transmit.assert_called_once()
     assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x04)) >> 0x04) == resource_pgm_bit
+
+
+@pytest.mark.parametrize('byte_order_bit, byte_order', ((0, "LITTLE_ENDIAN"), (1, "BIG_ENDIAN")))
+def test_command_connect_sets_the_byte_order_bit_according_to_the_configured_value(byte_order_bit, byte_order):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, byte_order=byte_order))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[2] & 0x01 == byte_order_bit
+
+
+@pytest.mark.parametrize('address_granularity_bits, address_granularity', ((0, 'BYTE'), (1, 'WORD'), (2, 'DWORD')))
+def test_command_connect_sets_the_address_granularity_bits_according_to_the_configured_value(address_granularity_bits,
+                                                                                             address_granularity):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity=address_granularity))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[2] & 0x06) >> 0x01) == address_granularity_bits
+
+
+@pytest.mark.parametrize('slave_block_mode_bit, slave_block_mode', ((0, False), (1, True)))
+def test_command_connect_sets_the_slave_block_mode_bit_according_to_the_configured_value(slave_block_mode_bit,
+                                                                                         slave_block_mode):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, slave_block_mode=slave_block_mode))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[2] & (0x01 << 0x06)) >> 0x06) == slave_block_mode_bit
+
+
+@pytest.mark.parametrize('optional_bit, api_enable', ((0, False), (1, True)))
+def test_command_connect_sets_the_optional_bit_according_to_enabled_apis(optional_bit, api_enable):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_get_comm_mode_info_api_enable=api_enable))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[2] & (0x01 << 0x07)) >> 0x07) == optional_bit
+
+
+@pytest.mark.parametrize('max_cto_byte, max_cto', ((8, 8), (16, 16), (32, 32)))
+def test_command_connect_sets_the_max_cto_byte_according_to_the_configured_value(max_cto_byte, max_cto):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[3] == max_cto_byte
+
+
+@pytest.mark.parametrize('max_dto_bytes, max_dto, byte_order', (((0, 8), 8, 'LITTLE_ENDIAN'),
+                                                                ((0, 16), 16, 'LITTLE_ENDIAN'),
+                                                                ((0, 32), 32, 'LITTLE_ENDIAN'),
+                                                                ((8, 0), 8, 'BIG_ENDIAN'),
+                                                                ((16, 0), 16, 'BIG_ENDIAN'),
+                                                                ((32, 0), 32, 'BIG_ENDIAN')))
+def test_command_connect_sets_the_max_dto_byte_according_to_the_configured_value(max_dto_bytes, max_dto, byte_order):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_dto=max_dto, byte_order=byte_order))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[4:6]) == max_dto_bytes
+
+
+def test_command_connect_sets_the_protocol_layer_version_number_byte_according_to_the_implementation():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[6] == 0x01
+
+
+def test_command_connect_sets_the_transport_layer_version_number_byte_according_to_the_implementation():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[7] == 0x01

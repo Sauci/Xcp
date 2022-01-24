@@ -67,7 +67,15 @@
         "xcp_alloc_odt_entry_api_enable": true,
         "xcp_program_clear_api_enable": true,
         "xcp_program_api_enable": true,
-        "xcp_program_max_api_enable": true
+        "xcp_program_max_api_enable": true,
+        "xcp_get_comm_mode_info_api_enable": true
+      },
+      "protocol_layer": {
+        "byte_order": "LITTLE_ENDIAN",
+        "address_granularity": "DWORD",
+        "slave_block_mode": true,
+        "max_cto": 8,
+        "max_dto": 8
       }
     }
   ]

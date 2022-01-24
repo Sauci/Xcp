@@ -35,6 +35,10 @@ class Config(dict):
         self._xcp_program_clear_api_enable = True
         self._xcp_program_api_enable = True
         self._xcp_program_max_api_enable = True
+        self._xcp_get_comm_mode_info_api_enable = True
+        self._byte_order = 'LITTLE_ENDIAN'
+        self._address_granularity = 'DWORD'
+        self._slave_block_mode = True
 
     @property
     def get_id(self):
@@ -152,6 +156,22 @@ class Config(dict):
     def xcp_program_max_api_enable(self) -> bool:
         return self._xcp_program_max_api_enable
 
+    @property
+    def xcp_get_comm_mode_info_api_enable(self) -> bool:
+        return self._xcp_get_comm_mode_info_api_enable
+
+    @property
+    def byte_order(self) -> str:
+        return self._byte_order
+
+    @property
+    def address_granularity(self) -> str:
+        return self._address_granularity
+
+    @property
+    def slave_block_mode(self) -> bool:
+        return self._slave_block_mode
+
 
 class DefaultConfig(Config):
     def __init__(self,
@@ -183,7 +203,13 @@ class DefaultConfig(Config):
                  xcp_alloc_odt_entry_api_enable=True,
                  xcp_program_clear_api_enable=True,
                  xcp_program_api_enable=True,
-                 xcp_program_max_api_enable=True):
+                 xcp_program_max_api_enable=True,
+                 xcp_get_comm_mode_info_api_enable=True,
+                 byte_order='LITTLE_ENDIAN',
+                 address_granularity='DWORD',
+                 slave_block_mode=True,
+                 max_cto=8,
+                 max_dto=8):
         super(DefaultConfig, self).__init__({
             "configurations": [
                 {
@@ -241,7 +267,15 @@ class DefaultConfig(Config):
                         "xcp_alloc_odt_entry_api_enable": xcp_alloc_odt_entry_api_enable,
                         "xcp_program_clear_api_enable": xcp_program_clear_api_enable,
                         "xcp_program_api_enable": xcp_program_api_enable,
-                        "xcp_program_max_api_enable": xcp_program_max_api_enable
+                        "xcp_program_max_api_enable": xcp_program_max_api_enable,
+                        "xcp_get_comm_mode_info_api_enable": xcp_get_comm_mode_info_api_enable
+                    },
+                    "protocol_layer": {
+                        "byte_order": byte_order,
+                        "address_granularity": address_granularity,
+                        "slave_block_mode": slave_block_mode,
+                        "max_cto": max_cto,
+                        "max_dto": max_dto
                     }
                 }
             ]

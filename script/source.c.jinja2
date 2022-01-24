@@ -174,8 +174,8 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     FALSE, /* hard-coded XcpFlashProgrammingEnabled */
     ABSOLUTE, /* hard-coded XcpIdentificationFieldType */
     1000000, /* hard-coded XcpMainFunctionPeriod */
-    0x07u, /* hard-coded XcpMaxCto */
-    0x07u, /* hard-coded XcpMaxDto */
+    {{'0x%02Xu' % configuration.protocol_layer.max_cto}}, /* hard-coded XcpMaxCto */
+    {{'0x%04Xu' % configuration.protocol_layer.max_dto}}, /* hard-coded XcpMaxDto */
     {{'0x%04Xu' % configuration.events|length}}, /* XcpMaxEventChannel */
     0x00u, /* hard-coded XcpMinDaq */
     0x00u, /* hard-coded XcpOdtCount */
@@ -218,7 +218,11 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {% if configuration.apis.xcp_alloc_odt_entry_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpAllocOdtEntryApiEnable */
     {% if configuration.apis.xcp_program_clear_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpProgramClearApiEnable */
     {% if configuration.apis.xcp_program_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpProgramApiEnable */
-    {% if configuration.apis.xcp_program_max_api_enable %}TRUE{% else %}FALSE{% endif %} /* xcpProgramMaxApiEnable */
+    {% if configuration.apis.xcp_program_max_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpProgramMaxApiEnable */
+    {% if configuration.apis.xcp_get_comm_mode_info_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetCommModeInfoApiEnable */
+    {{configuration.protocol_layer.byte_order}}, /* byteOrder */
+    {{configuration.protocol_layer.address_granularity}}, /* addressGranularity */
+    {% if configuration.protocol_layer.slave_block_mode %}TRUE{% else %}FALSE{% endif %} /* slaveBlockTransferModeSupported */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

@@ -86,6 +86,9 @@ extern "C" {
  * @{
  */
 
+#define XCP_PROTOCOL_LAYER_VERSION (0x01u)
+#define XCP_TRANSPORT_LAYER_VERSION (0x01u)
+
 #define XCP_PID_CONNECT (0xFFu)
 
 #define XCP_CONNECT_MODE_NORMAL (0x00u)
@@ -448,6 +451,14 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
 #include "Xcp_MemMap.h"
 
 static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static void copyU16WithOrder(const uint16 src, uint8 *p_dest, Xcp_ByteOrderType endianness);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1262,6 +1273,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
     uint8 result = E_OK;
 
     uint8 resource = 0x00u;
+    uint8 comm_mode_basic = 0x00u;
 
     uint8 mode;
     uint8 daq_idx;
@@ -1280,11 +1292,11 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
              * 1 = calibration/ paging available
              * The commands DOWNLOAD, DOWNLOAD_MAX, SHORT_DOWNLOAD, SET_CAL_PAGE, GET_CAL_PAGE are
              * available. */
-            if ((Xcp_Ptr->general->xcpDownloadApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpDownloadMaxApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpShortDownloadApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpSetCalPageApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetCalPageApiEnable == STD_ON)) {
+            if ((Xcp_Ptr->general->xcpDownloadApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpDownloadMaxApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpShortDownloadApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpSetCalPageApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetCalPageApiEnable == TRUE)) {
                 resource |= 0x01u;
             }
 
@@ -1293,23 +1305,23 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
              * 0 = DAQ lists not available
              * 1 = DAQ lists available
              * The DAQ commands (GET_DAQ_PROCESSOR_INFO, GET_DAQ_LIST_INFO, ...) are available. */
-            if ((Xcp_Ptr->general->xcpClearDaqListApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpSetDaqPtrApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpWriteDaqApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpSetDaqListModeApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetDaqListModeApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpStartStopDaqListApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpStartStopSynchApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetDaqClockApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpReadDaqApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetDaqProcessorInfoApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetDaqResolutionInfoApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetDaqListInfoApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpGetDaqEventInfoApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpFreeDaqApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpAllocDaqApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpAllocOdtApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpAllocOdtEntryApiEnable == STD_ON)) {
+            if ((Xcp_Ptr->general->xcpClearDaqListApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpSetDaqPtrApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpWriteDaqApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpSetDaqListModeApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetDaqListModeApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpStartStopDaqListApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpStartStopSynchApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetDaqClockApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpReadDaqApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetDaqProcessorInfoApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetDaqResolutionInfoApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetDaqListInfoApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpGetDaqEventInfoApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpFreeDaqApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpAllocDaqApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpAllocOdtApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpAllocOdtEntryApiEnable == TRUE)) {
                 resource |= (0x01u << 0x02u);
             }
 
@@ -1333,20 +1345,50 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
              * 0 = Flash programming not available
              * 1 = Flash programming available
              * The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are available. */
-            if ((Xcp_Ptr->general->xcpProgramClearApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpProgramApiEnable == STD_ON) &&
-                (Xcp_Ptr->general->xcpProgramMaxApiEnable == STD_ON)) {
+            if ((Xcp_Ptr->general->xcpProgramClearApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpProgramApiEnable == TRUE) &&
+                (Xcp_Ptr->general->xcpProgramMaxApiEnable == TRUE)) {
                 resource |= (0x01u << 0x04u);
+            }
+
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * BYTE_ORDER indicates the byte order used for transferring multi-byte parameters in an
+             * XCP Packet. BYTE_ORDER = 0 means Intel format, BYTE_ORDER = 1 means Motorola format.
+             * Motorola format means MSB on lower address/position. */
+            if (Xcp_Ptr->general->byteOrder == BIG_ENDIAN) {
+                comm_mode_basic |= 0x01u;
+            }
+
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * The address granularity indicates the size of an element contained at a single
+             * address. It is needed if the master has to do address calculation. */
+            if (Xcp_Ptr->general->addressGranularity == WORD) {
+                comm_mode_basic |= (0x01u << 0x01u);
+            } else if (Xcp_Ptr->general->addressGranularity == DWORD) {
+                comm_mode_basic |= (0x01u << 0x02u);
+            } else {
+                /* we leave BYTE granularity by default here... */
+            }
+
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+             * The SLAVE_BLOCK_MODE flag indicates whether the Slave Block Mode is available. */
+            if (Xcp_Ptr->general->slaveBlockModeSupported == TRUE) {
+                comm_mode_basic |= (0x01u << 0x06u);
+            }
+
+            if (Xcp_Ptr->general->xcpGetCommModeInfoApiEnable == TRUE) {
+                comm_mode_basic |= (0x01u << 0x07u);
             }
 
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_CONNECT;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = resource;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = comm_mode_basic;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = Xcp_Ptr->general->maxCto;
+            copyU16WithOrder(Xcp_Ptr->general->maxDto,
+                             &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u],
+                             Xcp_Ptr->general->byteOrder);
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = XCP_PROTOCOL_LAYER_VERSION;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = XCP_TRANSPORT_LAYER_VERSION;
 
             Xcp_Rt.cto_response.respond = TRUE;
         } else {
@@ -1357,6 +1399,17 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
     }
 
     return result;
+}
+
+static void copyU16WithOrder(const uint16 src, uint8 *p_dest, Xcp_ByteOrderType endianness)
+{
+    if (endianness == LITTLE_ENDIAN) {
+        p_dest[0x01u] = src & 0xFFu;
+        p_dest[0x00u] = (src >> 0x08u) & 0xFFu;
+    } else {
+        p_dest[0x00u] = src & 0xFFu;
+        p_dest[0x01u] = (src >> 0x08u) & 0xFFu;
+    }
 }
 
 /** @} */
