@@ -36,26 +36,24 @@ def test_xcp_init_raises_e_init_failed_if_max_dto_parameter_does_not_fit_with_ad
 
 
 @pytest.mark.parametrize('payload', ((0xFF,),))
-def test_command_connect_raises_e_asam_invalid_cto_packet_if_payload_size_is_too_short(payload):
+def test_command_connect_sets_the_packet_id_byte_to_pid_error_if_payload_size_is_too_short(payload):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(payload))
-    handle.det_report_error.assert_called_once_with(ANY,
-                                                    ANY,
-                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
-                                                    handle.define('XCP_E_ASAM_CMD_SYNTAX'))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
 
-@pytest.mark.parametrize('mode', range(0x02, 0xFF))
-def test_command_connect_raises_e_asam_invalid_cto_parameter_if_a_parameter_is_not_in_allowed_range(mode):
+@pytest.mark.parametrize('mode', range(0x02, 0x0F))
+def test_command_connect_sets_the_packet_id_byte_to_pid_error_if_a_parameter_is_not_in_allowed_range(mode):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, mode)))
-    handle.det_report_error.assert_called_once_with(ANY,
-                                                    ANY,
-                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
-                                                    handle.define('XCP_E_ASAM_OUT_OF_RANGE'))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
 
-def test_command_connect_sets_the_packet_id_byte_to_pid_res_positive_response_on_positive_response():
+def test_command_connect_sets_the_packet_id_byte_to_pid_response_on_positive_response():
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()

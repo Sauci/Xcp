@@ -89,7 +89,9 @@ extern "C" {
 #define XCP_PROTOCOL_LAYER_VERSION (0x01u)
 #define XCP_TRANSPORT_LAYER_VERSION (0x01u)
 
-#define XCP_PID_RES_POSITIVE_RESPONSE (0xFFu)
+#define XCP_PID_RESPONSE (0xFFu)
+#define XCP_PID_ERROR (0xFEu)
+
 #define XCP_PID_CONNECT (0xFFu)
 #define XCP_PID_DISCONNECT (0xFEu)
 
@@ -1286,19 +1288,13 @@ static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduIn
  *
  * positive response payload description:
  * 0        BYTE Packet ID: 0xFF
- * 1        BYTE RESOURCE
- * 2        BYTE COMM_MODE_BASIC
- * 3        BYTE MAX_CTO, Maximum CTO size [BYTE]
- * 4,5      WORD MAX_DTO, Maximum DTO size [BYTE]
- * 6        BYTE XCP Protocol Layer Version Number (most significant byte only)
- * 7        BYTE XCP Transport Layer Version Number (most significant byte only)
  */
 static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     (void)rxPduId;
     (void)pPduInfo;
 
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RES_POSITIVE_RESPONSE;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
@@ -1439,7 +1435,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
                 comm_mode_basic |= (0x01u << 0x07u);
             }
 
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RES_POSITIVE_RESPONSE;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = resource;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = comm_mode_basic;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = Xcp_Ptr->general->maxCto;
@@ -1448,15 +1444,30 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
                              Xcp_Ptr->general->byteOrder);
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = XCP_PROTOCOL_LAYER_VERSION;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = XCP_TRANSPORT_LAYER_VERSION;
-
-            Xcp_Rt.connection_state = XCP_CONNECTION_STATE_CONNECTED;
-            Xcp_Rt.cto_response.trigger_cto_response = TRUE;
         } else {
             result = XCP_E_ASAM_OUT_OF_RANGE;
         }
     } else {
         result = XCP_E_ASAM_CMD_SYNTAX;
     }
+
+    if (result == E_OK)
+    {
+        Xcp_Rt.connection_state = XCP_CONNECTION_STATE_CONNECTED;
+    }
+    else
+    {
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_ERROR;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = result;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+    }
+
+    Xcp_Rt.cto_response.trigger_cto_response = TRUE;
 
     return result;
 }
