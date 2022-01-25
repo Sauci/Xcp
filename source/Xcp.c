@@ -90,6 +90,7 @@ extern "C" {
 #define XCP_TRANSPORT_LAYER_VERSION (0x01u)
 
 #define XCP_PID_CONNECT (0xFFu)
+#define XCP_PID_DISCONNECT (0xFEu)
 
 #define XCP_CONNECT_MODE_NORMAL (0x00u)
 #define XCP_CONNECT_MODE_USER_DEFINED (0x01u)
@@ -105,10 +106,17 @@ extern "C" {
  * @{
  */
 
+typedef enum {
+    XCP_CONNECTION_STATE_DISCONNECTED = 0x00u,
+    XCP_CONNECTION_STATE_CONNECTED,
+    XCP_CONNECTION_STATE_RESUME
+} Xcp_ConnectionState;
+
 typedef struct {
     uint8 connect_mode;
+    Xcp_ConnectionState connection_state;
     struct {
-        boolean respond;
+        boolean trigger_cto_response;
         PduInfoType pdu_info;
         uint8 _packet[0x08u];
     } cto_response;
@@ -771,6 +779,7 @@ Xcp_StateType Xcp_State = XCP_UNINITIALIZED;
 
 Xcp_RtType Xcp_Rt = {
     XCP_CONNECT_MODE_NORMAL,
+    XCP_CONNECTION_STATE_DISCONNECTED,
     FALSE,
     {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u}
 };
@@ -898,7 +907,7 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 
 void Xcp_MainFunction(void)
 {
-    if (Xcp_Rt.cto_response.respond == TRUE) {
+    if (Xcp_Rt.cto_response.trigger_cto_response == TRUE) {
         Xcp_Rt.cto_response.pdu_info.SduLength = 0x08u;
         Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
@@ -990,8 +999,8 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 {
     if (Xcp_State == XCP_INITIALIZED) {
-        if ((Xcp_Rt.cto_response.respond == TRUE) && (result == E_OK)) {
-            Xcp_Rt.cto_response.respond = FALSE;
+        if ((Xcp_Rt.cto_response.trigger_cto_response == TRUE) && (result == E_OK)) {
+            Xcp_Rt.cto_response.trigger_cto_response = FALSE;
         }
     } else {
         Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
@@ -1273,6 +1282,21 @@ static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduIn
 
 static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_DISCONNECT;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+
+    Xcp_Rt.connection_state = XCP_CONNECTION_STATE_DISCONNECTED;
+    Xcp_Rt.cto_response.trigger_cto_response = TRUE;
+
     return E_OK;
 }
 
@@ -1413,7 +1437,8 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = XCP_PROTOCOL_LAYER_VERSION;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = XCP_TRANSPORT_LAYER_VERSION;
 
-            Xcp_Rt.cto_response.respond = TRUE;
+            Xcp_Rt.connection_state = XCP_CONNECTION_STATE_CONNECTED;
+            Xcp_Rt.cto_response.trigger_cto_response = TRUE;
         } else {
             result = XCP_E_ASAM_OUT_OF_RANGE;
         }

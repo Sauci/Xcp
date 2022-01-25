@@ -249,3 +249,11 @@ def test_command_connect_sets_the_transport_layer_version_number_byte_according_
     handle.lib.Xcp_MainFunction()
     handle.can_if_transmit.assert_called_once()
     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[7] == 0x01
+
+
+def test_command_disconnect_sets_the_packet_id_byte_according_to_the_specification():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+    handle.can_if_transmit.assert_called_once()
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFE
