@@ -817,16 +817,39 @@ Xcp_RtType Xcp_Rt = {
 
 void Xcp_Init(const Xcp_Type *pConfig)
 {
+    uint8 address_granularity = 0x00u;
+
     if (pConfig != NULL_PTR)
     {
         Xcp_Ptr = pConfig;
 
-        Xcp_Rt.cto_response.pdu_info.SduLength =  0x00u;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr = &Xcp_Rt.cto_response._packet[0x00u];
-        Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+         * The following relations must always be fulfilled
+         *  MAX_CTO mod AG = 0
+         *  MAX_DTO mod AG = 0 */
+        if (Xcp_Ptr->general->addressGranularity == BYTE) {
+            address_granularity = 0x01u;
+        } else if (Xcp_Ptr->general->addressGranularity == WORD) {
+            address_granularity = 0x02u;
+        } else if (Xcp_Ptr->general->addressGranularity == DWORD) {
+            address_granularity = 0x04u;
+        } else {
+            /* MISRA C, do nothing... */
+        }
 
-        Xcp_State = XCP_INITIALIZED;
+        if (((Xcp_Ptr->general->maxCto % address_granularity) == 0x00u) &&
+            ((Xcp_Ptr->general->maxDto % address_granularity) == 0x00u))
+        {
+            Xcp_Rt.cto_response.pdu_info.SduLength = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr = &Xcp_Rt.cto_response._packet[0x00u];
+            Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
+            Xcp_State = XCP_INITIALIZED;
+        }
+        else
+        {
+            Xcp_ReportError(0x00u, XCP_INIT_API_ID, XCP_E_INIT_FAILED);
+        }
     }
     else
     {
