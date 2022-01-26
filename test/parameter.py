@@ -10,167 +10,22 @@ class Config(dict):
         self._channel_rx_pdu_ref = 0x0001
         self._channel_tx_pdu_ref = 0x0002
         self._default_daq_dto_pdu_mapping = 0x0003
-        self._xcp_download_api_enable = True
-        self._xcp_download_max_api_enable = True
-        self._xcp_short_download_api_enable = True
-        self._xcp_set_cal_page_api_enable = True
-        self._xcp_get_cal_page_api_enable = True
-        self._xcp_clear_daq_list_api_enable = True
-        self._xcp_set_daq_ptr_api_enable = True
-        self._xcp_write_daq_api_enable = True
-        self._xcp_set_daq_list_mode_api_enable = True
-        self._xcp_get_daq_list_mode_api_enable = True
-        self._xcp_start_stop_daq_list_api_enable = True
-        self._xcp_start_stop_synch_api_enable = True
-        self._xcp_get_daq_clock_api_enable = True
-        self._xcp_read_daq_api_enable = True
-        self._xcp_get_daq_processor_info_api_enable = True
-        self._xcp_get_daq_resolution_info_api_enable = True
-        self._xcp_get_daq_list_info_api_enable = True
-        self._xcp_get_daq_event_info_api_enable = True
-        self._xcp_free_daq_api_enable = True
-        self._xcp_alloc_daq_api_enable = True
-        self._xcp_alloc_odt_api_enable = True
-        self._xcp_alloc_odt_entry_api_enable = True
-        self._xcp_program_clear_api_enable = True
-        self._xcp_program_api_enable = True
-        self._xcp_program_max_api_enable = True
-        self._xcp_get_comm_mode_info_api_enable = True
-        self._byte_order = 'LITTLE_ENDIAN'
-        self._address_granularity = 'DWORD'
-        self._slave_block_mode = True
 
     @property
     def get_id(self):
         return hashlib.sha224(json.dumps(self, sort_keys=True, indent=0).encode('utf-8')).hexdigest()[0:8]
 
     @property
-    def channel_rx_pdu_ref(self) -> (str, int):
+    def channel_rx_pdu_ref(self) -> int:
         return self._channel_rx_pdu_ref
 
     @property
-    def channel_tx_pdu_ref(self) -> (str, int):
+    def channel_tx_pdu_ref(self) -> int:
         return self._channel_tx_pdu_ref
 
     @property
-    def default_daq_dto_pdu_mapping(self) -> (str, int):
+    def default_daq_dto_pdu_mapping(self) -> int:
         return self._default_daq_dto_pdu_mapping
-
-    @property
-    def xcp_download_api_enable(self) -> bool:
-        return self._xcp_download_api_enable
-
-    @property
-    def xcp_download_max_api_enable(self) -> bool:
-        return self._xcp_download_max_api_enable
-
-    @property
-    def xcp_short_download_api_enable(self) -> bool:
-        return self._xcp_short_download_api_enable
-
-    @property
-    def xcp_set_cal_page_api_enable(self) -> bool:
-        return self._xcp_set_cal_page_api_enable
-
-    @property
-    def xcp_get_cal_page_api_enable(self) -> bool:
-        return self._xcp_get_cal_page_api_enable
-
-    @property
-    def xcp_clear_daq_list_api_enable(self) -> bool:
-        return self._xcp_clear_daq_list_api_enable
-
-    @property
-    def xcp_set_daq_ptr_api_enable(self) -> bool:
-        return self._xcp_set_daq_ptr_api_enable
-
-    @property
-    def xcp_write_daq_api_enable(self) -> bool:
-        return self._xcp_write_daq_api_enable
-
-    @property
-    def xcp_set_daq_list_mode_api_enable(self) -> bool:
-        return self._xcp_set_daq_list_mode_api_enable
-
-    @property
-    def xcp_get_daq_list_mode_api_enable(self) -> bool:
-        return self._xcp_get_daq_list_mode_api_enable
-
-    @property
-    def xcp_start_stop_daq_list_api_enable(self) -> bool:
-        return self._xcp_start_stop_daq_list_api_enable
-
-    @property
-    def xcp_start_stop_synch_api_enable(self) -> bool:
-        return self._xcp_start_stop_synch_api_enable
-
-    @property
-    def xcp_get_daq_clock_api_enable(self) -> bool:
-        return self._xcp_get_daq_clock_api_enable
-
-    @property
-    def xcp_read_daq_api_enable(self) -> bool:
-        return self._xcp_read_daq_api_enable
-
-    @property
-    def xcp_get_daq_processor_info_api_enable(self) -> bool:
-        return self._xcp_get_daq_processor_info_api_enable
-
-    @property
-    def xcp_get_daq_resolution_info_api_enable(self) -> bool:
-        return self._xcp_get_daq_resolution_info_api_enable
-
-    @property
-    def xcp_get_daq_list_info_api_enable(self) -> bool:
-        return self._xcp_get_daq_list_info_api_enable
-
-    @property
-    def xcp_get_daq_event_info_api_enable(self) -> bool:
-        return self._xcp_get_daq_event_info_api_enable
-
-    @property
-    def xcp_free_daq_api_enable(self) -> bool:
-        return self._xcp_free_daq_api_enable
-
-    @property
-    def xcp_alloc_daq_api_enable(self) -> bool:
-        return self._xcp_alloc_daq_api_enable
-
-    @property
-    def xcp_alloc_odt_api_enable(self) -> bool:
-        return self._xcp_alloc_odt_api_enable
-
-    @property
-    def xcp_alloc_odt_entry_api_enable(self) -> bool:
-        return self._xcp_alloc_odt_entry_api_enable
-
-    @property
-    def xcp_program_clear_api_enable(self) -> bool:
-        return self._xcp_program_clear_api_enable
-
-    @property
-    def xcp_program_api_enable(self) -> bool:
-        return self._xcp_program_api_enable
-
-    @property
-    def xcp_program_max_api_enable(self) -> bool:
-        return self._xcp_program_max_api_enable
-
-    @property
-    def xcp_get_comm_mode_info_api_enable(self) -> bool:
-        return self._xcp_get_comm_mode_info_api_enable
-
-    @property
-    def byte_order(self) -> str:
-        return self._byte_order
-
-    @property
-    def address_granularity(self) -> str:
-        return self._address_granularity
-
-    @property
-    def slave_block_mode(self) -> bool:
-        return self._slave_block_mode
 
 
 class DefaultConfig(Config):
