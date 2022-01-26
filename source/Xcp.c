@@ -117,7 +117,9 @@ typedef enum {
 
 typedef struct {
     uint8 connect_mode;
-    Xcp_ConnectionState connection_state;
+    Xcp_ConnectionState connection_status;
+    uint8 session_status;
+    uint8 protection_status;
     struct {
         boolean trigger_cto_response;
         PduInfoType pdu_info;
@@ -783,6 +785,8 @@ Xcp_StateType Xcp_State = XCP_UNINITIALIZED;
 Xcp_RtType Xcp_Rt = {
     XCP_CONNECT_MODE_NORMAL,
     XCP_CONNECTION_STATE_DISCONNECTED,
+    0x00u,
+    0x00u,
     FALSE,
     {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u}
 };
@@ -1268,26 +1272,52 @@ static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
-
 /**
- * position type description
+ * request payload description:
+ * 0        BYTE Packet ID: 0xFD
+ *
+ * positive response payload description:
  * 0        BYTE Packet ID: 0xFF
  * 1        BYTE Current session status
  * 2        BYTE Current resource protection status
  * 3        BYTE Reserved
- * 4,5      WORD Session configuration ID
+ * 4,5      WORD Session configuration id
+ *
+ * negative response payload description:
+ * 0        BYTE Packet ID: 0xFE
+ * 1        BYTE Error code
  */
 static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
-    return E_OK;
+    uint8 result = E_OK;
+
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Rt.session_status;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Rt.protection_status;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0xABu; /* TODO: implement me... */
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0xCDu; /* TODO: implement me... */
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+
+    Xcp_Rt.cto_response.trigger_cto_response = TRUE;
+
+    return result;
 }
 
 /**
  * request payload description:
  * 0        BYTE Packet ID: 0xFE
- *
- * positive response payload description:
- * 0        BYTE Packet ID: 0xFF
+*
+* positive response payload description:
+* 0        BYTE Packet ID: 0xFF
+*
+* negative response payload description:
+* 0        BYTE Packet ID: 0xFE
+* 1        BYTE Error code
  */
 static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
@@ -1303,8 +1333,11 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
 
-    Xcp_Rt.connection_state = XCP_CONNECTION_STATE_DISCONNECTED;
+    Xcp_Rt.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
     Xcp_Rt.cto_response.trigger_cto_response = TRUE;
+
+    /* TODO: check if something prevent the disconnection and return E_ASAM_CMD_BUSY, according to
+     *  1.6.1.1.2  */
 
     return E_OK;
 }
@@ -1322,6 +1355,10 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
  * 4,5      WORD MAX_DTO, Maximum DTO size [BYTE]
  * 6        BYTE XCP Protocol Layer Version Number (most significant byte only)
  * 7        BYTE XCP Transport Layer Version Number (most significant byte only)
+ *
+ * negative response payload description:
+ * 0        BYTE Packet ID: 0xFE
+ * 1        BYTE Error code
  */
 static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
@@ -1453,7 +1490,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
 
     if (result == E_OK)
     {
-        Xcp_Rt.connection_state = XCP_CONNECTION_STATE_CONNECTED;
+        Xcp_Rt.connection_status = XCP_CONNECTION_STATE_CONNECTED;
     }
     else
     {
