@@ -43,6 +43,7 @@
         }
       ],
       "apis": {
+        "xcp_set_request_api_enable": true,
         "xcp_download_api_enable": true,
         "xcp_download_max_api_enable": true,
         "xcp_short_download_api_enable": true,

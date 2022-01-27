@@ -34,6 +34,9 @@ class DefaultConfig(Config):
                  channel_tx_pdu_ref=0x0002,
                  default_daq_dto_pdu_mapping=0x0003,
                  daq_type="DAQ",
+                 xcp_set_request_api_enable=True,
+                 xcp_get_id_api_enable=True,
+                 xcp_get_seed_api_enable=True,
                  xcp_download_api_enable=True,
                  xcp_download_max_api_enable=True,
                  xcp_short_download_api_enable=True,
@@ -98,6 +101,9 @@ class DefaultConfig(Config):
                         }
                     ],
                     "apis": {
+                        "xcp_set_request_api_enable": xcp_set_request_api_enable,
+                        "xcp_get_id_api_enable": xcp_get_id_api_enable,
+                        "xcp_get_seed_api_enable": xcp_get_seed_api_enable,
                         "xcp_download_api_enable": xcp_download_api_enable,
                         "xcp_download_max_api_enable": xcp_download_max_api_enable,
                         "xcp_short_download_api_enable": xcp_short_download_api_enable,

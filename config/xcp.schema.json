@@ -177,6 +177,18 @@
             "description": "This container allows the user to enable/disable optional APIs from the driver. This is not part of the specification",
             "type": "object",
             "properties": {
+              "xcp_set_request_api_enable": {
+                "type": "boolean",
+                "default": true
+              },
+              "xcp_get_id_api_enable": {
+                "type": "boolean",
+                "default": true
+              },
+              "xcp_get_seed_api_enable": {
+                "type": "boolean",
+                "default": true
+              },
               "xcp_download_api_enable": {
                 "type": "boolean",
                 "default": true
@@ -283,6 +295,9 @@
               }
             },
             "required": [
+              "xcp_set_request_api_enable",
+              "xcp_get_id_api_enable",
+              "xcp_get_seed_api_enable",
               "xcp_download_api_enable",
               "xcp_download_max_api_enable",
               "xcp_short_download_api_enable",

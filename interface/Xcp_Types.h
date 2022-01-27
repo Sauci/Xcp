@@ -411,6 +411,9 @@ typedef struct
     /* TODO: pass a callback function here... */
     const void *counter;
     const void *nvRamBlockId;
+    const boolean xcpSetRequestApiEnable; /* not part of the specification... */
+    const boolean xcpGetIdApiEnable; /* not part of the specification... */
+    const boolean xcpGetSeedApiEnable; /* not part of the specification... */
     const boolean xcpDownloadApiEnable; /* not part of the specification... */
     const boolean xcpDownloadMaxApiEnable; /* not part of the specification... */
     const boolean xcpShortDownloadApiEnable; /* not part of the specification... */

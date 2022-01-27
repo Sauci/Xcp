@@ -12,6 +12,27 @@
 /*------------------------------------------------------------------------------------------------*/
 
 /**
+* @brief Command processor synchronization (see ASAM protocol layer specification 1.7.3.1)
+ */
+#define XCP_E_ASAM_CMD_SYNCH (0x00u)
+
+/**
+* @brief Command was not executed (see ASAM protocol layer specification 1.7.3.1)
+ */
+#define XCP_E_ASAM_CMD_BUSY (0x10u)
+
+/**
+* @brief Command rejected because PGM is running (see ASAM protocol layer specification 1.7.3.1)
+ */
+#define XCP_E_ASAM_PGM_ACTIVE (0x12u)
+
+/**
+* @brief Unknown command or not implemented optional command (see ASAM protocol layer specification
+* 1.7.3.1)
+*/
+#define XCP_E_ASAM_CMD_UNKNOWN (0x20u)
+
+/**
 * @brief Command syntax invalid (see ASAM protocol layer specification 1.7.3.1)
 */
 #define XCP_E_ASAM_CMD_SYNTAX (0x21u)

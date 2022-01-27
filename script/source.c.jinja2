@@ -194,6 +194,9 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     TRUE, /* hard-coded XcpVersionInfoApi */
     NULL_PTR, /* hard-coded XcpCounterRef */
     NULL_PTR, /* hard-coded XcpNvRamBlockIdRef */
+    {% if configuration.apis.xcp_set_request_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpSetRequestApiEnable */
+    {% if configuration.apis.xcp_get_id_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetIdApiEnable */
+    {% if configuration.apis.xcp_get_seed_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpGetSeedApiEnable */
     {% if configuration.apis.xcp_download_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpDownloadApiEnable */
     {% if configuration.apis.xcp_download_max_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpDownloadMaxApiEnable */
     {% if configuration.apis.xcp_short_download_api_enable %}TRUE{% else %}FALSE{% endif %}, /* xcpShortDownloadApiEnable */
