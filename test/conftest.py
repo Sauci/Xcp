@@ -1,6 +1,8 @@
 import os
 import sys
+import random
 
+import pytest
 from bsw_code_gen import BSWCodeGen
 from cffi import FFI
 from importlib import import_module
@@ -31,6 +33,17 @@ def pytest_configure(config):
     os.environ['source'] = config.getoption('source')
     os.environ['compile_definitions'] = config.getoption('compile_definitions')
     os.environ['include_directories'] = config.getoption('include_directories')
+
+
+@pytest.fixture
+def seed(request) -> [int]:
+    return [random.getrandbits(8, ) for _ in range(request.param)]
+
+
+@pytest.fixture
+def seed_array(request) -> [[int]]:
+    seed_size, number_of_seeds = request.param
+    return [[random.getrandbits(8, ) for _ in range(seed_size)] for _ in range(number_of_seeds)]
 
 
 def convert(name):
@@ -167,7 +180,9 @@ class XcpTest(object):
                               define_macros=tuple(self.compile_definitions) +
                                             ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu_ref),) +
                                             ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu_ref),) +
-                                            ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(config.default_daq_dto_pdu_mapping),),
+                                            (
+                                                'XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
+                                                    config.default_daq_dto_pdu_mapping),),
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               build_dir=self.build_directory)
         self.code = MockGen('_cffi_xcp',
@@ -182,12 +197,16 @@ class XcpTest(object):
         self.det_report_error = MagicMock()
         self.det_report_runtime_error = MagicMock()
         self.det_report_transient_fault = MagicMock()
+        self.xcp_get_seed = MagicMock()
+        self.xcp_calc_key = MagicMock()
         for func in self.code.mocked:
             self.ffi.def_extern(func)(getattr(self, convert(func)))
         self.can_if_transmit.return_value = self.define('E_OK')
         self.det_report_error.return_value = self.define('E_OK')
         self.det_report_runtime_error.return_value = self.define('E_OK')
         self.det_report_transient_fault.return_value = self.define('E_OK')
+        self.xcp_get_seed.return_value = self.define('E_OK')
+        self.xcp_calc_key.return_value = self.define('E_OK')
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:

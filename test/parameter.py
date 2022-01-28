@@ -37,6 +37,7 @@ class DefaultConfig(Config):
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
+                 xcp_unlock_api_enable=True,
                  xcp_download_api_enable=True,
                  xcp_download_max_api_enable=True,
                  xcp_short_download_api_enable=True,
@@ -63,6 +64,10 @@ class DefaultConfig(Config):
                  xcp_program_api_enable=True,
                  xcp_program_max_api_enable=True,
                  xcp_get_comm_mode_info_api_enable=True,
+                 resource_protection_calibration_paging=False,
+                 resource_protection_data_acquisition=False,
+                 resource_protection_data_stimulation=False,
+                 resource_protection_programming=False,
                  byte_order='LITTLE_ENDIAN',
                  address_granularity='DWORD',
                  slave_block_mode=True,
@@ -104,6 +109,7 @@ class DefaultConfig(Config):
                         "xcp_set_request_api_enable": xcp_set_request_api_enable,
                         "xcp_get_id_api_enable": xcp_get_id_api_enable,
                         "xcp_get_seed_api_enable": xcp_get_seed_api_enable,
+                        "xcp_unlock_api_enable": xcp_unlock_api_enable,
                         "xcp_download_api_enable": xcp_download_api_enable,
                         "xcp_download_max_api_enable": xcp_download_max_api_enable,
                         "xcp_short_download_api_enable": xcp_short_download_api_enable,
@@ -129,7 +135,13 @@ class DefaultConfig(Config):
                         "xcp_program_clear_api_enable": xcp_program_clear_api_enable,
                         "xcp_program_api_enable": xcp_program_api_enable,
                         "xcp_program_max_api_enable": xcp_program_max_api_enable,
-                        "xcp_get_comm_mode_info_api_enable": xcp_get_comm_mode_info_api_enable
+                        "xcp_get_comm_mode_info_api_enable": xcp_get_comm_mode_info_api_enable,
+                        "resource_protection": {
+                            "calibration_paging": resource_protection_calibration_paging,
+                            "data_acquisition": resource_protection_data_acquisition,
+                            "data_stimulation": resource_protection_data_stimulation,
+                            "programming": resource_protection_programming
+                        }
                     },
                     "protocol_layer": {
                         "byte_order": byte_order,

@@ -178,126 +178,128 @@
             "type": "object",
             "properties": {
               "xcp_set_request_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_id_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_seed_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_unlock_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_download_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_download_max_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_short_download_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_set_cal_page_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_cal_page_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_clear_daq_list_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_set_daq_ptr_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_write_daq_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_set_daq_list_mode_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_daq_list_mode_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_start_stop_daq_list_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_start_stop_synch_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_daq_clock_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_read_daq_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_daq_processor_info_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_daq_resolution_info_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_daq_list_info_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_daq_event_info_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_free_daq_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_alloc_daq_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_alloc_odt_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_alloc_odt_entry_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_program_clear_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_program_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_program_max_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
               },
               "xcp_get_comm_mode_info_api_enable": {
-                "type": "boolean",
-                "default": true
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "resource_protection": {
+                "type": "object",
+                "properties": {
+                  "calibration_paging": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "data_acquisition": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "data_stimulation": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "programming": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "required": [
+                  "calibration_paging",
+                  "data_acquisition",
+                  "data_stimulation",
+                  "programming"
+                ]
               }
             },
             "required": [
               "xcp_set_request_api_enable",
               "xcp_get_id_api_enable",
               "xcp_get_seed_api_enable",
+              "xcp_unlock_api_enable",
               "xcp_download_api_enable",
               "xcp_download_max_api_enable",
               "xcp_short_download_api_enable",
@@ -323,10 +325,11 @@
               "xcp_program_clear_api_enable",
               "xcp_program_api_enable",
               "xcp_program_max_api_enable",
-              "xcp_get_comm_mode_info_api_enable"
+              "xcp_get_comm_mode_info_api_enable",
+              "resource_protection"
             ]
           },
-          "protocol_layer":{
+          "protocol_layer": {
             "description": "This container allows the user to specify protocol layer specific parameters. This is not part of the specification",
             "type": "object",
             "properties": {
@@ -386,5 +389,11 @@
   },
   "required": [
     "configurations"
-  ]
+  ],
+  "definitions": {
+    "api_activation_information": {
+      "type": "boolean",
+      "default": true
+    }
+  }
 }

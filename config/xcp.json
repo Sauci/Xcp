@@ -44,6 +44,9 @@
       ],
       "apis": {
         "xcp_set_request_api_enable": true,
+        "xcp_get_id_api_enable": true,
+        "xcp_get_seed_api_enable": true,
+        "xcp_unlock_api_enable": true,
         "xcp_download_api_enable": true,
         "xcp_download_max_api_enable": true,
         "xcp_short_download_api_enable": true,
@@ -69,7 +72,13 @@
         "xcp_program_clear_api_enable": true,
         "xcp_program_api_enable": true,
         "xcp_program_max_api_enable": true,
-        "xcp_get_comm_mode_info_api_enable": true
+        "xcp_get_comm_mode_info_api_enable": true,
+        "resource_protection": {
+          "calibration_paging": false,
+          "data_acquisition": false,
+          "data_stimulation": false,
+          "programming": false
+        }
       },
       "protocol_layer": {
         "byte_order": "LITTLE_ENDIAN",

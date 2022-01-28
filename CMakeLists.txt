@@ -25,6 +25,7 @@ endif ()
 
 add_subdirectory(extern)
 add_subdirectory(generated)
+# add_subdirectory(debug)
 
 add_library(Xcp STATIC source/Xcp.c)
 
@@ -35,6 +36,7 @@ target_compile_definitions(Xcp
     PRIVATE XCP_SW_VERSION_PATCH=${PROJECT_VERSION_PATCH}
     PUBLIC XCP_AR_RELEASE_MAJOR_VERSION=4 # SWS_BSW_00059
     PUBLIC XCP_AR_RELEASE_MINOR_VERSION=3
+    PUBLIC XCP_AR_RELEASE_PATCH_VERSION=1
     PUBLIC XCP_API=STD_ON
     PUBLIC XCP_GET_VERSION_INFO_API=STD_ON # ECUC_Xcp_00283
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
@@ -51,7 +53,7 @@ if (${XCP_ENABLE_TEST})
 
     add_test(NAME Xcp_UnitTest
         COMMAND ${PYTHON_EXECUTABLE} -W ignore::DeprecationWarning
-        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test
+        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h

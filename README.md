@@ -3,7 +3,7 @@
 | [master](https://github.com/Sauci/Xcp/tree/master)   | [![Build Status](https://travis-ci.org/Sauci/Xcp.svg?branch=master)](https://travis-ci.org/Sauci/Xcp)  | [![codecov](https://codecov.io/gh/Sauci/Xcp/branch/master/graph/badge.svg)](https://codecov.io/gh/Sauci/Xcp/branch/master)   |
 | [develop](https://github.com/Sauci/Xcp/tree/develop) | [![Build Status](https://travis-ci.org/Sauci/Xcp.svg?branch=develop)](https://travis-ci.org/Sauci/Xcp) | [![codecov](https://codecov.io/gh/Sauci/Xcp/branch/develop/graph/badge.svg)](https://codecov.io/gh/Sauci/Xcp/branch/develop) |
 
-# CMake definitions
+# Configure/Compile -time definitions
 The following definitions might be set by the user, depending on the needs.
 
 | definition                    | values                           | default                    | description                                                                                                                                                                      |
@@ -19,5 +19,40 @@ The following definitions might be set by the user, depending on the needs.
 
 To use this feature, simply add ```-D<definition>=<value>``` when configuring the build with CMake.
 
+# Module configuration
+A large part of this module consists of auto-generated code. It takes a *JSON* file as input (the path of this file is
+specified through the `XCP_CONFIG_FILEPATH` CMake variable, defaulting to [this](config/xcp.json) file), and generates 
+the *Xcp_Cfg.c* and *Xcp_Cfg.h* files. The content of this configuration file is specified with the *JSON* schema
+available [here](config/xcp.schema.json). Most of the recent IDEs are providing auto-completion of the configuration 
+file based on its schema, thus it is highly recommended using it.
+
+# Implementation details
+This section gives a few implementation details, where the specification is not very clear or a little bit fuzzy. This
+will allow the user to properly configure the communication parameters on the master side.
+
+## Seed lifetime
+Whenever the seed is requested by the master trough the `GET_SEED` command, a new seed is requested by the XCP stack 
+through the `Xcp_GetSeed` function. The idea behind it is that if the slave would not do this, the master could 
+calculate a key for a single seed and use it forever, which would lead to a less secured resource protection.
+
+Whenever the master issues a `UNLOCK` command, the slave will discard the seed as well, either upon successful and 
+unsuccessful command result. THis implies a new `GET_SEED` request for each `UNLOCK` command.
+
+The `Xcp_GetSeed` function implementation is left to the stack user. The target on which the stack is integrated could
+provide some random value generator, thus this is target-specific. The function's prototype is defined 
+[here](./test/stub/Xcp_SeedKey.h).
+
+## Key lifetime
+Whenever an `UNLOCK` command is issued by the master, the key is calculated by the slave using the last seed value
+requested by the master. If the key calculated internally matches the key received from the master, the `UNLOCK` command
+succeeds. No matter if the keys are matching or not, the key validity is discarded after each `UNLOCK` sequence.
+
+If the master issues a `UNLOCK` command without calling `GET_SEED` first, the stack will respond with and error packet
+identifier, and the code `ERR_SEQUENCE`.
+
+The implementation of the function responsible for key calculation, `Xcp_CalcKey` is left to the user. This is required,
+as the function must be shared between the master and the slave.
+
 # TODO
 - Protect variables used in both synchronous and asynchronous APIs.
+- Use pre-processor to enable/disable optional APIs

@@ -51,6 +51,8 @@ extern "C" {
 
 #include "Xcp_Errors.h"
 
+#include "Xcp_SeedKey.h"
+
 #if defined(CFFI_ENABLE)
 
 /**

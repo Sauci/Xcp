@@ -43,4 +43,14 @@
  */
 #define XCP_E_ASAM_OUT_OF_RANGE (0x22u)
 
+/**
+* @brief Access denied, Seed & Key is required (see ASAM protocol layer specification 1.7.3.1)
+ */
+#define XCP_E_ASAM_ACCESS_LOCKED (0x25u)
+
+/**
+* @brief Sequence error (see ASAM protocol layer specification 1.7.3.1)
+ */
+#define XCP_E_ASAM_SEQUENCE (0x29u)
+
 #endif /* #ifndef XCP_ERRORS_H */

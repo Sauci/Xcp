@@ -4,7 +4,47 @@
 
 #include <Xcp_Types.h>
 #include "Xcp.h"
-#include "Xcp_PBcfg.h"
+#include "Xcp_Cfg.h"
+#include "XcpOnCan_Cbk.h"
+#include "Xcp_SeedKey.h"
+
+Std_ReturnType Xcp_GetSeed(uint8 *pSeedBuffer,
+                           const uint16 maxSeedLength,
+                           uint16 *pSeedLength)
+{
+    (void)maxSeedLength;
+
+    pSeedBuffer[0x00u] = 0x01u;
+    pSeedBuffer[0x01u] = 0x02u;
+    pSeedBuffer[0x02u] = 0x03u;
+    pSeedBuffer[0x03u] = 0x04u;
+    pSeedBuffer[0x04u] = 0x05u;
+    pSeedBuffer[0x05u] = 0x06u;
+    pSeedBuffer[0x06u] = 0x07u;
+    pSeedBuffer[0x07u] = 0x08u;
+    pSeedBuffer[0x08u] = 0x09u;
+    pSeedBuffer[0x09u] = 0x0Au;
+    pSeedBuffer[0x0Au] = 0x0Bu;
+
+    *pSeedLength = 0x0Bu;
+
+    return E_OK;
+}
+
+Std_ReturnType Xcp_CalcKey(const uint8 *pSeedBuffer,
+                           const uint16 seedLength,
+                           uint8* pKeyBuffer,
+                           const uint16 maxKeyLength,
+                           uint16 *pKeyLength)
+{
+    (void)pSeedBuffer;
+    (void)seedLength;
+    (void)pKeyBuffer;
+    (void)maxKeyLength;
+    (void)pKeyLength;
+
+    return E_OK;
+}
 
 Std_ReturnType CanIf_Transmit(PduIdType txPduId, const PduInfoType *pPduInfo)
 {
@@ -104,11 +144,8 @@ BufReq_ReturnType PduR_CanTpStartOfReception(PduIdType pduId,
 int main(int argc, char *argv[])
 {
     int i;
-    uint8 rx_data[] = {16, 8, 0xFFu, 0xFFu,
-                       0xFFu, 0xFFu, 0xFFu, 0xFFu};
-    uint8 tx_data[] = {0xFFu, 0xFFu, 0xFFu, 0xFFu,
-                       0xFFu, 0xFFu, 0xFFu, 0xFFu,
-                       0xFFu, 0xFFu, 0xFFu, 0xFFu};
+    uint8 rx_data[0x08u];
+    uint8 tx_data[0x08u];
 
     PduInfoType rx_pdu;
     PduInfoType tx_pdu;
@@ -121,9 +158,43 @@ int main(int argc, char *argv[])
     tx_pdu.MetaDataPtr = NULL_PTR;
     tx_pdu.SduLength = sizeof(tx_data);
 
-    CanTp_Init(&CanTp_Config[0x00u]);
-    CanTp_RxIndication(0, &rx_pdu);
-    CanTp_MainFunction();
+    Xcp_Init(&Xcp[0x00u]);
+
+    rx_data[0x00u] = 0xFFu;
+    rx_data[0x01u] = 0x00u;
+    rx_data[0x02u] = 0x00u;
+    rx_data[0x03u] = 0x00u;
+    rx_data[0x04u] = 0x00u;
+    rx_data[0x05u] = 0x00u;
+    rx_data[0x06u] = 0x00u;
+    rx_data[0x07u] = 0x00u;
+    Xcp_CanIfRxIndication(0x01u, &rx_pdu);
+    Xcp_MainFunction();
+    Xcp_CanIfTxConfirmation(0x01u, E_OK);
+
+    rx_data[0x00u] = 0xF8u;
+    rx_data[0x01u] = 0x00u;
+    rx_data[0x02u] = 0x01u;
+    rx_data[0x03u] = 0x02u;
+    rx_data[0x04u] = 0x03u;
+    rx_data[0x05u] = 0x04u;
+    rx_data[0x06u] = 0x05u;
+    rx_data[0x07u] = 0x06u;
+    Xcp_CanIfRxIndication(0x01u, &rx_pdu);
+    Xcp_MainFunction();
+    Xcp_CanIfTxConfirmation(0x01u, E_OK);
+
+    rx_data[0x00u] = 0xF7u;
+    rx_data[0x01u] = 0x02u;
+    rx_data[0x02u] = 0x07u;
+    rx_data[0x03u] = 0x08u;
+    rx_data[0x04u] = 0x00u;
+    rx_data[0x05u] = 0x00u;
+    rx_data[0x06u] = 0x00u;
+    rx_data[0x07u] = 0x00u;
+    Xcp_CanIfRxIndication(0x01u, &rx_pdu);
+    Xcp_MainFunction();
+    Xcp_CanIfTxConfirmation(0x01u, E_OK);
 
     return 0;
 }
