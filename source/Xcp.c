@@ -236,6 +236,10 @@ typedef struct {
         uint16 total_length;
         uint16 current_index;
     } key_slave;
+    struct {
+        uint32 address;
+        uint8 extension;
+    } memory_transfer_address;
 } Xcp_RtType;
 
 /** @} */
@@ -591,6 +595,14 @@ static void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrd
 #include "Xcp_MemMap.h"
 
 static void Xcp_CopyToU16WithOrder(const uint8 *pSrc, uint16 *pDest, Xcp_ByteOrderType endianness);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrderType endianness);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1504,6 +1516,10 @@ Xcp_RtType Xcp_Rt = {
          0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
         0x00u,
         0x00u
+    },
+    {
+        0x00000000u,
+        0x00u
     }
 };
 
@@ -2022,16 +2038,13 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
-
-/**
- * Position Type  Description
- * 0        BYTE  Command Code: 0xF6
- * 1,2      BYTE  Reserved
- * 3        BYTE  Address extension
- * 4.7      DWORD Address
- */
 static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    (void)rxPduId;
+
+    Xcp_Rt.memory_transfer_address.extension = pPduInfo->SduDataPtr[0x03u];
+    Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &Xcp_Rt.memory_transfer_address.address, Xcp_Ptr->general->byteOrder);
+
     return E_OK;
 }
 
@@ -2518,11 +2531,11 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
 static void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrderType endianness)
 {
     if (endianness == LITTLE_ENDIAN) {
-        pDest[0x01u] = src & 0xFFu;
-        pDest[0x00u] = (src >> 0x08u) & 0xFFu;
+        pDest[0x00u] = (uint8)(src & 0xFFu);
+        pDest[0x01u] = (uint8)((src >> 0x08u) & 0xFFu);
     } else {
-        pDest[0x00u] = src & 0xFFu;
-        pDest[0x01u] = (src >> 0x08u) & 0xFFu;
+        pDest[0x01u] = (uint8)(src & 0xFFu);
+        pDest[0x00u] = (uint8)((src >> 0x08u) & 0xFFu);
     }
 }
 
@@ -2530,11 +2543,31 @@ static void Xcp_CopyToU16WithOrder(const uint8 *pSrc, uint16 *pDest, Xcp_ByteOrd
 {
     if (endianness == LITTLE_ENDIAN)
     {
-        *pDest = (pSrc[0x01u] | (pSrc[0x00u] << 0x08u));
+        *pDest = ((uint16)pSrc[0x00u] |
+                  ((uint16)pSrc[0x01u] << 0x08u));
     }
     else
     {
-        *pDest = (pSrc[0x00u] | (pSrc[0x01u] << 0x08u));
+        *pDest = ((uint16)pSrc[0x01u] |
+                  ((uint16)pSrc[0x00u] << 0x08u));
+    }
+}
+
+static void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrderType endianness)
+{
+    if (endianness == LITTLE_ENDIAN)
+    {
+        *pDest = ((uint32)pSrc[0x00u] |
+                  ((uint32)pSrc[0x01u] << 0x08u) |
+                  ((uint32)pSrc[0x02u] << 0x10u) |
+                  ((uint32)pSrc[0x03u] << 0x18u));
+    }
+    else
+    {
+        *pDest = ((uint32)pSrc[0x03u] |
+                  ((uint32)pSrc[0x02u] << 0x08u) |
+                  ((uint32)pSrc[0x01u] << 0x10u) |
+                  ((uint32)pSrc[0x00u] << 0x18u));
     }
 }
 

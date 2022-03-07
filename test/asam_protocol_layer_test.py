@@ -191,12 +191,12 @@ def test_command_connect_sets_the_max_cto_byte_according_to_the_configured_value
     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[3] == max_cto_byte
 
 
-@pytest.mark.parametrize('max_dto_bytes, max_dto, byte_order', (((0, 8), 8, 'LITTLE_ENDIAN'),
-                                                                ((0, 16), 16, 'LITTLE_ENDIAN'),
-                                                                ((0, 32), 32, 'LITTLE_ENDIAN'),
-                                                                ((8, 0), 8, 'BIG_ENDIAN'),
-                                                                ((16, 0), 16, 'BIG_ENDIAN'),
-                                                                ((32, 0), 32, 'BIG_ENDIAN')))
+@pytest.mark.parametrize('max_dto_bytes, max_dto, byte_order', (((8, 0), 8, 'LITTLE_ENDIAN'),
+                                                                ((16, 0), 16, 'LITTLE_ENDIAN'),
+                                                                ((32, 0), 32, 'LITTLE_ENDIAN'),
+                                                                ((0, 8), 8, 'BIG_ENDIAN'),
+                                                                ((0, 16), 16, 'BIG_ENDIAN'),
+                                                                ((0, 32), 32, 'BIG_ENDIAN')))
 def test_command_connect_sets_the_max_dto_byte_according_to_the_configured_value(max_dto_bytes, max_dto, byte_order):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_dto=max_dto, byte_order=byte_order))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))

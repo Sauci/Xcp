@@ -571,3 +571,68 @@ class TestUnlockErrorHandling:
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x29)
+
+
+class TestSetMtaErrorHandling:
+    """
+    Command               Error             Pre-Action Action
+    SET_MTA               timeout t1        SYNCH      repeat 2 times
+    SET_MTA               ERR_CMD_BUSY      wait t7    repeat ∞ times
+    SET_MTA               ERR_PGM_ACTIVE    wait t7    repeat ∞ times
+    SET_MTA               ERR_CMD_UNKNOWN   -          display error
+    SET_MTA               ERR_CMD_SYNTAX    -          retry other syntax
+    SET_MTA               ERR_OUT_OF_RANGE  -          retry other parameter
+    """
+
+    def test_set_mta_err_cmd_busy(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_set_mta_err_pgm_active(self, mode_bit):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+    def test_set_mta_err_cmd_unknown(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_set_mta_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    @pytest.mark.parametrize('payload', ((0xF6,),
+                                         (0xF6, 0x00),
+                                         (0xF6, 0x00, 0x00),
+                                         (0xF6, 0x00, 0x00, 0x00),
+                                         (0xF6, 0x00, 0x00, 0x00, 0x00),
+                                         (0xF6, 0x00, 0x00, 0x00, 0x00, 0x00),
+                                         (0xF6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    def test_set_mta_err_cmd_syntax(self, payload):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(payload))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_set_mta_err_out_of_range(self):
+        pass
