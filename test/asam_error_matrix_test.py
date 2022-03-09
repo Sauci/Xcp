@@ -370,6 +370,7 @@ class TestGetSeedErrorHandling:
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
             p_seed_length[0] = seed_length
+            return handle.define('E_OK')
 
         handle.xcp_get_seed.side_effect = get_seed_side_effect
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -388,6 +389,7 @@ class TestGetSeedErrorHandling:
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
             p_seed_length[0] = 8
+            return handle.define('E_OK')
 
         handle.xcp_get_seed.side_effect = get_seed_side_effect
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -484,6 +486,7 @@ class TestUnlockErrorHandling:
             for i, b in enumerate(seed):
                 p_seed_buffer[i] = seed[i]
             p_seed_length[0] = len(seed)
+            return handle.define('E_OK')
 
         handle.xcp_get_seed.side_effect = get_seed_side_effect
 
@@ -514,11 +517,13 @@ class TestUnlockErrorHandling:
             for i, b in enumerate(seed):
                 p_seed_buffer[i] = seed[i]
             p_seed_length[0] = len(seed)
+            return handle.define('E_OK')
 
         def calc_key_side_effect(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
             for i, b in enumerate(seed):
                 p_key_buffer[i] = (~b) & 0xFF
             p_key_length[0] = len(seed)
+            return handle.define('E_OK')
 
         handle.xcp_get_seed.side_effect = get_seed_side_effect
         handle.xcp_calc_key.side_effect = calc_key_side_effect
@@ -552,6 +557,7 @@ class TestUnlockErrorHandling:
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
             p_seed_length[0] = 1
+            return handle.define('E_OK')
 
         handle.xcp_get_seed.side_effect = get_seed_side_effect
 

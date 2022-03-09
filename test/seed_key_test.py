@@ -10,8 +10,10 @@ from .conftest import XcpTest
 # TODO: handle seed size according to MAX_CTO definition instead of hard-coded 8 byte MAX_CTO value (e.g. XCP on
 #  ethernet)
 
-def get_seed_key_slices_for_max_cto(seed, max_cto=6):
-    return [seed[i*max_cto:i*max_cto+max_cto] for i in range(len(seed)) if len(seed[i*max_cto:i*max_cto+max_cto]) != 0]
+
+def get_seed_key_slices_for_max_cto(seed, max_cto=8):
+    n = max_cto - 2
+    return [seed[i * n:(i + 1) * n] for i in range(len(seed)) if len(seed[i * n:(i + 1) * n]) != 0]
 
 
 @pytest.mark.parametrize('seed', range(0x01, 0xFF), indirect=True)
@@ -22,6 +24,7 @@ def test_get_seed_returns_the_expected_responses(seed):
         for i, b in enumerate(seed):
             p_seed_buffer[i] = seed[i]
         p_seed_length[0] = len(seed)
+        return handle.define('E_OK')
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect
 
@@ -64,11 +67,13 @@ def test_get_seed_does_not_return_an_error_pid_if_the_first_part_of_the_seed_is_
         for i, b in enumerate(seed_array[0]):
             p_seed_buffer[i] = b
         p_seed_length[0] = len(seed_array[0])
+        return handle.define('E_OK')
 
     def get_seed_2_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
         for i, b in enumerate(seed_array[1]):
             p_seed_buffer[i] = b
         p_seed_length[0] = len(seed_array[1])
+        return handle.define('E_OK')
 
     handle.xcp_get_seed.side_effect = get_seed_1_side_effect
 
@@ -114,6 +119,7 @@ def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(seed, resourc
         for i, b in enumerate(seed):
             p_seed_buffer[i] = b
         p_seed_length[0] = len(seed)
+        return handle.define('E_OK')
 
     def calc_key_side_effect(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
         # The key is calculated with the seed transmitted to the master in the slave as well. Then, the key of the slave
@@ -122,6 +128,7 @@ def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(seed, resourc
         for i, b in enumerate(key):
             p_key_buffer[i] = b
         p_key_length[0] = len(key)
+        return handle.define('E_OK')
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect
     handle.xcp_calc_key.side_effect = calc_key_side_effect
@@ -173,15 +180,16 @@ def test_unlock_disconnects_the_master_if_key_is_invalid(resource, seed):
         for i, b in enumerate(seed):
             p_seed_buffer[i] = seed[i]
         p_seed_length[0] = len(seed)
+        return handle.define('E_OK')
 
     def calc_key_side_effect(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
         for i, b in enumerate(seed):
             p_key_buffer[i] = (~b) & 0xFF
         p_key_length[0] = len(seed)
+        return handle.define('E_OK')
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect
     handle.xcp_calc_key.side_effect = calc_key_side_effect
-    handle.xcp_calc_key.return_value = handle.define('E_NOT_OK')
 
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
