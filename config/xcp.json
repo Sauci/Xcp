@@ -47,6 +47,7 @@
         "xcp_get_id_api_enable": true,
         "xcp_get_seed_api_enable": true,
         "xcp_unlock_api_enable": true,
+        "xcp_set_mta_api_enable": true,
         "xcp_download_api_enable": true,
         "xcp_download_max_api_enable": true,
         "xcp_short_download_api_enable": true,
@@ -82,7 +83,7 @@
       },
       "protocol_layer": {
         "byte_order": "LITTLE_ENDIAN",
-        "address_granularity": "DWORD",
+        "address_granularity": "BYTE",
         "slave_block_mode": true,
         "max_cto": 8,
         "max_dto": 8
