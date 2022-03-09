@@ -199,6 +199,9 @@ class XcpTest(object):
         self.det_report_transient_fault = MagicMock()
         self.xcp_get_seed = MagicMock()
         self.xcp_calc_key = MagicMock()
+        self.xcp_read_slave_memory_u8 = MagicMock()
+        self.xcp_read_slave_memory_u16 = MagicMock()
+        self.xcp_read_slave_memory_u32 = MagicMock()
         for func in self.code.mocked:
             self.ffi.def_extern(func)(getattr(self, convert(func)))
         self.can_if_transmit.return_value = self.define('E_OK')

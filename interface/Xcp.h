@@ -53,6 +53,8 @@ extern "C" {
 
 #include "Xcp_SeedKey.h"
 
+#include "Xcp_MemoryAccess.h"
+
 #if defined(CFFI_ENABLE)
 
 /**

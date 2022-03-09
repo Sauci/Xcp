@@ -192,6 +192,9 @@
               "xcp_set_mta_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_upload_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_download_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
@@ -304,6 +307,7 @@
               "xcp_get_seed_api_enable",
               "xcp_unlock_api_enable",
               "xcp_set_mta_api_enable",
+              "xcp_upload_api_enable",
               "xcp_download_api_enable",
               "xcp_download_max_api_enable",
               "xcp_short_download_api_enable",
@@ -396,8 +400,21 @@
   ],
   "definitions": {
     "api_activation_information": {
-      "type": "boolean",
-      "default": true
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "protected": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "enabled",
+        "protected"
+      ]
     }
   }
 }

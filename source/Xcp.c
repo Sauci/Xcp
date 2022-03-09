@@ -86,8 +86,9 @@ extern "C" {
  * @{
  */
 
-#define XCP_CTO_INFO_ENABLE_MASK (0x01u << 0x07u)
+#define XCP_CTO_INFO_ENABLED_MASK (0x01u << 0x07u)
 #define XCP_CTO_INFO_IS_CTO_MASK (0x01u << 0x06u)
+#define XCP_CTO_INFO_PROTECTED_MASK (0x01u << 0x05u)
 #define XCP_CTO_INFO_MIN_REQUEST_SIZE_MASK (0b1111u)
 
 #define XCP_PROTOCOL_LAYER_VERSION (0x01u)
@@ -240,6 +241,10 @@ typedef struct {
         uint32 address;
         uint8 extension;
     } memory_transfer_address;
+    struct {
+        uint8 requested_elements;
+        uint8 frame_elements;
+    } block_transfer;
 } Xcp_RtType;
 
 /** @} */
@@ -611,6 +616,38 @@ static void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrd
 #include "Xcp_MemMap.h"
 
 static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static boolean Xcp_BlockTransferIsActive();
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static Std_ReturnType Xcp_BlockTransferInitialize(uint8 numberOfElements);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static void Xcp_BlockTransferAcknowledgeFrame();
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static Std_ReturnType Xcp_BlockTransferPrepareNextFrame();
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1520,6 +1557,10 @@ Xcp_RtType Xcp_Rt = {
     {
         0x00000000u,
         0x00u
+    },
+    {
+        0x00u,
+        0x00u
     }
 };
 
@@ -1744,7 +1785,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                         /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
                          * Check if the received Command/Transfer object is activated/allowed. If it is not the case, return an error packet with the
                          * error code ERR_CMD_UNKNOWN. */
-                        if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u)
+                        if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u)
                         {
                             /* Check if a CTO has been received, as the handling of such kind of
                              * packets is different from DTO packets. In the above lines, we handle all the behavior which is common for all CTOs.
@@ -1835,9 +1876,30 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
 void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 {
+    (void)txPduId;
+
     if (Xcp_State == XCP_INITIALIZED) {
-        if ((Xcp_Rt.cto_response.pending == TRUE) && (result == E_OK)) {
-            Xcp_Rt.cto_response.pending = FALSE;
+        if (Xcp_Rt.cto_response.pending == TRUE) {
+            if (result == E_OK)
+            {
+                if (Xcp_BlockTransferIsActive() == TRUE)
+                {
+                    Xcp_BlockTransferAcknowledgeFrame();
+
+                    if (Xcp_BlockTransferPrepareNextFrame() != E_OK)
+                    {
+                        Xcp_Rt.cto_response.pending = FALSE;
+                    }
+                }
+                else
+                {
+                    Xcp_Rt.cto_response.pending = FALSE;
+                }
+            }
+            else
+            {
+                /* We keep the response pending flag active here, and we will try to send it again in the next execution of the Xcp_MainFunction... */
+            }
         }
     } else {
         Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
@@ -1846,6 +1908,9 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
 Std_ReturnType Xcp_CanIfTriggerTransmit(PduIdType txPduId, PduInfoType *pPduInfo)
 {
+    (void)txPduId;
+    (void)pPduInfo;
+
     Std_ReturnType result = E_NOT_OK;
 
     if (Xcp_State == XCP_INITIALIZED) {
@@ -1873,168 +1938,132 @@ static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pP
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
-/**
- * Position Type Description
- * 0        BYTE Packet ID: 0xFF
- * 1        BYTE DAQ_LIST_PROPERTIES Specific properties for this DAQ list
- * 2        BYTE MAX_ODT Number of ODTs in this DAQ list
- * 3        BYTE MAX_ODT_ENTRIES Maximum number of entries in an ODT
- * 4,5      WORD FIXED_EVENT Number of the fixed event channel for this DAQ list
- */
 static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
-/**
- * Position Type Description
- * 0        BYTE Packet ID: 0xFF
- * 1        BYTE GRANULARITY_ODT_ENTRY_SIZE_DAQ Granularity for size of ODT entry (DIRECTION = DAQ)
- * 2        BYTE MAX_ODT_ENTRY_SIZE_DAQ Maximum size of ODT entry (DIRECTION = DAQ)
- * 3        BYTE GRANULARITY_ODT_ENTRY_SIZE_STIM Granularity for size of ODT entry (DIRECTION = STIM)
- * 4        BYTE MAX_ODT_ENTRY_SIZE_STIM Maximum size of ODT entry (DIRECTION = STIM)
- * 5        BYTE TIMESTAMP_MODE Timestamp unit and size
- * 6,7      WORD TIMESTAMP_TICKS Timestamp ticks per unit
- */
 static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
-/**
- * Position Type Description
- * 0        BYTE Packet ID: 0xFF
- * 1        BYTE DAQ_PROPERTIES General properties of DAQ lists
- * 2,3      WORD MAX_DAQ Total number of available DAQ lists
- * 4,5      WORD MAX_EVENT_CHANNEL Total number of available event channels
- * 6        BYTE MIN_DAQ Total number of predefined DAQ lists
- * 7        BYTE DAQ_KEY_BYTE
- */
 static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
-
 
 static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     return E_OK;
 }
 
-
 static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    (void)rxPduId;
+
+    /* TODO: Check if the block mode is supported in the configuration. If not, XCP_E_ASAM_CMD_UNKNOWN should probably be returned... */
+
+    if (Xcp_BlockTransferInitialize(pPduInfo->SduDataPtr[0x01u]) == E_OK)
+    {
+        /* It is not necessary to check the return value, as we have at least one element to tranfer (checked above). */
+        (void)Xcp_BlockTransferPrepareNextFrame();
+    }
+    else
+    {
+        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+    }
+
     return E_OK;
 }
 
@@ -2426,11 +2455,11 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
      * 1 = calibration/ paging available
      * The commands DOWNLOAD, DOWNLOAD_MAX, SHORT_DOWNLOAD, SET_CAL_PAGE, GET_CAL_PAGE are
      * available. */
-    if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_DOWNLOAD] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_DOWNLOAD_MAX] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SHORT_DOWNLOAD] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_CAL_PAGE] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_CAL_PAGE] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u)) {
+    if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_DOWNLOAD] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_DOWNLOAD_MAX] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SHORT_DOWNLOAD] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_CAL_PAGE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_CAL_PAGE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u)) {
         resource |= 0x01u;
     }
 
@@ -2439,23 +2468,23 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
      * 0 = DAQ lists not available
      * 1 = DAQ lists available
      * The DAQ commands (GET_DAQ_PROCESSOR_INFO, GET_DAQ_LIST_INFO, ...) are available. */
-    if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_CLEAR_DAQ_LIST] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_DAQ_PTR] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_WRITE_DAQ] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_DAQ_LIST_MODE] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_LIST_MODE] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_DAQ_LIST] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_SYNCH] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_CLOCK] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_READ_DAQ] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_PROCESSOR_INFO] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_RESOLUTION_INFO] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_LIST_INFO] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_EVENT_INFO] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_FREE_DAQ] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_DAQ] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_ODT] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_ODT_ENTRY] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u))
+    if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_CLEAR_DAQ_LIST] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_DAQ_PTR] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_WRITE_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_DAQ_LIST_MODE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_LIST_MODE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_DAQ_LIST] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_SYNCH] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_CLOCK] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_READ_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_PROCESSOR_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_RESOLUTION_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_LIST_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_EVENT_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_FREE_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_ODT] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_ODT_ENTRY] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u))
     {
         resource |= (0x01u << 0x02u);
     }
@@ -2480,9 +2509,9 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
      * 0 = Flash programming not available
      * 1 = Flash programming available
      * The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are available. */
-    if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_PROGRAM_CLEAR] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_PROGRAM] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_PROGRAM_MAX] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u)) {
+    if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_PROGRAM_CLEAR] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_PROGRAM] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_PROGRAM_MAX] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u)) {
         resource |= (0x01u << 0x04u);
     }
 
@@ -2511,7 +2540,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
         comm_mode_basic |= (0x01u << 0x06u);
     }
 
-    if ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_COMM_MOD_INFO] & XCP_CTO_INFO_ENABLE_MASK) != 0x00u) {
+    if ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_COMM_MOD_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) {
         comm_mode_basic |= (0x01u << 0x07u);
     }
 
@@ -2584,6 +2613,99 @@ static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode)
     }
 }
 
+static boolean Xcp_BlockTransferIsActive()
+{
+    boolean result;
+
+    if (Xcp_Rt.block_transfer.requested_elements != 0x00u)
+    {
+        result = TRUE;
+    }
+    else
+    {
+        result = FALSE;
+    }
+
+    return result;
+}
+
+static Std_ReturnType Xcp_BlockTransferInitialize(uint8 numberOfElements)
+{
+    Std_ReturnType result = E_OK;
+
+    if (numberOfElements != 0x00u)
+    {
+        Xcp_Rt.block_transfer.requested_elements = numberOfElements;
+        Xcp_Rt.block_transfer.frame_elements = 0x00u;
+    }
+    else
+    {
+        result = E_NOT_OK;
+    }
+
+    return result;
+}
+
+static void Xcp_BlockTransferAcknowledgeFrame()
+{
+    Xcp_Rt.block_transfer.requested_elements -= Xcp_Rt.block_transfer.frame_elements;
+}
+
+static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
+{
+    Std_ReturnType result = E_OK;
+
+    uint8_least idx;
+    uint8_least element_size;
+
+    if (Xcp_Ptr->general->addressGranularity == BYTE)
+    {
+        element_size = 0x01u;
+    }
+    else if (Xcp_Ptr->general->addressGranularity == WORD)
+    {
+        element_size = 0x02u;
+    }
+    else if (Xcp_Ptr->general->addressGranularity == DWORD)
+    {
+        element_size = 0x04u;
+    }
+    else
+    {
+        result = E_NOT_OK; /* TODO: if we fall here, an invalid configuration has been provided to the Xcp_Init function... */
+    }
+
+    if (result == E_OK)
+    {
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        if ((Xcp_Rt.block_transfer.requested_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u))
+        {
+            Xcp_Rt.block_transfer.frame_elements = Xcp_Rt.block_transfer.requested_elements;
+        }
+        else
+        {
+            Xcp_Rt.block_transfer.frame_elements = ((Xcp_Ptr->general->maxCto - 0x01u) / element_size);
+        }
+
+        for (idx = 0x00u; idx < Xcp_Rt.block_transfer.frame_elements; idx++)
+        {
+            Xcp_ReadSlaveMemoryU32(Xcp_Rt.memory_transfer_address.address,
+                                   Xcp_Rt.memory_transfer_address.extension,
+                                   &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
+
+            Xcp_Rt.memory_transfer_address.address += (element_size * 0x08u);
+        }
+
+        if (Xcp_Rt.block_transfer.frame_elements == 0x00u)
+        {
+            result = E_NOT_OK;
+        }
+    }
+
+    return result;
+}
+
 static uint8 Xcp_GetProtectionStatus(void) {
     return Xcp_Rt.protection_status;
 }
@@ -2615,8 +2737,6 @@ static Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const 
 
     return result;
 }
-
-
 
 /** @} */
 

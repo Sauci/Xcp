@@ -43,37 +43,134 @@
         }
       ],
       "apis": {
-        "xcp_set_request_api_enable": true,
-        "xcp_get_id_api_enable": true,
-        "xcp_get_seed_api_enable": true,
-        "xcp_unlock_api_enable": true,
-        "xcp_set_mta_api_enable": true,
-        "xcp_download_api_enable": true,
-        "xcp_download_max_api_enable": true,
-        "xcp_short_download_api_enable": true,
-        "xcp_set_cal_page_api_enable": true,
-        "xcp_get_cal_page_api_enable": true,
-        "xcp_clear_daq_list_api_enable": true,
-        "xcp_set_daq_ptr_api_enable": true,
-        "xcp_write_daq_api_enable": true,
-        "xcp_set_daq_list_mode_api_enable": true,
-        "xcp_get_daq_list_mode_api_enable": true,
-        "xcp_start_stop_daq_list_api_enable": true,
-        "xcp_start_stop_synch_api_enable": true,
-        "xcp_get_daq_clock_api_enable": true,
-        "xcp_read_daq_api_enable": true,
-        "xcp_get_daq_processor_info_api_enable": true,
-        "xcp_get_daq_resolution_info_api_enable": true,
-        "xcp_get_daq_list_info_api_enable": true,
-        "xcp_get_daq_event_info_api_enable": true,
-        "xcp_free_daq_api_enable": true,
-        "xcp_alloc_daq_api_enable": true,
-        "xcp_alloc_odt_api_enable": true,
-        "xcp_alloc_odt_entry_api_enable": true,
-        "xcp_program_clear_api_enable": true,
-        "xcp_program_api_enable": true,
-        "xcp_program_max_api_enable": true,
-        "xcp_get_comm_mode_info_api_enable": true,
+        "xcp_set_request_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_id_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_seed_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_unlock_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_set_mta_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_upload_api_enable": {
+          "enabled": true,
+          "protected": true
+        },
+        "xcp_download_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_download_max_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_short_download_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_set_cal_page_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_cal_page_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_clear_daq_list_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_set_daq_ptr_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_write_daq_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_set_daq_list_mode_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_daq_list_mode_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_start_stop_daq_list_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_start_stop_synch_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_daq_clock_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_read_daq_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_daq_processor_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_daq_resolution_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_daq_list_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_daq_event_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_free_daq_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_alloc_daq_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_alloc_odt_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_alloc_odt_entry_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_program_clear_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_program_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_program_max_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_comm_mode_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
         "resource_protection": {
           "calibration_paging": false,
           "data_acquisition": false,
