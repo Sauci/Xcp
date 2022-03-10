@@ -2292,23 +2292,15 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
     Std_ReturnType result = E_OK;
 
     (void)rxPduId;
-    (void)pPduInfo;
 
-    if (pPduInfo->SduLength >= 0x04u)
+    mode = pPduInfo->SduDataPtr[0x01u] & 0b00001101u;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &session_configuration_id, Xcp_Ptr->general->byteOrder);
+
+    /* TODO: this is most likely not the correct way to handle the session id, this must be implemented... */
+    if (session_configuration_id != 0x00u)
     {
-        mode = pPduInfo->SduDataPtr[0x01u] & 0b00001101u;
-
-        Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &session_configuration_id, Xcp_Ptr->general->byteOrder);
-
-        /* TODO: this is most likely not the correct way to handle the session id, this must be implemented... */
-        if (session_configuration_id != 0x00u)
-        {
-            result = XCP_E_ASAM_OUT_OF_RANGE;
-        }
-    }
-    else
-    {
-        result = XCP_E_ASAM_CMD_SYNTAX;
+        result = XCP_E_ASAM_OUT_OF_RANGE;
     }
 
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
