@@ -71,7 +71,7 @@ class DefaultConfig(Config):
                  resource_protection_data_stimulation=False,
                  resource_protection_programming=False,
                  byte_order='LITTLE_ENDIAN',
-                 address_granularity='DWORD',
+                 address_granularity='BYTE',
                  slave_block_mode=True,
                  max_cto=8,
                  max_dto=8):

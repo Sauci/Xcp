@@ -220,7 +220,7 @@ typedef struct {
     struct {
         boolean pending;
         PduInfoType pdu_info;
-        uint8 _packet[0x08u];
+        uint8 _packet[0x100u]; /* MAX_CTO is in range 8 to 255 */
     } cto_response;
     struct {
         uint8 buffer[0x100u];
@@ -1606,7 +1606,7 @@ Xcp_RtType Xcp_Rt = {
 
 void Xcp_Init(const Xcp_Type *pConfig)
 {
-    uint8 address_granularity = 0x00u;
+    uint8 address_granularity;
 
     if (pConfig != NULL_PTR)
     {
@@ -1623,11 +1623,11 @@ void Xcp_Init(const Xcp_Type *pConfig)
         } else if (Xcp_Ptr->general->addressGranularity == DWORD) {
             address_granularity = 0x04u;
         } else {
-            /* MISRA C, do nothing... */
+            address_granularity = 0x00u;
         }
 
-        if (((Xcp_Ptr->general->maxCto % address_granularity) == 0x00u) &&
-            ((Xcp_Ptr->general->maxDto % address_granularity) == 0x00u))
+        if ((address_granularity != 0x00u) &&
+            ((Xcp_Ptr->general->maxCto % address_granularity) == 0x00u) && ((Xcp_Ptr->general->maxDto % address_granularity) == 0x00u))
         {
             Xcp_Rt.cto_response.pdu_info.SduLength = 0x00u;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr = &Xcp_Rt.cto_response._packet[0x00u];
@@ -1704,7 +1704,7 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     if (Xcp_Rt.cto_response.pending == TRUE) {
-        Xcp_Rt.cto_response.pdu_info.SduLength = 0x08u;
+        Xcp_Rt.cto_response.pdu_info.SduLength = Xcp_Ptr->general->maxCto;
         Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
         CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Rt.cto_response.pdu_info);
@@ -2258,21 +2258,22 @@ static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo
         if ((Xcp_Rt.seed.total_length - Xcp_Rt.seed.current_index) <= (Xcp_Ptr->general->maxCto - (uint8)0x02u))
         {
             num_of_bytes_to_copy = (Xcp_Rt.seed.total_length - Xcp_Rt.seed.current_index);
+            Xcp_Rt.seed.total_length = 0x00u;
         }
         else
         {
             num_of_bytes_to_copy = Xcp_Ptr->general->maxCto - 0x02u;
         }
 
-        for (idx = 0x00u; idx < num_of_bytes_to_copy; idx++)
+        for (idx = 0x02u; idx < num_of_bytes_to_copy + 0x02u; idx++)
         {
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u + idx] = Xcp_Rt.seed.buffer[Xcp_Rt.seed.current_index++];
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[idx] = Xcp_Rt.seed.buffer[Xcp_Rt.seed.current_index++];
         }
 
         /* Fill the remaining bytes with 0s. */
-        for (; idx < (Xcp_Ptr->general->maxCto - 0x02u); idx++)
+        for (; idx < (Xcp_Ptr->general->maxCto); idx++)
         {
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u + idx] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
         }
     }
     else
@@ -2280,7 +2281,7 @@ static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo
         Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], result);
     }
 
-    return result;
+    return E_OK;
 }
 
 static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo)
