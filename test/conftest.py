@@ -112,6 +112,9 @@ class Preprocessor(Pp):
 
 
 class MockGen(FFI):
+    _pp = dict()
+    _ffi_header = dict()
+
     def __init__(self,
                  name,
                  source,
@@ -122,29 +125,43 @@ class MockGen(FFI):
                  link_flags=tuple(),
                  build_dir=''):
         super(MockGen, self).__init__()
-        self.pp = Preprocessor()
-        for include_directory in include_dirs:
-            self.pp.add_path(include_directory)
-        for compile_definition in (' '.join(d.split('=')) for d in define_macros):
-            self.pp.define(compile_definition)
-        self.pp.parse(header)
-        handle = StringIO()
-        self.pp.write(handle)
-        self.header = handle.getvalue()
-        func_decl = FunctionDecl(self.header)
-        self.ffi_header = CFFIHeader(self.header, func_decl.locals, func_decl.extern)
-        if name in sys.modules:
-            self.ffi_module = sys.modules[name]
+        self._name = name
+        if self.name in sys.modules:
+            self.ffi_module = sys.modules[self.name]
         else:
-            self.cdef(str(CFFIHeader(self.header, func_decl.locals, func_decl.extern)))
-            self.set_source(name, source,
+            pre_processor = Preprocessor()
+            for include_directory in include_dirs:
+                pre_processor.add_path(include_directory)
+            for compile_definition in (' '.join(d.split('=')) for d in define_macros):
+                pre_processor.define(compile_definition)
+            pre_processor.parse(header)
+            handle = StringIO()
+            pre_processor.write(handle)
+            self._pp[self.name] = pre_processor
+            header = handle.getvalue()
+            func_decl = FunctionDecl(header)
+            self._ffi_header[self.name] = CFFIHeader(header, func_decl.locals, func_decl.extern)
+            self.cdef(str(CFFIHeader(header, func_decl.locals, func_decl.extern)))
+            self.set_source(self.name, source,
                             include_dirs=include_dirs,
                             define_macros=list(tuple(d.split('=')) for d in define_macros),
                             extra_compile_args=list(compile_flags),
                             extra_link_args=list(link_flags))
             lib_path = self.compile(tmpdir=build_dir)
             sys.path.append(os.path.dirname(lib_path))
-            self.ffi_module = import_module(name)
+            self.ffi_module = import_module(self.name)
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def pp(self):
+        return self._pp[self.name]
+
+    @property
+    def ffi_header(self):
+        return self._ffi_header[self.name]
 
     @property
     def mocked(self):
