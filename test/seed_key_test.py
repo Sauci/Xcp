@@ -12,9 +12,10 @@ def get_seed_key_slices(seed, max_cto=8):
     return [seed[i * n:(i + 1) * n] for i in range(len(seed)) if len(seed[i * n:(i + 1) * n]) != 0]
 
 
-@pytest.mark.parametrize('max_cto', (8, 12, 255))
-@pytest.mark.parametrize('seed', range(0x01, 0x100), indirect=True)
-def test_get_seed_returns_the_expected_responses(max_cto, seed):
+@pytest.mark.parametrize('resource', resources)
+@pytest.mark.parametrize('max_cto', max_ctos)
+@pytest.mark.parametrize('seed', seeds, indirect=True)
+def test_get_seed_returns_the_expected_responses(resource, max_cto, seed):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
 
     def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
@@ -105,9 +106,9 @@ def test_get_seed_does_not_return_an_error_pid_if_the_first_part_of_the_seed_is_
     assert second_seed == seed_array[1]
 
 
-@pytest.mark.parametrize('resource', (0b00000001, 0b00000100, 0b00001000, 0b00010000))
-@pytest.mark.parametrize('max_cto', (8, 12, 255))
-@pytest.mark.parametrize('seed', list(range(0x01, 0x100)), indirect=True)
+@pytest.mark.parametrize('resource', resources)
+@pytest.mark.parametrize('max_cto', max_ctos)
+@pytest.mark.parametrize('seed', seeds, indirect=True)
 def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(resource, max_cto, seed):
     key = seed
 
@@ -157,8 +158,8 @@ def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(resource, max
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFF, resource)
 
 
-@pytest.mark.parametrize('resource', (0b00000001, 0b00000100, 0b00001000, 0b00010000))
-@pytest.mark.parametrize('seed', [1], indirect=True)
+@pytest.mark.parametrize('resource', resources)
+@pytest.mark.parametrize('seed', [pytest.param(1, id='seed length = {:03}d'.format(1))], indirect=True)
 def test_unlock_disconnects_the_master_if_key_is_invalid(resource, seed):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 

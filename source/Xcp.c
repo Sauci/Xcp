@@ -1490,6 +1490,18 @@ const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static void(* const Xcp_ReadSlaveMemoryTable[])(uint32 address, uint8 extension, uint8 *pBuffer) = {
+    Xcp_ReadSlaveMemoryU8,
+    Xcp_ReadSlaveMemoryU16,
+    Xcp_ReadSlaveMemoryU32
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -2045,6 +2057,66 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
 
 static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    uint8_least idx;
+    uint8_least element_size = 0x00u;
+    uint32 address;
+
+    (void)rxPduId;
+
+    if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
+    {
+
+        if (Xcp_Ptr->general->addressGranularity == BYTE)
+        {
+            element_size = 0x01u;
+        }
+        else if (Xcp_Ptr->general->addressGranularity == WORD)
+        {
+            element_size = 0x02u;
+        }
+        else if (Xcp_Ptr->general->addressGranularity == DWORD)
+        {
+            element_size = 0x04u;
+        }
+        else
+        {
+            /* Do nothing. If we fall here, an invalid configuration has been provided to the Xcp_Init function... */
+        }
+
+        if (element_size != 0x00u)
+        {
+            if ((pPduInfo->SduDataPtr[0x01u] * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u))
+            {
+                Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &address, Xcp_Ptr->general->byteOrder);
+
+                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+                for (idx = 0x01u; idx < element_size; idx++)
+                {
+                    Xcp_Rt.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
+                }
+
+                for (idx = 0x00u; idx < pPduInfo->SduDataPtr[0x01u]; idx++)
+                {
+                    Xcp_ReadSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](
+                        address,
+                        pPduInfo->SduDataPtr[0x03u],
+                        &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
+
+                    address += (element_size * 0x08u);
+                }
+            }
+            else
+            {
+                Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+            }
+        }
+    }
+    else
+    {
+        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+    }
+
     return E_OK;
 }
 
@@ -2683,9 +2755,9 @@ static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
 
         for (idx = 0x00u; idx < Xcp_Rt.block_transfer.frame_elements; idx++)
         {
-            Xcp_ReadSlaveMemoryU32(Xcp_Rt.memory_transfer_address.address,
-                                   Xcp_Rt.memory_transfer_address.extension,
-                                   &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
+        Xcp_ReadSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](Xcp_Rt.memory_transfer_address.address,
+                                                                       Xcp_Rt.memory_transfer_address.extension,
+                                                                       &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
 
             Xcp_Rt.memory_transfer_address.address += (element_size * 0x08u);
         }

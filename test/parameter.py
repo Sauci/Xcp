@@ -1,8 +1,50 @@
 import hashlib
 import json
+import pytest
+import random
+import struct
+
+from math import floor
 
 dummy_byte = 0xFF
 
+address_extensions = [pytest.param(v, id='address extension = {:02}d'.format(v)) for v in range(8)]
+address_granularities = [pytest.param('BYTE', id='AG = BYTE'),
+                         pytest.param('WORD', id='AG = WORD'),
+                         pytest.param('DWORD', id='AG = DWORD')]
+byte_orders = [pytest.param('BIG_ENDIAN', id='byte_order = BIG_ENDIAN'),
+               pytest.param('LITTLE_ENDIAN', id='byte_order = LITTLE_ENDIAN')]
+max_ctos = [pytest.param(v, id='MAX_CTO = {:04X}h'.format(v)) for v in (8, 128, 256)]
+resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
+             pytest.param(4, id='RESOURCE = DAQ'),
+             pytest.param(8, id='RESOURCE = STIM'),
+             pytest.param(16, id='RESOURCE = PGM')]
+seeds = [pytest.param(v, id='seed length = {:03}d'.format(v)) for v in range(0x01, 0x100)]
+
+
+def element_size_from_address_granularity(address_granularity):
+    return dict(BYTE=1, WORD=2, DWORD=4)[address_granularity]
+
+
+def generate_random_block_content(n, element_size, base_address) -> [int]:
+    return list((base_address + (i * 8 * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
+
+
+def get_block_slices_for_max_cto(block, element_size, max_cto=8):
+    n = floor((max_cto - 1) / element_size)
+    return [block[i * n:(i + 1) * n] for i in range(len(block)) if len(block[i * n:(i + 1) * n]) != 0]
+
+
+def address_to_array(address: int, byte_size: int, endianness: str) -> [int]:
+    return [int(b) for b in address.to_bytes(byte_size,
+                                             dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness],
+                                             signed=False)]
+
+
+def payload_to_array(payload, number_of_data_elements, element_size, byte_order):
+    return struct.unpack('{}{}'.format('>' if byte_order == 'BIG_ENDIAN' else '<',
+                                       {1: 'B', 2: 'H', 4: 'I'}[element_size] *
+                                       number_of_data_elements), payload)
 
 class Config(dict):
     def __init__(self, *args, **kwargs):
@@ -40,6 +82,7 @@ class DefaultConfig(Config):
                  xcp_unlock_api_enable=True,
                  xcp_set_mta_api_enable=True,
                  xcp_upload_api_enable=True,
+                 xcp_short_upload_api_enable=True,
                  xcp_download_api_enable=True,
                  xcp_download_max_api_enable=True,
                  xcp_short_download_api_enable=True,
@@ -114,6 +157,7 @@ class DefaultConfig(Config):
                         "xcp_unlock_api_enable": {"enabled": xcp_unlock_api_enable, "protected": False},
                         "xcp_set_mta_api_enable": {"enabled": xcp_set_mta_api_enable, "protected": False},
                         "xcp_upload_api_enable": {"enabled": xcp_upload_api_enable, "protected": False},
+                        "xcp_short_upload_api_enable": {"enabled": xcp_short_upload_api_enable, "protected": False},
                         "xcp_download_api_enable": {"enabled": xcp_download_api_enable, "protected": False},
                         "xcp_download_max_api_enable": {"enabled": xcp_download_max_api_enable, "protected": False},
                         "xcp_short_download_api_enable": {"enabled": xcp_short_download_api_enable, "protected": False},

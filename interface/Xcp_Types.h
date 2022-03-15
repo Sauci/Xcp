@@ -390,7 +390,7 @@ typedef struct
     const boolean flashProgrammingEnabled;
     const Xcp_IdentificationFieldTypeType identificationFieldType;
     const ieee_float mainFunctionPeriod;
-    const uint8 maxCto;
+    const uint16 maxCto;
     const uint16 maxDto;
     const uint16 maxEventChannel;
     const uint8 minDaq;

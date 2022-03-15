@@ -715,3 +715,88 @@ class TestUploadErrorHandling:
     @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
     def test_upload_err_access_locked(self):
         pass
+
+
+class TestShortUploadErrorHandling:
+    """
+    Command               Error             Pre-Action      Action
+    SHORT_UPLOAD          timeout t1        SYNCH + SET_MTA repeat 2 times
+    SHORT_UPLOAD          ERR_CMD_BUSY      wait t7         repeat ∞ times
+    SHORT_UPLOAD          ERR_PGM_ACTIVE    wait t7         repeat ∞ times
+    SHORT_UPLOAD          ERR_CMD_UNKNOWN   -               display error
+    SHORT_UPLOAD          ERR_CMD_SYNTAX    -               retry other syntax
+    SHORT_UPLOAD          ERR_OUT_OF_RANGE  -               retry other parameter
+    """
+
+    def test_short_upload_err_cmd_busy(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF4, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_short_upload_err_pgm_active(self, mode_bit):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF4, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+    def test_short_upload_err_cmd_unknown(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_short_upload_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF4, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    @pytest.mark.parametrize('payload', ((0xF4,),))
+    def test_short_upload_err_cmd_syntax(self, payload):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(payload))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    @pytest.mark.parametrize('number_of_elements, ag', ((0, 'BYTE'),
+                                                        (0, 'WORD'),
+                                                        (0, 'DWORD'),
+                                                        (8, 'BYTE'),
+                                                        (4, 'WORD'),
+                                                        (2, 'DWORD')))
+    def test_short_upload_err_out_of_range(self, number_of_elements, ag):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity=ag))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF4,
+                                                                      number_of_elements,
+                                                                      0x00,
+                                                                      0x00,
+                                                                      0x00,
+                                                                      0x00,
+                                                                      0x00,
+                                                                      0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_short_upload_err_access_denied(self):
+        pass
+
+    @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
+    def test_short_upload_err_access_locked(self):
+        pass
