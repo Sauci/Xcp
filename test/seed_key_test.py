@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import pytest
-
 from .parameter import *
 from .conftest import XcpTest
 
@@ -12,43 +10,45 @@ def get_seed_key_slices(seed, max_cto=8):
     return [seed[i * n:(i + 1) * n] for i in range(len(seed)) if len(seed[i * n:(i + 1) * n]) != 0]
 
 
+def get_seed_side_effect_copy_ok(handle, seed):
+    def wrapper(p_seed_buffer, _max_seed_length, p_seed_length):
+        for i, b in enumerate(seed):
+            p_seed_buffer[i] = b
+        p_seed_length[0] = len(seed)
+        return handle.define('E_OK')
+    return wrapper
+
+
+def calc_key_side_effect_copy_ok(handle, key):
+    def wrapper(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
+        for i, b in enumerate(key):
+            p_key_buffer[i] = b
+        p_key_length[0] = len(key)
+        return handle.define('E_OK')
+    return wrapper
+
+
 @pytest.mark.parametrize('resource', resources)
 @pytest.mark.parametrize('max_cto', max_ctos)
 @pytest.mark.parametrize('seed', seeds, indirect=True)
 def test_get_seed_returns_the_expected_responses(resource, max_cto, seed):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
 
-    def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
-        for i, b in enumerate(seed):
-            p_seed_buffer[i] = seed[i]
-        p_seed_length[0] = len(seed)
-        return handle.define('E_OK')
-
-    handle.xcp_get_seed.side_effect = get_seed_side_effect
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
 
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
-    # GET_SEED 1
-    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x00, 0x01)))
-    handle.lib.Xcp_MainFunction()
-
-    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFF, len(seed))
-
-    actual_seed = list(handle.can_if_transmit.call_args[0][1].SduDataPtr[2:2 + min(len(seed), max_cto - 2)])
-    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
-
-    # GET_SEED 2..n
-    remaining_seed_length = len(seed) - len(actual_seed)
-    for seed_slice in get_seed_key_slices(seed, max_cto)[1:]:
-        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x01, 0x01)))
+    # GET_SEED
+    actual_seed = list()
+    remaining_seed_length = len(seed)
+    for mode, seed_slice in zip([0] + [1] * (len(get_seed_key_slices(seed, max_cto)) - 1),
+                                get_seed_key_slices(seed, max_cto)):
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, mode, resource)))
         handle.lib.Xcp_MainFunction()
-        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
-
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFF, remaining_seed_length)
-
         actual_seed += list(handle.can_if_transmit.call_args[0][1].SduDataPtr[2:2 + min(remaining_seed_length, max_cto - 2)])
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
@@ -112,25 +112,13 @@ def test_get_seed_does_not_return_an_error_pid_if_the_first_part_of_the_seed_is_
 def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(resource, max_cto, seed):
     key = seed
 
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
 
-    def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
-        for i, b in enumerate(seed):
-            p_seed_buffer[i] = b
-        p_seed_length[0] = len(seed)
-        return handle.define('E_OK')
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, key)
 
-    def calc_key_side_effect(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
-        # The key is calculated with the seed transmitted to the master in the slave as well. Then, the key of the slave
-        # is compared against the key from the master. If we have a key match, then the key is valid. Thus, here we
-        # simply copy the seed.
-        for i, b in enumerate(key):
-            p_key_buffer[i] = b
-        p_key_length[0] = len(key)
-        return handle.define('E_OK')
-
-    handle.xcp_get_seed.side_effect = get_seed_side_effect
-    handle.xcp_calc_key.side_effect = calc_key_side_effect
+    seed_slices = get_seed_key_slices(seed, max_cto=max_cto)
+    key_slices = get_seed_key_slices(key, max_cto=max_cto)
 
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -138,14 +126,14 @@ def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(resource, max
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     # GET_SEED
-    for mode, _ in zip([0] + [1] * (len(get_seed_key_slices(seed)) - 1), get_seed_key_slices(seed)):
+    for mode, _ in zip([0] + [1] * (len(seed_slices) - 1), seed_slices):
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, mode, resource)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     # UNLOCK
     remaining_key_length = len(key)
-    for key_slice in get_seed_key_slices(key):
+    for key_slice in key_slices:
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF7, remaining_key_length, *key_slice)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -163,19 +151,13 @@ def test_unlock_unlocks_the_requested_resource_if_the_key_is_valid(resource, max
 def test_unlock_disconnects_the_master_if_key_is_invalid(resource, seed):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
-    def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
-        for i, b in enumerate(seed):
-            p_seed_buffer[i] = seed[i]
-        p_seed_length[0] = len(seed)
-        return handle.define('E_OK')
-
     def calc_key_side_effect(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
         for i, b in enumerate(seed):
             p_key_buffer[i] = (~b) & 0xFF
         p_key_length[0] = len(seed)
         return handle.define('E_OK')
 
-    handle.xcp_get_seed.side_effect = get_seed_side_effect
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
     handle.xcp_calc_key.side_effect = calc_key_side_effect
 
     # CONNECT
