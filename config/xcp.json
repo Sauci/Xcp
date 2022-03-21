@@ -67,6 +67,10 @@
           "enabled": true,
           "protected": true
         },
+        "xcp_short_upload_api_enable": {
+          "enabled": true,
+          "protected": true
+        },
         "xcp_download_api_enable": {
           "enabled": true,
           "protected": false

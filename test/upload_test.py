@@ -2,47 +2,42 @@
 # -*- coding: utf-8 -*-
 
 import pytest
-import random
-import struct
-
-from math import floor
+import pytest_cases
 
 from .parameter import *
 from .conftest import XcpTest
 
 
-# TODO: use max_cto parameter here instead of hard-coded 8 byte value...
-
-def generate_random_block_content(n, element_size, base_address) -> [int]:
-    return list((base_address + (i * 8 * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
-
-
-def address_to_array(address: int, byte_size: int, endianness: str) -> [int]:
-    return [int(b) for b in address.to_bytes(byte_size,
-                                             dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness],
-                                             signed=False)]
+@pytest_cases.fixture()
+@pytest.mark.parametrize('ag', address_granularities)
+@pytest.mark.parametrize('max_cto', max_ctos)
+def upload_payload_properties(ag, max_cto):
+    element_size = element_size_from_address_granularity(ag)
+    num_of_data_elements = floor((max_cto - 1) / element_size)
+    alignment = max_cto - 1 - num_of_data_elements * element_size
+    return ag, max_cto, alignment
 
 
-def get_block_slices_for_max_cto(block, element_size, max_cto=8):
-    n = floor((max_cto - 1) / element_size)
-    return [block[i * n:(i + 1) * n] for i in range(len(block)) if len(block[i * n:(i + 1) * n]) != 0]
-
-
-@pytest.mark.parametrize('ag, element_size', (('BYTE', 1), ('WORD', 2), ('DWORD', 4)))
-@pytest.mark.parametrize('number_of_data_elements', range(1, 255))
-@pytest.mark.parametrize('byte_order', ('BIG_ENDIAN', 'LITTLE_ENDIAN'))
-@pytest.mark.parametrize('mta', [0x00000000])
+@pytest_cases.parametrize('ag, max_cto, alignment', [pytest_cases.fixture_ref(upload_payload_properties)])
+@pytest.mark.parametrize('number_of_data_elements', range(1, 256))
+@pytest.mark.parametrize('mta', mtas)
+@pytest.mark.parametrize('byte_order', byte_orders)
 def test_upload_uploads_elements_according_to_provided_mta_with_address_granularity_byte(ag,
-                                                                                         element_size,
+                                                                                         max_cto,
+                                                                                         alignment,
                                                                                          number_of_data_elements,
                                                                                          mta,
                                                                                          byte_order):
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity=ag, byte_order=byte_order))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   address_granularity=ag,
+                                   byte_order=byte_order,
+                                   max_cto=max_cto))
 
+    element_size = element_size_from_address_granularity(ag)
     expected_block = generate_random_block_content(number_of_data_elements, element_size, mta)
     expected_block_generator = (v for v in expected_block)
     actual_block = list()
-    block_slices = get_block_slices_for_max_cto(expected_block, element_size)
+    block_slices = get_block_slices_for_max_cto(expected_block, element_size, max_cto=max_cto)
 
     def read_slave_memory(address, _extension, p_buffer):
         expected_address, expected_value = next(expected_block_generator)
@@ -73,15 +68,25 @@ def test_upload_uploads_elements_according_to_provided_mta_with_address_granular
 
     # UPLOAD
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, number_of_data_elements)))
-    for s in block_slices:
+    for i, s in enumerate(block_slices):
         handle.lib.Xcp_MainFunction()
 
+        # check packet ID.
         assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
-        raw_values = bytearray(
-            handle.can_if_transmit.call_args[0][1].SduDataPtr[element_size:element_size + (element_size * len(s))])
-        actual_values = tuple(struct.unpack('{}{}'.format('>' if byte_order == 'BIG_ENDIAN' else '<',
-                                                          {1: 'B', 2: 'H', 4: 'I'}[element_size] * len(s)), raw_values))
-        assert actual_values == tuple(v[1] for v in s)
+
+        # check alignment byte(s) if any.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[1:1 + alignment]) == tuple([0] * alignment)
+
+        # check uploaded values.
+        raw_payload = bytearray(handle.can_if_transmit.call_args[0][1].SduDataPtr[element_size:max_cto])
+        expected = [v[1] for v in s]
+        actual = payload_to_array(raw_payload[:len(s) * element_size], len(s), element_size, byte_order)
+        assert tuple(actual) == tuple(expected)
+
+        # check trailing zeros (if any).
+        expected = [0] * (max_cto - (len(s) * element_size) - alignment - 1)
+        actual = handle.can_if_transmit.call_args[0][1].SduDataPtr[max_cto - len(expected):max_cto]
+        assert tuple(actual) == tuple(expected)
 
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 

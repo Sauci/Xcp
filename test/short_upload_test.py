@@ -15,16 +15,16 @@ from .conftest import XcpTest
 @pytest_cases.fixture()
 @pytest.mark.parametrize('ag', address_granularities)
 @pytest.mark.parametrize('max_cto', max_ctos)
-def payload_properties(ag, max_cto):
+def short_upload_payload_properties(ag, max_cto):
     element_size = element_size_from_address_granularity(ag)
     num_of_data_elements = floor((max_cto - 1) / element_size)
     alignment = max_cto - 1 - num_of_data_elements * element_size
     return ag, max_cto, alignment, num_of_data_elements
 
 
-@pytest_cases.parametrize('ag, max_cto, alignment, number_of_data_elements', [pytest_cases.fixture_ref(payload_properties)])
+@pytest_cases.parametrize('ag, max_cto, alignment, number_of_data_elements', [pytest_cases.fixture_ref(short_upload_payload_properties)])
 @pytest.mark.parametrize('address_extension', address_extensions)
-@pytest.mark.parametrize('mta', [0x00000000])
+@pytest.mark.parametrize('mta', mtas)
 @pytest.mark.parametrize('byte_order', byte_orders)
 def test_short_upload_uploads_elements_according_to_provided_mta_with_address_granularity_byte(ag,
                                                                                                max_cto,

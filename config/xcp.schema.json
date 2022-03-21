@@ -195,6 +195,9 @@
               "xcp_upload_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_short_upload_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_download_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
@@ -308,6 +311,7 @@
               "xcp_unlock_api_enable",
               "xcp_set_mta_api_enable",
               "xcp_upload_api_enable",
+              "xcp_short_upload_api_enable",
               "xcp_download_api_enable",
               "xcp_download_max_api_enable",
               "xcp_short_download_api_enable",
@@ -363,15 +367,17 @@
                 "default": true
               },
               "max_cto": {
+                "description": "MAX_CTO shows the maximum length of a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper limit to 255",
                 "type": "integer",
                 "minimum": 8,
-                "maximum": 255,
+                "maximum": 256,
                 "default": 8
               },
               "max_dto": {
                 "type": "integer",
                 "minimum": 8,
-                "maximum": 65535
+                "maximum": 65535,
+                "default": 8
               }
             },
             "required": [

@@ -2740,32 +2740,41 @@ static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
         result = E_NOT_OK; /* TODO: if we fall here, an invalid configuration has been provided to the Xcp_Init function... */
     }
 
-    if (result == E_OK)
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    if ((Xcp_Rt.block_transfer.requested_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u))
     {
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Rt.block_transfer.frame_elements = Xcp_Rt.block_transfer.requested_elements;
+    }
+    else
+    {
+        Xcp_Rt.block_transfer.frame_elements = ((Xcp_Ptr->general->maxCto - 0x01u) / element_size);
+    }
 
-        if ((Xcp_Rt.block_transfer.requested_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u))
-        {
-            Xcp_Rt.block_transfer.frame_elements = Xcp_Rt.block_transfer.requested_elements;
-        }
-        else
-        {
-            Xcp_Rt.block_transfer.frame_elements = ((Xcp_Ptr->general->maxCto - 0x01u) / element_size);
-        }
+    /* Fill alignment bytes with zeros. */
+    for (idx = 0x01u; idx < element_size; idx++)
+    {
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
+    }
 
-        for (idx = 0x00u; idx < Xcp_Rt.block_transfer.frame_elements; idx++)
-        {
+    for (idx = 0x00u; idx < Xcp_Rt.block_transfer.frame_elements; idx++)
+    {
         Xcp_ReadSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](Xcp_Rt.memory_transfer_address.address,
                                                                        Xcp_Rt.memory_transfer_address.extension,
                                                                        &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
 
-            Xcp_Rt.memory_transfer_address.address += (element_size * 0x08u);
-        }
+        Xcp_Rt.memory_transfer_address.address += (element_size * 0x08u);
+    }
 
-        if (Xcp_Rt.block_transfer.frame_elements == 0x00u)
-        {
-            result = E_NOT_OK;
-        }
+    /* Fill remaining bytes with zeros. */
+    for (idx = 0x01u + (element_size - 0x01u) + (Xcp_Rt.block_transfer.frame_elements * element_size); idx < Xcp_Ptr->general->maxCto; idx ++)
+    {
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
+    }
+
+    if (Xcp_Rt.block_transfer.frame_elements == 0x00u)
+    {
+        result = E_NOT_OK;
     }
 
     return result;

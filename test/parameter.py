@@ -15,6 +15,7 @@ address_granularities = [pytest.param('BYTE', id='AG = BYTE'),
 byte_orders = [pytest.param('BIG_ENDIAN', id='byte_order = BIG_ENDIAN'),
                pytest.param('LITTLE_ENDIAN', id='byte_order = LITTLE_ENDIAN')]
 max_ctos = [pytest.param(v, id='MAX_CTO = {:04X}h'.format(v)) for v in (8, 128, 256)]
+mtas = [pytest.param(v, id='MTA = {:08X}h'.format(v)) for v in (0xDEADBEEF,)]
 resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
              pytest.param(4, id='RESOURCE = DAQ'),
              pytest.param(8, id='RESOURCE = STIM'),
@@ -45,6 +46,7 @@ def payload_to_array(payload, number_of_data_elements, element_size, byte_order)
     return struct.unpack('{}{}'.format('>' if byte_order == 'BIG_ENDIAN' else '<',
                                        {1: 'B', 2: 'H', 4: 'I'}[element_size] *
                                        number_of_data_elements), payload)
+
 
 class Config(dict):
     def __init__(self, *args, **kwargs):
