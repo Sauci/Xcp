@@ -71,6 +71,10 @@
           "enabled": true,
           "protected": true
         },
+        "xcp_build_checksum_api_enable": {
+          "enabled": true,
+          "protected": true
+        },
         "xcp_download_api_enable": {
           "enabled": true,
           "protected": false

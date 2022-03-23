@@ -198,6 +198,9 @@
               "xcp_short_upload_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_build_checksum_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_download_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
@@ -312,6 +315,7 @@
               "xcp_set_mta_api_enable",
               "xcp_upload_api_enable",
               "xcp_short_upload_api_enable",
+              "xcp_build_checksum_api_enable",
               "xcp_download_api_enable",
               "xcp_download_max_api_enable",
               "xcp_short_download_api_enable",

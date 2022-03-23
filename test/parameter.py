@@ -42,6 +42,14 @@ def address_to_array(address: int, byte_size: int, endianness: str) -> [int]:
                                              signed=False)]
 
 
+def u32_to_array(value: int, endianness: str) -> [int]:
+    return [int(b) for b in value.to_bytes(4, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)]
+
+
+def u32_from_array(data: bytearray, endianness: str):
+    return int.from_bytes(data, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)
+
+
 def payload_to_array(payload, number_of_data_elements, element_size, byte_order):
     return struct.unpack('{}{}'.format('>' if byte_order == 'BIG_ENDIAN' else '<',
                                        {1: 'B', 2: 'H', 4: 'I'}[element_size] *
@@ -85,6 +93,7 @@ class DefaultConfig(Config):
                  xcp_set_mta_api_enable=True,
                  xcp_upload_api_enable=True,
                  xcp_short_upload_api_enable=True,
+                 xcp_build_checksum_api_enable=True,
                  xcp_download_api_enable=True,
                  xcp_download_max_api_enable=True,
                  xcp_short_download_api_enable=True,
@@ -160,6 +169,7 @@ class DefaultConfig(Config):
                         "xcp_set_mta_api_enable": {"enabled": xcp_set_mta_api_enable, "protected": False},
                         "xcp_upload_api_enable": {"enabled": xcp_upload_api_enable, "protected": False},
                         "xcp_short_upload_api_enable": {"enabled": xcp_short_upload_api_enable, "protected": False},
+                        "xcp_build_checksum_api_enable": {"enabled": xcp_build_checksum_api_enable, "protected": False},
                         "xcp_download_api_enable": {"enabled": xcp_download_api_enable, "protected": False},
                         "xcp_download_max_api_enable": {"enabled": xcp_download_max_api_enable, "protected": False},
                         "xcp_short_download_api_enable": {"enabled": xcp_short_download_api_enable, "protected": False},

@@ -1,4 +1,5 @@
 cffi==1.15.0
+crcmod~=1.7
 jinja2==2.11.3
 jsonschema==3.0.1
 pcpp==1.22
