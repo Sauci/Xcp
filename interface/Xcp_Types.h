@@ -211,10 +211,33 @@ typedef enum
     EVENT
 } Xcp_EventChannelConsistencyType;
 
-typedef struct
+/**
+ * @brief BYTE_ORDER indicates the byte order used for transferring multi-byte parameters in an XCP
+ * Packet. BYTE_ORDER = 0 means Intel format, BYTE_ORDER = 1 means Motorola format. Motorola format
+ * means MSB on lower address/position.
+ *
+ * @note This enumeration is not specified in the AUTOSAR specification, but in the ASAM XCP part
+ * 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+ */
+typedef enum
 {
-    const uint32 dummy;
-} Xcp_CommunicationChannelType;
+    LITTLE_ENDIAN = 0x00u,
+    BIG_ENDIAN = 0x01u
+} Xcp_ByteOrderType;
+
+/**
+ * @brief The address granularity indicates the size of an element contained at a single address. It
+ * is needed if the master has to do address calculation.
+ *
+ * @note This enumeration is not specified in the AUTOSAR specification, but in the ASAM XCP part
+ * 2 - Protocol Layer Specification 1.0/1.6.1.1.1
+ */
+typedef enum
+{
+    BYTE = 0x00u,
+    WORD = 0x01u,
+    DWORD = 0x02u
+} Xcp_AddressGranularityType;
 
 typedef struct
 {
@@ -227,6 +250,13 @@ typedef struct
     const uint16 id;
     const void *pdu;
 } Xcp_TxPduType;
+
+typedef struct
+{
+    const Xcp_RxPduType *channel_rx_pdu_ref;
+    const Xcp_TxPduType *channel_tx_pdu_ref;
+    const void *com_m_channel_ref;
+} Xcp_CommunicationChannelType;
 
 typedef struct
 {
@@ -299,6 +329,7 @@ typedef struct
     const uint8 maxOdt;
     const uint8 maxOdtEntries;
     const Xcp_DtoType *dto;
+    const uint32 dtoCount; /* TODO: check if this value can be retrieved from somewhere else... */
     Xcp_OdtType *odt;
 } Xcp_DaqListType;
 
@@ -359,7 +390,7 @@ typedef struct
     const boolean flashProgrammingEnabled;
     const Xcp_IdentificationFieldTypeType identificationFieldType;
     const ieee_float mainFunctionPeriod;
-    const uint8 maxCto;
+    const uint16 maxCto;
     const uint16 maxDto;
     const uint16 maxEventChannel;
     const uint8 minDaq;
@@ -380,6 +411,11 @@ typedef struct
     /* TODO: pass a callback function here... */
     const void *counter;
     const void *nvRamBlockId;
+    const uint8 ctoInfo[0x100u]; /* not part of the specification... */
+    const Xcp_ByteOrderType byteOrder; /* not part of the specification... */
+    const Xcp_AddressGranularityType addressGranularity; /* not part of the specification... */
+    const boolean slaveBlockModeSupported; /* not part of the specification... */
+    const uint8 protectedResource; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

@@ -1,6 +1,8 @@
 import os
 import sys
+import random
 
+import pytest
 from bsw_code_gen import BSWCodeGen
 from cffi import FFI
 from importlib import import_module
@@ -31,6 +33,17 @@ def pytest_configure(config):
     os.environ['source'] = config.getoption('source')
     os.environ['compile_definitions'] = config.getoption('compile_definitions')
     os.environ['include_directories'] = config.getoption('include_directories')
+
+
+@pytest.fixture
+def seed(request) -> [int]:
+    return [random.getrandbits(8, ) for _ in range(request.param)]
+
+
+@pytest.fixture
+def seed_array(request) -> [[int]]:
+    seed_size, number_of_seeds = request.param
+    return [[random.getrandbits(8, ) for _ in range(seed_size)] for _ in range(number_of_seeds)]
 
 
 def convert(name):
@@ -99,6 +112,9 @@ class Preprocessor(Pp):
 
 
 class MockGen(FFI):
+    _pp = dict()
+    _ffi_header = dict()
+
     def __init__(self,
                  name,
                  source,
@@ -109,29 +125,43 @@ class MockGen(FFI):
                  link_flags=tuple(),
                  build_dir=''):
         super(MockGen, self).__init__()
-        self.pp = Preprocessor()
-        for include_directory in include_dirs:
-            self.pp.add_path(include_directory)
-        for compile_definition in (' '.join(d.split('=')) for d in define_macros):
-            self.pp.define(compile_definition)
-        self.pp.parse(header)
-        handle = StringIO()
-        self.pp.write(handle)
-        self.header = handle.getvalue()
-        func_decl = FunctionDecl(self.header)
-        self.ffi_header = CFFIHeader(self.header, func_decl.locals, func_decl.extern)
-        if name in sys.modules:
-            self.ffi_module = sys.modules[name]
+        self._name = name
+        if self.name in sys.modules:
+            self.ffi_module = sys.modules[self.name]
         else:
-            self.cdef(str(CFFIHeader(self.header, func_decl.locals, func_decl.extern)))
-            self.set_source(name, source,
+            pre_processor = Preprocessor()
+            for include_directory in include_dirs:
+                pre_processor.add_path(include_directory)
+            for compile_definition in (' '.join(d.split('=')) for d in define_macros):
+                pre_processor.define(compile_definition)
+            pre_processor.parse(header)
+            handle = StringIO()
+            pre_processor.write(handle)
+            self._pp[self.name] = pre_processor
+            header = handle.getvalue()
+            func_decl = FunctionDecl(header)
+            self._ffi_header[self.name] = CFFIHeader(header, func_decl.locals, func_decl.extern)
+            self.cdef(str(CFFIHeader(header, func_decl.locals, func_decl.extern)))
+            self.set_source(self.name, source,
                             include_dirs=include_dirs,
                             define_macros=list(tuple(d.split('=')) for d in define_macros),
                             extra_compile_args=list(compile_flags),
                             extra_link_args=list(link_flags))
             lib_path = self.compile(tmpdir=build_dir)
             sys.path.append(os.path.dirname(lib_path))
-            self.ffi_module = import_module(name)
+            self.ffi_module = import_module(self.name)
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def pp(self):
+        return self._pp[self.name]
+
+    @property
+    def ffi_header(self):
+        return self._ffi_header[self.name]
 
     @property
     def mocked(self):
@@ -164,7 +194,12 @@ class XcpTest(object):
         self.config = MockGen('_cffi_xcp_cfg_{}'.format(config.get_id),
                               code_gen.source,
                               code_gen.header,
-                              define_macros=tuple(self.compile_definitions),
+                              define_macros=tuple(self.compile_definitions) +
+                                            ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu_ref),) +
+                                            ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu_ref),) +
+                                            (
+                                                'XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
+                                                    config.default_daq_dto_pdu_mapping),),
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               build_dir=self.build_directory)
         self.code = MockGen('_cffi_xcp',
@@ -175,23 +210,29 @@ class XcpTest(object):
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
                             build_dir=self.build_directory)
-        if initialize:
-            self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
-            if self.code.lib.Xcp_State != self.code.lib.XCP_ON:
-                raise ValueError('Xcp module not initialized correctly...')
-
         self.can_if_transmit = MagicMock()
         self.det_report_error = MagicMock()
         self.det_report_runtime_error = MagicMock()
         self.det_report_transient_fault = MagicMock()
+        self.xcp_get_seed = MagicMock()
+        self.xcp_calc_key = MagicMock()
+        self.xcp_read_slave_memory_u8 = MagicMock()
+        self.xcp_read_slave_memory_u16 = MagicMock()
+        self.xcp_read_slave_memory_u32 = MagicMock()
         for func in self.code.mocked:
             self.ffi.def_extern(func)(getattr(self, convert(func)))
         self.can_if_transmit.return_value = self.define('E_OK')
         self.det_report_error.return_value = self.define('E_OK')
         self.det_report_runtime_error.return_value = self.define('E_OK')
         self.det_report_transient_fault.return_value = self.define('E_OK')
+        self.xcp_get_seed.return_value = self.define('E_OK')
+        self.xcp_calc_key.return_value = self.define('E_OK')
 
-    def get_pdu_info(self, payload, overridden_size=None, meta_data=None):
+        self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
+        if initialize:
+            self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
+
+    def get_pdu_info(self, payload, null_payload=False, overridden_size=None, meta_data=None):
         if isinstance(payload, str):
             payload = [ord(c) for c in payload]
         sdu_data = self.code.ffi.new('uint8 []', list(payload))
@@ -199,6 +240,8 @@ class XcpTest(object):
             sdu_length = overridden_size
         else:
             sdu_length = len(payload)
+        if null_payload:
+            sdu_data = self.code.ffi.NULL
         pdu_info = self.code.ffi.new('PduInfoType *')
         pdu_info.SduDataPtr = sdu_data
         pdu_info.SduLength = sdu_length

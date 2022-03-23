@@ -49,6 +49,12 @@ extern "C" {
 
 #include "Xcp_Types.h"
 
+#include "Xcp_Errors.h"
+
+#include "Xcp_SeedKey.h"
+
+#include "Xcp_MemoryAccess.h"
+
 #if defined(CFFI_ENABLE)
 
 /**
@@ -83,8 +89,8 @@ extern "C" {
  */
 
 typedef enum {
-    XCP_OFF = 0x00u,
-    XCP_ON,
+    XCP_UNINITIALIZED = 0x00u,
+    XCP_INITIALIZED,
 } Xcp_StateType;
 
 /** @} */
@@ -151,6 +157,21 @@ typedef enum {
  */
 #define XCP_MAIN_FUNCTION_API_ID (0x04u)
 
+/**
+ * @brief @ref Xcp_CanIfTxConfirmation API ID.
+ */
+#define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
+
+/**
+ * @brief @ref Xcp_CanIfTriggerTransmit API ID.
+ */
+#define XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID (0x41u)
+
+/**
+ * @brief @ref Xcp_CanIfRxIndication API ID.
+ */
+#define XCP_CAN_IF_RX_INDICATION_API_ID (0x42u)
+
 /** @} */
 
 /**
@@ -169,9 +190,14 @@ typedef enum {
 #define XCP_E_INIT_FAILED (0x04u)
 
 /**
- * @brief Null pointer has been passed as argument.
+ * @brief Null pointer has been passed as an argument.
  */
-#define XCP_E_PARAM_POINTER (0x03u)
+#define XCP_E_PARAM_POINTER (0x12u)
+
+/**
+ * @brief API call with wrong PDU ID.
+ */
+#define XCP_E_INVALID_PDUID (0x03u)
 
 /** @} */
 
@@ -220,9 +246,11 @@ typedef enum {
  * @{
  */
 
+#ifdef CFFI_ENABLE
+
 extern Xcp_StateType Xcp_State;
 
-#ifdef CFFI_ENABLE
+extern const Xcp_Type *Xcp_Ptr;
 
 #endif /* #ifndef CFFI_ENABLE */
 
@@ -265,6 +293,8 @@ void Xcp_GetVersionInfo(Std_VersionInfoType *pVersionInfo);
 
 #endif /* #if (XCP_GET_VERSION_INFO_API == STD_ON) */
 
+#if (XCP_SUPPRESS_TX_SUPPORT == STD_ON)
+
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
@@ -278,6 +308,8 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
+
+#endif /* #if (XCP_SUPPRESS_TX_SUPPORT == STD_ON) */
 
 /** @} */
 

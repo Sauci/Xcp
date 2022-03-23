@@ -14,7 +14,7 @@ add_custom_command(OUTPUT
 add_library(Xcp_Cfg STATIC ${CMAKE_CURRENT_SOURCE_DIR}/Xcp_Cfg.c)
 
 target_include_directories(Xcp_Cfg
-    INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
     PRIVATE ${PROJECT_SOURCE_DIR}/interface
     PRIVATE ${AUTOSAR_STD_HEADER_PATH}
     PUBLIC $<$<BOOL:${XCP_ENABLE_TEST}>:${PROJECT_SOURCE_DIR}/test/stub>)

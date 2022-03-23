@@ -3,16 +3,123 @@
 
 from unittest.mock import ANY
 
+import pytest
+
 from .parameter import *
 from .conftest import XcpTest
 
 
-def test_sws_00825():
+def test_sws_00802():
+    """
+    The function Xcp_Init shall internally store the configuration address to enable subsequent API calls to access the
+    configuration.
+    """
+
+    handle = XcpTest(DefaultConfig())
+    assert handle.config.lib.Xcp == handle.lib.Xcp_Ptr
+
+
+class TestSWS00825:
     """
     If development error detection for the Xcp module is enabled, then the function Xcp_GetVersionInfo shall check
     whether the parameter VersioninfoPtr is a NULL pointer (NULL_PTR). If VersioninfoPtr is a NULL pointer, then the
     function Xcp_GetVersionInfo shall raise the development error XCP_E_PARAM_POINTER and return.
     """
+
+    def test_null_parameter(self):
+        handle = XcpTest(DefaultConfig())
+        handle.lib.Xcp_GetVersionInfo(handle.ffi.NULL)
+        handle.det_report_error.assert_called_once_with(ANY,
+                                                        ANY,
+                                                        handle.define('XCP_GET_VERSION_INFO_API_ID'),
+                                                        handle.define('XCP_E_PARAM_POINTER'))
+
+    def test_non_null_parameter(self):
+        handle = XcpTest(DefaultConfig())
+        version_info = handle.ffi.new('Std_VersionInfoType *')
+        handle.lib.Xcp_GetVersionInfo(version_info)
+        handle.det_report_error.assert_not_called()
+
+
+def test_sws_00840():
+    """
+    If development error detection for the XCP module is enabled: if the function Xcp_<Lo>TxConfirmation is called
+    before the XCP was initialized successfully, the function Xcp_<Lo>TxConfirmation shall raise the development error
+    XCP_E_UNINIT and return.
+    """
+
+    handle = XcpTest(DefaultConfig(), initialize=False)
+    handle.lib.Xcp_CanIfTxConfirmation(0, handle.define('E_OK'))
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_TX_CONFIRMATION_API_ID'),
+                                                    handle.define('XCP_E_UNINIT'))
+
+
+def test_sws_00842():
+    """
+    If development error detection for the XCP module is enabled: if the function Xcp_<Lo>TriggerTransmit is called
+    before the XCP was initialized successfully, the function Xcp_<Lo>TriggerTransmit shall raise the development error
+    XCP_E_UNINIT and return E_NOT_OK.
+    """
+
+    handle = XcpTest(DefaultConfig(), initialize=False)
+    assert handle.lib.Xcp_CanIfTriggerTransmit(0, handle.ffi.NULL) == handle.define('E_NOT_OK')
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_TRIGGER_TRANSMIT_API_ID'),
+                                                    handle.define('XCP_E_UNINIT'))
+
+
+@pytest.mark.parametrize('enumeration, value', (('XCP_TX_OFF', 0), ('XCP_TX_ON', 1)))
+def test_sws_00846(enumeration, value):
     handle = XcpTest(DefaultConfig())
-    handle.lib.Xcp_GetVersionInfo(handle.ffi.NULL)
-    handle.det_report_error.assert_called_once_with(ANY, ANY, ANY, handle.define('XCP_E_PARAM_POINTER'))
+    assert getattr(handle.lib, enumeration) == value
+
+
+class TestSWS00847:
+    """
+    The callback function Xcp_<Lo>RxIndication shall inform the DET, if development error detection is enabled
+    (XCP_DEV_ERROR_DETECT is set to TRUE) and if function call has failed because of the following reasons:
+    - Xcp was not initialized (XCP_E_UNINIT)
+    - PduInfoPtr equals NULL_PTR (XCP_E_PARAM_POINTER)
+    - Invalid PDUID (XCP_E_INVALID_PDUID)
+    """
+
+    def test_not_initialized_error(self):
+        handle = XcpTest(DefaultConfig(), initialize=False)
+        handle.lib.Xcp_CanIfRxIndication(0, handle.get_pdu_info((dummy_byte,)))
+        handle.det_report_error.assert_called_once_with(ANY,
+                                                        ANY,
+                                                        handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                        handle.define('XCP_E_UNINIT'))
+
+    def test_null_pdu_info_pointer_error(self):
+        handle = XcpTest(DefaultConfig())
+        handle.lib.Xcp_CanIfRxIndication(0, handle.ffi.NULL)
+        handle.det_report_error.assert_called_once_with(ANY,
+                                                        ANY,
+                                                        handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                        handle.define('XCP_E_PARAM_POINTER'))
+
+    @pytest.mark.parametrize('pdu_id', [0x0002] + list(range(0x0004, 0x000F)))
+    @pytest.mark.parametrize('daq_type', ('STIM', 'DAQ_STIM'))
+    def test_invalid_pdu_id_error(self, pdu_id, daq_type):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       channel_tx_pdu_ref=0x0002,
+                                       default_daq_dto_pdu_mapping=0x0003,
+                                       daq_type=daq_type))
+        handle.lib.Xcp_CanIfRxIndication(pdu_id, handle.get_pdu_info((dummy_byte,)))
+        handle.det_report_error.assert_called_once_with(ANY,
+                                                        ANY,
+                                                        handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                        handle.define('XCP_E_INVALID_PDUID'))
+
+
+@pytest.mark.parametrize('definition, value', (('XCP_E_UNINIT', 0x02),
+                                               ('XCP_E_INIT_FAILED', 0x04),
+                                               ('XCP_E_PARAM_POINTER', 0x12),
+                                               ('XCP_E_INVALID_PDUID', 0x03)))
+def test_sws_00857(definition, value):
+    handle = XcpTest(DefaultConfig())
+    assert handle.define(definition) == value

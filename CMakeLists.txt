@@ -11,7 +11,7 @@ option(ENABLE_DET "enables/disables development error detection." ON)
 option(ENABLE_DOC_GEN "enables/disables documentation generation." OFF)
 option(ENABLE_PC_LINT "enables/disables static code analysis." OFF)
 set(MISRA_C_VERSION 2012 CACHE STRING "MISRA standard.")
-option(OS_GET_TIME_API "indicates whether the OSEK API GetTime is available or not." OFF)
+option(XCP_SUPPRESS_TX_SUPPORT "enables/disables transmission functionality of the XCP module." ON)
 
 find_package(PythonInterp 3.6 REQUIRED)
 
@@ -25,6 +25,7 @@ endif ()
 
 add_subdirectory(extern)
 add_subdirectory(generated)
+# add_subdirectory(debug)
 
 add_library(Xcp STATIC source/Xcp.c)
 
@@ -35,11 +36,12 @@ target_compile_definitions(Xcp
     PRIVATE XCP_SW_VERSION_PATCH=${PROJECT_VERSION_PATCH}
     PUBLIC XCP_AR_RELEASE_MAJOR_VERSION=4 # SWS_BSW_00059
     PUBLIC XCP_AR_RELEASE_MINOR_VERSION=3
+    PUBLIC XCP_AR_RELEASE_PATCH_VERSION=1
     PUBLIC XCP_API=STD_ON
     PUBLIC XCP_GET_VERSION_INFO_API=STD_ON # ECUC_Xcp_00283
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
-    PUBLIC OS_GET_TIME_API=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>)
 
 target_include_directories(Xcp
     PUBLIC interface
@@ -51,7 +53,7 @@ if (${XCP_ENABLE_TEST})
 
     add_test(NAME Xcp_UnitTest
         COMMAND ${PYTHON_EXECUTABLE} -W ignore::DeprecationWarning
-        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test
+        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h

@@ -6,6 +6,31 @@
       "items": {
         "type": "object",
         "properties": {
+          "communication": {
+            "description": "This container represents the configuration of the communication channel of XCP (see ECUC_Xcp_00183)",
+            "type": "object",
+            "properties": {
+              "channel_rx_pdu_ref": {
+                "description": "Optional reference to the XCP Rx PDU (see ECUC_Xcp_00185)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              },
+              "channel_tx_pdu_ref": {
+                "description": "Reference to the XCP Tx PDU (see ECUC_Xcp_00184)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              },
+              "com_m_channel_ref": {
+                "description": "Reference to the ComM channel the PDUs belong to (see ECUC_Xcp_00186)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              }
+            },
+            "required": [
+              "channel_rx_pdu_ref",
+              "channel_tx_pdu_ref"
+            ]
+          },
           "events": {
             "description": "This container contains the configuration of event channels on the XCP slave (see ECUC_Xcp_00150)",
             "type": "array",
@@ -147,11 +172,233 @@
               ]
             },
             "minItems": 1
+          },
+          "apis": {
+            "description": "This container allows the user to enable/disable optional APIs from the driver. This is not part of the specification",
+            "type": "object",
+            "properties": {
+              "xcp_set_request_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_id_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_seed_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_unlock_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_set_mta_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_upload_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_short_upload_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_build_checksum_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_download_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_download_max_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_short_download_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_set_cal_page_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_cal_page_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_clear_daq_list_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_set_daq_ptr_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_write_daq_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_set_daq_list_mode_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_daq_list_mode_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_start_stop_daq_list_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_start_stop_synch_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_daq_clock_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_read_daq_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_daq_processor_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_daq_resolution_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_daq_list_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_daq_event_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_free_daq_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_alloc_daq_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_alloc_odt_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_alloc_odt_entry_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_program_clear_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_program_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_program_max_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_comm_mode_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "resource_protection": {
+                "type": "object",
+                "properties": {
+                  "calibration_paging": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "data_acquisition": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "data_stimulation": {
+                    "type": "boolean",
+                    "default": false
+                  },
+                  "programming": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                },
+                "required": [
+                  "calibration_paging",
+                  "data_acquisition",
+                  "data_stimulation",
+                  "programming"
+                ]
+              }
+            },
+            "required": [
+              "xcp_set_request_api_enable",
+              "xcp_get_id_api_enable",
+              "xcp_get_seed_api_enable",
+              "xcp_unlock_api_enable",
+              "xcp_set_mta_api_enable",
+              "xcp_upload_api_enable",
+              "xcp_short_upload_api_enable",
+              "xcp_build_checksum_api_enable",
+              "xcp_download_api_enable",
+              "xcp_download_max_api_enable",
+              "xcp_short_download_api_enable",
+              "xcp_set_cal_page_api_enable",
+              "xcp_get_cal_page_api_enable",
+              "xcp_clear_daq_list_api_enable",
+              "xcp_set_daq_ptr_api_enable",
+              "xcp_write_daq_api_enable",
+              "xcp_set_daq_list_mode_api_enable",
+              "xcp_get_daq_list_mode_api_enable",
+              "xcp_start_stop_daq_list_api_enable",
+              "xcp_start_stop_synch_api_enable",
+              "xcp_get_daq_clock_api_enable",
+              "xcp_read_daq_api_enable",
+              "xcp_get_daq_processor_info_api_enable",
+              "xcp_get_daq_resolution_info_api_enable",
+              "xcp_get_daq_list_info_api_enable",
+              "xcp_get_daq_event_info_api_enable",
+              "xcp_free_daq_api_enable",
+              "xcp_alloc_daq_api_enable",
+              "xcp_alloc_odt_api_enable",
+              "xcp_alloc_odt_entry_api_enable",
+              "xcp_program_clear_api_enable",
+              "xcp_program_api_enable",
+              "xcp_program_max_api_enable",
+              "xcp_get_comm_mode_info_api_enable",
+              "resource_protection"
+            ]
+          },
+          "protocol_layer": {
+            "description": "This container allows the user to specify protocol layer specific parameters. This is not part of the specification",
+            "type": "object",
+            "properties": {
+              "byte_order": {
+                "type": "string",
+                "enum": [
+                  "LITTLE_ENDIAN",
+                  "BIG_ENDIAN"
+                ],
+                "default": "LITTLE_ENDIAN"
+              },
+              "address_granularity": {
+                "type": "string",
+                "enum": [
+                  "BYTE",
+                  "WORD",
+                  "DWORD"
+                ],
+                "default": "DWORD"
+              },
+              "slave_block_mode": {
+                "type": "boolean",
+                "default": true
+              },
+              "max_cto": {
+                "description": "MAX_CTO shows the maximum length of a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper limit to 255",
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 256,
+                "default": 8
+              },
+              "max_dto": {
+                "type": "integer",
+                "minimum": 8,
+                "maximum": 65535,
+                "default": 8
+              }
+            },
+            "required": [
+              "byte_order",
+              "address_granularity",
+              "slave_block_mode",
+              "max_cto",
+              "max_dto"
+            ]
           }
         },
         "required": [
+          "communication",
           "events",
-          "daqs"
+          "daqs",
+          "apis",
+          "protocol_layer"
         ],
         "additionalProperties": false
       },
@@ -162,119 +409,22 @@
     "configurations"
   ],
   "definitions": {
-    "channel_mode": {
-      "type": "string",
-      "enum": [
-        "CANTP_MODE_HALF_DUPLEX",
-        "CANTP_MODE_FULL_DUPLEX"
-      ]
-    },
-    "communication_type": {
-      "type": "string",
-      "enum": [
-        "CANTP_FUNCTIONAL",
-        "CANTP_PHYSICAL"
-      ]
-    },
-    "receiver_common": {
+    "api_activation_information": {
+      "type": "object",
       "properties": {
-        "comment": {
-          "type": "string"
+        "enabled": {
+          "type": "boolean",
+          "default": true
         },
-        "network_service_data_unit_identifier": {
-          "$ref": "#/definitions/network_address_extension"
-        },
-        "N_Ar_timeout": {
-          "$ref": "#/definitions/network_layer_timeout"
-        },
-        "N_Br_timeout": {
-          "$ref": "#/definitions/network_layer_timeout"
-        },
-        "N_Cr_timeout": {
-          "$ref": "#/definitions/network_layer_timeout"
-        },
-        "block_size": {
-          "$ref": "#/definitions/block_size"
-        },
-        "minimum_separation_time": {
-          "$ref": "#/definitions/minimum_separation_time"
-        },
-        "wait_for_transmission maximum": {
-          "$ref": "#/definitions/wait_for_transmission_maximum"
-        },
-        "network_service_data_unit_reference": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "enable_padding": {
-          "type": "boolean"
-        },
-        "communication_type": {
-          "$ref": "#/definitions/communication_type"
+        "protected": {
+          "type": "boolean",
+          "default": false
         }
       },
       "required": [
-        "network_service_data_unit_reference"
+        "enabled",
+        "protected"
       ]
-    },
-    "block_size": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "minimum_separation_time": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 0.127
-    },
-    "wait_for_transmission_maximum": {
-      "type": "integer",
-      "minimum": 0
-    },
-    "transmitter_common": {
-      "properties": {
-        "comment": {
-          "type": "string"
-        },
-        "network_service_data_unit_identifier": {
-          "$ref": "#/definitions/network_address_extension"
-        },
-        "N_As_timeout": {
-          "$ref": "#/definitions/network_layer_timeout"
-        },
-        "N_Bs_timeout": {
-          "$ref": "#/definitions/network_layer_timeout"
-        },
-        "N_Cs_timeout": {
-          "$ref": "#/definitions/network_layer_timeout"
-        },
-        "network_service_data_unit_reference": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        },
-        "enable_transmit_cancellation": {
-          "type": "boolean"
-        },
-        "enable_padding": {
-          "type": "boolean"
-        },
-        "communication_type": {
-          "$ref": "#/definitions/communication_type"
-        }
-      },
-      "required": [
-        "network_service_data_unit_reference"
-      ]
-    },
-    "network_address_extension": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 255
-    },
-    "network_layer_timeout": {
-      "type": "number",
-      "minimum": 0
     }
   }
 }
