@@ -258,6 +258,9 @@ typedef struct {
  * @{
  */
 
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 LOCAL_INLINE void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)
 {
 #if (XCP_DEV_ERROR_DETECT == STD_ON)
@@ -272,6 +275,9 @@ LOCAL_INLINE void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)
 
 #endif /* #if (XCP_DEV_ERROR_DETECT == STD_ON) */
 }
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
 
 /** @} */
 
@@ -706,7 +712,7 @@ static Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const 
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static uint8 (* Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType *pPduInfo) = {
+static uint8 (* const Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType *pPduInfo) = {
     Xcp_DTODaqStimPacket, /* 0x00 */
     Xcp_DTODaqStimPacket, /* 0x01 */
     Xcp_DTODaqStimPacket, /* 0x02 */
@@ -1545,7 +1551,11 @@ static const uint32 Xcp_CRC32Table[] = {
     0xA00AE278u, 0xD70DD2EEu, 0x4E048354u, 0x3903B3C2u, 0xA7672661u, 0xD06016F7u, 0x4969474Du, 0x3E6E77DBu,
     0xAED16A4Au, 0xD9D65ADCu, 0x40DF0B66u, 0x37D83BF0u, 0xA9BCAE53u, 0xDEBB9EC5u, 0x47B2CF7Fu, 0x30B5FFE9u,
     0xBDBDF21Cu, 0xCABAC28Au, 0x53B39330u, 0x24B4A3A6u, 0xBAD03605u, 0xCDD70693u, 0x54DE5729u, 0x23D967BFu,
-    0xB3667A2Eu, 0xC4614AB8u, 0x5D681B02u, 0x2A6F2B94u, 0xB40BBE37u, 0xC30C8EA1u, 0x5A05DF1Bu, 0x2D02EF8Du};
+    0xB3667A2Eu, 0xC4614AB8u, 0x5D681B02u, 0x2A6F2B94u, 0xB40BBE37u, 0xC30C8EA1u, 0x5A05DF1Bu, 0x2D02EF8Du
+};
+
+#define Xcp_STOP_SEC_CONST_32
+#include "Xcp_MemMap.h"
 
 /** @} */
 
