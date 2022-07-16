@@ -27,7 +27,7 @@ def element_size_from_address_granularity(address_granularity):
     return dict(BYTE=1, WORD=2, DWORD=4)[address_granularity]
 
 
-def generate_random_block_content(n, element_size, base_address) -> [int]:
+def generate_random_block_content(n, element_size, base_address) -> [(int, int)]:
     return list((base_address + (i * 8 * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
 
 
@@ -128,7 +128,9 @@ class DefaultConfig(Config):
                  address_granularity='BYTE',
                  slave_block_mode=True,
                  max_cto=8,
-                 max_dto=8):
+                 max_dto=8,
+                 checksum_type='XCP_CRC_32',
+                 user_defined_checksum_function='Xcp_UserDefinedChecksumFunction'):
         super(DefaultConfig, self).__init__({
             "configurations": [
                 {
@@ -208,7 +210,9 @@ class DefaultConfig(Config):
                         "address_granularity": address_granularity,
                         "slave_block_mode": slave_block_mode,
                         "max_cto": max_cto,
-                        "max_dto": max_dto
+                        "max_dto": max_dto,
+                        "checksum_type": checksum_type,
+                        "user_defined_checksum_function": user_defined_checksum_function
                     }
                 }
             ]

@@ -103,7 +103,10 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
         {%- for dto in daq.dtos %}
     {
         {{'0x%04Xu' % dto.pid}}, /* XcpDtoPid */
-        {{dto.pdu_mapping}} /* XcpDto2PduMapping */
+        {
+            {{dto.pdu_mapping}}, /* XcpDto2PduMapping */
+            NULL_PTR
+        }
     },
         {%- endfor %}
 };
@@ -454,11 +457,14 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     },
     {{configuration.protocol_layer.byte_order}}, /* byteOrder */
     {{configuration.protocol_layer.address_granularity}}, /* addressGranularity */
+    /* TODO: check this parameter while performing block transfer operation... */
     {% if configuration.protocol_layer.slave_block_mode %}TRUE{% else %}FALSE{% endif %}, /* slaveBlockTransferModeSupported */
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
-    ({% if configuration.apis.resource_protection.programming %}0x01u{% else %}0x00u{% endif %} << 0x04u) /* protectedResource */
+    ({% if configuration.apis.resource_protection.programming %}0x01u{% else %}0x00u{% endif %} << 0x04u), /* protectedResource */
+    {{configuration.protocol_layer.checksum_type}}, /* checksumType */
+    {% if configuration.protocol_layer.user_defined_checksum_function %}&{{configuration.protocol_layer.user_defined_checksum_function}}{% else %}NULL_PTR{% endif %} /* checksumType */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

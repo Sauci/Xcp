@@ -191,7 +191,9 @@
         "address_granularity": "BYTE",
         "slave_block_mode": true,
         "max_cto": 8,
-        "max_dto": 8
+        "max_dto": 8,
+        "checksum_type": "XCP_CRC_16",
+        "user_defined_checksum_function": null
       }
     }
   ]

@@ -382,6 +382,36 @@
                 "minimum": 8,
                 "maximum": 65535,
                 "default": 8
+              },
+              "checksum_type": {
+                "type": "string",
+                "enum": [
+                  "XCP_ADD_11",
+                  "XCP_ADD_12",
+                  "XCP_ADD_14",
+                  "XCP_ADD_22",
+                  "XCP_ADD_24",
+                  "XCP_ADD_44",
+                  "XCP_CRC_16",
+                  "XCP_CRC_16_CITT",
+                  "XCP_CRC_32",
+                  "XCP_USER_DEFINED"
+                ],
+                "default": "XCP_CRC_32"
+              },
+              "user_defined_checksum_function": {
+                "OneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "Xcp_UserDefinedChecksumFunction"
+                    ]
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -389,7 +419,9 @@
               "address_granularity",
               "slave_block_mode",
               "max_cto",
-              "max_dto"
+              "max_dto",
+              "checksum_type",
+              "user_defined_checksum_function"
             ]
           }
         },
