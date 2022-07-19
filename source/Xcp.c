@@ -2225,6 +2225,17 @@ static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo
 
 static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    (void)rxPduId;
+
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = pPduInfo->SduDataPtr[0x01u];
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = pPduInfo->SduDataPtr[0x02u];
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = pPduInfo->SduDataPtr[0x03u];
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = pPduInfo->SduDataPtr[0x04u];
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = pPduInfo->SduDataPtr[0x05u];
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = pPduInfo->SduDataPtr[0x06u];
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = pPduInfo->SduDataPtr[0x07u];
+
     return E_OK;
 }
 
