@@ -1,12 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import pytest
 import pytest_cases
-import random
-import struct
-
-from math import floor
 
 from .parameter import *
 from .conftest import XcpTest
@@ -22,7 +17,8 @@ def short_upload_payload_properties(ag, max_cto):
     return ag, max_cto, alignment, num_of_data_elements
 
 
-@pytest_cases.parametrize('ag, max_cto, alignment, number_of_data_elements', [pytest_cases.fixture_ref(short_upload_payload_properties)])
+@pytest_cases.parametrize('ag, max_cto, alignment, number_of_data_elements',
+                          [pytest_cases.fixture_ref(short_upload_payload_properties)])
 @pytest.mark.parametrize('address_extension', address_extensions)
 @pytest.mark.parametrize('mta', mtas)
 @pytest.mark.parametrize('byte_order', byte_orders)
@@ -86,4 +82,3 @@ def test_short_upload_uploads_elements_according_to_provided_mta_with_address_gr
 
     assert handle.can_if_transmit.call_count == 2
     assert actual_block == expected_block
-

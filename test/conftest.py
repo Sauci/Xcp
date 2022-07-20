@@ -195,8 +195,8 @@ class XcpTest(object):
                               code_gen.source,
                               code_gen.header,
                               define_macros=tuple(self.compile_definitions) +
-                                            ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu_ref),) +
-                                            ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu_ref),) +
+                                            ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu),) +
+                                            ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
                                             (
                                                 'XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),),

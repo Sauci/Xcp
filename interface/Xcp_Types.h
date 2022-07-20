@@ -441,6 +441,7 @@ typedef struct
 {
     const Xcp_CommunicationChannelType *communicationChannel;
     Xcp_DaqListType *daqList;
+    const uint16 daqListCount; /* not part of the specification... */
     const Xcp_EventChannelType *eventChannel;
     const void *pdu;
 } Xcp_ConfigType;

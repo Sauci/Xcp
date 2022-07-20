@@ -11,10 +11,10 @@
           "type": "DAQ",
           "max_odt": 3,
           "max_odt_entries": 9,
+          "pdu_mapping": "XCP_PDU_ID_TRANSMIT",
           "dtos": [
             {
-              "pid": 0,
-              "pdu_mapping": "XCP_PDU_ID_TRANSMIT"
+              "pid": 0
             }
           ]
         },
@@ -23,10 +23,10 @@
           "type": "DAQ",
           "max_odt": 5,
           "max_odt_entries": 10,
+          "pdu_mapping": "XCP_PDU_ID_TRANSMIT",
           "dtos": [
             {
-              "pid": 1,
-              "pdu_mapping": "XCP_PDU_ID_TRANSMIT"
+              "pid": 1
             }
           ]
         }

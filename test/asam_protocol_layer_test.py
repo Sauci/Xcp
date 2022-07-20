@@ -129,7 +129,12 @@ def test_command_connect_sets_the_resource_daq_bit_according_to_enabled_apis(res
 
 @pytest.mark.parametrize('resource_stim_bit, daq_type', ((0, "DAQ"), (1, "STIM"), (1, "DAQ_STIM")))
 def test_command_connect_sets_the_resource_stim_bit_according_to_enabled_apis(resource_stim_bit, daq_type):
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, daq_type=daq_type))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, daqs=(dict(name='DAQ1',
+                                                                         type=daq_type,
+                                                                         max_odt=1,
+                                                                         max_odt_entries=1,
+                                                                         pdu_mapping='XCP_PDU_ID_TRANSMIT',
+                                                                         dtos=[dict(pid=0)]),)))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()
     assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x03)) >> 0x03) == resource_stim_bit

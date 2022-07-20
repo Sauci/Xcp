@@ -2220,11 +2220,6 @@ static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
 static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
-    return E_OK;
-}
-
-static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
-{
     (void)rxPduId;
 
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
@@ -2235,6 +2230,100 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = pPduInfo->SduDataPtr[0x05u];
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = pPduInfo->SduDataPtr[0x06u];
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = pPduInfo->SduDataPtr[0x07u];
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+
+    uint8_least object_found;
+    uint16 daq_list_idx;
+    uint8 sub_command;
+    uint8 mode;
+    uint16 daq_list_number;
+    // uint32 can_identifier;
+
+    if (pPduInfo->SduLength >= 0x02u) {
+        sub_command = pPduInfo->SduDataPtr[0x01u];
+
+        if (sub_command == 0xFFu) {
+            if (pPduInfo->SduLength >= 0x05u) {
+                mode = pPduInfo->SduDataPtr[0x05u];
+
+                if (((pPduInfo->SduDataPtr[0x02u] == 0x58u) && (pPduInfo->SduDataPtr[0x03u] == 0x43u) && (pPduInfo->SduDataPtr[0x04u] == 0x50u)) &&
+                    ((mode == 0x00u) || (mode == 0x01u))) {
+
+                    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+                    if (mode == 0x00u) {
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x58u;
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x43u;
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x50u;
+                    } else {
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0xA7u;
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0xBCu;
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0xAFu;
+                    }
+
+                    Xcp_CopyFromU32WithOrder((uint32)Xcp_Ptr->config->communicationChannel->channel_rx_pdu_ref->id,
+                                             &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u],
+                                             Xcp_Ptr->general->byteOrder);
+                } else {
+                    Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+                }
+            } else {
+                Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+            }
+        } else if (sub_command == 0xFEu) {
+            if (pPduInfo->SduLength >= 0x04u) {
+                Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+                object_found = FALSE;
+
+                for (daq_list_idx = 0x00u; daq_list_idx < Xcp_Ptr->config->daqListCount; daq_list_idx ++) {
+                    if (Xcp_Ptr->config->daqList[daq_list_idx].number == daq_list_number) {
+                        object_found = TRUE;
+
+                        break;
+                    }
+                }
+
+                if (object_found == TRUE) {
+                    if (Xcp_Ptr->config->daqList[daq_list_idx].dtoCount > 0x00u) {
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x01u; // TODO: support configurable CAN ID...
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+                        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+                        Xcp_CopyFromU32WithOrder((uint32)Xcp_Ptr->config->daqList[daq_list_idx].dto[0x00u].dto2PduMapping.txPdu.id,
+                                                 &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u],
+                                                 Xcp_Ptr->general->byteOrder);
+                    } else {
+
+                    }
+                } else {
+                    Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+                }
+            } else {
+                Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+            }
+        }else if (sub_command == 0xFDu) {
+            if (pPduInfo->SduLength >= 0x08u) {
+                // Xcp_CopyToU16WithOrder(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+                // Xcp_CopyToU32WithOrder(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u], &can_identifier, Xcp_Ptr->general->byteOrder);
+
+                // TODO: implement this feature...
+                Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_UNKNOWN);
+            } else {
+                Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+            }
+        } else {
+            Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+        }
+    } else {
+        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+    }
 
     return E_OK;
 }

@@ -137,6 +137,11 @@
                   "minimum": 0,
                   "maximum": 255
                 },
+                "pdu_mapping": {
+                  "description": "This reference specifies the mapping of the DTO to the PDUs from the lower-layer interfaces (CanIf, FrIf, SoAd and Cdd). A reference to a XcpRxPdu is only feasible if the the DaqListType is DAQ_STIM. A reference to a XcpTxPdu is only feasible if the DaqListType is DAQ (see ECUC_Xcp_00067)",
+                  "type": "string",
+                  "pattern": "[A-Z_][A-Z0-9_]*"
+                },
                 "dtos": {
                   "description": "This container collects data transfer object specific parameters for the DAQ list (see ECUC_Xcp_00065)",
                   "type": "array",
@@ -148,19 +153,13 @@
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 251
-                      },
-                      "pdu_mapping": {
-                        "description": "This reference specifies the mapping of the DTO to the PDUs from the lower-layer interfaces (CanIf, FrIf, SoAd and Cdd). A reference to a XcpRxPdu is only feasible if the the DaqListType is DAQ_STIM. A reference to a XcpTxPdu is only feasible if the DaqListType is DAQ (see ECUC_Xcp_00067)",
-                        "type": "string",
-                        "pattern": "[A-Z_][A-Z0-9_]*"
                       }
                     },
                     "required": [
-                      "pid",
-                      "pdu_mapping"
+                      "pid"
                     ]
                   },
-                  "minItems": 0
+                  "minItems": 1
                 }
               },
               "required": [
@@ -168,6 +167,7 @@
                 "type",
                 "max_odt",
                 "max_odt_entries",
+                "pdu_mapping",
                 "dtos"
               ]
             },

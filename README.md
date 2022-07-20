@@ -36,7 +36,7 @@ through the `Xcp_GetSeed` function. The idea behind it is that if the slave woul
 calculate a key for a single seed and use it forever, which would lead to a less secured resource protection.
 
 Whenever the master issues a `UNLOCK` command, the slave will discard the seed as well, either upon successful and 
-unsuccessful command result. THis implies a new `GET_SEED` request for each `UNLOCK` command.
+unsuccessful command result. This implies a new `GET_SEED` request for each `UNLOCK` command.
 
 The `Xcp_GetSeed` function implementation is left to the stack user. The target on which the stack is integrated could
 provide some random value generator, thus this is target-specific. The function's prototype is defined 
@@ -44,8 +44,8 @@ provide some random value generator, thus this is target-specific. The function'
 
 ## Key lifetime
 Whenever an `UNLOCK` command is issued by the master, the key is calculated by the slave using the last seed value
-requested by the master. If the key calculated internally matches the key received from the master, the `UNLOCK` command
-succeeds. No matter if the keys are matching or not, the key validity is discarded after each `UNLOCK` sequence.
+requested by the master. No matter if the keys are matching or not, the key validity is discarded after the execution of
+the command following the `UNLOCK` sequence.
 
 If the master issues a `UNLOCK` command without calling `GET_SEED` first, the stack will respond with and error packet
 identifier, and the code `ERR_SEQUENCE`.
@@ -53,6 +53,12 @@ identifier, and the code `ERR_SEQUENCE`.
 The implementation of the function responsible for key calculation, `Xcp_CalcKey` is left to the user. This is required,
 as the function must be shared between the master and the slave.
 
+# Limitations
+- The `GET_SLAVE_ID` command (CTO = `TRANSPORT_LAYER_CMD`, sub-command = `0xFF`) returns the PDU ID of the 
+  **CMD**/**STIM** communication channel, not the CAN identifier directly. This is implemented this way to prevent 
+  dependencies on the PDU mapping table in this module.
+
 # TODO
 - Protect variables used in both synchronous and asynchronous APIs.
-- Use pre-processor to enable/disable optional APIs
+- Use pre-processor to enable/disable optional APIs.
+- Implement sub-command `SET_DAQ_LIST_CAN_IDENTIFIER` for CTO `TRANSPORT_LAYER_CMD`.

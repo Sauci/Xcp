@@ -42,6 +42,10 @@ def address_to_array(address: int, byte_size: int, endianness: str) -> [int]:
                                              signed=False)]
 
 
+def u16_to_array(value: int, endianness: str) -> [int]:
+    return [int(b) for b in value.to_bytes(2, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)]
+
+
 def u32_to_array(value: int, endianness: str) -> [int]:
     return [int(b) for b in value.to_bytes(4, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)]
 
@@ -56,36 +60,32 @@ def payload_to_array(payload, number_of_data_elements, element_size, byte_order)
                                        number_of_data_elements), payload)
 
 
-class Config(dict):
-    def __init__(self, *args, **kwargs):
-        super(Config, self).__init__(*args, **kwargs)
-        self._channel_rx_pdu_ref = 0x0001
-        self._channel_tx_pdu_ref = 0x0002
-        self._default_daq_dto_pdu_mapping = 0x0003
-
-    @property
-    def get_id(self):
-        return hashlib.sha224(json.dumps(self, sort_keys=True, indent=0).encode('utf-8')).hexdigest()[0:8]
-
-    @property
-    def channel_rx_pdu_ref(self) -> int:
-        return self._channel_rx_pdu_ref
-
-    @property
-    def channel_tx_pdu_ref(self) -> int:
-        return self._channel_tx_pdu_ref
-
-    @property
-    def default_daq_dto_pdu_mapping(self) -> int:
-        return self._default_daq_dto_pdu_mapping
+class DAQ(object):
+    def __init__(self, name, type, max_odt, max_odt_entries, dtos):
+        self._name = name
+        self._type = type
+        self._max_odt = max_odt
+        self._max_odt_entries = max_odt_entries
+        self._dtos = dtos
 
 
-class DefaultConfig(Config):
+class DefaultConfig(dict):
     def __init__(self,
                  channel_rx_pdu_ref=0x0001,
                  channel_tx_pdu_ref=0x0002,
                  default_daq_dto_pdu_mapping=0x0003,
-                 daq_type="DAQ",
+                 daqs=({
+                     "name": "DAQ1",
+                     "type": "DAQ",
+                     "max_odt": 1,
+                     "max_odt_entries": 1,
+                     "pdu_mapping": "XCP_PDU_ID_TRANSMIT",
+                     "dtos": [
+                         {
+                             "pid": 0
+                         }
+                     ]
+                 },),
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -131,92 +131,110 @@ class DefaultConfig(Config):
                  max_dto=8,
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction'):
-        super(DefaultConfig, self).__init__({
-            "configurations": [
-                {
-                    "communication": {
-                        "channel_rx_pdu_ref": "XCP_PDU_ID_CTO_RX",
-                        "channel_tx_pdu_ref": "XCP_PDU_ID_CTO_TX"
-                    },
-                    "daqs": [
-                        {
-                            "name": "DAQ1",
-                            "type": daq_type,
-                            "max_odt": 1,
-                            "max_odt_entries": 1,
-                            "dtos": [
-                                {
-                                    "pid": 0,
-                                    "pdu_mapping": "XCP_PDU_ID_TRANSMIT"
-                                }
-                            ]
-                        }
-                    ],
-                    "events": [
-                        {
-                            "consistency": "ODT",
-                            "priority": 0,
-                            "time_cycle": 10,
-                            "time_unit": "TIMESTAMP_UNIT_1MS",
-                            "triggered_daq_list_ref": [
-                                "DAQ1"
-                            ]
-                        }
-                    ],
-                    "apis": {
-                        "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
-                        "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},
-                        "xcp_get_seed_api_enable": {"enabled": xcp_get_seed_api_enable, "protected": False},
-                        "xcp_unlock_api_enable": {"enabled": xcp_unlock_api_enable, "protected": False},
-                        "xcp_set_mta_api_enable": {"enabled": xcp_set_mta_api_enable, "protected": False},
-                        "xcp_upload_api_enable": {"enabled": xcp_upload_api_enable, "protected": False},
-                        "xcp_short_upload_api_enable": {"enabled": xcp_short_upload_api_enable, "protected": False},
-                        "xcp_build_checksum_api_enable": {"enabled": xcp_build_checksum_api_enable, "protected": False},
-                        "xcp_download_api_enable": {"enabled": xcp_download_api_enable, "protected": False},
-                        "xcp_download_max_api_enable": {"enabled": xcp_download_max_api_enable, "protected": False},
-                        "xcp_short_download_api_enable": {"enabled": xcp_short_download_api_enable, "protected": False},
-                        "xcp_set_cal_page_api_enable": {"enabled": xcp_set_cal_page_api_enable, "protected": False},
-                        "xcp_get_cal_page_api_enable": {"enabled": xcp_get_cal_page_api_enable, "protected": False},
-                        "xcp_clear_daq_list_api_enable": {"enabled": xcp_clear_daq_list_api_enable, "protected": False},
-                        "xcp_set_daq_ptr_api_enable": {"enabled": xcp_set_daq_ptr_api_enable, "protected": False},
-                        "xcp_write_daq_api_enable": {"enabled": xcp_write_daq_api_enable, "protected": False},
-                        "xcp_set_daq_list_mode_api_enable": {"enabled": xcp_set_daq_list_mode_api_enable, "protected": False},
-                        "xcp_get_daq_list_mode_api_enable": {"enabled": xcp_get_daq_list_mode_api_enable, "protected": False},
-                        "xcp_start_stop_daq_list_api_enable": {"enabled": xcp_start_stop_daq_list_api_enable, "protected": False},
-                        "xcp_start_stop_synch_api_enable": {"enabled": xcp_start_stop_synch_api_enable, "protected": False},
-                        "xcp_get_daq_clock_api_enable": {"enabled": xcp_get_daq_clock_api_enable, "protected": False},
-                        "xcp_read_daq_api_enable": {"enabled": xcp_read_daq_api_enable, "protected": False},
-                        "xcp_get_daq_processor_info_api_enable": {"enabled": xcp_get_daq_processor_info_api_enable, "protected": False},
-                        "xcp_get_daq_resolution_info_api_enable": {"enabled": xcp_get_daq_resolution_info_api_enable, "protected": False},
-                        "xcp_get_daq_list_info_api_enable": {"enabled": xcp_get_daq_list_info_api_enable, "protected": False},
-                        "xcp_get_daq_event_info_api_enable": {"enabled": xcp_get_daq_event_info_api_enable, "protected": False},
-                        "xcp_free_daq_api_enable": {"enabled": xcp_free_daq_api_enable, "protected": False},
-                        "xcp_alloc_daq_api_enable": {"enabled": xcp_alloc_daq_api_enable, "protected": False},
-                        "xcp_alloc_odt_api_enable": {"enabled": xcp_alloc_odt_api_enable, "protected": False},
-                        "xcp_alloc_odt_entry_api_enable": {"enabled": xcp_alloc_odt_entry_api_enable, "protected": False},
-                        "xcp_program_clear_api_enable": {"enabled": xcp_program_clear_api_enable, "protected": False},
-                        "xcp_program_api_enable": {"enabled": xcp_program_api_enable, "protected": False},
-                        "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},
-                        "xcp_get_comm_mode_info_api_enable": {"enabled": xcp_get_comm_mode_info_api_enable, "protected": False},
-                        "resource_protection": {
-                            "calibration_paging": resource_protection_calibration_paging,
-                            "data_acquisition": resource_protection_data_acquisition,
-                            "data_stimulation": resource_protection_data_stimulation,
-                            "programming": resource_protection_programming
-                        }
-                    },
-                    "protocol_layer": {
-                        "byte_order": byte_order,
-                        "address_granularity": address_granularity,
-                        "slave_block_mode": slave_block_mode,
-                        "max_cto": max_cto,
-                        "max_dto": max_dto,
-                        "checksum_type": checksum_type,
-                        "user_defined_checksum_function": user_defined_checksum_function
-                    }
-                }
-            ]
-        })
-        self._channel_rx_pdu_ref = channel_rx_pdu_ref
-        self._channel_tx_pdu_ref = channel_tx_pdu_ref
+        self._channel_rx_pdu = channel_rx_pdu_ref
+        self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
+        super(DefaultConfig, self).__init__(configurations=[
+            {
+                "communication": {
+                    "channel_rx_pdu_ref": "XCP_PDU_ID_CTO_RX",
+                    "channel_tx_pdu_ref": "XCP_PDU_ID_CTO_TX"
+                },
+                "daqs": list(daqs),
+                "events": [
+                    {
+                        "consistency": "ODT",
+                        "priority": 0,
+                        "time_cycle": 10,
+                        "time_unit": "TIMESTAMP_UNIT_1MS",
+                        "triggered_daq_list_ref": [
+                            "DAQ1"
+                        ]
+                    }
+                ],
+                "apis": {
+                    "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
+                    "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},
+                    "xcp_get_seed_api_enable": {"enabled": xcp_get_seed_api_enable, "protected": False},
+                    "xcp_unlock_api_enable": {"enabled": xcp_unlock_api_enable, "protected": False},
+                    "xcp_set_mta_api_enable": {"enabled": xcp_set_mta_api_enable, "protected": False},
+                    "xcp_upload_api_enable": {"enabled": xcp_upload_api_enable, "protected": False},
+                    "xcp_short_upload_api_enable": {"enabled": xcp_short_upload_api_enable, "protected": False},
+                    "xcp_build_checksum_api_enable": {"enabled": xcp_build_checksum_api_enable, "protected": False},
+                    "xcp_download_api_enable": {"enabled": xcp_download_api_enable, "protected": False},
+                    "xcp_download_max_api_enable": {"enabled": xcp_download_max_api_enable, "protected": False},
+                    "xcp_short_download_api_enable": {"enabled": xcp_short_download_api_enable, "protected": False},
+                    "xcp_set_cal_page_api_enable": {"enabled": xcp_set_cal_page_api_enable, "protected": False},
+                    "xcp_get_cal_page_api_enable": {"enabled": xcp_get_cal_page_api_enable, "protected": False},
+                    "xcp_clear_daq_list_api_enable": {"enabled": xcp_clear_daq_list_api_enable, "protected": False},
+                    "xcp_set_daq_ptr_api_enable": {"enabled": xcp_set_daq_ptr_api_enable, "protected": False},
+                    "xcp_write_daq_api_enable": {"enabled": xcp_write_daq_api_enable, "protected": False},
+                    "xcp_set_daq_list_mode_api_enable": {"enabled": xcp_set_daq_list_mode_api_enable,
+                                                         "protected": False},
+                    "xcp_get_daq_list_mode_api_enable": {"enabled": xcp_get_daq_list_mode_api_enable,
+                                                         "protected": False},
+                    "xcp_start_stop_daq_list_api_enable": {"enabled": xcp_start_stop_daq_list_api_enable,
+                                                           "protected": False},
+                    "xcp_start_stop_synch_api_enable": {"enabled": xcp_start_stop_synch_api_enable, "protected": False},
+                    "xcp_get_daq_clock_api_enable": {"enabled": xcp_get_daq_clock_api_enable, "protected": False},
+                    "xcp_read_daq_api_enable": {"enabled": xcp_read_daq_api_enable, "protected": False},
+                    "xcp_get_daq_processor_info_api_enable": {"enabled": xcp_get_daq_processor_info_api_enable,
+                                                              "protected": False},
+                    "xcp_get_daq_resolution_info_api_enable": {"enabled": xcp_get_daq_resolution_info_api_enable,
+                                                               "protected": False},
+                    "xcp_get_daq_list_info_api_enable": {"enabled": xcp_get_daq_list_info_api_enable,
+                                                         "protected": False},
+                    "xcp_get_daq_event_info_api_enable": {"enabled": xcp_get_daq_event_info_api_enable,
+                                                          "protected": False},
+                    "xcp_free_daq_api_enable": {"enabled": xcp_free_daq_api_enable, "protected": False},
+                    "xcp_alloc_daq_api_enable": {"enabled": xcp_alloc_daq_api_enable, "protected": False},
+                    "xcp_alloc_odt_api_enable": {"enabled": xcp_alloc_odt_api_enable, "protected": False},
+                    "xcp_alloc_odt_entry_api_enable": {"enabled": xcp_alloc_odt_entry_api_enable, "protected": False},
+                    "xcp_program_clear_api_enable": {"enabled": xcp_program_clear_api_enable, "protected": False},
+                    "xcp_program_api_enable": {"enabled": xcp_program_api_enable, "protected": False},
+                    "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},
+                    "xcp_get_comm_mode_info_api_enable": {"enabled": xcp_get_comm_mode_info_api_enable,
+                                                          "protected": False},
+                    "resource_protection": {
+                        "calibration_paging": resource_protection_calibration_paging,
+                        "data_acquisition": resource_protection_data_acquisition,
+                        "data_stimulation": resource_protection_data_stimulation,
+                        "programming": resource_protection_programming
+                    }
+                },
+                "protocol_layer": {
+                    "byte_order": byte_order,
+                    "address_granularity": address_granularity,
+                    "slave_block_mode": slave_block_mode,
+                    "max_cto": max_cto,
+                    "max_dto": max_dto,
+                    "checksum_type": checksum_type,
+                    "user_defined_checksum_function": user_defined_checksum_function
+                }
+            }
+        ])
+
+    @property
+    def get_id(self):
+        tmp = self.copy()
+        tmp.update(dict(_channel_rx_pdu=self.channel_rx_pdu,
+                        _channel_tx_pdu=self.channel_tx_pdu,
+                        _default_daq_dto_pdu_mapping=self.default_daq_dto_pdu_mapping))
+        return hashlib.sha224(json.dumps(tmp, sort_keys=True, indent=0).encode('utf-8')).hexdigest()[0:8]
+
+    @property
+    def channel_rx_pdu(self):
+        return self._channel_rx_pdu
+
+    @property
+    def channel_tx_pdu(self):
+        return self._channel_tx_pdu
+
+    @property
+    def default_daq_dto_pdu_mapping(self):
+        return self._default_daq_dto_pdu_mapping
+
+
+if __name__ == '__main__':
+    a = DefaultConfig()
+    print(a.get_id)
