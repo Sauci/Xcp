@@ -412,6 +412,20 @@
                   }
                 ],
                 "default": null
+              },
+              "user_cmd_function": {
+                "OneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "Xcp_UserCmdFunction"
+                    ]
+                  }
+                ],
+                "default": null
               }
             },
             "required": [
@@ -421,7 +435,8 @@
               "max_cto",
               "max_dto",
               "checksum_type",
-              "user_defined_checksum_function"
+              "user_defined_checksum_function",
+              "user_cmd_function"
             ]
           }
         },

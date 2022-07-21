@@ -219,6 +219,9 @@ class XcpTest(object):
         self.xcp_read_slave_memory_u8 = MagicMock()
         self.xcp_read_slave_memory_u16 = MagicMock()
         self.xcp_read_slave_memory_u32 = MagicMock()
+        self.xcp_user_cmd_function = MagicMock()
+        self.config.ffi.def_extern('Xcp_UserCmdFunction')(self.xcp_user_cmd_function)
+        self.xcp_user_cmd_function.return_value = self.define('E_OK')
         self.xcp_user_defined_checksum_function = MagicMock()
         self.config.ffi.def_extern('Xcp_UserDefinedChecksumFunction')(self.xcp_user_defined_checksum_function)
         self.xcp_user_defined_checksum_function.return_value = 0

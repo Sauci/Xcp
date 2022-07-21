@@ -1894,7 +1894,7 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     if (Xcp_Rt.cto_response.pending == TRUE) {
-        Xcp_Rt.cto_response.pdu_info.SduLength = Xcp_Ptr->general->maxCto;
+        // Xcp_Rt.cto_response.pdu_info.SduLength = Xcp_Ptr->general->maxCto;
         Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
         CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Rt.cto_response.pdu_info);
@@ -2220,18 +2220,19 @@ static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
 static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    uint8 result = E_OK;
+
     (void)rxPduId;
 
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = pPduInfo->SduDataPtr[0x01u];
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = pPduInfo->SduDataPtr[0x02u];
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = pPduInfo->SduDataPtr[0x03u];
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = pPduInfo->SduDataPtr[0x04u];
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = pPduInfo->SduDataPtr[0x05u];
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = pPduInfo->SduDataPtr[0x06u];
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = pPduInfo->SduDataPtr[0x07u];
+    if (Xcp_Ptr->general->userCmdFunction != NULL_PTR) {
+        result = Xcp_Ptr->general->userCmdFunction(pPduInfo, &Xcp_Rt.cto_response.pdu_info);
+    }
+    else
+    {
+        result = XCP_E_PARAM_POINTER;
+    }
 
-    return E_OK;
+    return result;
 }
 
 static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
@@ -2431,7 +2432,7 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
             case XCP_USER_DEFINED:
             {
                 checksum_type = 0xFFu;
-                checksum_function = Xcp_Ptr->general->Xcp_UserDefinedChecksumFunction;
+                checksum_function = Xcp_Ptr->general->userDefinedChecksumFunction;
 
                 break;
             }

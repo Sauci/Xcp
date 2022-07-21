@@ -130,7 +130,8 @@ class DefaultConfig(dict):
                  max_cto=8,
                  max_dto=8,
                  checksum_type='XCP_CRC_32',
-                 user_defined_checksum_function='Xcp_UserDefinedChecksumFunction'):
+                 user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
+                 user_cmd_function='Xcp_UserCmdFunction'):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
@@ -209,7 +210,8 @@ class DefaultConfig(dict):
                     "max_cto": max_cto,
                     "max_dto": max_dto,
                     "checksum_type": checksum_type,
-                    "user_defined_checksum_function": user_defined_checksum_function
+                    "user_defined_checksum_function": user_defined_checksum_function,
+                    "user_cmd_function": user_cmd_function
                 }
             }
         ])
