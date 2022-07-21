@@ -701,6 +701,14 @@ static void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrd
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+static void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode);
 
 #define Xcp_STOP_SEC_CODE_FAST
@@ -2226,6 +2234,8 @@ static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo
 
     if (Xcp_Ptr->general->userCmdFunction != NULL_PTR) {
         result = Xcp_Ptr->general->userCmdFunction(pPduInfo, &Xcp_Rt.cto_response.pdu_info);
+
+        Xcp_FinalizeResPacket(Xcp_Rt.cto_response.pdu_info.SduLength, &Xcp_Rt.cto_response.pdu_info);
     }
     else
     {
@@ -2271,6 +2281,8 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
                     Xcp_CopyFromU32WithOrder((uint32)Xcp_Ptr->config->communicationChannel->channel_rx_pdu_ref->id,
                                              &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u],
                                              Xcp_Ptr->general->byteOrder);
+
+                    Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
                 } else {
                     Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
                 }
@@ -2300,6 +2312,8 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
                         Xcp_CopyFromU32WithOrder((uint32)Xcp_Ptr->config->daqList[daq_list_idx].dto[0x00u].dto2PduMapping.txPdu.id,
                                                  &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u],
                                                  Xcp_Ptr->general->byteOrder);
+
+                        Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
                     } else {
 
                     }
@@ -2445,16 +2459,17 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
             }
         }
 
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = checksum_type;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-
         if (checksum_function != NULL_PTR) {
-            Xcp_Rt.memory_transfer.address = checksum_function(Xcp_Rt.memory_transfer.address,
-                                                               upper_address,
-                                                               &checksum);
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = checksum_type;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+
+            Xcp_Rt.memory_transfer.address = checksum_function(Xcp_Rt.memory_transfer.address, upper_address, &checksum);
+
             Xcp_CopyFromU32WithOrder(checksum, &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
+
+            Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
         } else {
             Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_PARAM_POINTER);
             Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
@@ -2515,6 +2530,8 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
                         address,
                         pPduInfo->SduDataPtr[0x03u],
                         &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
+
+                        //TODO: Set SduLength correctly here...
 
                     address += (element_size * 0x08u);
                 }
@@ -2598,12 +2615,7 @@ static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
                     Xcp_Rt.key_master.buffer[Xcp_Rt.key_master.current_index++] = pPduInfo->SduDataPtr[key_idx + 0x02u];
                 }
 
-                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+                Xcp_FinalizeResPacket(0x02u, &Xcp_Rt.cto_response.pdu_info);
 
                 if (Xcp_Rt.key_master.total_length == Xcp_Rt.key_master.current_index)
                 {
@@ -2621,6 +2633,8 @@ static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
                             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
                             Xcp_SetProtectionStatus();
                             Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_GetProtectionStatus();
+
+                            Xcp_FinalizeResPacket(0x02u, &Xcp_Rt.cto_response.pdu_info);
                         }
                         else
                         {
@@ -2804,8 +2818,7 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
     }
     else
     {
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_ERROR;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = result;
+        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], result);
     }
 
     return result;
@@ -2834,8 +2847,7 @@ static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
     if (result == E_OK) {
 
     } else {
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_ERROR;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = result;
+        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], result);
     }
 
     return E_OK;
@@ -2853,6 +2865,8 @@ static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
 
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
+
     return E_OK;
 }
 
@@ -2863,12 +2877,8 @@ static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_ERROR;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = XCP_E_ASAM_CMD_SYNCH;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+
+    Xcp_FinalizeResPacket(0x02u, &Xcp_Rt.cto_response.pdu_info);
 
     return E_OK;
 }
@@ -2884,8 +2894,8 @@ static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduIn
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0xABu; /* TODO: implement me... */
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0xCDu; /* TODO: implement me... */
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+
+    Xcp_FinalizeResPacket(0x06u, &Xcp_Rt.cto_response.pdu_info);
 
     return E_OK;
 }
@@ -2896,13 +2906,8 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
     (void)pPduInfo;
 
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+
+    Xcp_FinalizeResPacket(0x01u, &Xcp_Rt.cto_response.pdu_info);
 
     Xcp_Rt.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
 
@@ -3029,6 +3034,8 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
     Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->maxDto, &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = XCP_PROTOCOL_LAYER_VERSION;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = XCP_TRANSPORT_LAYER_VERSION;
+
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
 
     Xcp_Rt.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 
@@ -3249,6 +3256,18 @@ static void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrd
     }
 }
 
+static void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo)
+{
+    uint16_least idx;
+
+    pPduInfo->SduLength = startIndex;
+
+    for (idx = startIndex; idx < Xcp_Ptr->general->maxCto; idx ++)
+    {
+        pPduInfo->SduDataPtr[idx] = 0x00u;
+    }
+}
+
 static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode)
 {
     uint8_least idx;
@@ -3353,6 +3372,7 @@ static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
     /* Fill remaining bytes with zeros. */
     for (idx = 0x01u + (element_size - 0x01u) + (Xcp_Rt.block_transfer.frame_elements * element_size); idx < Xcp_Ptr->general->maxCto; idx ++)
     {
+        // TODO: set SduLength correctly here...
         Xcp_Rt.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
     }
 
