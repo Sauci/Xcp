@@ -2349,7 +2349,7 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
     uint32_least block_size;
     uint8 checksum_type;
     uint32 checksum;
-    uint32 (*checksum_function)(uint32, const uint32, uint32 *);
+    uint32 (*checksum_function)(uint32, const uint32, uint32 *) = NULL_PTR;
 
     uint8_least element_size = 0x00u;
 
@@ -2452,26 +2452,29 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
             }
             default:
             {
-                checksum_type = 0x09u;
-                checksum_function = Xcp_BuildChecksumCRC32;
+                checksum_type = 0x0Au;
 
                 break;
             }
         }
 
-        if (checksum_function != NULL_PTR) {
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = checksum_type;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-            Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+        if (checksum_type != 0x0Au) {
+            if (checksum_function != NULL_PTR) {
+                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = checksum_type;
+                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+                Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
 
-            Xcp_Rt.memory_transfer.address = checksum_function(Xcp_Rt.memory_transfer.address, upper_address, &checksum);
+                Xcp_Rt.memory_transfer.address = checksum_function(Xcp_Rt.memory_transfer.address, upper_address, &checksum);
 
-            Xcp_CopyFromU32WithOrder(checksum, &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
+                Xcp_CopyFromU32WithOrder(checksum, &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
 
-            Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
+                Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
+            } else {
+                Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_PARAM_POINTER);
+                Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+            }
         } else {
-            Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_PARAM_POINTER);
             Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
         }
     }

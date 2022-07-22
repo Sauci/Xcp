@@ -217,3 +217,58 @@ def test_build_checksum_user_defined_returns_expected_checksum_on_a_single_block
 
     # check checksum value.
     handle.xcp_user_defined_checksum_function.assert_called_once_with(mta, mta + element_size * 8 * block_size, ANY)
+
+
+def test_build_checksum_calls_the_det_with_err_param_pointer_if_checksum_function_is_null():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   checksum_type='XCP_USER_DEFINED',
+                                   user_defined_checksum_function=None))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # BUILD_CHECKSUM
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)))
+
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_PARAM_POINTER'))
+
+
+def test_build_checksum_returns_err_out_of_range_if_checksum_function_is_null():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   checksum_type='XCP_USER_DEFINED',
+                                   user_defined_checksum_function=None))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # BUILD_CHECKSUM
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+
+def test_build_checksum_returns_err_out_of_range_if_checksum_type_is_out_of_range():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   checksum_type=0xFF,
+                                   user_defined_checksum_function=None))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # BUILD_CHECKSUM
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
