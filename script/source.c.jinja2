@@ -14,13 +14,13 @@
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
     {%- for daq in configuration.daqs %}
-        {%- for dto in daq.dtos %}
-#ifndef {{dto.pdu_mapping}}
-#warning {{dto.pdu_mapping}} not defined, assigning {{'0x%04Xu' % default_pdu_mapping.value}} as default value. This definition should be passed trough the build system ({{dto.pdu_mapping}}=0xXXXX).
-#define {{dto.pdu_mapping}} ({{'0x%04Xu' % default_pdu_mapping.value}})
-#endif /* #ifndef {{dto.pdu_mapping}} */
+        {%- if daq.pdu_mapping is string %}
+#ifndef {{daq.pdu_mapping}}
+#warning {{daq.pdu_mapping}} not defined, assigning {{'0x%04Xu' % default_pdu_mapping.value}} as default value. This definition should be passed trough the build system ({{daq.pdu_mapping}}=0xXXXX).
+#define {{daq.pdu_mapping}} ({{'0x%04Xu' % default_pdu_mapping.value}})
+#endif /* #ifndef {{daq.pdu_mapping}} */
             {%- set default_pdu_mapping.value = default_pdu_mapping.value + 1 %}
-        {% endfor %}
+        {%- endif %}
     {%- endfor %}
 {%- endfor %}
 {%- for configuration in configurations %}
@@ -103,7 +103,10 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
         {%- for dto in daq.dtos %}
     {
         {{'0x%04Xu' % dto.pid}}, /* XcpDtoPid */
-        {{dto.pdu_mapping}} /* XcpDto2PduMapping */
+        {
+            {{daq.pdu_mapping}}, /* XcpDto2PduMapping */
+            NULL_PTR
+        }
     },
         {%- endfor %}
 };
@@ -156,6 +159,7 @@ static const Xcp_CommunicationChannelType Xcp_CommunicationChannelConfig[{{'0x%0
 static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
     &Xcp_CommunicationChannelConfig[{{'0x%02Xu' % loop.index0}}], /* reference to XcpCommunicationChannel */
     &Xcp_DaqListConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDaqList */
+    {{'%04Xu' % configuration.daqs | length}},
     NULL_PTR, /* reference to XcpEventChannel */
     NULL_PTR /* reference to XcpPdu */
 };
@@ -437,7 +441,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* DOWNLOAD_NEXT 0xEF, optional */
         ({% if configuration.apis.xcp_download_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* DOWNLOAD 0xF0 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* USER_CMD 0xF1, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* TRANSPORT_LAYER_CMD 0xF2, optional */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x01u, /* TRANSPORT_LAYER_CMD 0xF2, optional Note: the size depends on sub-command and is checked in the callback itself. */
         ({% if configuration.apis.xcp_build_checksum_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* BUILD_CHECKSUM 0xF3, optional */
         ({% if configuration.apis.xcp_short_upload_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* SHORT_UPLOAD 0xF4, optional */
         ({% if configuration.apis.xcp_upload_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x02u, /* UPLOAD 0xF5, optional */
@@ -454,11 +458,15 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     },
     {{configuration.protocol_layer.byte_order}}, /* byteOrder */
     {{configuration.protocol_layer.address_granularity}}, /* addressGranularity */
+    /* TODO: check this parameter while performing block transfer operation... */
     {% if configuration.protocol_layer.slave_block_mode %}TRUE{% else %}FALSE{% endif %}, /* slaveBlockTransferModeSupported */
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
-    ({% if configuration.apis.resource_protection.programming %}0x01u{% else %}0x00u{% endif %} << 0x04u) /* protectedResource */
+    ({% if configuration.apis.resource_protection.programming %}0x01u{% else %}0x00u{% endif %} << 0x04u), /* protectedResource */
+    {{configuration.protocol_layer.checksum_type}}, /* checksumType */
+    {% if configuration.protocol_layer.user_defined_checksum_function %}&{{configuration.protocol_layer.user_defined_checksum_function}}{% else %}NULL_PTR{% endif %}, /* userDefinedChecksumFunction */
+    {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %} /* userCmdFunction */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

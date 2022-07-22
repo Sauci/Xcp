@@ -108,7 +108,12 @@ class TestSWS00847:
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                        channel_tx_pdu_ref=0x0002,
                                        default_daq_dto_pdu_mapping=0x0003,
-                                       daq_type=daq_type))
+                                       daqs=(dict(name='DAQ1',
+                                                  type=daq_type,
+                                                  max_odt=1,
+                                                  max_odt_entries=1,
+                                                  pdu_mapping='XCP_PDU_ID_TRANSMIT',
+                                                  dtos=[dict(pid=0)]),)))
         handle.lib.Xcp_CanIfRxIndication(pdu_id, handle.get_pdu_info((dummy_byte,)))
         handle.det_report_error.assert_called_once_with(ANY,
                                                         ANY,

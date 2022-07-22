@@ -195,8 +195,8 @@ class XcpTest(object):
                               code_gen.source,
                               code_gen.header,
                               define_macros=tuple(self.compile_definitions) +
-                                            ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu_ref),) +
-                                            ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu_ref),) +
+                                            ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu),) +
+                                            ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
                                             (
                                                 'XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),),
@@ -219,6 +219,12 @@ class XcpTest(object):
         self.xcp_read_slave_memory_u8 = MagicMock()
         self.xcp_read_slave_memory_u16 = MagicMock()
         self.xcp_read_slave_memory_u32 = MagicMock()
+        self.xcp_user_cmd_function = MagicMock()
+        self.config.ffi.def_extern('Xcp_UserCmdFunction')(self.xcp_user_cmd_function)
+        self.xcp_user_cmd_function.return_value = self.define('E_OK')
+        self.xcp_user_defined_checksum_function = MagicMock()
+        self.config.ffi.def_extern('Xcp_UserDefinedChecksumFunction')(self.xcp_user_defined_checksum_function)
+        self.xcp_user_defined_checksum_function.return_value = 0
         for func in self.code.mocked:
             self.ffi.def_extern(func)(getattr(self, convert(func)))
         self.can_if_transmit.return_value = self.define('E_OK')
@@ -227,6 +233,9 @@ class XcpTest(object):
         self.det_report_transient_fault.return_value = self.define('E_OK')
         self.xcp_get_seed.return_value = self.define('E_OK')
         self.xcp_calc_key.return_value = self.define('E_OK')
+        self.xcp_read_slave_memory_u8.return_value = None
+        self.xcp_read_slave_memory_u16.return_value = None
+        self.xcp_read_slave_memory_u32.return_value = None
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:

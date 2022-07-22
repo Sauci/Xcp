@@ -890,3 +890,73 @@ class TestBuildChecksumErrorHandling:
     def test_build_checksum_err_access_locked(self):
         pass
 
+
+class TestTransportLayerCmdErrorHandling:
+    """
+    Command               Error             Pre-Action      Action
+    TRANSPORT_LAYER_CMD   timeout t1        SYNCH           repeat 2 times
+    TRANSPORT_LAYER_CMD   ERR_CMD_BUSY      wait t7         repeat ∞ times
+    TRANSPORT_LAYER_CMD   ERR_PGM_ACTIVE    wait t7         repeat ∞ times
+    TRANSPORT_LAYER_CMD   ERR_CMD_SYNTAX    -               retry other syntax
+    TRANSPORT_LAYER_CMD   ERR_OUT_OF_RANGE  -               retry other parameter
+    """
+
+    def test_transport_layer_cmd_err_cmd_busy(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF2, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_transport_layer_cmd_err_pgm_active(self, mode_bit):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF2, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+    @pytest.mark.parametrize('payload', ((0xF2,),
+                                         (0xF2, 0xFF),
+                                         (0xF2, 0xFF, 0x00),
+                                         (0xF2, 0xFF, 0x00, 0x00),
+                                         (0xF2, 0xFE),
+                                         (0xF2, 0xFE, 0x00),
+                                         (0xF2, 0xFD),
+                                         (0xF2, 0xFD, 0x00),
+                                         (0xF2, 0xFD, 0x00, 0x00),
+                                         (0xF2, 0xFD, 0x00, 0x00, 0x00),
+                                         (0xF2, 0xFD, 0x00, 0x00, 0x00, 0x00),
+                                         (0xF2, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00),))
+    def test_transport_layer_cmd_err_cmd_syntax(self, payload):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(payload))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    @pytest.mark.parametrize('payload', ((0xF2, 0xFC, 0x00, 0x00, 0x00, 0x00),
+                                         (0xF2, 0xFF, 0x59, 0x43, 0x50, 0x00),
+                                         (0xF2, 0xFF, 0x58, 0x44, 0x50, 0x00),
+                                         (0xF2, 0xFF, 0x58, 0x43, 0x51, 0x00),
+                                         (0xF2, 0xFF, 0x58, 0x43, 0x50, 0x02),
+                                         (0xF2, 0xFE, 0xFF, 0xFF, 0x00, 0x00),))
+    def test_transport_layer_cmd_err_out_of_range(self, payload):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(payload))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)

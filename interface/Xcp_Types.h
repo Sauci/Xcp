@@ -239,6 +239,20 @@ typedef enum
     DWORD = 0x02u
 } Xcp_AddressGranularityType;
 
+typedef enum
+{
+    XCP_ADD_11,
+    XCP_ADD_12,
+    XCP_ADD_14,
+    XCP_ADD_22,
+    XCP_ADD_24,
+    XCP_ADD_44,
+    XCP_CRC_16,
+    XCP_CRC_16_CITT,
+    XCP_CRC_32,
+    XCP_USER_DEFINED
+} Xcp_ChecksumType;
+
 typedef struct
 {
     const uint16 id;
@@ -416,6 +430,9 @@ typedef struct
     const Xcp_AddressGranularityType addressGranularity; /* not part of the specification... */
     const boolean slaveBlockModeSupported; /* not part of the specification... */
     const uint8 protectedResource; /* not part of the specification... */
+    const Xcp_ChecksumType checksumType; /* not part of the specification... */
+    uint32 (*const userDefinedChecksumFunction)(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult); /* not part of the specification... */
+    uint8 (*const userCmdFunction)(const PduInfoType *pCtoPduInfo, PduInfoType *pResErrPduInfo); /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**
@@ -425,6 +442,7 @@ typedef struct
 {
     const Xcp_CommunicationChannelType *communicationChannel;
     Xcp_DaqListType *daqList;
+    const uint16 daqListCount; /* not part of the specification... */
     const Xcp_EventChannelType *eventChannel;
     const void *pdu;
 } Xcp_ConfigType;
