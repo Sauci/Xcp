@@ -21,6 +21,7 @@ resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
              pytest.param(8, id='RESOURCE = STIM'),
              pytest.param(16, id='RESOURCE = PGM')]
 seeds = [pytest.param(v, id='seed length = {:03}d'.format(v)) for v in range(0x01, 0x100)]
+trailing_values = [pytest.param(v, id='trailing value = {:02X}h'.format(v)) for v in (0, 255)]
 
 
 def element_size_from_address_granularity(address_granularity):
@@ -131,7 +132,8 @@ class DefaultConfig(dict):
                  max_dto=8,
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
-                 user_cmd_function='Xcp_UserCmdFunction'):
+                 user_cmd_function='Xcp_UserCmdFunction',
+                 trailing_value=0):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
@@ -211,7 +213,8 @@ class DefaultConfig(dict):
                     "max_dto": max_dto,
                     "checksum_type": checksum_type,
                     "user_defined_checksum_function": user_defined_checksum_function,
-                    "user_cmd_function": user_cmd_function
+                    "user_cmd_function": user_cmd_function,
+                    "trailing_value": trailing_value
                 }
             }
         ])

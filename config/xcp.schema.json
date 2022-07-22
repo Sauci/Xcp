@@ -426,6 +426,12 @@
                   }
                 ],
                 "default": null
+              },
+              "trailing_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255,
+                "default": 0
               }
             },
             "required": [
@@ -436,7 +442,8 @@
               "max_dto",
               "checksum_type",
               "user_defined_checksum_function",
-              "user_cmd_function"
+              "user_cmd_function",
+              "trailing_value"
             ]
           }
         },

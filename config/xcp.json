@@ -194,7 +194,8 @@
         "max_dto": 8,
         "checksum_type": "XCP_CRC_16",
         "user_defined_checksum_function": null,
-        "user_cmd_function": null
+        "user_cmd_function": null,
+        "trailing_value": 0
       }
     }
   ]

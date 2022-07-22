@@ -2858,6 +2858,8 @@ static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *
     (void)rxPduId;
     (void)pPduInfo;
 
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
@@ -3264,7 +3266,7 @@ static void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *p
 
     for (idx = startIndex; idx < Xcp_Ptr->general->maxCto; idx ++)
     {
-        pPduInfo->SduDataPtr[idx] = 0x00u;
+        pPduInfo->SduDataPtr[idx] = Xcp_Ptr->general->trailingValue;
     }
 }
 
@@ -3277,7 +3279,7 @@ static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode)
 
     for (idx = 0x02u; idx < Xcp_Ptr->general->maxCto; idx ++)
     {
-        pBuffer[idx] = 0x00u;
+        pBuffer[idx] = Xcp_Ptr->general->trailingValue;
     }
 }
 

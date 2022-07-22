@@ -3,7 +3,6 @@
 import ctypes
 
 import crcmod
-import zlib
 import crcmod.predefined
 
 from .parameter import *
@@ -33,38 +32,38 @@ def checksum_add_u8_into_u32(data: [int], _byte_order) -> int:
     return result
 
 
-def checksum_add_u16_into_u16(data: [int], byte_order) -> int:
+def checksum_add_u16_into_u16(data: [int], _byte_order) -> int:
     result = 0
     for b in data:
         result = ((result & 0xFFFF) + b) & 0xFFFF
     return result
 
 
-def checksum_add_u16_into_u32(data: [int], byte_order) -> int:
+def checksum_add_u16_into_u32(data: [int], _byte_order) -> int:
     result = 0
     for b in data:
         result = ((result & 0xFFFFFFFF) + b) & 0xFFFFFFFF
     return result
 
 
-def checksum_add_u32_into_u32(data: [int], byte_order) -> int:
+def checksum_add_u32_into_u32(data: [int], _byte_order) -> int:
     result = 0
     for b in data:
         result = ((result & 0xFFFFFFFF) + b) & 0xFFFFFFFF
     return result
 
 
-def checksum_crc16(data: [int], byte_order) -> int:
+def checksum_crc16(data: [int], _byte_order) -> int:
     f = crcmod.predefined.mkPredefinedCrcFun('crc-16')
     return f(bytearray(data))
 
 
-def checksum_crc16_citt(data: [int], byte_order) -> int:
+def checksum_crc16_citt(data: [int], _byte_order) -> int:
     f = crcmod.predefined.mkPredefinedCrcFun('crc-ccitt-false')
     return f(bytearray(data))
 
 
-def checksum_crc32(data: [int], byte_order) -> int:
+def checksum_crc32(data: [int], _byte_order) -> int:
     f = crcmod.predefined.mkPredefinedCrcFun('crc-32')
     return f(bytearray(data))
 
@@ -213,9 +212,7 @@ def test_build_checksum_user_defined_returns_expected_checksum_on_a_single_block
     assert raw_data[3] == 0x00
 
     # check checksum.
-    expected_checksum = int.from_bytes(bytearray((1, 2, 3, 4)),
-                                       dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order],
-                                       signed=False)
+    expected_checksum = u32_from_array(bytearray((1, 2, 3, 4)), byte_order)
     assert u32_from_array(bytearray(raw_data[4:8]), byte_order) == expected_checksum
 
     # check checksum value.
