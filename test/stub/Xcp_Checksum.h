@@ -19,12 +19,12 @@ extern "C" {
 
 /**
  * @brief Calculates the checksum on the provided address range.
- * @param [in] lowerAddress Lower address of the data range on which the checksum is calculated
- * @param [in] upperAddress Upper address of the data range on which the checksum is calculated
+ * @param [in] pLowerAddress Pointer to lower address of the data range on which the checksum is calculated
+ * @param [in] pUpperAddress Pointer to upper address of the data range on which the checksum is calculated
  * @param [out] pResult Pointer to the buffer where the calculated checksum will be stored
  * @returns The post-incremented MTA value.
  */
-extern uint32 Xcp_UserDefinedChecksumFunction(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+extern void *Xcp_UserDefinedChecksumFunction(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #ifdef __cplusplus
 }

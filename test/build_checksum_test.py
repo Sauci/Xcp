@@ -98,9 +98,9 @@ def test_build_checksum_returns_expected_checksum_on_a_single_block(ag,
     expected_block = generate_random_block_content(block_size, element_size, mta)
     expected_block_generator = (v for v in expected_block)
 
-    def read_slave_memory(address, _extension, p_buffer):
+    def read_slave_memory(p_address, _extension, p_buffer):
         expected_address, expected_value = next(expected_block_generator)
-        assert address == expected_address
+        assert int(handle.ffi.cast('uint32_t', p_address)) == expected_address
         raw = expected_value.to_bytes(element_size, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order],
                                       signed=False)
         for i, b in enumerate(raw):
@@ -168,11 +168,11 @@ def test_build_checksum_user_defined_returns_expected_checksum_on_a_single_block
 
     element_size = element_size_from_address_granularity(ag)
 
-    def xcp_user_defined_checksum_function(_lower_address, upper_address, p_checksum):
+    def xcp_user_defined_checksum_function(_p_lower_address, p_upper_address, p_checksum):
         p_checksum[0] = int.from_bytes(bytearray((1, 2, 3, 4)),
                                        dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order],
                                        signed=False)
-        return upper_address
+        return p_upper_address
 
     handle.xcp_user_defined_checksum_function.side_effect = xcp_user_defined_checksum_function
 
@@ -216,7 +216,9 @@ def test_build_checksum_user_defined_returns_expected_checksum_on_a_single_block
     assert u32_from_array(bytearray(raw_data[4:8]), byte_order) == expected_checksum
 
     # check checksum value.
-    handle.xcp_user_defined_checksum_function.assert_called_once_with(mta, mta + element_size * 8 * block_size, ANY)
+    handle.xcp_user_defined_checksum_function.assert_called_once_with(handle.ffi.cast('void *', mta),
+                                                                      handle.ffi.cast('void *', mta + element_size * 8 * block_size),
+                                                                      ANY)
 
 
 def test_build_checksum_calls_the_det_with_err_param_pointer_if_checksum_function_is_null():
@@ -257,9 +259,7 @@ def test_build_checksum_returns_err_out_of_range_if_checksum_function_is_null():
 
 
 def test_build_checksum_returns_err_out_of_range_if_checksum_type_is_out_of_range():
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
-                                   checksum_type=0xFF,
-                                   user_defined_checksum_function=None))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, checksum_type=0xFF, user_defined_checksum_function=None))
 
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))

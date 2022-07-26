@@ -17,11 +17,11 @@ extern "C" {
 #include "Std_Types.h"
 #endif /* #ifndef STD_TYPES_H */
 
-extern void Xcp_ReadSlaveMemoryU8(uint32 address, uint8 extension, uint8 *pBuffer);
+extern void Xcp_ReadSlaveMemoryU8(void *address, uint8 extension, uint8 *pBuffer);
 
-extern void Xcp_ReadSlaveMemoryU16(uint32 address, uint8 extension, uint8 *pBuffer);
+extern void Xcp_ReadSlaveMemoryU16(void *address, uint8 extension, uint8 *pBuffer);
 
-extern void Xcp_ReadSlaveMemoryU32(uint32 address, uint8 extension, uint8 *pBuffer);
+extern void Xcp_ReadSlaveMemoryU32(void *address, uint8 extension, uint8 *pBuffer);
 
 #ifdef __cplusplus
 }

@@ -238,7 +238,7 @@ typedef struct {
         uint16 current_index;
     } key_slave;
     struct {
-        uint32 address;
+        void *address;
         uint8 extension;
     } memory_transfer;
     struct {
@@ -597,7 +597,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksum11(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksum11(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -605,7 +605,7 @@ static uint32 Xcp_BuildChecksum11(uint32 lowerAddress, const uint32 upperAddress
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksum12(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksum12(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -613,7 +613,7 @@ static uint32 Xcp_BuildChecksum12(uint32 lowerAddress, const uint32 upperAddress
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksum14(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksum14(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -621,7 +621,7 @@ static uint32 Xcp_BuildChecksum14(uint32 lowerAddress, const uint32 upperAddress
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksum22(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksum22(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -629,7 +629,7 @@ static uint32 Xcp_BuildChecksum22(uint32 lowerAddress, const uint32 upperAddress
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksum24(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksum24(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -637,7 +637,7 @@ static uint32 Xcp_BuildChecksum24(uint32 lowerAddress, const uint32 upperAddress
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksum44(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksum44(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -645,7 +645,7 @@ static uint32 Xcp_BuildChecksum44(uint32 lowerAddress, const uint32 upperAddress
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksumCRC16(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksumCRC16(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -653,7 +653,7 @@ static uint32 Xcp_BuildChecksumCRC16(uint32 lowerAddress, const uint32 upperAddr
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksumCRC16CITT(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksumCRC16CITT(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -661,7 +661,7 @@ static uint32 Xcp_BuildChecksumCRC16CITT(uint32 lowerAddress, const uint32 upper
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint32 Xcp_BuildChecksumCRC32(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult);
+static void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1587,7 +1587,7 @@ const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static void(* const Xcp_ReadSlaveMemoryTable[])(uint32 address, uint8 extension, uint8 *pBuffer) = {
+static void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer) = {
     Xcp_ReadSlaveMemoryU8,
     Xcp_ReadSlaveMemoryU16,
     Xcp_ReadSlaveMemoryU32
@@ -1752,7 +1752,7 @@ Xcp_RtType Xcp_Rt = {
         0x00u
     },
     {
-        0x00000000u,
+        NULL_PTR,
         0x00u
     },
     {
@@ -2345,11 +2345,11 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
 
 static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
-    uint32_least upper_address;
+    void *upper_address;
     uint32_least block_size;
     uint8 checksum_type;
     uint32 checksum;
-    uint32 (*checksum_function)(uint32, const uint32, uint32 *) = NULL_PTR;
+    void * (*checksum_function)(void *, const void *, uint32 *) = NULL_PTR;
 
     uint8_least element_size = 0x00u;
 
@@ -2530,7 +2530,7 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
                 for (idx = 0x00u; idx < pPduInfo->SduDataPtr[0x01u]; idx++)
                 {
                     Xcp_ReadSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](
-                        address,
+                        (void *)address,
                         pPduInfo->SduDataPtr[0x03u],
                         &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
 
@@ -3047,62 +3047,62 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
     return E_OK;
 }
 
-static uint32 Xcp_BuildChecksum11(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
-    uint32 current_address;
+static void *Xcp_BuildChecksum11(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
+    void *p_current_address;
     uint8 crc = 0x00u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
     {
-        Xcp_ReadSlaveMemoryU8(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
         crc += Xcp_Rt.internal_buffer[0x00u];
     }
 
     *pResult = (uint32)crc;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksum12(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
-    uint32 current_address;
+static void *Xcp_BuildChecksum12(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
+    void *p_current_address;
     uint16 crc = 0x0000u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
     {
-        Xcp_ReadSlaveMemoryU8(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
         crc += Xcp_Rt.internal_buffer[0x00u];
     }
 
     *pResult = (uint32)crc;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksum14(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
-    uint32 current_address;
+static void *Xcp_BuildChecksum14(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
+    void *p_current_address;
     uint32 crc = 0x00000000u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
     {
-        Xcp_ReadSlaveMemoryU8(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
         crc += Xcp_Rt.internal_buffer[0x00u];
     }
 
     *pResult = (uint32)crc;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksum22(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
+static void *Xcp_BuildChecksum22(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
     uint16 u16_data;
-    uint32 current_address;
+    void *p_current_address;
     uint16 crc = 0x0000u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x10u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x10u)
     {
-        Xcp_ReadSlaveMemoryU16(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU16(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
         Xcp_CopyToU16WithOrder(&Xcp_Rt.internal_buffer[0x00u], &u16_data, Xcp_Ptr->general->byteOrder);
 
@@ -3111,17 +3111,17 @@ static uint32 Xcp_BuildChecksum22(uint32 lowerAddress, const uint32 upperAddress
 
     *pResult = (uint32)crc;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksum24(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
+static void *Xcp_BuildChecksum24(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
     uint16 u16_data;
-    uint32 current_address;
+    void *p_current_address;
     uint32 crc = 0x00000000u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x10u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x10u)
     {
-        Xcp_ReadSlaveMemoryU16(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU16(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
         Xcp_CopyToU16WithOrder(&Xcp_Rt.internal_buffer[0x00u], &u16_data, Xcp_Ptr->general->byteOrder);
 
@@ -3130,17 +3130,17 @@ static uint32 Xcp_BuildChecksum24(uint32 lowerAddress, const uint32 upperAddress
 
     *pResult = crc;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksum44(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
+static void *Xcp_BuildChecksum44(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
     uint32 u32_data;
-    uint32 current_address;
+    void *p_current_address;
     uint32 crc = 0x00000000u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x20u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x20u)
     {
-        Xcp_ReadSlaveMemoryU32(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU32(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
         Xcp_CopyToU32WithOrder(&Xcp_Rt.internal_buffer[0x00u], &u32_data, Xcp_Ptr->general->byteOrder);
 
@@ -3149,16 +3149,16 @@ static uint32 Xcp_BuildChecksum44(uint32 lowerAddress, const uint32 upperAddress
 
     *pResult = crc;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksumCRC16(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
-    uint32 current_address;
+static void *Xcp_BuildChecksumCRC16(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
+    void *p_current_address;
     uint16 remainder = 0x0000u;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
     {
-        Xcp_ReadSlaveMemoryU8(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
         remainder = (remainder >> 0x08u) ^ Xcp_CRC16Table[(remainder ^ Xcp_Rt.internal_buffer[0x00u]) & 0xFFu];
     }
 
@@ -3166,16 +3166,16 @@ static uint32 Xcp_BuildChecksumCRC16(uint32 lowerAddress, const uint32 upperAddr
 
     *pResult = remainder;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksumCRC16CITT(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
-    uint32 current_address;
+static void *Xcp_BuildChecksumCRC16CITT(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
+    void *p_current_address;
     uint16 remainder = 0xFFFFu;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
     {
-        Xcp_ReadSlaveMemoryU8(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
         remainder = (remainder << 0x08u) ^ Xcp_CRC16CITTTable[(remainder >> 0x08u) ^ Xcp_Rt.internal_buffer[0x00u]];
     }
 
@@ -3183,16 +3183,16 @@ static uint32 Xcp_BuildChecksumCRC16CITT(uint32 lowerAddress, const uint32 upper
 
     *pResult = remainder;
 
-    return current_address;
+    return p_current_address;
 }
 
-static uint32 Xcp_BuildChecksumCRC32(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult) {
-    uint32 current_address;
+static void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddress, uint32 *pResult) {
+    void *p_current_address;
     uint32 remainder = 0xFFFFFFFFu;
 
-    for (current_address = lowerAddress; current_address < upperAddress; current_address+= 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
     {
-        Xcp_ReadSlaveMemoryU8(current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
+        Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
         remainder = (remainder >> 0x08u) ^ Xcp_CRC32Table[(remainder ^ Xcp_Rt.internal_buffer[0x00u]) & 0xFFu];
     }
 
@@ -3200,7 +3200,7 @@ static uint32 Xcp_BuildChecksumCRC32(uint32 lowerAddress, const uint32 upperAddr
 
     *pResult = remainder;
 
-    return current_address;
+    return p_current_address;
 }
 
 static void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrderType endianness)

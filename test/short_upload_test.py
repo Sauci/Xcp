@@ -40,14 +40,14 @@ def test_short_upload_uploads_elements_according_to_provided_mta_with_address_gr
     actual_block = list()
     block_slices = get_block_slices_for_max_cto(expected_block, element_size, max_cto=max_cto)
 
-    def read_slave_memory(address, _extension, p_buffer):
+    def read_slave_memory(p_address, _extension, p_buffer):
         expected_address, expected_value = next(expected_block_generator)
         expected_value_buffer = expected_value.to_bytes(element_size,
                                                         dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order],
                                                         signed=False)
         for i, b in enumerate(expected_value_buffer):
             p_buffer[i] = int(b)
-        actual_block.append((int(address), expected_value))
+        actual_block.append((int(handle.ffi.cast('uint32_t', p_address)), expected_value))
 
     handle.xcp_read_slave_memory_u8.side_effect = read_slave_memory
     handle.xcp_read_slave_memory_u16.side_effect = read_slave_memory
