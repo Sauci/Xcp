@@ -717,6 +717,14 @@ static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+static uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 static boolean Xcp_BlockTransferIsActive();
 
 #define Xcp_STOP_SEC_CODE_FAST
@@ -1804,7 +1812,7 @@ Xcp_RtType Xcp_Rt = {
 
 void Xcp_Init(const Xcp_Type *pConfig)
 {
-    uint8 address_granularity;
+    uint8 element_size;
 
     if (pConfig != NULL_PTR)
     {
@@ -1814,18 +1822,10 @@ void Xcp_Init(const Xcp_Type *pConfig)
          * The following relations must always be fulfilled
          *  MAX_CTO mod AG = 0
          *  MAX_DTO mod AG = 0 */
-        if (Xcp_Ptr->general->addressGranularity == BYTE) {
-            address_granularity = 0x01u;
-        } else if (Xcp_Ptr->general->addressGranularity == WORD) {
-            address_granularity = 0x02u;
-        } else if (Xcp_Ptr->general->addressGranularity == DWORD) {
-            address_granularity = 0x04u;
-        } else {
-            address_granularity = 0x00u;
-        }
+        element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
-        if ((address_granularity != 0x00u) &&
-            ((Xcp_Ptr->general->maxCto % address_granularity) == 0x00u) && ((Xcp_Ptr->general->maxDto % address_granularity) == 0x00u))
+        if ((element_size != 0x00u) &&
+            ((Xcp_Ptr->general->maxCto % element_size) == 0x00u) && ((Xcp_Ptr->general->maxDto % element_size) == 0x00u))
         {
             Xcp_Rt.cto_response.pdu_info.SduLength = 0x00u;
             Xcp_Rt.cto_response.pdu_info.SduDataPtr = &Xcp_Rt.cto_response._packet[0x00u];
@@ -2349,33 +2349,17 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
     uint32_least block_size;
     uint8 checksum_type;
     uint32 checksum;
+    uint8 element_size;
     void * (*checksum_function)(void *, const void *, uint32 *) = NULL_PTR;
 
-    uint8_least element_size = 0x00u;
-
     (void)rxPduId;
-
-    if (Xcp_Ptr->general->addressGranularity == BYTE)
-    {
-        element_size = 0x01u;
-    }
-    else if (Xcp_Ptr->general->addressGranularity == WORD)
-    {
-        element_size = 0x02u;
-    }
-    else if (Xcp_Ptr->general->addressGranularity == DWORD)
-    {
-        element_size = 0x04u;
-    }
-    else
-    {
-        /* MISRA C, do nothing... */
-    }
 
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &block_size, Xcp_Ptr->general->byteOrder);
 
     if (block_size > 0x00u)
     {
+        element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+
         upper_address = Xcp_Rt.memory_transfer.address + (element_size * block_size);
 
         switch (Xcp_Ptr->general->checksumType)
@@ -2497,22 +2481,7 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
     if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
     {
 
-        if (Xcp_Ptr->general->addressGranularity == BYTE)
-        {
-            element_size = 0x01u;
-        }
-        else if (Xcp_Ptr->general->addressGranularity == WORD)
-        {
-            element_size = 0x02u;
-        }
-        else if (Xcp_Ptr->general->addressGranularity == DWORD)
-        {
-            element_size = 0x04u;
-        }
-        else
-        {
-            /* Do nothing. If we fall here, an invalid configuration has been provided to the Xcp_Init function... */
-        }
+        element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
         if (element_size != 0x00u)
         {
@@ -2557,12 +2526,21 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     (void)rxPduId;
 
-    /* TODO: Check if the block mode is supported in the configuration. If not, XCP_E_ASAM_CMD_UNKNOWN should probably be returned... */
+    uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
-    if (Xcp_BlockTransferInitialize(pPduInfo->SduDataPtr[0x01u]) == E_OK)
+    if (((Xcp_Ptr->general->slaveBlockModeSupported == FALSE) &&
+         ((pPduInfo->SduDataPtr[0x01u] * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u - (element_size - 0x01u)))) ||
+        (Xcp_Ptr->general->slaveBlockModeSupported == TRUE))
     {
-        /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
-        (void)Xcp_BlockTransferPrepareNextFrame();
+        if (Xcp_BlockTransferInitialize(pPduInfo->SduDataPtr[0x01u]) == E_OK)
+        {
+            /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
+            (void)Xcp_BlockTransferPrepareNextFrame();
+        }
+        else
+        {
+            Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+        }
     }
     else
     {
@@ -3308,6 +3286,29 @@ static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode)
     }
 }
 
+static uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag) {
+    uint8 result = 0x00u;
+
+    if (ag == BYTE)
+    {
+        result = 0x01u;
+    }
+    else if (ag == WORD)
+    {
+        result = 0x02u;
+    }
+    else if (ag == DWORD)
+    {
+        result = 0x04u;
+    }
+    else
+    {
+        /* Do nothing. If we fall here, an invalid configuration has been provided to the Xcp_Init function... */
+    }
+
+    return result;
+}
+
 static boolean Xcp_BlockTransferIsActive()
 {
     boolean result;
@@ -3351,24 +3352,7 @@ static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
     Std_ReturnType result = E_OK;
 
     uint8_least idx;
-    uint8_least element_size = 0x01u;
-
-    if (Xcp_Ptr->general->addressGranularity == BYTE)
-    {
-        element_size = 0x01u;
-    }
-    else if (Xcp_Ptr->general->addressGranularity == WORD)
-    {
-        element_size = 0x02u;
-    }
-    else if (Xcp_Ptr->general->addressGranularity == DWORD)
-    {
-        element_size = 0x04u;
-    }
-    else
-    {
-        result = E_NOT_OK; /* TODO: if we fall here, an invalid configuration has been provided to the Xcp_Init function... */
-    }
+    uint8_least element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
