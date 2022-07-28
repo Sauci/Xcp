@@ -2376,7 +2376,7 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
 
     if (block_size > 0x00u)
     {
-        upper_address = Xcp_Rt.memory_transfer.address + (element_size * block_size * 0x08u);
+        upper_address = Xcp_Rt.memory_transfer.address + (element_size * block_size);
 
         switch (Xcp_Ptr->general->checksumType)
         {
@@ -2536,7 +2536,7 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
 
                         //TODO: Set SduLength correctly here...
 
-                    address += (element_size * 0x08u);
+                    address += element_size;
                 }
             }
             else
@@ -2561,7 +2561,7 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
     if (Xcp_BlockTransferInitialize(pPduInfo->SduDataPtr[0x01u]) == E_OK)
     {
-        /* It is not necessary to check the return value, as we have at least one element to tranfer (checked above). */
+        /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
         (void)Xcp_BlockTransferPrepareNextFrame();
     }
     else
@@ -2831,29 +2831,39 @@ static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     Std_ReturnType result = E_OK;
 
+    uint32 identification_length;
+
     (void)rxPduId;
-    (void)pPduInfo;
 
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+    const uint8 identification_type = pPduInfo->SduDataPtr[0x01u];
+    const char *identification = Xcp_Ptr->general->identification;
 
-    if ((pPduInfo->SduDataPtr[0x01u] <= 0x04u) || (pPduInfo->SduDataPtr[0x01u] >= 0x80u)) {
-
-    } else {
-        result = XCP_E_ASAM_OUT_OF_RANGE;
+    for (identification_length = 0x00000000u; identification_length < 0xFFFFFFFFu; identification_length++)
+    {
+        if (identification[identification_length] == 0x00u)
+        {
+            break;
+        }
     }
 
-    if (result == E_OK) {
+    if (identification_type == 0x00u)
+    {
+        Xcp_Rt.memory_transfer.address = (void *)Xcp_Ptr->general->identification;
 
-    } else {
-        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], result);
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+        Xcp_CopyFromU32WithOrder(identification_length, &Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(&Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
     }
 
-    return E_OK;
+    return result;
 }
 
 static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
@@ -3051,7 +3061,7 @@ static void *Xcp_BuildChecksum11(void *pLowerAddress, const void *pUpperAddress,
     void *p_current_address;
     uint8 crc = 0x00u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address ++)
     {
         Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
@@ -3067,7 +3077,7 @@ static void *Xcp_BuildChecksum12(void *pLowerAddress, const void *pUpperAddress,
     void *p_current_address;
     uint16 crc = 0x0000u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address ++)
     {
         Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
@@ -3083,7 +3093,7 @@ static void *Xcp_BuildChecksum14(void *pLowerAddress, const void *pUpperAddress,
     void *p_current_address;
     uint32 crc = 0x00000000u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address ++)
     {
         Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
@@ -3100,7 +3110,7 @@ static void *Xcp_BuildChecksum22(void *pLowerAddress, const void *pUpperAddress,
     void *p_current_address;
     uint16 crc = 0x0000u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x10u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x02u)
     {
         Xcp_ReadSlaveMemoryU16(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
@@ -3119,7 +3129,7 @@ static void *Xcp_BuildChecksum24(void *pLowerAddress, const void *pUpperAddress,
     void *p_current_address;
     uint32 crc = 0x00000000u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x10u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x02u)
     {
         Xcp_ReadSlaveMemoryU16(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
@@ -3138,7 +3148,7 @@ static void *Xcp_BuildChecksum44(void *pLowerAddress, const void *pUpperAddress,
     void *p_current_address;
     uint32 crc = 0x00000000u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x20u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x04u)
     {
         Xcp_ReadSlaveMemoryU32(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
 
@@ -3156,7 +3166,7 @@ static void *Xcp_BuildChecksumCRC16(void *pLowerAddress, const void *pUpperAddre
     void *p_current_address;
     uint16 remainder = 0x0000u;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address ++)
     {
         Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
         remainder = (remainder >> 0x08u) ^ Xcp_CRC16Table[(remainder ^ Xcp_Rt.internal_buffer[0x00u]) & 0xFFu];
@@ -3173,7 +3183,7 @@ static void *Xcp_BuildChecksumCRC16CITT(void *pLowerAddress, const void *pUpperA
     void *p_current_address;
     uint16 remainder = 0xFFFFu;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address ++)
     {
         Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
         remainder = (remainder << 0x08u) ^ Xcp_CRC16CITTTable[(remainder >> 0x08u) ^ Xcp_Rt.internal_buffer[0x00u]];
@@ -3190,7 +3200,7 @@ static void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddre
     void *p_current_address;
     uint32 remainder = 0xFFFFFFFFu;
 
-    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address += 0x08u)
+    for (p_current_address = pLowerAddress; p_current_address < pUpperAddress; p_current_address ++)
     {
         Xcp_ReadSlaveMemoryU8(p_current_address, Xcp_Rt.memory_transfer.extension, &Xcp_Rt.internal_buffer[0x00u]);
         remainder = (remainder >> 0x08u) ^ Xcp_CRC32Table[(remainder ^ Xcp_Rt.internal_buffer[0x00u]) & 0xFFu];
@@ -3371,7 +3381,7 @@ static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
                                                                        Xcp_Rt.memory_transfer.extension,
                                                                        &Xcp_Rt.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
 
-        Xcp_Rt.memory_transfer.address += (element_size * 0x08u);
+        Xcp_Rt.memory_transfer.address += element_size;
     }
 
     /* Fill remaining bytes with zeros. */

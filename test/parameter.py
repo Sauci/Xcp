@@ -29,7 +29,7 @@ def element_size_from_address_granularity(address_granularity):
 
 
 def generate_random_block_content(n, element_size, base_address) -> [(int, int)]:
-    return list((base_address + (i * 8 * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
+    return list((base_address + (i * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
 
 
 def get_block_slices_for_max_cto(block, element_size, max_cto=8):
@@ -133,7 +133,8 @@ class DefaultConfig(dict):
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
-                 trailing_value=0):
+                 trailing_value=0,
+                 identification='/path/to/database.a2l'):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
@@ -214,7 +215,8 @@ class DefaultConfig(dict):
                     "checksum_type": checksum_type,
                     "user_defined_checksum_function": user_defined_checksum_function,
                     "user_cmd_function": user_cmd_function,
-                    "trailing_value": trailing_value
+                    "trailing_value": trailing_value,
+                    'identification': identification
                 }
             }
         ])

@@ -217,7 +217,7 @@ def test_build_checksum_user_defined_returns_expected_checksum_on_a_single_block
 
     # check checksum value.
     handle.xcp_user_defined_checksum_function.assert_called_once_with(handle.ffi.cast('void *', mta),
-                                                                      handle.ffi.cast('void *', mta + element_size * 8 * block_size),
+                                                                      handle.ffi.cast('void *', mta + element_size * block_size),
                                                                       ANY)
 
 

@@ -57,7 +57,8 @@ as the function must be shared between the master and the slave.
 - The `GET_SLAVE_ID` command (CTO = `TRANSPORT_LAYER_CMD`, sub-command = `0xFF`) returns the PDU ID of the 
   **CMD**/**STIM** communication channel, not the CAN identifier directly. This is implemented this way to prevent 
   dependencies on the PDU mapping table in this module.
-
+- The `GET_ID` command only supports the request identification type 0 (*ASCII text*).
+---
 # TODO
 - Protect variables used in both synchronous and asynchronous APIs.
 - Use pre-processor to enable/disable optional APIs.

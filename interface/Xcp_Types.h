@@ -433,7 +433,8 @@ typedef struct
     const Xcp_ChecksumType checksumType; /* not part of the specification... */
     void *(*const userDefinedChecksumFunction)(void *lowerAddress, const void *upperAddress, uint32 *pResult); /* not part of the specification... */
     uint8 (*const userCmdFunction)(const PduInfoType *pCtoPduInfo, PduInfoType *pResErrPduInfo); /* not part of the specification... */
-    const uint8 trailingValue;
+    const uint8 trailingValue; /* not part of the specification... */
+    const char *identification; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

@@ -183,7 +183,7 @@ class TestGetIdErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
-    @pytest.mark.parametrize('requested_identification_type', range(0x05, 0x80))
+    @pytest.mark.parametrize('requested_identification_type', range(0x01, 0xFF))
     def test_get_id_err_out_of_range(self, requested_identification_type):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))

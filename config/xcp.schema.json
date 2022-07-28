@@ -432,6 +432,10 @@
                 "minimum": 0,
                 "maximum": 255,
                 "default": 0
+              },
+              "identification": {
+                "type": "string",
+                "default": "/path/to/database.a2l"
               }
             },
             "required": [
@@ -443,7 +447,8 @@
               "checksum_type",
               "user_defined_checksum_function",
               "user_cmd_function",
-              "trailing_value"
+              "trailing_value",
+              "identification"
             ]
           }
         },
