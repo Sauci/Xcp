@@ -428,7 +428,12 @@ typedef struct
     const uint8 ctoInfo[0x100u]; /* not part of the specification... */
     const Xcp_ByteOrderType byteOrder; /* not part of the specification... */
     const Xcp_AddressGranularityType addressGranularity; /* not part of the specification... */
+    const boolean masterBlockModeSupported; /* not part of the specification... */
     const boolean slaveBlockModeSupported; /* not part of the specification... */
+    const boolean interleavedModeSupported; /* not part of the specification... */
+    const uint8 maxBS; /* not part of the specification... */
+    const uint8 minST; /* not part of the specification... */
+    const uint8 ctoQueueSize; /* not part of the specification... */
     const uint8 protectedResource; /* not part of the specification... */
     const Xcp_ChecksumType checksumType; /* not part of the specification... */
     void *(*const userDefinedChecksumFunction)(void *lowerAddress, const void *upperAddress, uint32 *pResult); /* not part of the specification... */

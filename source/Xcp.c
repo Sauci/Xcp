@@ -2871,14 +2871,26 @@ static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *
     (void)rxPduId;
     (void)pPduInfo;
 
+    uint8 comm_mode_optional = 0x00u;
+
+    if (Xcp_Ptr->general->masterBlockModeSupported == TRUE)
+    {
+        comm_mode_optional |= (0x01u << 0x00u);
+    }
+
+    if (Xcp_Ptr->general->interleavedModeSupported == TRUE)
+    {
+        comm_mode_optional |= (0x01u << 0x01u);
+    }
+
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = comm_mode_optional;
     Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->maxBS;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = Xcp_Ptr->general->minST;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->ctoQueueSize;
+    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = ((XCP_SW_MAJOR_VERSION & 0x0Fu) << 0x04u) | (XCP_SW_MINOR_VERSION & 0x0F);
 
     Xcp_FinalizeResPacket(0x08u, &Xcp_Rt.cto_response.pdu_info);
 
