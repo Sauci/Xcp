@@ -257,14 +257,15 @@ class TestSetRequestErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
+    @pytest.mark.parametrize('mode', (0b10000000, 0b01000000, 0b00100000, 0b00010000, 0b00000010))
     @pytest.mark.parametrize('session_configuration_id', (0x0001, 0x00FF, 0xFF00, 0x0100, 0xFFFF))
-    def test_set_request_err_out_of_range(self, session_configuration_id):
+    def test_set_request_err_out_of_range(self, mode, session_configuration_id):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9,
-                                                                      0x00,
+                                                                      mode,
                                                                       session_configuration_id >> 8,
                                                                       session_configuration_id & 0xFF)))
         handle.lib.Xcp_MainFunction()

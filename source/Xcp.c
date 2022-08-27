@@ -2778,7 +2778,14 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
 
     (void)rxPduId;
 
-    mode = pPduInfo->SduDataPtr[0x01u] & 0b00001101u;
+    if ((pPduInfo->SduDataPtr[0x01u] & 0b11110010u) != 0x00u)
+    {
+        result = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else
+    {
+        mode = pPduInfo->SduDataPtr[0x01u] & 0b00001101u;
+    }
 
     Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &session_configuration_id, Xcp_Ptr->general->byteOrder);
 
@@ -2788,19 +2795,13 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
         result = XCP_E_ASAM_OUT_OF_RANGE;
     }
 
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u;
-    Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x07u] = 0x00u;
-
     if (result == E_OK)
     {
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
-
         Xcp_Rt.session_status |= mode;
+
+        Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Rt.cto_response.pdu_info);
     }
     else
     {
