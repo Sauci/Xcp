@@ -2526,13 +2526,18 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     (void)rxPduId;
 
+    const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
     uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7
+     * If the slave device does not support block transfer mode, all uploaded data are transferred in a single response packet. Therefore, the number
+     * of data elements parameter in the request has to be in the range [1..MAX_CTO-1]. An ERR_OUT_OF_RANGE will be returned, if the number of data
+     * elements is more than MAX_CTO-1.*/
     if (((Xcp_Ptr->general->slaveBlockModeSupported == FALSE) &&
-         ((pPduInfo->SduDataPtr[0x01u] * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u - (element_size - 0x01u)))) ||
+         ((number_of_data_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u - (element_size - 0x01u)))) ||
         (Xcp_Ptr->general->slaveBlockModeSupported == TRUE))
     {
-        if (Xcp_BlockTransferInitialize(pPduInfo->SduDataPtr[0x01u]) == E_OK)
+        if (Xcp_BlockTransferInitialize(number_of_data_elements) == E_OK)
         {
             /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
             (void)Xcp_BlockTransferPrepareNextFrame();

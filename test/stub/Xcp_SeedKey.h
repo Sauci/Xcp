@@ -34,15 +34,15 @@ extern Std_ReturnType Xcp_GetSeed(uint8 *pSeedBuffer,
 
 /**
  * @brief Calculates the key for the provided seed.
-* @param [in] pSeedBuffer Pointer to the buffer containing the input seed
-* @param [in] seedLength Length of the provided input seed
-* @param [out] pKeyBuffer Pointer to the buffer where the calculated key will be stored
+ * @param [in] pSeedBuffer Pointer to the buffer containing the input seed
+ * @param [in] seedLength Length of the provided input seed
+ * @param [out] pKeyBuffer Pointer to the buffer where the calculated key will be stored
  * @param [in] maxKeyLength Maximum length of the key the caller can handle. This value depends of
  *     the size of the buffer in the XCP stack
  * @param [out] pKeyLength Pointer to the key length of the calculated key. This value should never
  *     be greater than the maxKeyLength parameter
- * @retval E_OK : The key has been successfully calculated
- * @retval E_NOT_OK : The key has not been successfully generated, or the key length is greater
+ * @retval E_OK: The key has been successfully calculated
+ * @retval E_NOT_OK: The key has not been successfully generated, or the key length is greater
  *     than the specified maximum key length
  *
  * @link https://support.vector.com/kb?id=kb_article_view&sysparm_article=KB0011313&sys_kb_id=35e40ea41b2614148e9a535c2e4bcb28&spa=1
