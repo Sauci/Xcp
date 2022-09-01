@@ -60,6 +60,7 @@ class TestDisconnectErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_disconnect_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -228,6 +229,7 @@ class TestSetRequestErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_set_request_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -307,6 +309,7 @@ class TestGetSeedErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_get_seed_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -449,6 +452,7 @@ class TestUnlockErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_unlock_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -605,6 +609,7 @@ class TestSetMtaErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_set_mta_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -670,6 +675,7 @@ class TestUploadErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_upload_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -745,6 +751,7 @@ class TestShortUploadErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_short_upload_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -832,6 +839,7 @@ class TestBuildChecksumErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_build_checksum_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -916,6 +924,7 @@ class TestTransportLayerCmdErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_transport_layer_cmd_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -987,6 +996,7 @@ class TestUserCmdErrorHandling:
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
     def test_user_cmd_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))

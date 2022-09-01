@@ -96,6 +96,9 @@ extern "C" {
 
 #define XCP_PID_RESPONSE (0xFFu)
 #define XCP_PID_ERROR (0xFEu)
+#define XCP_PID_EVENT (0xFDu)
+
+#define XCP_EVENT_STORE_CAL (0x03u)
 
 #define XCP_PID_CMD_PROGRAM_VERIFY (0xC8u)
 #define XCP_PID_CMD_PROGRAM_MAX (0xC9u)
@@ -222,6 +225,11 @@ typedef struct {
         PduInfoType pdu_info;
         uint8 _packet[0x100u]; /* MAX_CTO is in range 8 to 255 */
     } cto_response;
+    struct {
+        boolean pending;
+        PduInfoType pdu_info;
+        uint8 _packet[0x100u]; /* MAX_CTO is in range 8 to 255 */
+    } event;
     struct {
         uint8 buffer[0x100u];
         uint16 total_length;
@@ -1742,6 +1750,15 @@ Xcp_RtType Xcp_Rt = {
         {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u}
     },
     {
+        FALSE,
+        {
+            NULL_PTR,
+            NULL_PTR,
+            0x00u
+        },
+        {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u}
+    },
+    {
         {0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u,
          0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u, 0x00u},
         0x00u,
@@ -1831,6 +1848,10 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Rt.cto_response.pdu_info.SduDataPtr = &Xcp_Rt.cto_response._packet[0x00u];
             Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
+            Xcp_Rt.event.pdu_info.SduLength = 0x00u;
+            Xcp_Rt.event.pdu_info.SduDataPtr = &Xcp_Rt.event._packet[0x00u];
+            Xcp_Rt.event.pdu_info.MetaDataPtr = NULL_PTR;
+
             Xcp_Rt.seed.total_length = 0x00u;
             Xcp_Rt.seed.current_index = 0x00u;
 
@@ -1901,11 +1922,38 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 
 void Xcp_MainFunction(void)
 {
+    Std_ReturnType store_calibration_success;
+
     if (Xcp_Rt.cto_response.pending == TRUE) {
         // Xcp_Rt.cto_response.pdu_info.SduLength = Xcp_Ptr->general->maxCto;
         Xcp_Rt.cto_response.pdu_info.MetaDataPtr = NULL_PTR;
 
-        CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Rt.cto_response.pdu_info);
+        // TODO: handle the case where E_NOT_OK is returned here...
+        (void)CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Rt.cto_response.pdu_info);
+    }
+
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
+         * The STORE_CAL_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
+         * by transmitting an EV_STORE_CAL event packet. */
+    if ((Xcp_Rt.session_status & XCP_SESSION_STATUS_MASK_STORE_CAL_REQ) != 0x00u)
+    {
+        if (Xcp_StoreCalibrationDataToNonVolatileMemory(&store_calibration_success) == E_OK)
+        {
+            Xcp_Rt.session_status &= ~XCP_SESSION_STATUS_MASK_STORE_CAL_REQ;
+
+            if (store_calibration_success == E_OK) {
+                // TODO: handle the case where E_NOT_OK is returned here...
+                Xcp_Rt.event.pdu_info.SduDataPtr[0x00u] = XCP_PID_EVENT;
+                Xcp_Rt.event.pdu_info.SduDataPtr[0x01u] = XCP_EVENT_STORE_CAL;
+                Xcp_Rt.event.pdu_info.SduLength = 0x02u;
+                Xcp_Rt.event.pending = TRUE;
+            }
+        }
+    }
+
+    if (Xcp_Rt.event.pending == TRUE) {
+        // TODO: handle the case where E_NOT_OK is returned here...
+        (void)CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Rt.event.pdu_info);
     }
 }
 
@@ -2097,6 +2145,12 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
             else
             {
                 /* We keep the response pending flag active here, and we will try to send it again in the next execution of the Xcp_MainFunction... */
+            }
+        }
+
+        if (Xcp_Rt.event.pending == TRUE) {
+            if (result == E_OK) {
+                Xcp_Rt.event.pending = FALSE;
             }
         }
     } else {
@@ -2784,19 +2838,19 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
     }
     else
     {
-        mode = pPduInfo->SduDataPtr[0x01u] & 0b00001101u;
-    }
-
-    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &session_configuration_id, Xcp_Ptr->general->byteOrder);
-
-    /* TODO: this is most likely not the correct way to handle the session id, this must be implemented... */
-    if (session_configuration_id != 0x00u)
-    {
-        result = XCP_E_ASAM_OUT_OF_RANGE;
+        mode = pPduInfo->SduDataPtr[0x01u];
     }
 
     if (result == E_OK)
     {
+        Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &session_configuration_id, Xcp_Ptr->general->byteOrder);
+
+        /* TODO: this is most likely not the correct way to handle the session id, this must be implemented... */
+        if (session_configuration_id != 0x00u)
+        {
+            result = XCP_E_ASAM_OUT_OF_RANGE;
+        }
+
         Xcp_Rt.session_status |= mode;
 
         Xcp_Rt.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
