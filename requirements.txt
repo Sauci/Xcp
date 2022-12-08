@@ -7,5 +7,5 @@ pycparser==2.21.0
 pytest
 pytest_cases
 pytest-xdist
-git+https://github.com/openmcusw/bsw_code_gen.git@master#egg=bsw_code_gen
+bsw_code_gen~=0.1.6
 MarkupSafe==2.0.1 # required to fix https://github.com/aws/aws-sam-cli/issues/3661

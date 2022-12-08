@@ -463,7 +463,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {% if configuration.protocol_layer.interleaved_mode %}TRUE{% else %}FALSE{% endif %}, /* interleavedModeSupported */
     {{'0x%02Xu' % configuration.protocol_layer.max_bs}}, /* maxBS */
     {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
-    {{'0x%02Xu' % configuration.protocol_layer.queue_size}}, /* ctoQueueSize */
+    {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
