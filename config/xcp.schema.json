@@ -394,8 +394,15 @@
                 "minimum": 0,
                 "maximum": 255
               },
-              "queue_size": {
-                "description": "QUEUE_SIZE indicates the maximum number of consecutive command packets the master can send to the receipt queue of the slave.",
+              "cto_queue_size": {
+                "description": "CTO_QUEUE_SIZE indicates the maximum number of consecutive command packets the master can send to the receipt queue of the slave.",
+                "type": "integer",
+                "default": 16,
+                "minimum": 0,
+                "maximum": 255
+              },
+              "event_queue_size": {
+                "description": "EVENT_QUEUE_SIZE indicates the maximum number of events stacked before dropping them, in case the slave is not able to transmit them to the master.",
                 "type": "integer",
                 "default": 16,
                 "minimum": 0,
@@ -477,7 +484,8 @@
               "interleaved_mode",
               "max_bs",
               "min_st",
-              "queue_size",
+              "cto_queue_size",
+              "event_queue_size",
               "max_cto",
               "max_dto",
               "checksum_type",
