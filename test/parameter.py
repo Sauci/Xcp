@@ -22,7 +22,7 @@ resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
              pytest.param(16, id='RESOURCE = PGM')]
 seeds = [pytest.param(v, id='seed length = {:03}d'.format(v)) for v in range(0x01, 0x100)]
 trailing_values = [pytest.param(v, id='trailing value = {:02X}h'.format(v)) for v in (0, 255)]
-queue_sizes = [pytest.param(v, id='QUEUE_SIZE = {:02}d'.format(v)) for v in (0, 1, 255)]
+cto_queue_sizes = [pytest.param(v, id='CTO_QUEUE_SIZE = {:02}d'.format(v)) for v in (0, 1, 255)]
 max_bss = [pytest.param(v, id='MAX_BS = {:02}d'.format(v)) for v in (0, 1, 255)]
 min_sts = [pytest.param(v, id='MIN_ST = {:02}d'.format(v)) for v in (0, 1, 255)]
 

@@ -5,7 +5,7 @@ from .parameter import *
 from .conftest import XcpTest
 
 
-@pytest.mark.parametrize('queue_size', queue_sizes)
+@pytest.mark.parametrize('cto_queue_size', cto_queue_sizes)
 @pytest.mark.parametrize('max_bs', max_bss)
 @pytest.mark.parametrize('min_st', min_sts)
 @pytest.mark.parametrize('comm_mode_optional, master_block_mode, interleaved_mode', [
@@ -13,7 +13,7 @@ from .conftest import XcpTest
     (0x01, True, False),
     (0x02, False, True),
     (0x03, True, True)])
-def test_get_comm_mode_info_returns_expected_values(queue_size,
+def test_get_comm_mode_info_returns_expected_values(cto_queue_size,
                                                     max_bs,
                                                     min_st,
                                                     comm_mode_optional,
@@ -24,7 +24,7 @@ def test_get_comm_mode_info_returns_expected_values(queue_size,
                                    interleaved_mode=interleaved_mode,
                                    max_bs=max_bs,
                                    min_st=min_st,
-                                   queue_size=queue_size))
+                                   cto_queue_size=cto_queue_size))
 
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -59,8 +59,8 @@ def test_get_comm_mode_info_returns_expected_values(queue_size,
     # check MIN_ST.
     assert raw_data[5] == min_st
 
-    # check QUEUE_SIZE.
-    assert raw_data[6] == queue_size
+    # check CTO_QUEUE_SIZE.
+    assert raw_data[6] == cto_queue_size
 
     # check XCP driver version number.
     assert raw_data[7] == ((handle.define('XCP_SW_MAJOR_VERSION') & 0x0F) << 4) | \
