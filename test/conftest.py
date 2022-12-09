@@ -186,14 +186,14 @@ class XcpTest(object):
         self.can_tp_rx_data = list()
         code_gen = BSWCodeGen(config, self.script_directory)
         with open(os.path.join(self.build_directory, 'Xcp_Cfg.h'), 'w') as fp:
-            fp.write(code_gen.header)
+            fp.write(code_gen.header_cfg)
         with open(os.path.join(self.build_directory, 'Xcp_Cfg.c'), 'w') as fp:
-            fp.write(code_gen.source)
+            fp.write(code_gen.source_cfg)
         with open(self.header, 'r') as fp:
             header = fp.read()
         self.config = MockGen('_cffi_xcp_cfg_{}'.format(config.get_id),
-                              code_gen.source,
-                              code_gen.header,
+                              code_gen.source_cfg,
+                              code_gen.header_cfg,
                               define_macros=tuple(self.compile_definitions) +
                                             ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu),) +
                                             ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
