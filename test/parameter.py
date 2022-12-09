@@ -135,7 +135,8 @@ class DefaultConfig(dict):
                  interleaved_mode=False,
                  max_bs=255,
                  min_st=255,
-                 queue_size=16,
+                 cto_queue_size=16,
+                 event_queue_size=16,
                  max_cto=8,
                  max_dto=8,
                  checksum_type='XCP_CRC_32',
@@ -146,6 +147,7 @@ class DefaultConfig(dict):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
+        self._event_queue_size = event_queue_size
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -222,7 +224,8 @@ class DefaultConfig(dict):
                     "interleaved_mode": interleaved_mode,
                     "max_bs": max_bs,
                     "min_st": min_st,
-                    "queue_size": queue_size,
+                    "cto_queue_size": cto_queue_size,
+                    "event_queue_size": event_queue_size,
                     "max_cto": max_cto,
                     "max_dto": max_dto,
                     "checksum_type": checksum_type,
@@ -253,6 +256,10 @@ class DefaultConfig(dict):
     @property
     def default_daq_dto_pdu_mapping(self):
         return self._default_daq_dto_pdu_mapping
+
+    @property
+    def event_queue_size(self):
+        return self._event_queue_size
 
 
 if __name__ == '__main__':
