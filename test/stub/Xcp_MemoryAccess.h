@@ -43,11 +43,11 @@ extern void Xcp_ReadSlaveMemoryU32(void *address, uint8 extension, uint8 *pBuffe
 
 /**
  * @brief Stores calibration data in slave's non-volatile memory.
- * @param [out] pSuccess Pointer to flag indicating if the store sequence terminated successfully or not
+ * @param [out] pStatusCode Pointer to status indicating the store sequence result value
  * @retval E_OK: The store sequence is finished (no matter if it was successfully terminated or not)
  * @retval E_NOT_OK: The store sequence is not finished
  */
-extern Std_ReturnType Xcp_StoreCalibrationDataToNonVolatileMemory(Std_ReturnType *pSuccess);
+extern Std_ReturnType Xcp_StoreCalibrationDataToNonVolatileMemory(uint8 *pStatusCode);
 
 #ifdef __cplusplus
 }
