@@ -1,0 +1,41 @@
+
+#ifndef XCP_RT_H
+
+#include "Xcp_Rt.h"
+
+#endif /* #ifndef XCP_RT_H */
+{% for configuration in configurations %}
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static Xcp_EventType Xcp_Event00[{{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}];
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static Xcp_EventQueueType Xcp_EventQueue00 = {
+    &Xcp_Event00[0x00u],
+    0x00000000u,
+    0x00000000u
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{%- endfor %}
+
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+Xcp_RtType Xcp_Rt[{{'0x%02Xu' % configurations|length}}] = {
+{%- for configuration in configurations %}
+    {
+        &Xcp_EventQueue{{'%02X' % loop.index0}}
+    },
+{%- endfor %}
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"

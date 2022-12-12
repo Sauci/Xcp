@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import ctypes
+
+# see http://www.sunshine2k.de/coding/javascript/crc/crc_js.html
 
 import crcmod
 import crcmod.predefined

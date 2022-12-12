@@ -464,6 +464,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % configuration.protocol_layer.max_bs}}, /* maxBS */
     {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
     {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
+    {{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}, /* eventQueueSize */
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
@@ -487,6 +488,7 @@ const Xcp_Type Xcp[{{'0x%02Xu' % configurations|length}}] =
     {
         &Xcp_ConfigConfig{{'%02X' % loop.index0}}, /* reference to XcpConfig */
         &Xcp_GeneralConfig{{'%02X' % loop.index0}}, /* reference to XcpGeneral */
+        {{'0x%02Xu' % loop.index0}}, /* xcpRtRef */
     },
 {%- endfor %}
 };

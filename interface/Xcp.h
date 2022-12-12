@@ -84,22 +84,6 @@ extern "C" {
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
-/* global data type definitions (typedef, struct).                                                */
-/*------------------------------------------------------------------------------------------------*/
-
-/**
- * @addtogroup XCP_H_GTDEF
- * @{
- */
-
-typedef enum {
-    XCP_UNINITIALIZED = 0x00u,
-    XCP_INITIALIZED,
-} Xcp_StateType;
-
-/** @} */
-
-/*------------------------------------------------------------------------------------------------*/
 /* global definitions (#define).                                                                  */
 /*------------------------------------------------------------------------------------------------*/
 
@@ -203,6 +187,12 @@ typedef enum {
  */
 #define XCP_E_INVALID_PDUID (0x03u)
 
+/**
+ * @brief The stack tried to stack an event while the queue was full.
+ * @note This error is not part of the specification.
+ */
+#define XCP_E_EVENT_QUEUE_FULL (0x04u)
+
 /** @} */
 
 /**
@@ -216,6 +206,22 @@ typedef enum {
  * @addtogroup XCP_H_E_T
  * @{
  */
+
+/** @} */
+
+/*------------------------------------------------------------------------------------------------*/
+/* global data type definitions (typedef, struct).                                                */
+/*------------------------------------------------------------------------------------------------*/
+
+/**
+ * @addtogroup XCP_H_GTDEF
+ * @{
+ */
+
+typedef enum {
+    XCP_UNINITIALIZED = 0x00u,
+    XCP_INITIALIZED,
+} Xcp_StateType;
 
 /** @} */
 
