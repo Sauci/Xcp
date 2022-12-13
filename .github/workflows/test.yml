@@ -41,7 +41,7 @@ jobs:
         username: ${{secrets.PKG_REGISTRY_USERNAME}}
         password: ${{secrets.PKG_REGISTRY_RW_TOKEN}}
       volumes:
-        - ${{github.workspace}}:/usr/project/cantp
+        - ${{github.workspace}}:/usr/project
     steps:
       - name: Checkout repository
         uses: actions/checkout@v2
