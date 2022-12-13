@@ -9,6 +9,7 @@ from importlib import import_module
 from io import StringIO
 from re import sub
 from unittest.mock import MagicMock
+from glob import glob
 
 from pycparser.c_ast import FuncDecl, NodeVisitor
 from pycparser.c_generator import CGenerator as Generator
@@ -217,6 +218,7 @@ class XcpTest(object):
                                                     config.default_daq_dto_pdu_mapping),),
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               build_dir=self.build_directory)
+        f = glob(os.path.join(self.build_directory, 'libcffi_xcp_rt_{}*.so'.format(config.get_id)))[0]
         self.code = MockGen('_cffi_xcp',
                             '#include "{}"'.format(self.source),
                             header,
@@ -225,7 +227,7 @@ class XcpTest(object):
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',),
-                            link_libraries=('cffi_xcp_rt_{}.cpython-37m-x86_64-linux-gnu'.format(config.get_id),),
+                            link_libraries=(os.path.basename(f).lstrip('lib').rstrip('.so'),),
                             build_dir=self.build_directory)
         self.can_if_transmit = MagicMock()
         self.det_report_error = MagicMock()
