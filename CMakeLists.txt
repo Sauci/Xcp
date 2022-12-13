@@ -57,7 +57,7 @@ if (${XCP_ENABLE_TEST})
 
     add_test(NAME Xcp_UnitTest
         COMMAND ${PYTHON_EXECUTABLE} -W ignore::DeprecationWarning
-        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v
+        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v -x
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h
