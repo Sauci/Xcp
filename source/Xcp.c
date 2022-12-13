@@ -2670,6 +2670,9 @@ static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
     Xcp_Internal.memory_transfer.extension = pPduInfo->SduDataPtr[0x03u];
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], (uint32 *)&Xcp_Internal.memory_transfer.address, Xcp_Ptr->general->byteOrder);
 
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+
     return E_OK;
 }
 
