@@ -3572,12 +3572,7 @@ static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
         Xcp_Internal.memory_transfer.address += element_size;
     }
 
-    /* Fill remaining bytes with zeros. */
-    for (idx = 0x01u + (element_size - 0x01u) + (Xcp_Internal.block_transfer.frame_elements * element_size); idx < Xcp_Ptr->general->maxCto; idx ++)
-    {
-        // TODO: set SduLength correctly here...
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
-    }
+    Xcp_FinalizeResPacket(0x01u + (element_size - 0x01u) + (Xcp_Internal.block_transfer.frame_elements * element_size), &Xcp_Internal.cto_response.pdu_info);
 
     if (Xcp_Internal.block_transfer.frame_elements == 0x00u)
     {
