@@ -891,9 +891,9 @@ class TestBuildChecksumErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
-    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    # @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_build_checksum_err_access_denied(self):
-        pass
+        pytest.fail('intentionally failing test for CI test')
 
     @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
     def test_build_checksum_err_access_locked(self):
