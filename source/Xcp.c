@@ -2241,6 +2241,152 @@ Std_ReturnType Xcp_CanIfTriggerTransmit(PduIdType txPduId, PduInfoType *pPduInfo
 
 static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
+
+    return E_OK;
+}
+
+static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    (void)rxPduId;
+    (void)pPduInfo;
     return E_OK;
 }
 
