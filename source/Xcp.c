@@ -1669,6 +1669,18 @@ static void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer) = {
+    Xcp_WriteSlaveMemoryU8,
+    Xcp_WriteSlaveMemoryU16,
+    Xcp_WriteSlaveMemoryU32
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
 #define Xcp_START_SEC_CONST_16
 #include "Xcp_MemMap.h"
 

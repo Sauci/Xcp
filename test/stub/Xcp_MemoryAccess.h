@@ -42,6 +42,27 @@ extern void Xcp_ReadSlaveMemoryU16(void *address, uint8 extension, uint8 *pBuffe
 extern void Xcp_ReadSlaveMemoryU32(void *address, uint8 extension, uint8 *pBuffer);
 
 /**
+ * @brief Writes a single byte into slave memory.
+ * @param [in] pAddress Pointer to address location where data must be written
+ * @param [in] pBuffer Pointer to the data buffer
+ */
+extern void Xcp_WriteSlaveMemoryU8(void *pAddress, uint8 *pBuffer);
+
+/**
+ * @brief Writes two bytes into slave memory.
+ * @param [in] pAddress Pointer to address location where data must be written
+ * @param [in] pBuffer Pointer to the data buffer
+ */
+extern void Xcp_WriteSlaveMemoryU16(void *address, uint8 *pBuffer);
+
+/**
+ * @brief Writes four bytes into slave memory.
+ * @param [in] pAddress Pointer to address location where data must be written
+ * @param [in] pBuffer Pointer to the data buffer
+ */
+extern void Xcp_WriteSlaveMemoryU32(void *address, uint8 *pBuffer);
+
+/**
  * @brief Stores calibration data in slave's non-volatile memory.
  * @param [out] pStatusCode Pointer to status indicating the store sequence result value
  * @retval E_OK: The store sequence is finished (no matter if it was successfully terminated or not)
