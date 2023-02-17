@@ -774,7 +774,7 @@ static void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode);
+static void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -2125,17 +2125,17 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                         }
                                         else
                                         {
-                                            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_PGM_ACTIVE);
+                                            Xcp_FillErrorPacket(XCP_E_ASAM_PGM_ACTIVE, &Xcp_Internal.cto_response.pdu_info);
                                         }
                                     }
                                     else
                                     {
-                                        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+                                        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
                                     }
                                 }
                                 else
                                 {
-                                    Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_BUSY);
+                                    Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
                                 }
 
                                 Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
@@ -2147,7 +2147,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                         }
                         else
                         {
-                            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_UNKNOWN);
+                            Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
                         }
                     }
 
@@ -2461,10 +2461,10 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
 
                     Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
                 } else {
-                    Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+                    Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
                 }
             } else {
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
             }
         } else if (sub_command == 0xFEu) {
             if (pPduInfo->SduLength >= 0x04u) {
@@ -2495,10 +2495,10 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
 
                     }
                 } else {
-                    Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+                    Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
                 }
             } else {
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
             }
         }else if (sub_command == 0xFDu) {
             if (pPduInfo->SduLength >= 0x08u) {
@@ -2506,15 +2506,15 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
                 // Xcp_CopyToU32WithOrder(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u], &can_identifier, Xcp_Ptr->general->byteOrder);
 
                 // TODO: implement this feature...
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_UNKNOWN);
+                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
             } else {
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
             }
         } else {
-            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
         }
     } else {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_CMD_SYNTAX);
+        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;
@@ -2633,15 +2633,15 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
                 Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
             } else {
                 Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_PARAM_POINTER);
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+                Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
             }
         } else {
-            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
         }
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;
@@ -2687,13 +2687,13 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
             }
             else
             {
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+                Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
             }
         }
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;
@@ -2721,12 +2721,12 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
         }
         else
         {
-            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
         }
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;
@@ -2804,7 +2804,7 @@ static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
                         }
                         else
                         {
-                            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_ACCESS_LOCKED);
+                            Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_LOCKED, &Xcp_Internal.cto_response.pdu_info);
 
                             /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.5
                              * The key is checked after completion of the UNLOCK sequence. If the key is not accepted, ERR_ACCESS_LOCKED will be
@@ -2829,17 +2829,17 @@ static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
             }
             else
             {
-                Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_SEQUENCE);
+                Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
             }
         }
         else
         {
-            Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
         }
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_SEQUENCE);
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;
@@ -2943,7 +2943,7 @@ static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], result);
+        Xcp_FillErrorPacket(result, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;
@@ -2985,7 +2985,7 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], result);
+        Xcp_FillErrorPacket(result, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return result;
@@ -3024,7 +3024,7 @@ static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
     }
     else
     {
-        Xcp_FillErrorPacket(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u], XCP_E_ASAM_OUT_OF_RANGE);
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return result;
@@ -3534,17 +3534,12 @@ static void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *p
     }
 }
 
-static void Xcp_FillErrorPacket(uint8 *pBuffer, const uint8 errorCode)
+static void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo)
 {
-    uint8_least idx;
+    pPduInfo->SduDataPtr[0x00u] = XCP_PID_ERROR;
+    pPduInfo->SduDataPtr[0x01u] = errorCode;
 
-    pBuffer[0x00u] = XCP_PID_ERROR;
-    pBuffer[0x01u] = errorCode;
-
-    for (idx = 0x02u; idx < Xcp_Ptr->general->maxCto; idx ++)
-    {
-        pBuffer[idx] = Xcp_Ptr->general->trailingValue;
-    }
+    Xcp_FinalizeResPacket(0x02u, pPduInfo);
 }
 
 static uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag) {
