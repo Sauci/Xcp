@@ -1,7 +1,7 @@
-| branch                                               | build status                                                                                           | coverage                                                                                                                     |
-|:-----------------------------------------------------|:-------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
-| [master](https://github.com/Sauci/Xcp/tree/master)   | [![Build Status](https://travis-ci.org/Sauci/Xcp.svg?branch=master)](https://travis-ci.org/Sauci/Xcp)  | [![codecov](https://codecov.io/gh/Sauci/Xcp/branch/master/graph/badge.svg)](https://codecov.io/gh/Sauci/Xcp/branch/master)   |
-| [develop](https://github.com/Sauci/Xcp/tree/develop) | [![Build Status](https://travis-ci.org/Sauci/Xcp.svg?branch=develop)](https://travis-ci.org/Sauci/Xcp) | [![codecov](https://codecov.io/gh/Sauci/Xcp/branch/develop/graph/badge.svg)](https://codecov.io/gh/Sauci/Xcp/branch/develop) |
+| branch                                               | build status                                                                                                                                         | coverage                                                                                                                     |
+|:-----------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| [master](https://github.com/Sauci/Xcp/tree/master)   | [![test](https://github.com/Sauci/Xcp/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/Sauci/Xcp/actions/workflows/test.yml)  | [![codecov](https://codecov.io/gh/Sauci/Xcp/branch/master/graph/badge.svg)](https://codecov.io/gh/Sauci/Xcp/branch/master)   |
+| [develop](https://github.com/Sauci/Xcp/tree/develop) | [![test](https://github.com/Sauci/Xcp/actions/workflows/test.yml/badge.svg?branch=develop)](https://github.com/Sauci/Xcp/actions/workflows/test.yml) | [![codecov](https://codecov.io/gh/Sauci/Xcp/branch/develop/graph/badge.svg)](https://codecov.io/gh/Sauci/Xcp/branch/develop) |
 
 # Configure/Compile -time definitions
 The following definitions might be set by the user, depending on the needs.
@@ -57,7 +57,8 @@ as the function must be shared between the master and the slave.
 - The `GET_SLAVE_ID` command (CTO = `TRANSPORT_LAYER_CMD`, sub-command = `0xFF`) returns the PDU ID of the 
   **CMD**/**STIM** communication channel, not the CAN identifier directly. This is implemented this way to prevent 
   dependencies on the PDU mapping table in this module.
-
+- The `GET_ID` command only supports the request identification type 0 (*ASCII text*).
+---
 # TODO
 - Protect variables used in both synchronous and asynchronous APIs.
 - Use pre-processor to enable/disable optional APIs.

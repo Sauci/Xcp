@@ -46,14 +46,18 @@ target_compile_definitions(Xcp
 target_include_directories(Xcp
     PUBLIC interface
     PUBLIC ${AUTOSAR_STD_HEADER_PATH}
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/generated
     PUBLIC $<$<BOOL:${XCP_ENABLE_TEST}>:${CMAKE_CURRENT_SOURCE_DIR}/test/stub>)
+
+target_link_libraries(Xcp
+    PUBLIC Xcp_Rt)
 
 if (${XCP_ENABLE_TEST})
     enable_testing()
 
     add_test(NAME Xcp_UnitTest
         COMMAND ${PYTHON_EXECUTABLE} -W ignore::DeprecationWarning
-        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v
+        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v -x
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h

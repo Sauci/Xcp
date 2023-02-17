@@ -23,8 +23,22 @@ extern "C" {
  */
 
 #ifndef COMSTACK_TYPES_H
+
 #include "ComStack_Types.h"
+
 #endif /* #ifndef COMSTACK_TYPES_H */
+
+/** @} */
+
+/*------------------------------------------------------------------------------------------------*/
+/* global definitions (#define).                                                                  */
+/*------------------------------------------------------------------------------------------------*/
+
+#ifndef XCP_EVENT_USER_DATA_SIZE
+
+#define XCP_EVENT_USER_DATA_SIZE (0x10u)
+
+#endif /* #ifndef XCP_EVENT_USER_DATA_SIZE */
 
 /** @} */
 
@@ -428,11 +442,19 @@ typedef struct
     const uint8 ctoInfo[0x100u]; /* not part of the specification... */
     const Xcp_ByteOrderType byteOrder; /* not part of the specification... */
     const Xcp_AddressGranularityType addressGranularity; /* not part of the specification... */
+    const boolean masterBlockModeSupported; /* not part of the specification... */
     const boolean slaveBlockModeSupported; /* not part of the specification... */
+    const boolean interleavedModeSupported; /* not part of the specification... */
+    const uint8 maxBS; /* not part of the specification... */
+    const uint8 minST; /* not part of the specification... */
+    const uint8 ctoQueueSize; /* not part of the specification... */
+    const uint8 eventQueueSize; /* not part of the specification... */
     const uint8 protectedResource; /* not part of the specification... */
     const Xcp_ChecksumType checksumType; /* not part of the specification... */
-    uint32 (*const userDefinedChecksumFunction)(uint32 lowerAddress, const uint32 upperAddress, uint32 *pResult); /* not part of the specification... */
+    void *(*const userDefinedChecksumFunction)(void *lowerAddress, const void *upperAddress, uint32 *pResult); /* not part of the specification... */
     uint8 (*const userCmdFunction)(const PduInfoType *pCtoPduInfo, PduInfoType *pResErrPduInfo); /* not part of the specification... */
+    const uint8 trailingValue; /* not part of the specification... */
+    const char *identification; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**
@@ -447,10 +469,28 @@ typedef struct
     const void *pdu;
 } Xcp_ConfigType;
 
+typedef struct {
+    uint8 packetID;
+    uint8 eventCode;
+    uint8 userData[XCP_EVENT_USER_DATA_SIZE];
+    uint32 userDataSize;
+} Xcp_EventType;
+
+typedef struct {
+    Xcp_EventType *queue;
+    uint32 read;
+    uint32 write;
+} Xcp_EventQueueType;
+
+typedef struct {
+    Xcp_EventQueueType *eventQueue;
+} Xcp_RtType;
+
 typedef struct
 {
-    Xcp_ConfigType *config;
+    const Xcp_ConfigType *config;
     const Xcp_GeneralType *general;
+    const uint8 xcpRtRef; /* not part of the specification... */
 } Xcp_Type;
 
 /** @} */

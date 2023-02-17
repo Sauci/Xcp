@@ -439,7 +439,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         ({% if configuration.apis.xcp_short_download_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_short_download_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x08u, /* SHORT_DOWNLOAD 0xED, optional */
         ({% if configuration.apis.xcp_download_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_max_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* DOWNLOAD_MAX 0xEE, optional */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* DOWNLOAD_NEXT 0xEF, optional */
-        ({% if configuration.apis.xcp_download_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* DOWNLOAD 0xF0 */
+        ({% if configuration.apis.xcp_download_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* DOWNLOAD 0xF0 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* USER_CMD 0xF1, optional */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x01u, /* TRANSPORT_LAYER_CMD 0xF2, optional Note: the size depends on sub-command and is checked in the callback itself. */
         ({% if configuration.apis.xcp_build_checksum_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* BUILD_CHECKSUM 0xF3, optional */
@@ -458,15 +458,22 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     },
     {{configuration.protocol_layer.byte_order}}, /* byteOrder */
     {{configuration.protocol_layer.address_granularity}}, /* addressGranularity */
-    /* TODO: check this parameter while performing block transfer operation... */
+    {% if configuration.protocol_layer.master_block_mode %}TRUE{% else %}FALSE{% endif %}, /* masterBlockModeSupported */
     {% if configuration.protocol_layer.slave_block_mode %}TRUE{% else %}FALSE{% endif %}, /* slaveBlockTransferModeSupported */
+    {% if configuration.protocol_layer.interleaved_mode %}TRUE{% else %}FALSE{% endif %}, /* interleavedModeSupported */
+    {{'0x%02Xu' % configuration.protocol_layer.max_bs}}, /* maxBS */
+    {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
+    {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
+    {{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}, /* eventQueueSize */
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
     ({% if configuration.apis.resource_protection.programming %}0x01u{% else %}0x00u{% endif %} << 0x04u), /* protectedResource */
     {{configuration.protocol_layer.checksum_type}}, /* checksumType */
     {% if configuration.protocol_layer.user_defined_checksum_function %}&{{configuration.protocol_layer.user_defined_checksum_function}}{% else %}NULL_PTR{% endif %}, /* userDefinedChecksumFunction */
-    {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %} /* userCmdFunction */
+    {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %}, /* userCmdFunction */
+    {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
+    "{{configuration.protocol_layer.identification}}", /* identification */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
@@ -481,6 +488,7 @@ const Xcp_Type Xcp[{{'0x%02Xu' % configurations|length}}] =
     {
         &Xcp_ConfigConfig{{'%02X' % loop.index0}}, /* reference to XcpConfig */
         &Xcp_GeneralConfig{{'%02X' % loop.index0}}, /* reference to XcpGeneral */
+        {{'0x%02Xu' % loop.index0}}, /* xcpRtRef */
     },
 {%- endfor %}
 };

@@ -189,12 +189,20 @@
       "protocol_layer": {
         "byte_order": "LITTLE_ENDIAN",
         "address_granularity": "BYTE",
+        "master_block_mode": true,
         "slave_block_mode": true,
+        "interleaved_mode": false,
+        "max_bs": 255,
+        "min_st": 255,
+        "cto_queue_size": 16,
+        "event_queue_size": 16,
         "max_cto": 8,
         "max_dto": 8,
         "checksum_type": "XCP_CRC_16",
         "user_defined_checksum_function": null,
-        "user_cmd_function": null
+        "user_cmd_function": null,
+        "trailing_value": 0,
+        "identification": "/path/to/database.a2l"
       }
     }
   ]

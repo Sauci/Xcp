@@ -16,6 +16,7 @@ def test_transport_layer_cmd_sub_command_get_slave_can_identifier_returns_expect
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=rx_pdu_ref,
                                    channel_tx_pdu_ref=tx_pdu_ref,
                                    byte_order=byte_order))
+
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(rx_pdu_ref, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()

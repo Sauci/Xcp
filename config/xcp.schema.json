@@ -366,12 +366,50 @@
                 ],
                 "default": "DWORD"
               },
+              "master_block_mode": {
+                "description": "MASTER_BLOCK_MODE flag indicates whether the master block mode is available.",
+                "type": "boolean",
+                "default": true
+              },
               "slave_block_mode": {
                 "type": "boolean",
                 "default": true
               },
+              "interleaved_mode": {
+                "description": "INTERLEAVED_MODE flag indicates whether the interleaved mode is available. If interleaved mode is available, QUEUE_SIZE indicates the maximum number of consecutive command packets the master can send to the receipt queue of the slave.",
+                "type": "boolean",
+                "default": false
+              },
+              "max_bs": {
+                "description": "MAX_BS indicates the maximum allowed block size as the number of consecutive command packets (DOWNLOAD_NEXT or PROGRAM_NEXT) in a block sequence.",
+                "type": "integer",
+                "default": 255,
+                "minimum": 0,
+                "maximum": 255
+              },
+              "min_st": {
+                "description": "MIN_ST indicates the required minimum separation time between the packets of a block transfer from the master device to the slave device in units of 100 microseconds.",
+                "type": "integer",
+                "default": 255,
+                "minimum": 0,
+                "maximum": 255
+              },
+              "cto_queue_size": {
+                "description": "CTO_QUEUE_SIZE indicates the maximum number of consecutive command packets the master can send to the receipt queue of the slave.",
+                "type": "integer",
+                "default": 16,
+                "minimum": 0,
+                "maximum": 255
+              },
+              "event_queue_size": {
+                "description": "EVENT_QUEUE_SIZE indicates the maximum number of events stacked before dropping them, in case the slave is not able to transmit them to the master.",
+                "type": "integer",
+                "default": 16,
+                "minimum": 0,
+                "maximum": 255
+              },
               "max_cto": {
-                "description": "MAX_CTO shows the maximum length of a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper limit to 255",
+                "description": "MAX_CTO shows the maximum length of a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper limit to 255.",
                 "type": "integer",
                 "minimum": 8,
                 "maximum": 256,
@@ -426,17 +464,35 @@
                   }
                 ],
                 "default": null
+              },
+              "trailing_value": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255,
+                "default": 0
+              },
+              "identification": {
+                "type": "string",
+                "default": "/path/to/database.a2l"
               }
             },
             "required": [
               "byte_order",
               "address_granularity",
+              "master_block_mode",
               "slave_block_mode",
+              "interleaved_mode",
+              "max_bs",
+              "min_st",
+              "cto_queue_size",
+              "event_queue_size",
               "max_cto",
               "max_dto",
               "checksum_type",
               "user_defined_checksum_function",
-              "user_cmd_function"
+              "user_cmd_function",
+              "trailing_value",
+              "identification"
             ]
           }
         },

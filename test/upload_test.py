@@ -31,6 +31,7 @@ def test_upload_uploads_elements_according_to_provided_mta_with_address_granular
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    address_granularity=ag,
                                    byte_order=byte_order,
+                                   slave_block_mode=True,
                                    max_cto=max_cto))
 
     element_size = element_size_from_address_granularity(ag)
@@ -39,14 +40,14 @@ def test_upload_uploads_elements_according_to_provided_mta_with_address_granular
     actual_block = list()
     block_slices = get_block_slices_for_max_cto(expected_block, element_size, max_cto=max_cto)
 
-    def read_slave_memory(address, _extension, p_buffer):
+    def read_slave_memory(p_address, _extension, p_buffer):
         expected_address, expected_value = next(expected_block_generator)
         expected_value_buffer = expected_value.to_bytes(element_size,
                                                         dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order],
                                                         signed=False)
         for i, b in enumerate(expected_value_buffer):
             p_buffer[i] = int(b)
-        actual_block.append((int(address), expected_value))
+        actual_block.append((int(handle.ffi.cast('uint32_t', p_address)), expected_value))
 
     handle.xcp_read_slave_memory_u8.side_effect = read_slave_memory
     handle.xcp_read_slave_memory_u16.side_effect = read_slave_memory
@@ -95,3 +96,45 @@ def test_upload_uploads_elements_according_to_provided_mta_with_address_granular
 
     assert handle.can_if_transmit.call_count == len(block_slices) + 2
     assert actual_block == expected_block
+
+
+@pytest.mark.parametrize('ag,max_cto,data_elements', [
+    ('BYTE', 0x08, 0x08),
+    ('WORD', 0x08, 0x04),
+    ('DWORD', 0x08, 0x02)])
+def test_upload_returns_err_out_of_range_if_slave_block_mode_is_disabled_and_payload_exceeds_range(ag,
+                                                                                                   max_cto,
+                                                                                                   data_elements):
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   address_granularity=ag,
+                                   slave_block_mode=False,
+                                   max_cto=max_cto))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # UPLOAD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, data_elements)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+
+def test_upload_returns_err_out_of_range_if_slave_block_mode_is_enabled_and_payload_exceeds_range():
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   slave_block_mode=True))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # UPLOAD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)

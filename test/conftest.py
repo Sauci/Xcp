@@ -9,6 +9,7 @@ from importlib import import_module
 from io import StringIO
 from re import sub
 from unittest.mock import MagicMock
+from glob import glob
 
 from pycparser.c_ast import FuncDecl, NodeVisitor
 from pycparser.c_generator import CGenerator as Generator
@@ -123,6 +124,7 @@ class MockGen(FFI):
                  define_macros=tuple(),
                  compile_flags=tuple(),
                  link_flags=tuple(),
+                 link_libraries=tuple(),
                  build_dir=''):
         super(MockGen, self).__init__()
         self._name = name
@@ -146,6 +148,8 @@ class MockGen(FFI):
                             include_dirs=include_dirs,
                             define_macros=list(tuple(d.split('=')) for d in define_macros),
                             extra_compile_args=list(compile_flags),
+                            libraries=list(link_libraries),
+                            library_dirs=(build_dir,),
                             extra_link_args=list(link_flags))
             lib_path = self.compile(tmpdir=build_dir)
             sys.path.append(os.path.dirname(lib_path))
@@ -186,29 +190,44 @@ class XcpTest(object):
         self.can_tp_rx_data = list()
         code_gen = BSWCodeGen(config, self.script_directory)
         with open(os.path.join(self.build_directory, 'Xcp_Cfg.h'), 'w') as fp:
-            fp.write(code_gen.header)
+            fp.write(code_gen.header_cfg)
         with open(os.path.join(self.build_directory, 'Xcp_Cfg.c'), 'w') as fp:
-            fp.write(code_gen.source)
+            fp.write(code_gen.source_cfg)
+        with open(os.path.join(self.build_directory, 'Xcp_Rt.h'), 'w') as fp:
+            fp.write(code_gen.header_rt)
+        with open(os.path.join(self.build_directory, 'Xcp_Rt.c'), 'w') as fp:
+            fp.write(code_gen.source_rt)
         with open(self.header, 'r') as fp:
             header = fp.read()
+        os.environ['DYLD_LIBRARY_PATH'] = '{}'.format(self.build_directory)
+        os.environ['LD_LIBRARY_PATH'] = '{}'.format(self.build_directory)
+        self.rt = MockGen('libcffi_xcp_rt_{}'.format(config.get_id),
+                          code_gen.source_rt,
+                          code_gen.header_rt,
+                          define_macros=tuple(self.compile_definitions) +
+                                        ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
+                          include_dirs=tuple(self.include_directories + [self.build_directory]),
+                          build_dir=self.build_directory)
         self.config = MockGen('_cffi_xcp_cfg_{}'.format(config.get_id),
-                              code_gen.source,
-                              code_gen.header,
+                              code_gen.source_cfg,
+                              code_gen.header_cfg,
                               define_macros=tuple(self.compile_definitions) +
                                             ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu),) +
                                             ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
-                                            (
-                                                'XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
+                                            ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),),
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               build_dir=self.build_directory)
+        f = glob(os.path.join(self.build_directory, 'libcffi_xcp_rt_{}*.so'.format(config.get_id)))[0]
         self.code = MockGen('_cffi_xcp',
                             '#include "{}"'.format(self.source),
                             header,
-                            define_macros=tuple(self.compile_definitions),
+                            define_macros=tuple(self.compile_definitions) +
+                                          ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
-                            link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
+                            link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',),
+                            link_libraries=(os.path.basename(f).lstrip('lib').rstrip('.so'),),
                             build_dir=self.build_directory)
         self.can_if_transmit = MagicMock()
         self.det_report_error = MagicMock()
@@ -219,6 +238,10 @@ class XcpTest(object):
         self.xcp_read_slave_memory_u8 = MagicMock()
         self.xcp_read_slave_memory_u16 = MagicMock()
         self.xcp_read_slave_memory_u32 = MagicMock()
+        self.xcp_write_slave_memory_u8 = MagicMock()
+        self.xcp_write_slave_memory_u16 = MagicMock()
+        self.xcp_write_slave_memory_u32 = MagicMock()
+        self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
         self.xcp_user_cmd_function = MagicMock()
         self.config.ffi.def_extern('Xcp_UserCmdFunction')(self.xcp_user_cmd_function)
         self.xcp_user_cmd_function.return_value = self.define('E_OK')
@@ -236,6 +259,10 @@ class XcpTest(object):
         self.xcp_read_slave_memory_u8.return_value = None
         self.xcp_read_slave_memory_u16.return_value = None
         self.xcp_read_slave_memory_u32.return_value = None
+        self.xcp_write_slave_memory_u8.return_value = None
+        self.xcp_write_slave_memory_u16.return_value = None
+        self.xcp_write_slave_memory_u32.return_value = None
+        self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:

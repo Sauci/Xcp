@@ -21,6 +21,10 @@ resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
              pytest.param(8, id='RESOURCE = STIM'),
              pytest.param(16, id='RESOURCE = PGM')]
 seeds = [pytest.param(v, id='seed length = {:03}d'.format(v)) for v in range(0x01, 0x100)]
+trailing_values = [pytest.param(v, id='trailing value = {:02X}h'.format(v)) for v in (0, 255)]
+cto_queue_sizes = [pytest.param(v, id='CTO_QUEUE_SIZE = {:02}d'.format(v)) for v in (0, 1, 255)]
+max_bss = [pytest.param(v, id='MAX_BS = {:02}d'.format(v)) for v in (0, 1, 255)]
+min_sts = [pytest.param(v, id='MIN_ST = {:02}d'.format(v)) for v in (0, 1, 255)]
 
 
 def element_size_from_address_granularity(address_granularity):
@@ -28,7 +32,7 @@ def element_size_from_address_granularity(address_granularity):
 
 
 def generate_random_block_content(n, element_size, base_address) -> [(int, int)]:
-    return list((base_address + (i * 8 * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
+    return list((base_address + (i * element_size), random.getrandbits(8 * element_size, )) for i in range(n))
 
 
 def get_block_slices_for_max_cto(block, element_size, max_cto=8):
@@ -126,15 +130,24 @@ class DefaultConfig(dict):
                  resource_protection_programming=False,
                  byte_order='LITTLE_ENDIAN',
                  address_granularity='BYTE',
+                 master_block_mode=True,
                  slave_block_mode=True,
+                 interleaved_mode=False,
+                 max_bs=255,
+                 min_st=255,
+                 cto_queue_size=16,
+                 event_queue_size=16,
                  max_cto=8,
                  max_dto=8,
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
-                 user_cmd_function='Xcp_UserCmdFunction'):
+                 user_cmd_function='Xcp_UserCmdFunction',
+                 trailing_value=0,
+                 identification='/path/to/database.a2l'):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
+        self._event_queue_size = event_queue_size
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -206,12 +219,20 @@ class DefaultConfig(dict):
                 "protocol_layer": {
                     "byte_order": byte_order,
                     "address_granularity": address_granularity,
+                    "master_block_mode": master_block_mode,
                     "slave_block_mode": slave_block_mode,
+                    "interleaved_mode": interleaved_mode,
+                    "max_bs": max_bs,
+                    "min_st": min_st,
+                    "cto_queue_size": cto_queue_size,
+                    "event_queue_size": event_queue_size,
                     "max_cto": max_cto,
                     "max_dto": max_dto,
                     "checksum_type": checksum_type,
                     "user_defined_checksum_function": user_defined_checksum_function,
-                    "user_cmd_function": user_cmd_function
+                    "user_cmd_function": user_cmd_function,
+                    "trailing_value": trailing_value,
+                    'identification': identification
                 }
             }
         ])
@@ -235,6 +256,10 @@ class DefaultConfig(dict):
     @property
     def default_daq_dto_pdu_mapping(self):
         return self._default_daq_dto_pdu_mapping
+
+    @property
+    def event_queue_size(self):
+        return self._event_queue_size
 
 
 if __name__ == '__main__':
