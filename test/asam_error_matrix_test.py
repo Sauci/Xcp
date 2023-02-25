@@ -9,9 +9,9 @@ from .conftest import XcpTest
 
 class TestConnectErrorHandling:
     """
-    Command               Error             Pre-Action Action
-    CONNECT(NORMAL)       timeout t1        -          repeat ∞ times
-    CONNECT(USER_DEFINED) timeout t6        wait t7    repeat ∞ times
+    Command               Error               Pre-Action Action
+    CONNECT(NORMAL)       timeout t1          -          repeat ∞ times
+    CONNECT(USER_DEFINED) timeout t6          wait t7    repeat ∞ times
     """
 
     # @pytest.mark.parametrize('payload', ((0xFF,),))
@@ -31,10 +31,10 @@ class TestConnectErrorHandling:
 
 class TestDisconnectErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    DISCONNECT            timeout t1        SYNCH           repeat 2 times
-    DISCONNECT            ERR_CMD_BUSY      wait t7         repeat ∞ times
-    DISCONNECT            ERR_PGM_ACTIVE    wait t7         repeat ∞ times
+    Command               Error               Pre-Action      Action
+    DISCONNECT            timeout t1          SYNCH           repeat 2 times
+    DISCONNECT            ERR_CMD_BUSY        wait t7         repeat ∞ times
+    DISCONNECT            ERR_PGM_ACTIVE      wait t7         repeat ∞ times
     """
 
     # def test_disconnect_timeout_t1(self):
@@ -74,8 +74,8 @@ class TestDisconnectErrorHandling:
 
 class TestGetStatusErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    GET_STATUS            timeout t1        SYNCH           repeat 2 times
+    Command               Error               Pre-Action      Action
+    GET_STATUS            timeout t1          SYNCH           repeat 2 times
     """
 
     # @pytest.mark.parametrize('payload', ((0xFF,),))
@@ -91,10 +91,10 @@ class TestGetStatusErrorHandling:
 
 class TestSynchErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    SYNCH                 timeout t1        SYNCH           repeat 2 times
-    SYNCH                 ERR_CMD_SYNCH     -               -
-    SYNCH                 ERR_CMD_UNKNOWN   -               restart session
+    Command               Error               Pre-Action      Action
+    SYNCH                 timeout t1          SYNCH           repeat 2 times
+    SYNCH                 ERR_CMD_SYNCH       -               -
+    SYNCH                 ERR_CMD_UNKNOWN     -               restart session
     """
 
     # def test_synch_timeout_t1(self):
@@ -122,10 +122,10 @@ class TestSynchErrorHandling:
 
 class TestGetCommModInfoErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    GET_COMM_MODE_INFO    timeout t1        SYNCH           repeat 2 times
-    GET_COMM_MODE_INFO    ERR_CMD_BUSY      wait t7         repeat ∞ times
-    GET_COMM_MODE_INFO    ERR_CMD_SYNTAX    -               retry other syntax
+    Command               Error               Pre-Action      Action
+    GET_COMM_MODE_INFO    timeout t1          SYNCH           repeat 2 times
+    GET_COMM_MODE_INFO    ERR_CMD_BUSY        wait t7         repeat ∞ times
+    GET_COMM_MODE_INFO    ERR_CMD_SYNTAX      -               retry other syntax
     """
 
     def test_get_comm_mode_info_err_cmd_busy(self):
@@ -146,12 +146,12 @@ class TestGetCommModInfoErrorHandling:
 
 class TestGetIdErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    GET_ID                timeout t1        SYNCH           repeat 2 times
-    GET_ID                ERR_CMD_BUSY      wait t7         repeat ∞ times
-    GET_ID                ERR_CMD_UNKNOWN   -               display error
-    GET_ID                ERR_CMD_SYNTAX    -               retry other syntax
-    GET_ID                ERR_OUT_OF_RANGE  -               retry other parameter
+    Command               Error               Pre-Action      Action
+    GET_ID                timeout t1          SYNCH           repeat 2 times
+    GET_ID                ERR_CMD_BUSY        wait t7         repeat ∞ times
+    GET_ID                ERR_CMD_UNKNOWN     -               display error
+    GET_ID                ERR_CMD_SYNTAX      -               retry other syntax
+    GET_ID                ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
     def test_get_id_err_cmd_busy(self):
@@ -197,13 +197,13 @@ class TestGetIdErrorHandling:
 
 class TestSetRequestErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    SET_REQUEST           timeout t1        SYNCH           repeat 2 times
-    SET_REQUEST           ERR_CMD_BUSY      wait t7         repeat ∞ times
-    SET_REQUEST           ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    SET_REQUEST           ERR_CMD_UNKNOWN   -               display error
-    SET_REQUEST           ERR_CMD_SYNTAX    -               retry other syntax
-    SET_REQUEST           ERR_OUT_OF_RANGE  -               retry other parameter
+    Command               Error               Pre-Action      Action
+    SET_REQUEST           timeout t1          SYNCH           repeat 2 times
+    SET_REQUEST           ERR_CMD_BUSY        wait t7         repeat ∞ times
+    SET_REQUEST           ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    SET_REQUEST           ERR_CMD_UNKNOWN     -               display error
+    SET_REQUEST           ERR_CMD_SYNTAX      -               retry other syntax
+    SET_REQUEST           ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
     # def test_set_request_timeout_t1(self):
@@ -276,14 +276,14 @@ class TestSetRequestErrorHandling:
 
 class TestGetSeedErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    GET_SEED              timeout t1        SYNCH           repeat 2 times
-    GET_SEED              ERR_CMD_BUSY      wait t7         repeat ∞ times
-    GET_SEED              ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    GET_SEED              ERR_CMD_UNKNOWN   -               display error
-    GET_SEED              ERR_CMD_SYNTAX    -               retry other syntax
-    GET_SEED              ERR_OUT_OF_RANGE  -               retry other parameter
-    GET_SEED              ERR_SEQUENCE      GET_SEED        repeat 2 times (not in the matrix)
+    Command               Error               Pre-Action      Action
+    GET_SEED              timeout t1          SYNCH           repeat 2 times
+    GET_SEED              ERR_CMD_BUSY        wait t7         repeat ∞ times
+    GET_SEED              ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    GET_SEED              ERR_CMD_UNKNOWN     -               display error
+    GET_SEED              ERR_CMD_SYNTAX      -               retry other syntax
+    GET_SEED              ERR_OUT_OF_RANGE    -               retry other parameter
+    GET_SEED              ERR_SEQUENCE        GET_SEED        repeat 2 times (not in the matrix)
     """
 
     # def test_set_request_timeout_t1(self):
@@ -418,15 +418,15 @@ class TestGetSeedErrorHandling:
 
 class TestUnlockErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    UNLOCK                timeout t1        SYNCH           repeat 2 times
-    UNLOCK                ERR_CMD_BUSY      wait t7         repeat ∞ times
-    UNLOCK                ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    UNLOCK                ERR_CMD_UNKNOWN   -               display error
-    UNLOCK                ERR_CMD_SYNTAX    -               retry other syntax
-    UNLOCK                ERR_OUT_OF_RANGE  -               retry other parameter
-    UNLOCK                ERR_ACCESS_LOCKED -               restart session
-    UNLOCK                ERR_SEQUENCE      GET_SEED        repeat 2 times
+    Command               Error               Pre-Action      Action
+    UNLOCK                timeout t1          SYNCH           repeat 2 times
+    UNLOCK                ERR_CMD_BUSY        wait t7         repeat ∞ times
+    UNLOCK                ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    UNLOCK                ERR_CMD_UNKNOWN     -               display error
+    UNLOCK                ERR_CMD_SYNTAX      -               retry other syntax
+    UNLOCK                ERR_OUT_OF_RANGE    -               retry other parameter
+    UNLOCK                ERR_ACCESS_LOCKED   -               restart session
+    UNLOCK                ERR_SEQUENCE        GET_SEED        repeat 2 times
     """
 
     # def test_set_request_timeout_t1(self):
@@ -586,13 +586,13 @@ class TestUnlockErrorHandling:
 
 class TestSetMtaErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    SET_MTA               timeout t1        SYNCH           repeat 2 times
-    SET_MTA               ERR_CMD_BUSY      wait t7         repeat ∞ times
-    SET_MTA               ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    SET_MTA               ERR_CMD_UNKNOWN   -               display error
-    SET_MTA               ERR_CMD_SYNTAX    -               retry other syntax
-    SET_MTA               ERR_OUT_OF_RANGE  -               retry other parameter
+    Command               Error               Pre-Action      Action
+    SET_MTA               timeout t1          SYNCH           repeat 2 times
+    SET_MTA               ERR_CMD_BUSY        wait t7         repeat ∞ times
+    SET_MTA               ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    SET_MTA               ERR_CMD_UNKNOWN     -               display error
+    SET_MTA               ERR_CMD_SYNTAX      -               retry other syntax
+    SET_MTA               ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
     def test_set_mta_err_cmd_busy(self):
@@ -652,13 +652,13 @@ class TestSetMtaErrorHandling:
 
 class TestUploadErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    UPLOAD                timeout t1        SYNCH + SET_MTA repeat 2 times
-    UPLOAD                ERR_CMD_BUSY      wait t7         repeat ∞ times
-    UPLOAD                ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    UPLOAD                ERR_CMD_UNKNOWN   -               display error
-    UPLOAD                ERR_CMD_SYNTAX    -               retry other syntax
-    UPLOAD                ERR_OUT_OF_RANGE  -               retry other parameter
+    Command               Error               Pre-Action      Action
+    UPLOAD                timeout t1          SYNCH + SET_MTA repeat 2 times
+    UPLOAD                ERR_CMD_BUSY        wait t7         repeat ∞ times
+    UPLOAD                ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    UPLOAD                ERR_CMD_UNKNOWN     -               display error
+    UPLOAD                ERR_CMD_SYNTAX      -               retry other syntax
+    UPLOAD                ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
     def test_upload_err_cmd_busy(self):
@@ -726,15 +726,15 @@ class TestUploadErrorHandling:
 
 class TestShortUploadErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    SHORT_UPLOAD          timeout t1        SYNCH + SET_MTA repeat 2 times
-    SHORT_UPLOAD          ERR_CMD_BUSY      wait t7         repeat ∞ times
-    SHORT_UPLOAD          ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    SHORT_UPLOAD          ERR_CMD_UNKNOWN   -               display error
-    SHORT_UPLOAD          ERR_CMD_SYNTAX    -               retry other syntax
-    SHORT_UPLOAD          ERR_OUT_OF_RANGE  -               retry other parameter
-    BUILD_CHECKSUM        ERR_ACCESS_DENIED -               display error
-    BUILD_CHECKSUM        ERR_ACCESS_LOCKED unlock slave    repeat 2 times
+    Command               Error               Pre-Action      Action
+    SHORT_UPLOAD          timeout t1          SYNCH + SET_MTA repeat 2 times
+    SHORT_UPLOAD          ERR_CMD_BUSY        wait t7         repeat ∞ times
+    SHORT_UPLOAD          ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    SHORT_UPLOAD          ERR_CMD_UNKNOWN     -               display error
+    SHORT_UPLOAD          ERR_CMD_SYNTAX      -               retry other syntax
+    SHORT_UPLOAD          ERR_OUT_OF_RANGE    -               retry other parameter
+    SHORT_UPLOAD          ERR_ACCESS_DENIED   -               display error
+    SHORT_UPLOAD          ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
     """
 
     def test_short_upload_err_cmd_busy(self):
@@ -814,15 +814,15 @@ class TestShortUploadErrorHandling:
 
 class TestBuildChecksumErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    BUILD_CHECKSUM        timeout t2        SYNCH + SET_MTA repeat 2 times
-    BUILD_CHECKSUM        ERR_CMD_BUSY      wait t7         repeat ∞ times
-    BUILD_CHECKSUM        ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    BUILD_CHECKSUM        ERR_CMD_UNKNOWN   -               display error
-    BUILD_CHECKSUM        ERR_CMD_SYNTAX    -               retry other syntax
-    BUILD_CHECKSUM        ERR_OUT_OF_RANGE  -               retry other parameter
-    BUILD_CHECKSUM        ERR_ACCESS_DENIED -               display error
-    BUILD_CHECKSUM        ERR_ACCESS_LOCKED unlock slave    repeat 2 times
+    Command               Error               Pre-Action      Action
+    BUILD_CHECKSUM        timeout t2          SYNCH + SET_MTA repeat 2 times
+    BUILD_CHECKSUM        ERR_CMD_BUSY        wait t7         repeat ∞ times
+    BUILD_CHECKSUM        ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    BUILD_CHECKSUM        ERR_CMD_UNKNOWN     -               display error
+    BUILD_CHECKSUM        ERR_CMD_SYNTAX      -               retry other syntax
+    BUILD_CHECKSUM        ERR_OUT_OF_RANGE    -               retry other parameter
+    BUILD_CHECKSUM        ERR_ACCESS_DENIED   -               display error
+    BUILD_CHECKSUM        ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
     """
 
     def test_build_checksum_err_cmd_busy(self):
@@ -902,12 +902,12 @@ class TestBuildChecksumErrorHandling:
 
 class TestTransportLayerCmdErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    TRANSPORT_LAYER_CMD   timeout t1        SYNCH           repeat 2 times
-    TRANSPORT_LAYER_CMD   ERR_CMD_BUSY      wait t7         repeat ∞ times
-    TRANSPORT_LAYER_CMD   ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    TRANSPORT_LAYER_CMD   ERR_CMD_SYNTAX    -               retry other syntax
-    TRANSPORT_LAYER_CMD   ERR_OUT_OF_RANGE  -               retry other parameter
+    Command               Error               Pre-Action      Action
+    TRANSPORT_LAYER_CMD   timeout t1          SYNCH           repeat 2 times
+    TRANSPORT_LAYER_CMD   ERR_CMD_BUSY        wait t7         repeat ∞ times
+    TRANSPORT_LAYER_CMD   ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    TRANSPORT_LAYER_CMD   ERR_CMD_SYNTAX      -               retry other syntax
+    TRANSPORT_LAYER_CMD   ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
     def test_transport_layer_cmd_err_cmd_busy(self):
@@ -974,12 +974,12 @@ class TestTransportLayerCmdErrorHandling:
 
 class TestUserCmdErrorHandling:
     """
-    Command               Error             Pre-Action      Action
-    USER_CMD              timeout t1        SYNCH           repeat 2 times
-    USER_CMD              ERR_CMD_BUSY      wait t7         repeat ∞ times
-    USER_CMD              ERR_PGM_ACTIVE    wait t7         repeat ∞ times
-    USER_CMD              ERR_CMD_SYNTAX    -               retry other syntax
-    USER_CMD              ERR_OUT_OF_RANGE  -               retry other parameter
+    Command               Error               Pre-Action      Action
+    USER_CMD              timeout t1          SYNCH           repeat 2 times
+    USER_CMD              ERR_CMD_BUSY        wait t7         repeat ∞ times
+    USER_CMD              ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    USER_CMD              ERR_CMD_SYNTAX      -               retry other syntax
+    USER_CMD              ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
     def test_user_cmd_err_cmd_busy(self):
@@ -1036,3 +1036,78 @@ class TestUserCmdErrorHandling:
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+
+class TestDownloadErrorHandling:
+    """
+    Command               Error               Pre-Action      Action
+    DOWNLOAD              timeout t1          SYNCH + SET_MTA repeat 2 times
+    DOWNLOAD              ERR_CMD_BUSY        wait t7         repeat ∞ times
+    DOWNLOAD              ERR_PGM_ACTIVE      wait t7         repeat ∞ times
+    DOWNLOAD              ERR_OUT_OF_RANGE    -               retry other parameter
+    DOWNLOAD              ERR_ACCESS_DENIED   -               display error
+    DOWNLOAD              ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
+    DOWNLOAD              ERR_WRITE_PROTECTED -               display error
+    DOWNLOAD              ERR_MEMORY_OVERFLOW -               display error
+    """
+
+    def test_download_err_cmd_busy(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_download_err_pgm_active(self, mode_bit):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+    @pytest.mark.parametrize('number_of_elements, ag, max_bs, slave_block_mode', ((0, 'BYTE', 255, True),
+                                                                                  (0, 'WORD', 255, True),
+                                                                                  (0, 'DWORD', 255, True),
+                                                                                  (7, 'BYTE', 1, True),
+                                                                                  (4, 'WORD', 1, True),
+                                                                                  (2, 'DWORD', 1, True),
+                                                                                  (0, 'BYTE', 255, False),
+                                                                                  (0, 'WORD', 255, False),
+                                                                                  (0, 'DWORD', 255, False),
+                                                                                  (7, 'BYTE', 1, False),
+                                                                                  (4, 'WORD', 1, False),
+                                                                                  (2, 'DWORD', 1, False)))
+    def test_download_err_out_of_range(self, number_of_elements, ag, max_bs, slave_block_mode):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_download_err_access_denied(self):
+        pass
+
+    @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
+    def test_download_err_access_locked(self):
+        pass
+
+    def test_download_err_write_protected(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_download_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_download_err_memory_overflow(self, payload):
+        pass

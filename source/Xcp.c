@@ -497,6 +497,15 @@ static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+static uint8 Xcp_DTOCmdStdDownload(PduIdType rxPduId, const PduInfoType *pPduInfo);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
@@ -783,6 +792,14 @@ static void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo);
 #include "Xcp_MemMap.h"
 
 static uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static uint8_least Xcp_GetNumberOfAlignmentBytes(uint8_least alignmentByteIndex, uint8_least elementSize, uint8 maxCto);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1106,7 +1123,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType
     Xcp_DTODaqPacket, /* 0xED */
     Xcp_DTODaqPacket, /* 0xEE */
     Xcp_DTODaqPacket, /* 0xEF */
-    Xcp_DTODaqPacket, /* 0xF0 */
+    Xcp_DTOCmdStdDownload, /* 0xF0 */
     Xcp_DTOCmdStdUserCmd, /* 0xF1, optional */
     Xcp_DTOCmdStdTransportLayerCmd, /* 0xF2, optional */
     Xcp_DTOCmdStdBuildChecksum, /* 0xF3, optional */
@@ -2403,6 +2420,32 @@ static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
+static uint8 Xcp_DTOCmdStdDownload(PduIdType rxPduId, const PduInfoType *pPduInfo)
+{
+    const uint8_least element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
+    const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
+
+    (void)rxPduId;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
+     * If the slave device does not support block transfer mode, all downloaded data are transferred in a single command packet. Therefore, the
+     * number of data elements parameter in the request has to be in the range [1..MAX_CTO-2]. An ERR_OUT_OF_RANGE will be returned, if the number
+     * of data elements is more than MAX_CTO-2. */
+    if (((Xcp_Ptr->general->slaveBlockModeSupported == FALSE) &&
+         ((number_of_data_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x02u))) ||
+        (Xcp_Ptr->general->slaveBlockModeSupported == TRUE))
+    {
+        
+    }
+    else
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     uint8 result = E_OK;
@@ -3563,6 +3606,11 @@ static uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag)
     }
 
     return result;
+}
+
+static uint8_least Xcp_GetNumberOfAlignmentBytes(uint8_least alignmentByteIndex, uint8_least elementSize, uint8 maxCto)
+{
+    return (maxCto - alignmentByteIndex) - (((maxCto - alignmentByteIndex) / elementSize) * elementSize);
 }
 
 static boolean Xcp_BlockTransferIsActive()
