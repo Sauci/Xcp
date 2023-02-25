@@ -456,7 +456,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x01u, /* DISCONNECT 0xFE */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x02u /* CONNECT 0xFF */
     },
-    {{configuration.protocol_layer.byte_order}}, /* byteOrder */
+    XCP_{{configuration.protocol_layer.byte_order}}, /* byteOrder */
     {{configuration.protocol_layer.address_granularity}}, /* addressGranularity */
     {% if configuration.protocol_layer.master_block_mode %}TRUE{% else %}FALSE{% endif %}, /* masterBlockModeSupported */
     {% if configuration.protocol_layer.slave_block_mode %}TRUE{% else %}FALSE{% endif %}, /* slaveBlockTransferModeSupported */

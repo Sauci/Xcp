@@ -3193,7 +3193,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
      * BYTE_ORDER indicates the byte order used for transferring multi-byte parameters in an
      * XCP Packet. BYTE_ORDER = 0 means Intel format, BYTE_ORDER = 1 means Motorola format.
      * Motorola format means MSB on lower address/position. */
-    if (Xcp_Ptr->general->byteOrder == BIG_ENDIAN) {
+    if (Xcp_Ptr->general->byteOrder == XCP_BIG_ENDIAN) {
         comm_mode_basic |= 0x01u;
     }
 
@@ -3391,7 +3391,7 @@ static void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddre
 
 static void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrderType endianness)
 {
-    if (endianness == LITTLE_ENDIAN) {
+    if (endianness == XCP_LITTLE_ENDIAN) {
         pDest[0x00u] = (uint8)(src & 0xFFu);
         pDest[0x01u] = (uint8)((src >> 0x08u) & 0xFFu);
     } else {
@@ -3402,7 +3402,7 @@ static void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrd
 
 static void Xcp_CopyFromU32WithOrder(const uint32 src, uint8 *pDest, Xcp_ByteOrderType endianness)
 {
-    if (endianness == LITTLE_ENDIAN) {
+    if (endianness == XCP_LITTLE_ENDIAN) {
         pDest[0x00u] = (uint8)(src & 0xFFu);
         pDest[0x01u] = (uint8)((src >> 0x08u) & 0xFFu);
         pDest[0x02u] = (uint8)((src >> 0x10u) & 0xFFu);
@@ -3417,7 +3417,7 @@ static void Xcp_CopyFromU32WithOrder(const uint32 src, uint8 *pDest, Xcp_ByteOrd
 
 static void Xcp_CopyToU16WithOrder(const uint8 *pSrc, uint16 *pDest, Xcp_ByteOrderType endianness)
 {
-    if (endianness == LITTLE_ENDIAN)
+    if (endianness == XCP_LITTLE_ENDIAN)
     {
         *pDest = ((uint16)pSrc[0x00u] |
                   ((uint16)pSrc[0x01u] << 0x08u));
@@ -3431,7 +3431,7 @@ static void Xcp_CopyToU16WithOrder(const uint8 *pSrc, uint16 *pDest, Xcp_ByteOrd
 
 static void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrderType endianness)
 {
-    if (endianness == LITTLE_ENDIAN)
+    if (endianness == XCP_LITTLE_ENDIAN)
     {
         *pDest = ((uint32)pSrc[0x00u] |
                   ((uint32)pSrc[0x01u] << 0x08u) |

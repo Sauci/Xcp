@@ -235,8 +235,8 @@ typedef enum
  */
 typedef enum
 {
-    LITTLE_ENDIAN = 0x00u,
-    BIG_ENDIAN = 0x01u
+    XCP_LITTLE_ENDIAN = 0x00u,
+    XCP_BIG_ENDIAN = 0x01u
 } Xcp_ByteOrderType;
 
 /**
