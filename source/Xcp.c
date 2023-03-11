@@ -815,7 +815,7 @@ static boolean Xcp_BlockTransferIsActive();
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static Std_ReturnType Xcp_BlockTransferInitialize(uint8 numberOfElements);
+static Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -2746,8 +2746,9 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     (void)rxPduId;
 
-    const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
     uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
+    const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7
      * If the slave device does not support block transfer mode, all uploaded data are transferred in a single response packet. Therefore, the number
@@ -2757,7 +2758,7 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
          ((number_of_data_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u - (element_size - 0x01u)))) ||
         (Xcp_Ptr->general->slaveBlockModeSupported == TRUE))
     {
-        if (Xcp_BlockTransferInitialize(number_of_data_elements) == E_OK)
+        if (Xcp_DataTransferInitialize(number_of_data_elements, element_size, alignment) == E_OK)
         {
             /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
             (void)Xcp_BlockTransferPrepareNextFrame();
@@ -3629,13 +3630,18 @@ static boolean Xcp_BlockTransferIsActive()
     return result;
 }
 
-static Std_ReturnType Xcp_BlockTransferInitialize(uint8 numberOfElements)
+/**
+ * @brief Initializes the internal memory transfer state.
+ * @retval E_OK: The provided parameters are valid, and the transfer will start.
+ * @retval E_NOT_OK: The provided parameters are not valid, and the transfer will be discarded.
+ */
+static Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment)
 {
     Std_ReturnType result = E_OK;
 
-    if (numberOfElements != 0x00u)
+    if (numberOfDataElements != 0x00u)
     {
-        Xcp_Internal.block_transfer.requested_elements = numberOfElements;
+        Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
         Xcp_Internal.block_transfer.frame_elements = 0x00u;
     }
     else
