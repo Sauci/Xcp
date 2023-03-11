@@ -815,6 +815,14 @@ static boolean Xcp_BlockTransferIsActive();
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+static boolean Xcp_DataTransferActive();
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 static Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment);
 
 #define Xcp_STOP_SEC_CODE_FAST
@@ -3628,6 +3636,11 @@ static boolean Xcp_BlockTransferIsActive()
     }
 
     return result;
+}
+
+static boolean Xcp_DataTransferActive()
+{
+    return Xcp_Internal.block_transfer.requested_elements != 0x00u;
 }
 
 /**
