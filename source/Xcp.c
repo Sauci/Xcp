@@ -3670,6 +3670,13 @@ static Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uin
                 result = E_NOT_OK;
             }
         }
+        else
+        {
+            if (numberOfDataElements > (((Xcp_Ptr->general->maxCto - 0x02u - alignment) / elementSize) * Xcp_Ptr->general->maxBS))
+            {
+                result = E_NOT_OK;
+            }
+        }
 
         Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
         Xcp_Internal.block_transfer.frame_elements = 0x00u;
