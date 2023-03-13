@@ -839,7 +839,7 @@ static void Xcp_BlockTransferAcknowledgeFrame();
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static Std_ReturnType Xcp_BlockTransferPrepareNextFrame();
+static Std_ReturnType Xcp_BlockTransferUploadMemoryContent();
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -2217,7 +2217,7 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                     {
                         Xcp_BlockTransferAcknowledgeFrame();
 
-                        if (Xcp_BlockTransferPrepareNextFrame() != E_OK)
+                        if (Xcp_BlockTransferUploadMemoryContent() != E_OK)
                         {
                             Xcp_Internal.cto_response.successful_transmission_pending = FALSE;
                         }
@@ -2769,7 +2769,7 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
         if (Xcp_DataTransferInitialize(number_of_data_elements, element_size, alignment) == E_OK)
         {
             /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
-            (void)Xcp_BlockTransferPrepareNextFrame();
+            (void)Xcp_BlockTransferUploadMemoryContent();
         }
         else
         {
@@ -3670,7 +3670,12 @@ static void Xcp_BlockTransferAcknowledgeFrame()
     Xcp_Internal.block_transfer.requested_elements -= Xcp_Internal.block_transfer.frame_elements;
 }
 
-static Std_ReturnType Xcp_BlockTransferPrepareNextFrame()
+/**
+ * @brief Processes memory read accesses on behalf of the master.
+ * @retval E_OK: More frames awaited, the master expects consecutive frames from the slave.
+ * @retval E_NOT_OK: No more frames awaited by the master, the slave will stop sending frames.
+ */
+static Std_ReturnType Xcp_BlockTransferUploadMemoryContent()
 {
     Std_ReturnType result = E_OK;
 
