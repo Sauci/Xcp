@@ -2701,27 +2701,29 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
 static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 {
     uint8_least idx;
-    uint8_least element_size = 0x00u;
     uint32 address;
+
+    const uint8_least element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x01u, element_size, Xcp_Ptr->general->maxCto);
 
     (void)rxPduId;
 
     if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
     {
-
-        element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
-
         if (element_size != 0x00u)
         {
             if ((pPduInfo->SduDataPtr[0x01u] * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u))
             {
+                // TODO: check if the received SduLength corresponds to the number of elements...
                 Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &address, Xcp_Ptr->general->byteOrder);
 
                 Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
-                for (idx = 0x01u; idx < element_size; idx++)
+                // TODO: use Xcp_BlockTransferUploadMemoryContent() here...
+
+                for (idx = 0x01u; idx < alignment + 0x01u; idx++)
                 {
-                    Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
+                    Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = Xcp_Ptr->general->trailingValue;
                 }
 
                 for (idx = 0x00u; idx < pPduInfo->SduDataPtr[0x01u]; idx++)
@@ -2740,6 +2742,10 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
             {
                 Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
             }
+        }
+        else
+        {
+            /* TODO: raise a DET error here? */
         }
     }
     else
