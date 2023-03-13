@@ -3660,6 +3660,17 @@ static Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uin
 
     if (numberOfDataElements != 0x00u)
     {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
+         * number of data elements of DOWNLOAD command = [1..(MAX_CTO-2)/AG] in standard mode
+         * number of data elements of DOWNLOAD command = [1..min(MAX_BS*(MAX_CTO-2)/AG,255)] in block mode */
+        if (Xcp_Ptr->general->slaveBlockModeSupported == FALSE)
+        {
+            if ((Xcp_Ptr->general->maxCto - 0x02u) > (uint16)((numberOfDataElements * elementSize) + alignment))
+            {
+                result = E_NOT_OK;
+            }
+        }
+
         Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
         Xcp_Internal.block_transfer.frame_elements = 0x00u;
     }
