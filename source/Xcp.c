@@ -2774,8 +2774,9 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
     {
         if (Xcp_DataTransferInitialize(number_of_data_elements, element_size, alignment) == E_OK)
         {
-            /* It is not necessary to check the return value, as we have at least one element to transfer (checked above). */
-            (void)Xcp_BlockTransferUploadMemoryContent();
+            if (Xcp_BlockTransferUploadMemoryContent() == E_NOT_OK) {
+                /* Do nothing, last frame is waiting for TX confirmation. */
+            }
         }
         else
         {
@@ -3720,6 +3721,7 @@ static Std_ReturnType Xcp_BlockTransferUploadMemoryContent()
     /* Fill alignment bytes with zeros. */
     for (idx = 0x01u; idx < element_size; idx++)
     {
+        // TODO: fill with padding byte value here...
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
     }
 
