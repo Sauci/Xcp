@@ -327,7 +327,7 @@ LOCAL_INLINE void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -336,7 +336,7 @@ static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pP
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -345,7 +345,7 @@ static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInf
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -354,7 +354,7 @@ static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInf
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -363,7 +363,7 @@ static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -372,7 +372,7 @@ static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -381,7 +381,7 @@ static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -390,7 +390,7 @@ static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoT
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -399,7 +399,7 @@ static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoTy
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -408,7 +408,7 @@ static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -417,7 +417,7 @@ static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPdu
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -426,7 +426,7 @@ static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -435,7 +435,7 @@ static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType 
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -444,7 +444,7 @@ static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -453,7 +453,7 @@ static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *p
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -462,7 +462,7 @@ static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInf
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -471,7 +471,7 @@ static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduIn
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -479,16 +479,7 @@ static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPd
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
-
-#define Xcp_STOP_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-
-#define Xcp_START_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -497,7 +488,7 @@ static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdDownload(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTODaqPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -506,7 +497,7 @@ static uint8 Xcp_DTOCmdStdDownload(PduIdType rxPduId, const PduInfoType *pPduInf
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -515,7 +506,7 @@ static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -524,7 +515,7 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -533,7 +524,7 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -542,7 +533,7 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -551,7 +542,7 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdUpload(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -560,7 +551,7 @@ static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdSetMta(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -569,7 +560,7 @@ static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -578,7 +569,7 @@ static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -587,7 +578,7 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -596,7 +587,7 @@ static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -605,7 +596,7 @@ static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -614,7 +605,7 @@ static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -623,7 +614,16 @@ static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduIn
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -631,7 +631,7 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo);
+static uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -890,7 +890,7 @@ static Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const 
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static uint8 (* const Xcp_PIDTable[0x100u])(PduIdType rxPduId, const PduInfoType *pPduInfo) = {
+static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const PduInfoType *pPduInfo) = {
     Xcp_DTODaqStimPacket, /* 0x00 */
     Xcp_DTODaqStimPacket, /* 0x01 */
     Xcp_DTODaqStimPacket, /* 0x02 */
@@ -2049,6 +2049,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
     uint8 pid;
     uint8_least daq_idx;
     uint32_least dto_idx;
+    boolean response_expected = TRUE;
 
     boolean valid_pdu_id = FALSE;
 
@@ -2139,7 +2140,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                             if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
                                                 ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))
                                             {
-                                                result = Xcp_PIDTable[pid](rxPduId, pPduInfo);
+                                                result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
 
                                                 Xcp_Internal.last_pid = pid;
 
@@ -2163,7 +2164,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
                                 }
 
-                                Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
+                                Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
                             }
                             else
                             {
@@ -2276,165 +2277,185 @@ Std_ReturnType Xcp_CanIfTriggerTransmit(PduIdType txPduId, PduInfoType *pPduInfo
  * @{
  */
 
-static uint8 Xcp_DTOCmdDaqAllocOdtEntry(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqAllocOdt(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqAllocDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqFreeDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqGetDaqListInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqReadDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqGetDaqClock(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqStartStopSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqStartStopDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqGetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqSetDaqListMode(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqWriteDaq(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqSetDaqPtr(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdDaqClearDaqList(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTODaqStimPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTODaqPacket(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTODaqPacket(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdDownload(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
+    Std_ReturnType result = E_OK;
     const uint8_least element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
     const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
      * If the slave device does not support block transfer mode, all downloaded data are transferred in a single command packet. Therefore, the
@@ -2451,14 +2472,14 @@ static uint8 Xcp_DTOCmdStdDownload(PduIdType rxPduId, const PduInfoType *pPduInf
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
 
-    return E_OK;
+    return result;
 }
 
-static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint8 result = E_OK;
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     if (Xcp_Ptr->general->userCmdFunction != NULL_PTR) {
         result = Xcp_Ptr->general->userCmdFunction(pPduInfo, &Xcp_Internal.cto_response.pdu_info);
@@ -2473,9 +2494,9 @@ static uint8 Xcp_DTOCmdStdUserCmd(PduIdType rxPduId, const PduInfoType *pPduInfo
     return result;
 }
 
-static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     uint8_least object_found;
     uint16 daq_list_idx;
@@ -2571,7 +2592,7 @@ static uint8 Xcp_DTOCmdStdTransportLayerCmd(PduIdType rxPduId, const PduInfoType
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     void *upper_address;
     uint32_least block_size;
@@ -2580,7 +2601,7 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
     uint8 element_size;
     void * (*checksum_function)(void *, const void *, uint32 *) = NULL_PTR;
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &block_size, Xcp_Ptr->general->byteOrder);
 
@@ -2698,7 +2719,7 @@ static uint8 Xcp_DTOCmdStdBuildChecksum(PduIdType rxPduId, const PduInfoType *pP
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint8_least idx;
     uint32 address;
@@ -2706,7 +2727,7 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
     const uint8_least element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x01u, element_size, Xcp_Ptr->general->maxCto);
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
     {
@@ -2756,9 +2777,9 @@ static uint8 Xcp_DTOCmdStdShortUpload(PduIdType rxPduId, const PduInfoType *pPdu
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdUpload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
@@ -2791,9 +2812,9 @@ static uint8 Xcp_DTOCmdStdUpload(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdSetMta(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     Xcp_Internal.memory_transfer.extension = pPduInfo->SduDataPtr[0x03u];
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], (uint32 *)&Xcp_Internal.memory_transfer.address, Xcp_Ptr->general->byteOrder);
@@ -2804,12 +2825,12 @@ static uint8 Xcp_DTOCmdStdSetMta(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint16_least key_idx;
     uint16_least num_of_bytes_to_copy;
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     if ((Xcp_Internal.last_pid == XCP_PID_CMD_GET_SEED) || (Xcp_Internal.last_pid == XCP_PID_CMD_UNLOCK))
     {
@@ -2904,7 +2925,7 @@ static uint8 Xcp_DTOCmdStdUnlock(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint8_least idx;
     uint8_least num_of_bytes_to_copy;
@@ -2913,8 +2934,9 @@ static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo
 
     Std_ReturnType result = E_OK;
 
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     mode = pPduInfo->SduDataPtr[0x01u];
     resource = pPduInfo->SduDataPtr[0x02u];
@@ -3008,14 +3030,14 @@ static uint8 Xcp_DTOCmdStdGetSeed(PduIdType rxPduId, const PduInfoType *pPduInfo
     return E_OK;
 }
 
-static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint8 mode;
     uint16 session_configuration_id;
 
     Std_ReturnType result = E_OK;
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     if ((pPduInfo->SduDataPtr[0x01u] & 0b11110010u) != 0x00u)
     {
@@ -3050,13 +3072,13 @@ static uint8 Xcp_DTOCmdStdSetRequest(PduIdType rxPduId, const PduInfoType *pPduI
     return result;
 }
 
-static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     Std_ReturnType result = E_OK;
 
     uint32 identification_length;
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     const uint8 identification_type = pPduInfo->SduDataPtr[0x01u];
     const char *identification = Xcp_Ptr->general->identification;
@@ -3089,10 +3111,11 @@ static uint8 Xcp_DTOCmdStdGetId(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return result;
 }
 
-static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     uint8 comm_mode_optional = 0x00u;
 
@@ -3120,10 +3143,11 @@ static uint8 Xcp_DTOCmdStdGetCommModeInfo(PduIdType rxPduId, const PduInfoType *
     return E_OK;
 }
 
-static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_ERROR;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = XCP_E_ASAM_CMD_SYNCH;
@@ -3133,10 +3157,11 @@ static uint8 Xcp_CTOCmdStdSynch(PduIdType rxPduId, const PduInfoType *pPduInfo)
     return E_OK;
 }
 
-static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.session_status;
@@ -3150,10 +3175,11 @@ static uint8 Xcp_CTOCmdStdGetStatus(PduIdType rxPduId, const PduInfoType *pPduIn
     return E_OK;
 }
 
-static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    (void)rxPduId;
     (void)pPduInfo;
+
+    *responseExpected = TRUE;
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
@@ -3164,7 +3190,7 @@ static uint8 Xcp_CTOCmdStdDisconnect(PduIdType rxPduId, const PduInfoType *pPduI
     return E_OK;
 }
 
-static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo)
+static uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint8 resource = 0x00u;
     uint8 comm_mode_basic = 0x00u;
@@ -3173,7 +3199,7 @@ static uint8 Xcp_CTOCmdStdConnect(PduIdType rxPduId, const PduInfoType *pPduInfo
 
     uint8 daq_idx;
 
-    (void)rxPduId;
+    *responseExpected = TRUE;
 
     if ((pPduInfo->SduLength >= 0x02u) && (pPduInfo->SduDataPtr[0x01u] != XCP_CONNECT_MODE_NORMAL))
     {
