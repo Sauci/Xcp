@@ -848,7 +848,7 @@ static void Xcp_BlockTransferAcknowledgeFrame();
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static Std_ReturnType Xcp_BlockTransferUploadMemoryContent();
+static Std_ReturnType Xcp_BlockTransferReadSlaveMemory();
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -2227,7 +2227,7 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                     {
                         Xcp_BlockTransferAcknowledgeFrame();
 
-                        if (Xcp_BlockTransferUploadMemoryContent() != E_OK)
+                        if (Xcp_BlockTransferReadSlaveMemory() != E_OK)
                         {
                             Xcp_Internal.cto_response.successful_transmission_pending = FALSE;
                         }
@@ -2755,7 +2755,7 @@ static uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoTy
 
                 Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
-                // TODO: use Xcp_BlockTransferUploadMemoryContent() here...
+                // TODO: use Xcp_BlockTransferReadSlaveMemory() here...
 
                 for (idx = 0x01u; idx < alignment + 0x01u; idx++)
                 {
@@ -2810,7 +2810,7 @@ static uint8 Xcp_DTOCmdStdUpload(boolean *responseExpected, const PduInfoType *p
     {
         if (Xcp_DataTransferInitialize(number_of_data_elements, element_size, alignment) == E_OK)
         {
-            if (Xcp_BlockTransferUploadMemoryContent() == E_NOT_OK) {
+            if (Xcp_BlockTransferReadSlaveMemory() == E_NOT_OK) {
                 /* Do nothing, last frame is waiting for TX confirmation. */
             }
         }
@@ -3741,7 +3741,7 @@ static void Xcp_BlockTransferAcknowledgeFrame()
  * @retval E_OK: More frames awaited, the master expects consecutive frames from the slave.
  * @retval E_NOT_OK: No more frames awaited by the master, the slave will stop sending frames.
  */
-static Std_ReturnType Xcp_BlockTransferUploadMemoryContent()
+static Std_ReturnType Xcp_BlockTransferReadSlaveMemory()
 {
     Std_ReturnType result = E_OK;
 
