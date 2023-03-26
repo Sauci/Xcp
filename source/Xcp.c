@@ -497,6 +497,15 @@ static uint8 Xcp_DTODaqPacket(boolean *responseExpected, const PduInfoType *pPdu
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+static uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 static uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #define Xcp_STOP_SEC_CODE_FAST
@@ -1130,7 +1139,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTODaqPacket, /* 0xEC */
     Xcp_DTODaqPacket, /* 0xED */
     Xcp_DTODaqPacket, /* 0xEE */
-    Xcp_DTODaqPacket, /* 0xEF */
+    Xcp_DTOCmdStdDownloadNext, /* 0xEF */
     Xcp_DTOCmdStdDownload, /* 0xF0 */
     Xcp_DTOCmdStdUserCmd, /* 0xF1, optional */
     Xcp_DTOCmdStdTransportLayerCmd, /* 0xF2, optional */
@@ -2446,6 +2455,12 @@ static uint8 Xcp_DTODaqPacket(boolean *responseExpected, const PduInfoType *pPdu
     *responseExpected = TRUE;
 
     return E_OK;
+}
+
+static uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    Std_ReturnType result = E_OK;
+    return result;
 }
 
 static uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
