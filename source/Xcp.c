@@ -856,6 +856,14 @@ static Std_ReturnType Xcp_BlockTransferReadSlaveMemory();
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+static Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 static uint8 Xcp_GetProtectionStatus(void);
 
 #define Xcp_STOP_SEC_CODE_FAST
@@ -3778,6 +3786,49 @@ static Std_ReturnType Xcp_BlockTransferReadSlaveMemory()
     Xcp_FinalizeResPacket(0x01u + (element_size - 0x01u) + (Xcp_Internal.block_transfer.frame_elements * element_size), &Xcp_Internal.cto_response.pdu_info);
 
     if (Xcp_Internal.block_transfer.frame_elements == 0x00u)
+    {
+        result = E_NOT_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief Processes memory write accesses on behalf of the master.
+ * @retval E_OK: More frames awaited, the slave expects consecutive frames from the master.
+ * @retval E_NOT_OK: No more frames awaited by the slave, the master will stop sending frames.
+ */
+static Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize)
+{
+    Std_ReturnType result = E_OK;
+
+    uint8_least idx;
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    if ((Xcp_Internal.block_transfer.requested_elements * elementSize) <= (Xcp_Ptr->general->maxCto - 0x02u))
+    {
+        Xcp_Internal.block_transfer.frame_elements = Xcp_Internal.block_transfer.requested_elements;
+    }
+    else
+    {
+        Xcp_Internal.block_transfer.frame_elements = ((Xcp_Ptr->general->maxCto - 0x02u) / elementSize);
+    }
+
+    for (idx = 0x00u; idx < Xcp_Internal.block_transfer.frame_elements; idx++)
+    {
+        Xcp_WriteSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](Xcp_Internal.memory_transfer.address, &pBuffer[idx * elementSize]);
+
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
+         * The data block of the specified length (size) contained in the CMD will be copied into memory, starting at the MTA. The MTA will be
+         * post-incremented by the number of data bytes. */
+        Xcp_Internal.memory_transfer.address += elementSize;
+    }
+
+    Xcp_BlockTransferAcknowledgeFrame();
+
+    /* Check if the currently processed frame is the last one. If so, inform the caller that the data transfer is terminated. */
+    if (Xcp_Internal.block_transfer.requested_elements == 0x00u)
     {
         result = E_NOT_OK;
     }
