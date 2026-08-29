@@ -5,6 +5,7 @@ import random
 import pytest
 from bsw_code_gen import BSWCodeGen
 from cffi import FFI
+from cffi import cparser as cffi_cparser
 from importlib import import_module
 from io import StringIO
 from re import sub
@@ -152,6 +153,13 @@ class MockGen(FFI):
             header = handle.getvalue()
             func_decl = FunctionDecl(header)
             self._ffi_header[self.name] = CFFIHeader(header, func_decl.locals, func_decl.extern)
+            # cffi caches a single pycparser.CParser in cffi.cparser._parser_cache and reuses
+            # it for every cdef(). pycparser resets its own scope stack per parse, but the
+            # underlying PLY parser object is shared, so once any parse raises, PLY's symstack
+            # and statestack stay dirty and every later parse returns nonsense (AST nodes where
+            # dicts are expected, 'list' object is not callable, and so on). Force a fresh
+            # parser per module so one bad parse cannot poison the rest of the session.
+            cffi_cparser._parser_cache = None
             self.cdef(str(CFFIHeader(header, func_decl.locals, func_decl.extern)))
             self.set_source(self.name, source,
                             include_dirs=include_dirs,
