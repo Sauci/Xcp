@@ -47,6 +47,15 @@ def seed_array(request) -> [[int]]:
     return [[random.getrandbits(8, ) for _ in range(seed_size)] for _ in range(number_of_seeds)]
 
 
+def _asan_flags():
+    """Debug aid: set XCP_ASAN=1 to build the module under test with AddressSanitizer.
+
+    Requires a glibc toolchain and running python with libasan LD_PRELOADed. Off by default,
+    so the normal build is unaffected.
+    """
+    return ('-fsanitize=address', '-fno-omit-frame-pointer') if os.getenv('XCP_ASAN') else tuple()
+
+
 def convert(name):
     s1 = sub('(.)([A-Z][a-z][_]+)', r'\1_\2', name)
     return sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
@@ -186,6 +195,8 @@ class XcpTest(object):
                  initialize=True,
                  rx_buffer_size=0x0FFF):
         self.available_rx_buffer = rx_buffer_size
+        # Owns every buffer handed to the C module, so none is freed while C still points at it.
+        self._pdu_info_keepalive = list()
         self.can_if_tx_data = list()
         self.can_tp_rx_data = list()
         code_gen = BSWCodeGen(config, self.script_directory)
@@ -207,6 +218,8 @@ class XcpTest(object):
                           define_macros=tuple(self.compile_definitions) +
                                         ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
                           include_dirs=tuple(self.include_directories + [self.build_directory]),
+                          compile_flags=_asan_flags(),
+                          link_flags=_asan_flags(),
                           build_dir=self.build_directory)
         self.config = MockGen('_cffi_xcp_cfg_{}'.format(config.get_id),
                               code_gen.source_cfg,
@@ -217,16 +230,24 @@ class XcpTest(object):
                                             ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),),
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
+                              compile_flags=_asan_flags(),
+                              link_flags=_asan_flags(),
                               build_dir=self.build_directory)
         f = glob(os.path.join(self.build_directory, 'libcffi_xcp_rt_{}*.so'.format(config.get_id)))[0]
-        self.code = MockGen('_cffi_xcp',
+        # The module under test is compiled with XCP_EVENT_QUEUE_SIZE and linked against one
+        # specific libcffi_xcp_rt_<id>.so, whose Xcp_Event00 array is sized at compile time.
+        # Sharing a single '_cffi_xcp' across configurations let Xcp_Init run with one config's
+        # eventQueueSize against another config's array, overflowing it (ASan: global-buffer-
+        # overflow in Xcp_EventQueueInit). Key the module on the configuration so the bound and
+        # the array always come from the same generated pair.
+        self.code = MockGen('_cffi_xcp_{}'.format(config.get_id),
                             '#include "{}"'.format(self.source),
                             header,
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
-                            compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage'),
-                            link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',),
+                            compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
+                            link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),
                             link_libraries=(os.path.basename(f).lstrip('lib').rstrip('.so'),),
                             build_dir=self.build_directory)
         self.can_if_transmit = MagicMock()
@@ -285,7 +306,13 @@ class XcpTest(object):
             sdu_meta_data = self.code.ffi.new('uint8 []', list(meta_data))
             pdu_info.MetaDataPtr = sdu_meta_data
         else:
+            sdu_meta_data = None
             pdu_info.MetaDataPtr = self.code.ffi.NULL
+        # Assigning a buffer's address into a cdata field does NOT keep that buffer alive:
+        # cffi frees the memory owned by ffi.new() as soon as the returned object goes out of
+        # scope. Without this, SduDataPtr and MetaDataPtr would dangle into memory CPython has
+        # already reused, and the C under test would read (and act on) live Python objects.
+        self._pdu_info_keepalive.append((pdu_info, sdu_data, sdu_meta_data))
         return pdu_info
 
     def define(self, name):

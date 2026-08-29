@@ -4,8 +4,8 @@ jinja2==2.11.3
 jsonschema==3.0.1
 pcpp==1.22
 pycparser==2.21.0
-pytest
-pytest_cases
-pytest-xdist
-bsw_code_gen~=0.1.9
+pytest==7.2.2 # 7.3+ refactored CallSpec2.indices, which breaks pytest_cases 3.10.1
+pytest_cases==3.10.1
+pytest-xdist==3.5.0
+bsw_code_gen==0.1.14
 MarkupSafe==2.0.1 # required to fix https://github.com/aws/aws-sam-cli/issues/3661
