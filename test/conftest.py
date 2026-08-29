@@ -213,7 +213,19 @@ class MockGen(FFI):
         return self.ffi_module.lib
 
 
+class _GeneratedSources(object):
+    """Snapshot of a BSWCodeGen's outputs, so the generator need not be re-run per test."""
+
+    def __init__(self, code_gen):
+        self.header_cfg = code_gen.header_cfg
+        self.source_cfg = code_gen.source_cfg
+        self.header_rt = code_gen.header_rt
+        self.source_rt = code_gen.source_rt
+
+
 class XcpTest(object):
+    _code_gen_cache = dict()
+
     def __init__(self,
                  config,
                  initialize=True,
@@ -223,7 +235,16 @@ class XcpTest(object):
         self._pdu_info_keepalive = list()
         self.can_if_tx_data = list()
         self.can_tp_rx_data = list()
-        code_gen = BSWCodeGen(config, self.script_directory)
+        # BSWCodeGen builds a fresh jinja2 Environment and recompiles every template on each
+        # construction, and XcpTest constructs one per test. A file such as upload_test.py runs
+        # thousands of tests over a handful of distinct configurations, so this ran tens of
+        # thousands of template compilations to produce a handful of distinct outputs, and
+        # jinja2 eventually emitted malformed Python for a template. Generated sources depend
+        # only on the configuration, so cache them by configuration id.
+        code_gen = self._code_gen_cache.get(config.get_id)
+        if code_gen is None:
+            code_gen = _GeneratedSources(BSWCodeGen(config, self.script_directory))
+            self._code_gen_cache[config.get_id] = code_gen
         with open(os.path.join(self.build_directory, 'Xcp_Cfg.h'), 'w') as fp:
             fp.write(code_gen.header_cfg)
         with open(os.path.join(self.build_directory, 'Xcp_Cfg.c'), 'w') as fp:
