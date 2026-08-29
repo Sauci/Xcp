@@ -51,4 +51,4 @@ jobs:
         if: success() || failure()
         uses: codecov/codecov-action@v1
         with:
-          files: ./build/Xcp.c.gcov
+          files: ./build/Xcp.c.gcov,./build/Xcp_Std.c.gcov,./build/Xcp_Cal.c.gcov,./build/Xcp_Pag.c.gcov,./build/Xcp_Daq.c.gcov

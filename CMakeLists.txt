@@ -28,7 +28,12 @@ add_subdirectory(extern)
 add_subdirectory(generated)
 # add_subdirectory(debug)
 
-add_library(Xcp STATIC source/Xcp.c)
+add_library(Xcp STATIC
+    source/Xcp.c
+    source/Xcp_Std.c
+    source/Xcp_Cal.c
+    source/Xcp_Pag.c
+    source/Xcp_Daq.c)
 
 target_compile_definitions(Xcp
     PRIVATE XCP_DEV_ERROR_DETECT=$<IF:$<BOOL:${ENABLE_DET}>,STD_ON,STD_OFF>
@@ -62,7 +67,7 @@ if (${XCP_ENABLE_TEST})
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h
-        --source "${PROJECT_SOURCE_DIR}/source/Xcp.c"
+        --source "${PROJECT_SOURCE_DIR}/source/Xcp.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Std.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Cal.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Pag.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Daq.c"
         --compile_definitions $<JOIN:$<TARGET_PROPERTY:Xcp,COMPILE_DEFINITIONS>,$<SEMICOLON>>
         --include_directories $<JOIN:$<TARGET_PROPERTY:Xcp,INCLUDE_DIRECTORIES>,$<SEMICOLON>>
         --junitxml=./report/${PROJECT_NAME}.xml
