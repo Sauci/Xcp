@@ -126,6 +126,7 @@ class Preprocessor(Pp):
 class MockGen(FFI):
     _pp = dict()
     _ffi_header = dict()
+    _parse_cache = dict()
 
     def __init__(self,
                  name,
@@ -142,18 +143,32 @@ class MockGen(FFI):
         if self.name in sys.modules:
             self.ffi_module = sys.modules[self.name]
         else:
-            pre_processor = Preprocessor()
-            for include_directory in include_dirs:
-                pre_processor.add_path(include_directory)
-            for compile_definition in (' '.join(d.split('=')) for d in define_macros):
-                pre_processor.define(compile_definition)
-            pre_processor.parse(header)
-            handle = StringIO()
-            pre_processor.write(handle)
+            # The generated Xcp_Cfg.h and Xcp_Rt.h depend only on the number of configurations,
+            # so every test configuration yields byte-identical header text. Parsing is keyed on
+            # that text (plus the macros pcpp expands with) rather than on the module name, so
+            # the preprocess and the two pycparser passes run once per distinct header instead
+            # of once per module. Without this a full run performed several hundred redundant
+            # parses through pcpp, pycparser and PLY, all of which hold global mutable state.
+            parse_key = hashlib.sha1(
+                (header + repr(sorted(define_macros)) + repr(sorted(include_dirs))).encode('utf-8')).hexdigest()
+            if parse_key not in self._parse_cache:
+                pre_processor = Preprocessor()
+                for include_directory in include_dirs:
+                    pre_processor.add_path(include_directory)
+                for compile_definition in (' '.join(d.split('=')) for d in define_macros):
+                    pre_processor.define(compile_definition)
+                pre_processor.parse(header)
+                handle = StringIO()
+                pre_processor.write(handle)
+                expanded = handle.getvalue()
+                func_decl = FunctionDecl(expanded)
+                # Built once: the original code constructed CFFIHeader twice per module, once to
+                # store and once to feed cdef.
+                self._parse_cache[parse_key] = (pre_processor,
+                                                CFFIHeader(expanded, func_decl.locals, func_decl.extern))
+            pre_processor, cffi_header = self._parse_cache[parse_key]
             self._pp[self.name] = pre_processor
-            header = handle.getvalue()
-            func_decl = FunctionDecl(header)
-            self._ffi_header[self.name] = CFFIHeader(header, func_decl.locals, func_decl.extern)
+            self._ffi_header[self.name] = cffi_header
             # cffi caches a single pycparser.CParser in cffi.cparser._parser_cache and reuses
             # it for every cdef(). pycparser resets its own scope stack per parse, but the
             # underlying PLY parser object is shared, so once any parse raises, PLY's symstack
@@ -161,7 +176,7 @@ class MockGen(FFI):
             # dicts are expected, 'list' object is not callable, and so on). Force a fresh
             # parser per module so one bad parse cannot poison the rest of the session.
             cffi_cparser._parser_cache = None
-            self.cdef(str(CFFIHeader(header, func_decl.locals, func_decl.extern)))
+            self.cdef(str(cffi_header))
             self.set_source(self.name, source,
                             include_dirs=include_dirs,
                             define_macros=list(tuple(d.split('=')) for d in define_macros),
