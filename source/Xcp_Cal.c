@@ -23,27 +23,45 @@ uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pP
 
 uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    Std_ReturnType result = E_OK;
-    const uint8_least element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
-    const uint8_least alignment = Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
+    const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
     const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
 
     *responseExpected = TRUE;
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
-     * If the slave device does not support block transfer mode, all downloaded data are transferred in a single command packet. Therefore, the
-     * number of data elements parameter in the request has to be in the range [1..MAX_CTO-2]. An ERR_OUT_OF_RANGE will be returned, if the number
-     * of data elements is more than MAX_CTO-2. */
-    if (((Xcp_Ptr->general->slaveBlockModeSupported == FALSE) &&
-         ((number_of_data_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x02u))) ||
-        (Xcp_Ptr->general->slaveBlockModeSupported == TRUE))
+     * The data block of the specified length (size) contained in the CMD will be copied into
+     * memory, starting at the MTA. The MTA will be post-incremented by the number of data bytes.
+     *
+     * XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.1
+     * MAX_BS applies to master block mode, whose packets are DOWNLOAD_NEXT. Slave block mode
+     * governs multi-response commands such as UPLOAD and is not consulted here. */
+    if (Xcp_DataTransferInitialize(number_of_data_elements,
+                                   element_size,
+                                   alignment,
+                                   (uint8)(Xcp_Ptr->general->maxCto - 0x02u),
+                                   Xcp_Ptr->general->masterBlockModeSupported,
+                                   Xcp_Ptr->general->maxBS) == E_OK)
     {
-        
+        if (Xcp_BlockTransferWriteSlaveMemory(&pPduInfo->SduDataPtr[0x02u + alignment],
+                                              element_size) == E_NOT_OK)
+        {
+            /* The whole payload has been written, so the command is acknowledged now. */
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+            Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else
+        {
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
+             * The slave device will acknowledge only the last DOWNLOAD_NEXT command packet. */
+            *responseExpected = FALSE;
+        }
     }
     else
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
 
-    return result;
+    return E_OK;
 }
