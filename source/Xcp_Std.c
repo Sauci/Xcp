@@ -679,7 +679,12 @@ uint8 Xcp_DTOCmdStdUpload(boolean *responseExpected, const PduInfoType *pPduInfo
          ((number_of_data_elements * element_size) <= (Xcp_Ptr->general->maxCto - 0x01u - (element_size - 0x01u)))) ||
         (Xcp_Ptr->general->slaveBlockModeSupported == TRUE))
     {
-        if (Xcp_DataTransferInitialize(number_of_data_elements, element_size, alignment) == E_OK)
+        if (Xcp_DataTransferInitialize(number_of_data_elements,
+                                       element_size,
+                                       (uint8)alignment,
+                                       (uint8)(Xcp_Ptr->general->maxCto - 0x01u),
+                                       Xcp_Ptr->general->slaveBlockModeSupported,
+                                       0x00u) == E_OK)
         {
             if (Xcp_BlockTransferReadSlaveMemory() == E_NOT_OK) {
                 /* Do nothing, last frame is waiting for TX confirmation. */

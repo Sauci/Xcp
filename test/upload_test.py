@@ -138,3 +138,27 @@ def test_upload_returns_err_out_of_range_if_slave_block_mode_is_enabled_and_payl
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+
+@pytest.mark.parametrize('ag, max_cto, data_elements', (('BYTE', 0x08, 0x03),
+                                                        ('BYTE', 0x08, 0x07),
+                                                        ('WORD', 0x08, 0x01),
+                                                        ('WORD', 0x08, 0x03),
+                                                        ('DWORD', 0x08, 0x01)))
+def test_upload_succeeds_with_slave_block_mode_disabled_and_payload_within_range(ag, max_cto, data_elements):
+    """XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7: n is in [1..MAX_CTO/AG-1]."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   address_granularity=ag,
+                                   slave_block_mode=False,
+                                   max_cto=max_cto))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # UPLOAD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, data_elements)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF

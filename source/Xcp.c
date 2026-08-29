@@ -130,14 +130,6 @@ static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue);
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-#define Xcp_START_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-static boolean Xcp_DataTransferActive();
-
-#define Xcp_STOP_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -1645,42 +1637,57 @@ boolean Xcp_BlockTransferIsActive()
     return result;
 }
 
-static boolean Xcp_DataTransferActive()
-{
-    return Xcp_Internal.block_transfer.requested_elements != 0x00u;
-}
-
 /**
  * @brief Initializes the internal memory transfer state.
  * @retval E_OK: The provided parameters are valid, and the transfer will start.
  * @retval E_NOT_OK: The provided parameters are not valid, and the transfer will be discarded.
  */
-Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment)
+Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
+                                          uint8 elementSize,
+                                          uint8 alignment,
+                                          uint8 budget,
+                                          boolean blockModeSupported,
+                                          uint8 maxBlockSize)
 {
     Std_ReturnType result = E_OK;
+    uint16 capacity;
 
-    if (numberOfDataElements != 0x00u)
+    if ((numberOfDataElements != 0x00u) && (elementSize != 0x00u) && (budget >= alignment))
     {
-        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
-         * number of data elements of DOWNLOAD command = [1..(MAX_CTO-2)/AG] in standard mode
-         * number of data elements of DOWNLOAD command = [1..min(MAX_BS*(MAX_CTO-2)/AG,255)] in block mode */
-        if (Xcp_Ptr->general->slaveBlockModeSupported == FALSE)
+        /* Number of elements that fit into a single frame, once the command header and any
+         * address-granularity alignment bytes have been accounted for. */
+        capacity = (uint16)((uint16)(budget - alignment) / elementSize);
+
+        if (blockModeSupported == FALSE)
         {
-            if ((Xcp_Ptr->general->maxCto - 0x02u) > (uint16)((numberOfDataElements * elementSize) + alignment))
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7 and 1.6.2.1.1
+             * Without block transfer mode the whole payload travels in a single packet. */
+            if ((uint16)numberOfDataElements > capacity)
+            {
+                result = E_NOT_OK;
+            }
+        }
+        else if (maxBlockSize != 0x00u)
+        {
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1
+             * In block mode the master may send up to MAX_BS consecutive packets. */
+            if ((uint32)numberOfDataElements > ((uint32)capacity * (uint32)maxBlockSize))
             {
                 result = E_NOT_OK;
             }
         }
         else
         {
-            if (numberOfDataElements > (((Xcp_Ptr->general->maxCto - 0x02u - alignment) / elementSize) * Xcp_Ptr->general->maxBS))
-            {
-                result = E_NOT_OK;
-            }
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7
+             * For slave block transfer no maximum block size applies, so the uint8 range of the
+             * request parameter is the only bound. */
         }
 
-        Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
-        Xcp_Internal.block_transfer.frame_elements = 0x00u;
+        if (result == E_OK)
+        {
+            Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
+            Xcp_Internal.block_transfer.frame_elements = 0x00u;
+        }
     }
     else
     {
