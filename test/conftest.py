@@ -1,3 +1,4 @@
+import hashlib
 import os
 import sys
 import random
@@ -220,7 +221,16 @@ class XcpTest(object):
             header = fp.read()
         os.environ['DYLD_LIBRARY_PATH'] = '{}'.format(self.build_directory)
         os.environ['LD_LIBRARY_PATH'] = '{}'.format(self.build_directory)
-        self.rt = MockGen('libcffi_xcp_rt_{}'.format(config.get_id),
+        # The module under test is only coupled to a configuration through the generated
+        # runtime it links against, so key both on a digest of that generated source rather
+        # than on the whole configuration. Configurations producing identical runtime source
+        # then share one compiled pair, which collapses hundreds of compiled and dlopened
+        # modules down to a handful, while any change to the generated runtime automatically
+        # produces a new key. Keying on the whole configuration compiled a fresh copy per
+        # parametrisation; keying by hand on event_queue_size would silently break the first
+        # time the runtime template gained another dependency.
+        rt_key = hashlib.sha1(code_gen.source_rt.encode('utf-8')).hexdigest()[0:8]
+        self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
                           define_macros=tuple(self.compile_definitions) +
@@ -241,14 +251,14 @@ class XcpTest(object):
                               compile_flags=_asan_flags(),
                               link_flags=_asan_flags(),
                               build_dir=self.build_directory)
-        f = glob(os.path.join(self.build_directory, 'libcffi_xcp_rt_{}*.so'.format(config.get_id)))[0]
+        f = glob(os.path.join(self.build_directory, 'libcffi_xcp_rt_{}*.so'.format(rt_key)))[0]
         # The module under test is compiled with XCP_EVENT_QUEUE_SIZE and linked against one
-        # specific libcffi_xcp_rt_<id>.so, whose Xcp_Event00 array is sized at compile time.
-        # Sharing a single '_cffi_xcp' across configurations let Xcp_Init run with one config's
-        # eventQueueSize against another config's array, overflowing it (ASan: global-buffer-
-        # overflow in Xcp_EventQueueInit). Key the module on the configuration so the bound and
-        # the array always come from the same generated pair.
-        self.code = MockGen('_cffi_xcp_{}'.format(config.get_id),
+        # libcffi_xcp_rt_*.so whose Xcp_Event00 array is sized at compile time. Sharing a single
+        # '_cffi_xcp' across configurations let Xcp_Init run with one configuration's
+        # eventQueueSize against another's array, overflowing it (ASan: global-buffer-overflow
+        # in Xcp_EventQueueInit). Keying on the same rt_key keeps the compiled bound and the
+        # linked array in the same generated pair.
+        self.code = MockGen('_cffi_xcp_{}'.format(rt_key),
                             '#include "{}"'.format(self.source),
                             header,
                             define_macros=tuple(self.compile_definitions) +
