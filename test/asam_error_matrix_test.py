@@ -1111,3 +1111,26 @@ class TestDownloadErrorHandling:
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_download_err_memory_overflow(self, payload):
         pass
+
+@pytest.mark.parametrize('name, code', (('XCP_E_ASAM_CMD_SYNCH', 0x00),
+                                        ('XCP_E_ASAM_CMD_BUSY', 0x10),
+                                        ('XCP_E_ASAM_DAQ_ACTIVE', 0x11),
+                                        ('XCP_E_ASAM_PGM_ACTIVE', 0x12),
+                                        ('XCP_E_ASAM_CMD_UNKNOWN', 0x20),
+                                        ('XCP_E_ASAM_CMD_SYNTAX', 0x21),
+                                        ('XCP_E_ASAM_OUT_OF_RANGE', 0x22),
+                                        ('XCP_E_ASAM_WRITE_PROTECTED', 0x23),
+                                        ('XCP_E_ASAM_ACCESS_DENIED', 0x24),
+                                        ('XCP_E_ASAM_ACCESS_LOCKED', 0x25),
+                                        ('XCP_E_ASAM_PAGE_NOT_VALID', 0x26),
+                                        ('XCP_E_ASAM_MODE_NOT_VALID', 0x27),
+                                        ('XCP_E_ASAM_SEGMENT_NOT_VALID', 0x28),
+                                        ('XCP_E_ASAM_SEQUENCE', 0x29),
+                                        ('XCP_E_ASAM_DAQ_CONFIG', 0x2A),
+                                        ('XCP_E_ASAM_MEMORY_OVERFLOW', 0x30),
+                                        ('XCP_E_ASAM_GENERIC', 0x31),
+                                        ('XCP_E_ASAM_VERIFY', 0x32)))
+def test_asam_error_codes_match_the_specification(name, code):
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1"""
+    handle = XcpTest(DefaultConfig())
+    assert handle.define(name) == code
