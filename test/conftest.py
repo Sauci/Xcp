@@ -175,7 +175,6 @@ class MockGen(FFI):
             # and statestack stay dirty and every later parse returns nonsense (AST nodes where
             # dicts are expected, 'list' object is not callable, and so on). Force a fresh
             # parser per module so one bad parse cannot poison the rest of the session.
-            cffi_cparser._parser_cache = None
             self.cdef(str(cffi_header))
             self.set_source(self.name, source,
                             include_dirs=include_dirs,
