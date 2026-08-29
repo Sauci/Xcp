@@ -62,7 +62,7 @@ if (${XCP_ENABLE_TEST})
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h
-        --source ${PROJECT_SOURCE_DIR}/source/Xcp.c
+        --source "${PROJECT_SOURCE_DIR}/source/Xcp.c"
         --compile_definitions $<JOIN:$<TARGET_PROPERTY:Xcp,COMPILE_DEFINITIONS>,$<SEMICOLON>>
         --include_directories $<JOIN:$<TARGET_PROPERTY:Xcp,INCLUDE_DIRECTORIES>,$<SEMICOLON>>
         --junitxml=./report/${PROJECT_NAME}.xml

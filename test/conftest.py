@@ -137,6 +137,7 @@ class MockGen(FFI):
                  compile_flags=tuple(),
                  link_flags=tuple(),
                  link_libraries=tuple(),
+                 sources=tuple(),
                  build_dir=''):
         super(MockGen, self).__init__()
         self._name = name
@@ -182,8 +183,19 @@ class MockGen(FFI):
                             extra_compile_args=list(compile_flags),
                             libraries=list(link_libraries),
                             library_dirs=(build_dir,),
+                            sources=list(sources),
                             extra_link_args=list(link_flags))
-            lib_path = self.compile(tmpdir=build_dir)
+            # distutils places each source's object at <tmpdir>/<abs-path-without-leading-/>,
+            # ignoring the extension name entirely. That's fine for cffi's own generated glue
+            # file (named after this extension, so already unique) but not for an extra source
+            # given by absolute path: every rt_key's MockGen compiles the same Xcp.c path, and
+            # each recompile overwrites the previous one's .o/.gcno at that identical spot. The
+            # resulting .gcda then carries a stamp tied to whichever compile happened last, so
+            # gcov refuses to associate it with data flushed by any other rt_key's copy at exit
+            # (all of them share this one process), and coverage for Xcp.c collapses to zero.
+            # Compiling extra sources into a subdirectory namespaced by this module's own name
+            # keeps every rt_key's copy at its own path, so each stays internally consistent.
+            lib_path = self.compile(tmpdir=os.path.join(build_dir, self.name) if sources else build_dir)
             sys.path.append(os.path.dirname(lib_path))
             self.ffi_module = import_module(self.name)
 
@@ -294,7 +306,7 @@ class XcpTest(object):
         # in Xcp_EventQueueInit). Keying on the same rt_key keeps the compiled bound and the
         # linked array in the same generated pair.
         self.code = MockGen('_cffi_xcp_{}'.format(rt_key),
-                            '#include "{}"'.format(self.source),
+                            '#include "Xcp.h"',
                             header,
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
@@ -302,6 +314,7 @@ class XcpTest(object):
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),
                             link_libraries=(os.path.basename(f).lstrip('lib').rstrip('.so'),),
+                            sources=tuple(self.sources),
                             build_dir=self.build_directory)
         self.can_if_transmit = MagicMock()
         self.det_report_error = MagicMock()
@@ -392,8 +405,8 @@ class XcpTest(object):
         return os.getenv('header')
 
     @property
-    def source(self):
-        return os.getenv('source')
+    def sources(self):
+        return os.getenv('source').split(';')
 
     @property
     def compile_definitions(self):
