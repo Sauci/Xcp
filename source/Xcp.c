@@ -373,7 +373,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTOCmdDaqWriteDaq, /* 0xE1 */
     Xcp_DTOCmdDaqSetDaqPtr, /* 0xE2 */
     Xcp_DTOCmdDaqClearDaqList, /* 0xE3 */
-    Xcp_DTODaqPacket, /* 0xE4 */
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+    Xcp_DTOCmdStdCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
+#else
+    Xcp_CmdNotImplemented, /* COPY_CAL_PAGE 0xE4, optional */
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdStdGetSegmentMode, /* GET_SEGMENT_MODE 0xE5, optional */
 #else

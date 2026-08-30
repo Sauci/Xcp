@@ -411,4 +411,45 @@ uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPd
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdStdCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 src_segment = pPduInfo->SduDataPtr[0x01u];
+    const uint8 src_page = pPduInfo->SduDataPtr[0x02u];
+    const uint8 dst_segment = pPduInfo->SduDataPtr[0x03u];
+    const uint8 dst_page = pPduInfo->SduDataPtr[0x04u];
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    if ((Xcp_SegmentIsValid(src_segment) == FALSE) || (Xcp_SegmentIsValid(dst_segment) == FALSE))
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else if ((Xcp_PageIsValid(src_segment, src_page) == FALSE) ||
+             (Xcp_PageIsValid(dst_segment, dst_page) == FALSE))
+    {
+        error = XCP_E_ASAM_PAGE_NOT_VALID;
+    }
+    else if (Xcp_CopyCalPage(src_segment, src_page, dst_segment, dst_page) != E_OK)
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.6
+         * If calibration data page cannot be copied to the given destination, e.g. because the
+         * location of destination is a flash segment, an ERR_WRITE_PROTECTED will be returned. */
+        error = XCP_E_ASAM_WRITE_PROTECTED;
+    }
+    else
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    if (error != 0x00u)
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
