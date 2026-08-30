@@ -161,4 +161,22 @@ uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPdu
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.1
+     * MAX_SEGMENT is the total number of segments in the slave device. PAG_PROPERTIES bit 0 is
+     * FREEZE_SUPPORTED, indicating that all SEGMENTs can be put in FREEZE mode. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Ptr->general->maxSegment;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->pagProperties;
+
+    Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */

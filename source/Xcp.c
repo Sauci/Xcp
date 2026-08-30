@@ -378,7 +378,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTODaqPacket, /* 0xE6 */
     Xcp_DTODaqPacket, /* 0xE7 */
     Xcp_DTODaqPacket, /* 0xE8 */
-    Xcp_DTODaqPacket, /* 0xE9 */
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+    Xcp_DTOCmdStdGetPagProcessorInfo, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
+#else
+    Xcp_CmdNotImplemented, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdStdGetCalPage, /* GET_CAL_PAGE 0xEA */
 #else
