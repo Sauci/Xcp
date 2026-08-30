@@ -11,6 +11,10 @@
 #include "Xcp_Internal.h"
 #endif /* #ifndef XCP_INTERNAL_H */
 
+#ifndef XCP_RT_H
+#include "Xcp_Rt.h"
+#endif /* #ifndef XCP_RT_H */
+
 #if (XCP_PAGING_SUPPORTED == STD_ON)
 
 /*------------------------------------------------------------------------------------------------*/
@@ -175,6 +179,90 @@ uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoT
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->pagProperties;
 
     Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
+boolean Xcp_GetSegmentFreezeState(uint8 segment)
+{
+    boolean result = FALSE;
+
+    if (Xcp_SegmentIsValid(segment) == TRUE)
+    {
+        result = Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[segment].freeze;
+    }
+
+    return result;
+}
+
+uint8 Xcp_DTOCmdStdSetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 segment = pPduInfo->SduDataPtr[0x02u];
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    if (Xcp_SegmentIsValid(segment) == FALSE)
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else if (((mode & XCP_SEGMENT_MODE_FREEZE) != 0x00u) && ((Xcp_Ptr->general->pagProperties & 0x01u) == 0x00u))
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.1
+         * PAG_PROPERTIES bit 0 is FREEZE_SUPPORTED, indicating that all SEGMENTS can be put in
+         * FREEZE mode; a request to enable FREEZE on a slave that does not support it is
+         * rejected. */
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.4
+         * The FREEZE flag selects the SEGMENT for freezing through STORE_CAL_REQ. */
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[segment].freeze =
+            (boolean)(((mode & XCP_SEGMENT_MODE_FREEZE) != 0x00u) ? TRUE : FALSE);
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    if (error != 0x00u)
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdStdGetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 segment = pPduInfo->SduDataPtr[0x02u];
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    if (Xcp_SegmentIsValid(segment) == FALSE)
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.5
+         * GET_SEGMENT_MODE reports the SEGMENT's current mode; bit 0 reflects whether FREEZE,
+         * as set by SET_SEGMENT_MODE, is enabled. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] =
+            (uint8)((Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[segment].freeze == TRUE) ? XCP_SEGMENT_MODE_FREEZE : 0x00u);
+
+        Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    if (error != 0x00u)
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
 
     return E_OK;
 }

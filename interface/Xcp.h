@@ -327,6 +327,27 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 
 #endif /* #if (XCP_SUPPRESS_TX_SUPPORT == STD_ON) */
 
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+
+#define Xcp_START_SEC_CODE_SLOW
+#include "Xcp_MemMap.h"
+
+/**
+ * @brief reports whether a calibration data segment has been selected for freezing.
+ * @details The XCP master sets this flag with SET_SEGMENT_MODE. An integrator implementing
+ * @ref Xcp_StoreCalibrationDataToNonVolatileMemory queries it per segment to decide what to
+ * store.
+ * @param [in] segment logical data segment number
+ * @return TRUE if FREEZE mode is enabled for that segment, FALSE otherwise or if the segment
+ * number is out of range
+ */
+boolean Xcp_GetSegmentFreezeState(uint8 segment);
+
+#define Xcp_STOP_SEC_CODE_SLOW
+#include "Xcp_MemMap.h"
+
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/

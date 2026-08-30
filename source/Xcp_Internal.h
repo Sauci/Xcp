@@ -117,6 +117,8 @@ extern "C" {
 #define XCP_CAL_PAGE_MODE_XCP (0x02u)
 #define XCP_CAL_PAGE_MODE_ALL (0x80u)
 
+#define XCP_SEGMENT_MODE_FREEZE (0x01u)
+
 #define XCP_CONNECT_MODE_NORMAL (0x00u)
 #define XCP_CONNECT_MODE_USER_DEFINED (0x01u)
 
@@ -339,6 +341,8 @@ uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType 
 uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdStdSetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdStdGetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);
