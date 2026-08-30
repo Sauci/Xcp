@@ -267,4 +267,111 @@ uint8 Xcp_DTOCmdStdGetSegmentMode(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 segment = pPduInfo->SduDataPtr[0x02u];
+    const uint8 segment_info = pPduInfo->SduDataPtr[0x03u];
+    const uint8 mapping_index = pPduInfo->SduDataPtr[0x04u];
+    const Xcp_SegmentType *p_segment;
+    uint32 value = 0x00000000u;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    if (Xcp_SegmentIsValid(segment) == FALSE)
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else
+    {
+        p_segment = &Xcp_Ptr->config->segment[segment];
+
+        if (mode == 0x00u)
+        {
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.2
+             * Mode 0: SEGMENT_INFO selects 0 = address, 1 = length of this SEGMENT. */
+            if (segment_info == 0x00u)
+            {
+                value = p_segment->address;
+            }
+            else if (segment_info == 0x01u)
+            {
+                value = p_segment->length;
+            }
+            else
+            {
+                error = XCP_E_ASAM_OUT_OF_RANGE;
+            }
+        }
+        else if (mode == 0x01u)
+        {
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.2
+             * Mode 1: SEGMENT_INFO and MAPPING_INDEX are don't care. */
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = p_segment->maxPages;
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = p_segment->addressExtension;
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_segment->maxMapping;
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = p_segment->compressionMethod;
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = p_segment->encryptionMethod;
+
+            Xcp_FinalizeResPacket(0x06u, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else if (mode == 0x02u)
+        {
+            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.2
+             * Mode 2: SEGMENT_INFO selects 0 = source address, 1 = destination address,
+             * 2 = length, for the range referenced by MAPPING_INDEX. */
+            if (mapping_index >= p_segment->maxMapping)
+            {
+                error = XCP_E_ASAM_OUT_OF_RANGE;
+            }
+            else if (segment_info == 0x00u)
+            {
+                value = p_segment->addressMapping[mapping_index].sourceAddress;
+            }
+            else if (segment_info == 0x01u)
+            {
+                value = p_segment->addressMapping[mapping_index].destinationAddress;
+            }
+            else if (segment_info == 0x02u)
+            {
+                value = p_segment->addressMapping[mapping_index].length;
+            }
+            else
+            {
+                error = XCP_E_ASAM_OUT_OF_RANGE;
+            }
+        }
+        else
+        {
+            error = XCP_E_ASAM_OUT_OF_RANGE;
+        }
+    }
+
+    if (error != 0x00u)
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if (mode != 0x01u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u; /* reserved */
+
+        Xcp_CopyFromU32WithOrder(value,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        /* Mode 1 has already assembled its response. */
+    }
+
+    return E_OK;
+}
+
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
