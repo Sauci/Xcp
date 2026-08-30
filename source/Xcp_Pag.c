@@ -10,3 +10,7 @@
 #ifndef XCP_INTERNAL_H
 #include "Xcp_Internal.h"
 #endif /* #ifndef XCP_INTERNAL_H */
+
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */

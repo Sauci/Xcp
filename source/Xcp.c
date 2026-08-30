@@ -1833,6 +1833,20 @@ void Xcp_ClearProtectionStatus(void) {
     Xcp_Internal.protection_status = 0x00u;
 }
 
+uint8 Xcp_CmdNotImplemented(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.4
+     * An attempt to execute a not implemented optional command will return ERR_CMD_UNKNOWN and
+     * does not have any effect. */
+    Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
 /** @} */
 
 #ifdef __cplusplus

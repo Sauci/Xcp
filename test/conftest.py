@@ -322,6 +322,9 @@ class XcpTest(object):
         self.det_report_transient_fault = MagicMock()
         self.xcp_get_seed = MagicMock()
         self.xcp_calc_key = MagicMock()
+        self.xcp_set_cal_page = MagicMock()
+        self.xcp_get_cal_page = MagicMock()
+        self.xcp_copy_cal_page = MagicMock()
         self.xcp_read_slave_memory_u8 = MagicMock()
         self.xcp_read_slave_memory_u16 = MagicMock()
         self.xcp_read_slave_memory_u32 = MagicMock()
@@ -343,6 +346,9 @@ class XcpTest(object):
         self.det_report_transient_fault.return_value = self.define('E_OK')
         self.xcp_get_seed.return_value = self.define('E_OK')
         self.xcp_calc_key.return_value = self.define('E_OK')
+        self.xcp_set_cal_page.return_value = self.define('E_OK')
+        self.xcp_get_cal_page.return_value = self.define('E_OK')
+        self.xcp_copy_cal_page.return_value = self.define('E_OK')
         self.xcp_read_slave_memory_u8.return_value = None
         self.xcp_read_slave_memory_u16.return_value = None
         self.xcp_read_slave_memory_u32.return_value = None

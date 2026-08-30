@@ -336,6 +336,7 @@ uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo)
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_CmdNotImplemented(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 #ifdef __cplusplus
 

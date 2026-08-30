@@ -59,6 +59,12 @@ extern "C" {
 
 #include "Xcp_MemoryAccess.h"
 
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+
+#include "Xcp_Paging.h"
+
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
+
 #if defined(CFFI_ENABLE)
 
 /**

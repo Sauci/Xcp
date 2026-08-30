@@ -13,6 +13,16 @@
 #include "Xcp_UserCmd.h"
 #endif /* #ifndef XCP_USER_CMD_H */
 
+{%- for configuration in configurations %}
+{%- if loop.first %}
+#ifndef XCP_PAGING_SUPPORTED
+
+#define XCP_PAGING_SUPPORTED ({% if (configuration.segments | default([]))|length > 0 %}STD_ON{% else %}STD_OFF{% endif %})
+
+#endif /* #ifndef XCP_PAGING_SUPPORTED */
+{%- endif %}
+{%- endfor %}
+
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
