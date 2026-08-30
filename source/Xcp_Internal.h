@@ -113,6 +113,10 @@ extern "C" {
 #define XCP_PID_CMD_DISCONNECT (0xFEu)
 #define XCP_PID_CMD_CONNECT (0xFFu)
 
+#define XCP_CAL_PAGE_MODE_ECU (0x01u)
+#define XCP_CAL_PAGE_MODE_XCP (0x02u)
+#define XCP_CAL_PAGE_MODE_ALL (0x80u)
+
 #define XCP_CONNECT_MODE_NORMAL (0x00u)
 #define XCP_CONNECT_MODE_USER_DEFINED (0x01u)
 
@@ -332,6 +336,8 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
 uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);

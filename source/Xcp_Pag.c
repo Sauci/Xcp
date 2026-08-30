@@ -13,4 +13,152 @@
 
 #if (XCP_PAGING_SUPPORTED == STD_ON)
 
+/*------------------------------------------------------------------------------------------------*/
+/* local function definitions (static).                                                           */
+/*------------------------------------------------------------------------------------------------*/
+
+static boolean Xcp_SegmentIsValid(uint8 segment)
+{
+    return (boolean)((segment < Xcp_Ptr->general->maxSegment) ? TRUE : FALSE);
+}
+
+static boolean Xcp_PageIsValid(uint8 segment, uint8 page)
+{
+    boolean result = FALSE;
+
+    if (Xcp_SegmentIsValid(segment) == TRUE)
+    {
+        if (page < Xcp_Ptr->config->segment[segment].maxPages)
+        {
+            result = TRUE;
+        }
+    }
+
+    return result;
+}
+
+uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 segment = pPduInfo->SduDataPtr[0x02u];
+    const uint8 page = pPduInfo->SduDataPtr[0x03u];
+    uint8 error = 0x00u;
+    uint8_least first;
+    uint8_least last;
+    uint8_least idx;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.1
+     * Both flags ECU and XCP may be set simultaneously or separately. A request selecting neither
+     * asks for nothing and is rejected. */
+    if ((mode & (XCP_CAL_PAGE_MODE_ECU | XCP_CAL_PAGE_MODE_XCP)) == 0x00u)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if (((mode & XCP_CAL_PAGE_MODE_ALL) == 0x00u) && (Xcp_SegmentIsValid(segment) == FALSE))
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.1
+         * The ALL flag makes the logical segment number irrelevant; the command applies to all
+         * segments. */
+        if ((mode & XCP_CAL_PAGE_MODE_ALL) != 0x00u)
+        {
+            first = 0x00u;
+            last = Xcp_Ptr->general->maxSegment;
+        }
+        else
+        {
+            first = segment;
+            last = (uint8_least)(segment + 0x01u);
+        }
+
+        /* Validate every affected segment before switching any of them, so a bad page number
+         * cannot leave the slave half-switched. */
+        for (idx = first; idx < last; idx++)
+        {
+            if (Xcp_PageIsValid((uint8)idx, page) == FALSE)
+            {
+                error = XCP_E_ASAM_PAGE_NOT_VALID;
+
+                break;
+            }
+        }
+
+        if (error == 0x00u)
+        {
+            for (idx = first; idx < last; idx++)
+            {
+                /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.1
+                 * If the calibration data page cannot be set to the given mode, an
+                 * ERR_MODE_NOT_VALID will be returned. The specification defines no rollback, so
+                 * segments already switched stay switched. */
+                if (Xcp_SetCalPage((uint8)idx, page, mode) != E_OK)
+                {
+                    error = XCP_E_ASAM_MODE_NOT_VALID;
+
+                    break;
+                }
+            }
+        }
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 segment = pPduInfo->SduDataPtr[0x02u];
+    uint8 page = 0x00u;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.2
+     * Mode may be 0x01 (ECU access) or 0x02 (XCP access). All other values are invalid. */
+    if ((mode != XCP_CAL_PAGE_MODE_ECU) && (mode != XCP_CAL_PAGE_MODE_XCP))
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if (Xcp_SegmentIsValid(segment) == FALSE)
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else if (Xcp_GetCalPage(segment, mode, &page) != E_OK)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = page;
+
+        Xcp_FinalizeResPacket(0x04u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    if (error != 0x00u)
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */

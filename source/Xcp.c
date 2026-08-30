@@ -379,8 +379,16 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTODaqPacket, /* 0xE7 */
     Xcp_DTODaqPacket, /* 0xE8 */
     Xcp_DTODaqPacket, /* 0xE9 */
-    Xcp_DTODaqPacket, /* 0xEA */
-    Xcp_DTODaqPacket, /* 0xEB */
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+    Xcp_DTOCmdStdGetCalPage, /* GET_CAL_PAGE 0xEA */
+#else
+    Xcp_CmdNotImplemented, /* GET_CAL_PAGE 0xEA */
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+    Xcp_DTOCmdStdSetCalPage, /* SET_CAL_PAGE 0xEB */
+#else
+    Xcp_CmdNotImplemented, /* SET_CAL_PAGE 0xEB */
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
     Xcp_DTOCmdStdModifyBits, /* MODIFY_BITS 0xEC, optional */
     Xcp_DTOCmdStdShortDownload, /* SHORT_DOWNLOAD 0xED, optional */
     Xcp_DTOCmdStdDownloadMax, /* DOWNLOAD_MAX 0xEE, optional */
@@ -1036,6 +1044,7 @@ void Xcp_Init(const Xcp_Type *pConfig)
 {
     uint8 element_size;
     uint32_least idx;
+    boolean dependencies_satisfied;
 
     if (pConfig != NULL_PTR)
     {
@@ -1047,7 +1056,24 @@ void Xcp_Init(const Xcp_Type *pConfig)
          *  MAX_DTO mod AG = 0 */
         element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
-        if ((element_size != 0x00u) &&
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.4
+         * If SET_CAL_PAGE is implemented, GET_CAL_PAGE is required.
+         * If GET_SEED is implemented, UNLOCK is required. */
+        dependencies_satisfied = TRUE;
+
+        if (((pConfig->general->ctoInfo[XCP_PID_CMD_SET_CAL_PAGE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+            ((pConfig->general->ctoInfo[XCP_PID_CMD_GET_CAL_PAGE] & XCP_CTO_INFO_ENABLED_MASK) == 0x00u))
+        {
+            dependencies_satisfied = FALSE;
+        }
+
+        if (((pConfig->general->ctoInfo[XCP_PID_CMD_GET_SEED] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
+            ((pConfig->general->ctoInfo[XCP_PID_CMD_UNLOCK] & XCP_CTO_INFO_ENABLED_MASK) == 0x00u))
+        {
+            dependencies_satisfied = FALSE;
+        }
+
+        if ((element_size != 0x00u) && (dependencies_satisfied == TRUE) &&
             ((Xcp_Ptr->general->maxCto % element_size) == 0x00u) && ((Xcp_Ptr->general->maxDto % element_size) == 0x00u))
         {
             Xcp_Internal.connect_mode = XCP_CONNECT_MODE_NORMAL;
