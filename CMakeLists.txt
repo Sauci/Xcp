@@ -12,6 +12,8 @@ option(ENABLE_DOC_GEN "enables/disables documentation generation." OFF)
 option(ENABLE_PC_LINT "enables/disables static code analysis." OFF)
 set(MISRA_C_VERSION 2012 CACHE STRING "MISRA standard.")
 option(XCP_SUPPRESS_TX_SUPPORT "enables/disables transmission functionality of the XCP module." ON)
+set(XCP_PAGING_SUPPORTED STD_OFF CACHE STRING
+    "STD_ON/STD_OFF: whether the calibration page switching callbacks are compiled in; must match whether XCP_CONFIG_FILEPATH declares at least one segment.")
 set(XCP_PYTEST_ARGS "" CACHE STRING "extra arguments forwarded to pytest (e.g. -k download).")
 
 find_package(PythonInterp 3.6 REQUIRED)
@@ -47,7 +49,8 @@ target_compile_definitions(Xcp
     PUBLIC XCP_GET_VERSION_INFO_API=STD_ON # ECUC_Xcp_00283
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
-    PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>
+    PUBLIC XCP_PAGING_SUPPORTED=${XCP_PAGING_SUPPORTED})
 
 target_include_directories(Xcp
     PUBLIC interface

@@ -305,11 +305,19 @@ class XcpTest(object):
         # eventQueueSize against another's array, overflowing it (ASan: global-buffer-overflow
         # in Xcp_EventQueueInit). Keying on the same rt_key keeps the compiled bound and the
         # linked array in the same generated pair.
+        # XCP_PAGING_SUPPORTED is emitted into the generated Xcp_Cfg.h for integrators, but this
+        # module never includes Xcp_Cfg.h: doing so would pull `extern const Xcp_Type Xcp[...]`
+        # into this module's cdef, and that symbol is only ever defined in the separate
+        # self.config module above, which this one is not linked against (undefined symbol at
+        # import time). Thread the same value through as a compile definition instead, derived
+        # from the same configuration.segments the generated header keys off.
+        paging_supported = 'STD_ON' if len(config['configurations'][0].get('segments', [])) > 0 else 'STD_OFF'
         self.code = MockGen('_cffi_xcp_{}'.format(rt_key),
                             '#include "Xcp.h"',
                             header,
                             define_macros=tuple(self.compile_definitions) +
-                                          ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
+                                          ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
+                                          ('XCP_PAGING_SUPPORTED={}'.format(paging_supported),),
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),
