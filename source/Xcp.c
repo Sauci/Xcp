@@ -1389,7 +1389,14 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                         }
                         else
                         {
+                            /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1: the error packet
+                             * filled above must actually reach the master. Its sibling branch (a CTO
+                             * that was dispatched, above) sets this flag once for every outcome
+                             * (busy/syntax/pgm_active/dispatched) right after the if/else that fills
+                             * the response; a disabled command must do the same, or Xcp_MainFunction
+                             * never transmits the packet it just filled. */
                             Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
+                            Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
                         }
                     }
 

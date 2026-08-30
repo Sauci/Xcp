@@ -17,9 +17,15 @@ def test_unimplemented_commands_return_err_cmd_unknown(pid):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
     connect(handle)
 
+    # call_args holds the live pointer into the response buffer, not a snapshot, so a slave that
+    # filled the error packet but never transmitted it would still satisfy the byte assertion.
+    # Reset first and count the call, as the sibling command tests do.
+    handle.can_if_transmit.reset_mock()
+
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((pid, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
     handle.lib.Xcp_MainFunction()
 
+    assert handle.can_if_transmit.call_count == 1
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
 
@@ -39,7 +45,13 @@ def test_disabled_optional_commands_return_err_cmd_unknown(pid, flag):
                                    **{flag: False}))
     connect(handle)
 
+    # call_args holds the live pointer into the response buffer, not a snapshot, so a slave that
+    # filled the error packet but never transmitted it would still satisfy the byte assertion.
+    # Reset first and count the call, as the sibling command tests do.
+    handle.can_if_transmit.reset_mock()
+
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((pid, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
     handle.lib.Xcp_MainFunction()
 
+    assert handle.can_if_transmit.call_count == 1
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
