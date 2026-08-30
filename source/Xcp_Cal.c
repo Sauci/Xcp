@@ -112,3 +112,52 @@ uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduIn
 
     return E_OK;
 }
+
+uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    uint8 number_of_data_elements;
+    uint8_least idx;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.2
+     * This command does not support block transfer and it mustn't be used within a block transfer
+     * sequence. The specification prescribes no error code for the violation; ERR_SEQUENCE is the
+     * accurate one and leaves the master able to recover. */
+    if (Xcp_BlockTransferIsActive() == TRUE)
+    {
+        Xcp_BlockTransferAbort();
+
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if (pPduInfo->SduLength < (PduLengthType)Xcp_Ptr->general->maxCto)
+    {
+        /* The minimum request size of this command is MAX_CTO, which does not fit the four-bit
+         * field of ctoInfo, so the check happens here. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.2
+         * The data block with the fixed length (size) of MAX_CTO/AG-1 elements contained in the
+         * CMD will be copied into memory, starting at the MTA. The MTA will be post-incremented by
+         * MAX_CTO/AG-1. */
+        number_of_data_elements = (uint8)((Xcp_Ptr->general->maxCto / element_size) - 0x01u);
+
+        for (idx = 0x00u; idx < number_of_data_elements; idx++)
+        {
+            Xcp_WriteSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](
+                Xcp_Internal.memory_transfer.address,
+                &pPduInfo->SduDataPtr[element_size + (idx * element_size)]);
+
+            Xcp_Internal.memory_transfer.address += element_size;
+        }
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
