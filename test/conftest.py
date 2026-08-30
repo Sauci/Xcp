@@ -268,6 +268,17 @@ class XcpTest(object):
             header = fp.read()
         os.environ['DYLD_LIBRARY_PATH'] = '{}'.format(self.build_directory)
         os.environ['LD_LIBRARY_PATH'] = '{}'.format(self.build_directory)
+        # XCP_PAGING_SUPPORTED is emitted into the generated Xcp_Cfg.h for integrators, but the
+        # module under test never includes Xcp_Cfg.h: doing so would pull
+        # `extern const Xcp_Type Xcp[...]` into its cdef, and that symbol is only ever defined in
+        # the separate configuration module it is not linked against (undefined symbol at import
+        # time). Thread the same value through as a compile definition instead, derived from the
+        # same configuration.segments the generated header keys off, and give it to every module:
+        # self.compile_definitions carries the CMake cache default, a fixed STD_OFF, which would
+        # otherwise suppress the generated header's own definition wherever it is not overridden.
+        # A later -D wins, so appending the derived value corrects it.
+        paging_define = ('XCP_PAGING_SUPPORTED={}'.format(
+                'STD_ON' if len(config['configurations'][0].get('segments', [])) > 0 else 'STD_OFF'),)
         # The module under test is only coupled to a configuration through the generated
         # runtime it links against, so key both on a digest of that generated source rather
         # than on the whole configuration. Configurations producing identical runtime source
@@ -275,13 +286,16 @@ class XcpTest(object):
         # modules down to a handful, while any change to the generated runtime automatically
         # produces a new key. Keying on the whole configuration compiled a fresh copy per
         # parametrisation; keying by hand on event_queue_size would silently break the first
-        # time the runtime template gained another dependency.
+        # time the runtime template gained another dependency. paging_define is discriminated by
+        # the same digest, because it is a function of the segment count and the generated runtime
+        # sizes Xcp_SegmentRt00 by that same count.
         rt_key = hashlib.sha1(code_gen.source_rt.encode('utf-8')).hexdigest()[0:8]
         self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
                           define_macros=tuple(self.compile_definitions) +
-                                        ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),),
+                                        ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
+                                        paging_define,
                           include_dirs=tuple(self.include_directories + [self.build_directory]),
                           compile_flags=_asan_flags(),
                           link_flags=_asan_flags(),
@@ -293,7 +307,8 @@ class XcpTest(object):
                                             ('XCP_PDU_ID_CTO_RX=0x{:04X}'.format(config.channel_rx_pdu),) +
                                             ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
                                             ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
-                                                    config.default_daq_dto_pdu_mapping),),
+                                                    config.default_daq_dto_pdu_mapping),) +
+                                            paging_define,
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               compile_flags=_asan_flags(),
                               link_flags=_asan_flags(),
@@ -305,19 +320,12 @@ class XcpTest(object):
         # eventQueueSize against another's array, overflowing it (ASan: global-buffer-overflow
         # in Xcp_EventQueueInit). Keying on the same rt_key keeps the compiled bound and the
         # linked array in the same generated pair.
-        # XCP_PAGING_SUPPORTED is emitted into the generated Xcp_Cfg.h for integrators, but this
-        # module never includes Xcp_Cfg.h: doing so would pull `extern const Xcp_Type Xcp[...]`
-        # into this module's cdef, and that symbol is only ever defined in the separate
-        # self.config module above, which this one is not linked against (undefined symbol at
-        # import time). Thread the same value through as a compile definition instead, derived
-        # from the same configuration.segments the generated header keys off.
-        paging_supported = 'STD_ON' if len(config['configurations'][0].get('segments', [])) > 0 else 'STD_OFF'
         self.code = MockGen('_cffi_xcp_{}'.format(rt_key),
                             '#include "Xcp.h"',
                             header,
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
-                                          ('XCP_PAGING_SUPPORTED={}'.format(paging_supported),),
+                                          paging_define,
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),
