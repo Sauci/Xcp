@@ -28,13 +28,21 @@ def run_modify_bits(handle, initial, shift, and_mask, xor_mask, byte_order='LITT
     return result
 
 
-def test_modify_bits_matches_the_specification_example():
-    """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.4 worked example."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity='BYTE', max_cto=8))
-    connect(handle)
-    set_mta(handle, 0x00004000)
+@pytest.mark.parametrize('byte_order', byte_orders)
+def test_modify_bits_matches_the_specification_example(byte_order):
+    """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.4 worked example.
 
-    result = run_modify_bits(handle, 0xFFF0FFFF, 16, 0xBFFE, 0x0001)
+    Byte order only changes how the masks and the memory value are marshalled to and from
+    the wire; the arithmetic result must be identical under BIG_ENDIAN and LITTLE_ENDIAN.
+    """
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   address_granularity='BYTE',
+                                   byte_order=byte_order,
+                                   max_cto=8))
+    connect(handle)
+    set_mta(handle, 0x00004000, byte_order)
+
+    result = run_modify_bits(handle, 0xFFF0FFFF, 16, 0xBFFE, 0x0001, byte_order)
 
     assert result['value'] == 0xBFF1FFFF
     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
@@ -43,7 +51,8 @@ def test_modify_bits_matches_the_specification_example():
 @pytest.mark.parametrize('shift, and_mask, xor_mask, initial, expected', ((0, 0xFFFE, 0x0000, 0xFFFFFFFF, 0xFFFFFFFE),
                                                                           (0, 0xFFFE, 0x0001, 0xFFFFFFFE, 0xFFFFFFFF),
                                                                           (8, 0xFFFF, 0x00FF, 0x00000000, 0x0000FF00),
-                                                                          (16, 0xFFFF, 0xFFFF, 0x00000000, 0xFFFF0000)))
+                                                                          (16, 0xFFFF, 0xFFFF, 0x00000000, 0xFFFF0000),
+                                                                          (31, 0xFFFF, 0x0001, 0x00000000, 0x80000000)))
 def test_modify_bits_applies_the_mask_formula(shift, and_mask, xor_mask, initial, expected):
     """The masks must be widened to 32 bits before shifting."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity='BYTE', max_cto=8))
