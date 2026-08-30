@@ -169,7 +169,7 @@ uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoT
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.1
      * MAX_SEGMENT is the total number of segments in the slave device. PAG_PROPERTIES bit 0 is
-     * FREEZE_SUPPORTED, indicating that all SEGMENTs can be put in FREEZE mode. */
+     * FREEZE_SUPPORTED, indicating that all SEGMENTS can be put in FREEZE mode. */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Ptr->general->maxSegment;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->pagProperties;
