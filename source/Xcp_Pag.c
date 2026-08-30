@@ -374,4 +374,41 @@ uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 segment = pPduInfo->SduDataPtr[0x02u];
+    const uint8 page = pPduInfo->SduDataPtr[0x03u];
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    if (Xcp_SegmentIsValid(segment) == FALSE)
+    {
+        error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+    }
+    else if (Xcp_PageIsValid(segment, page) == FALSE)
+    {
+        error = XCP_E_ASAM_PAGE_NOT_VALID;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.3
+         * PAGE 0 of the INIT_SEGMENT of a PAGE contains the initial data for this PAGE. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] =
+            Xcp_Ptr->config->segment[segment].page[page].pageProperties;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] =
+            Xcp_Ptr->config->segment[segment].page[page].initSegment;
+
+        Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    if (error != 0x00u)
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */

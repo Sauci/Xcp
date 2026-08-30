@@ -384,7 +384,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #else
     Xcp_CmdNotImplemented, /* SET_SEGMENT_MODE 0xE6, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
-    Xcp_DTODaqPacket, /* 0xE7 */
+#if (XCP_PAGING_SUPPORTED == STD_ON)
+    Xcp_DTOCmdStdGetPageInfo, /* GET_PAGE_INFO 0xE7, optional */
+#else
+    Xcp_CmdNotImplemented, /* GET_PAGE_INFO 0xE7, optional */
+#endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdStdGetSegmentInfo, /* GET_SEGMENT_INFO 0xE8, optional */
 #else
