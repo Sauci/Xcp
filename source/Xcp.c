@@ -381,7 +381,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTODaqPacket, /* 0xE9 */
     Xcp_DTODaqPacket, /* 0xEA */
     Xcp_DTODaqPacket, /* 0xEB */
-    Xcp_DTODaqPacket, /* 0xEC */
+    Xcp_DTOCmdStdModifyBits, /* MODIFY_BITS 0xEC, optional */
     Xcp_DTOCmdStdShortDownload, /* SHORT_DOWNLOAD 0xED, optional */
     Xcp_DTOCmdStdDownloadMax, /* DOWNLOAD_MAX 0xEE, optional */
     Xcp_DTOCmdStdDownloadNext, /* 0xEF */

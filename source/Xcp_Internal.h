@@ -320,6 +320,7 @@ uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *p
 uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdStdModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *pPduInfo);
