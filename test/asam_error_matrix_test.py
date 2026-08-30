@@ -464,7 +464,12 @@ class TestUnlockErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
     def test_unlock_err_cmd_unknown(self):
-        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_unlock_api_enable=False))
+        # GET_SEED is disabled along with UNLOCK: XCP part 2 - Protocol Layer Specification
+        # 1.0/1.4 requires UNLOCK whenever GET_SEED is implemented, so leaving GET_SEED enabled
+        # here would make Xcp_Init reject the configuration before this command is ever sent.
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       xcp_get_seed_api_enable=False,
+                                       xcp_unlock_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
