@@ -337,25 +337,25 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTODaqStimPacket, /* 0xBD */
     Xcp_DTODaqStimPacket, /* 0xBE */
     Xcp_DTODaqStimPacket, /* 0xBF */
-    Xcp_DTODaqPacket, /* 0xC0 */
-    Xcp_DTODaqPacket, /* 0xC1 */
-    Xcp_DTODaqPacket, /* 0xC2 */
-    Xcp_DTODaqPacket, /* 0xC3 */
-    Xcp_DTODaqPacket, /* 0xC4 */
-    Xcp_DTODaqPacket, /* 0xC5 */
-    Xcp_DTODaqPacket, /* 0xC6 */
-    Xcp_DTODaqPacket, /* 0xC7 */
-    Xcp_DTODaqPacket, /* 0xC8 */
-    Xcp_DTODaqPacket, /* 0xC9 */
-    Xcp_DTODaqPacket, /* 0xCA */
-    Xcp_DTODaqPacket, /* 0xCB */
-    Xcp_DTODaqPacket, /* 0xCC */
-    Xcp_DTODaqPacket, /* 0xCD */
-    Xcp_DTODaqPacket, /* 0xCE */
-    Xcp_DTODaqPacket, /* 0xCF */
-    Xcp_DTODaqPacket, /* 0xD0 */
-    Xcp_DTODaqPacket, /* 0xD1 */
-    Xcp_DTODaqPacket, /* 0xD2 */
+    Xcp_CmdNotImplemented, /* 0xC0 */
+    Xcp_CmdNotImplemented, /* 0xC1 */
+    Xcp_CmdNotImplemented, /* 0xC2 */
+    Xcp_CmdNotImplemented, /* 0xC3 */
+    Xcp_CmdNotImplemented, /* 0xC4 */
+    Xcp_CmdNotImplemented, /* 0xC5 */
+    Xcp_CmdNotImplemented, /* 0xC6 */
+    Xcp_CmdNotImplemented, /* 0xC7 */
+    Xcp_CmdNotImplemented, /* 0xC8 */
+    Xcp_CmdNotImplemented, /* 0xC9 */
+    Xcp_CmdNotImplemented, /* 0xCA */
+    Xcp_CmdNotImplemented, /* 0xCB */
+    Xcp_CmdNotImplemented, /* 0xCC */
+    Xcp_CmdNotImplemented, /* 0xCD */
+    Xcp_CmdNotImplemented, /* 0xCE */
+    Xcp_CmdNotImplemented, /* 0xCF */
+    Xcp_CmdNotImplemented, /* 0xD0 */
+    Xcp_CmdNotImplemented, /* 0xD1 */
+    Xcp_CmdNotImplemented, /* 0xD2 */
     Xcp_DTOCmdDaqAllocOdtEntry, /* 0xD3, optional */
     Xcp_DTOCmdDaqAllocOdt, /* 0xD4, optional */
     Xcp_DTOCmdDaqAllocDaq, /* 0xD5, optional */

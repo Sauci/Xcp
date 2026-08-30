@@ -197,6 +197,38 @@
           "enabled": true,
           "protected": false
         },
+        "xcp_download_next_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_modify_bits_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_pag_processor_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_segment_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_page_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_set_segment_mode_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_segment_mode_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_copy_cal_page_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
         "resource_protection": {
           "calibration_paging": false,
           "data_acquisition": false,

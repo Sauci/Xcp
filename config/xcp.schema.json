@@ -281,6 +281,30 @@
               "xcp_get_comm_mode_info_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_download_next_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_modify_bits_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_pag_processor_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_segment_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_page_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_set_segment_mode_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_segment_mode_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_copy_cal_page_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "resource_protection": {
                 "type": "object",
                 "properties": {
@@ -344,6 +368,14 @@
               "xcp_program_api_enable",
               "xcp_program_max_api_enable",
               "xcp_get_comm_mode_info_api_enable",
+              "xcp_download_next_api_enable",
+              "xcp_modify_bits_api_enable",
+              "xcp_get_pag_processor_info_api_enable",
+              "xcp_get_segment_info_api_enable",
+              "xcp_get_page_info_api_enable",
+              "xcp_set_segment_mode_api_enable",
+              "xcp_get_segment_mode_api_enable",
+              "xcp_copy_cal_page_api_enable",
               "resource_protection"
             ]
           },
