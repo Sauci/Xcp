@@ -1593,6 +1593,30 @@ void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo)
     Xcp_FinalizeResPacket(0x02u, pPduInfo);
 }
 
+void Xcp_FillErrorPacketWithData(const uint8 errorCode,
+                                 const uint8 *pData,
+                                 const uint8 dataLength,
+                                 PduInfoType *pPduInfo)
+{
+    uint8_least idx;
+
+    pPduInfo->SduDataPtr[0x00u] = XCP_PID_ERROR;
+    pPduInfo->SduDataPtr[0x01u] = errorCode;
+
+    for (idx = 0x00u; idx < dataLength; idx++)
+    {
+        pPduInfo->SduDataPtr[0x02u + idx] = pData[idx];
+    }
+
+    Xcp_FinalizeResPacket((PduLengthType)(0x02u + dataLength), pPduInfo);
+}
+
+void Xcp_BlockTransferAbort(void)
+{
+    Xcp_Internal.block_transfer.requested_elements = 0x00u;
+    Xcp_Internal.block_transfer.frame_elements = 0x00u;
+}
+
 uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag) {
     uint8 result = 0x00u;
 

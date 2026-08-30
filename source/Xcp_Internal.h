@@ -276,6 +276,7 @@ extern const Xcp_Type *Xcp_Ptr;
 
 void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo);
 void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo);
+void Xcp_FillErrorPacketWithData(const uint8 errorCode, const uint8 *pData, const uint8 dataLength, PduInfoType *pPduInfo);
 uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag);
 uint8_least Xcp_GetNumberOfAlignmentBytes(uint8_least alignmentByteIndex, uint8_least elementSize, uint8 maxCto);
 void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrderType endianness);
@@ -287,6 +288,7 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elem
 void Xcp_BlockTransferAcknowledgeFrame(void);
 Std_ReturnType Xcp_BlockTransferReadSlaveMemory(void);
 Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize);
+void Xcp_BlockTransferAbort(void);
 uint8 Xcp_GetProtectionStatus(void);
 void Xcp_SetProtectionStatus(void);
 void Xcp_ClearProtectionStatus(void);
