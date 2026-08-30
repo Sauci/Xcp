@@ -81,3 +81,24 @@ def test_get_segment_info_rejects_invalid_parameters(mode, segment, segment_info
     handle.lib.Xcp_MainFunction()
 
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, expected_error)
+
+
+@pytest.mark.parametrize('mapping_index', (0x00, 0x01, 0xFF))
+def test_get_segment_info_mode_2_rejects_every_index_when_the_segment_has_no_mappings(mapping_index):
+    """A segment may declare no address mappings at all, which is the configuration default.
+
+    MAPPING_INDEX is unsigned, so `mapping_index >= maxMapping` rejects every possible wire
+    value when maxMapping is zero and the array is never indexed. This pins that, because the
+    generator still emits a sentinel row for such a segment: were the bound ever dropped, the
+    read would succeed against the sentinel instead of faulting, and the defect would be silent.
+    """
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   max_cto=8,
+                                   segments=[segment(name='S0', address_mappings=[])]))
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001,
+                                     handle.get_pdu_info((0xE8, 0x02, 0x00, 0x00, mapping_index)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
