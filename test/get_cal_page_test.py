@@ -55,3 +55,12 @@ def test_xcp_init_fails_when_set_cal_page_is_enabled_without_get_cal_page():
     handle.det_report_error.assert_called_once_with(ANY, ANY,
                                                     handle.define('XCP_INIT_API_ID'),
                                                     handle.define('XCP_E_INIT_FAILED'))
+
+
+def test_xcp_init_fails_when_get_seed_is_enabled_without_unlock():
+    """XCP part 2 - Protocol Layer Specification 1.0/1.4: GET_SEED requires UNLOCK."""
+    handle = XcpTest(DefaultConfig(xcp_get_seed_api_enable=True,
+                                   xcp_unlock_api_enable=False))
+    handle.det_report_error.assert_called_once_with(ANY, ANY,
+                                                    handle.define('XCP_INIT_API_ID'),
+                                                    handle.define('XCP_E_INIT_FAILED'))
