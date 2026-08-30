@@ -161,3 +161,62 @@ uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPd
 
     return E_OK;
 }
+
+uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
+    uint8 capacity = 0x00u;
+    uint32 address;
+    uint8_least idx;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.3
+     * Please note that this command will have no effect (no data bytes can be transferred) if
+     * MAX_CTO = 8 (e.g. XCP on CAN). */
+    if (Xcp_Ptr->general->maxCto >= 0x08u)
+    {
+        capacity = (uint8)((Xcp_Ptr->general->maxCto - 0x08u) / element_size);
+    }
+
+    if (Xcp_BlockTransferIsActive() == TRUE)
+    {
+        /* This command mustn't be used within a block transfer sequence. */
+        Xcp_BlockTransferAbort();
+
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if (number_of_data_elements > capacity)
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.3
+         * If the number of elements exceeds (MAX_CTO-8)/AG, the error code ERR_OUT_OF_RANGE will
+         * be returned. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &address, Xcp_Ptr->general->byteOrder);
+
+        Xcp_Internal.memory_transfer.extension = pPduInfo->SduDataPtr[0x03u];
+
+        for (idx = 0x00u; idx < number_of_data_elements; idx++)
+        {
+            Xcp_WriteSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](
+                (void *)address,
+                &pPduInfo->SduDataPtr[0x08u + (idx * element_size)]);
+
+            address += element_size;
+        }
+
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.3
+         * The MTA pointer is set to the first data element behind the downloaded data block. */
+        Xcp_Internal.memory_transfer.address = (void *)address;
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}

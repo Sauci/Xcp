@@ -316,6 +316,7 @@ uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduI
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTODaqPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
