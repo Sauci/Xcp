@@ -4,7 +4,6 @@
 import pytest
 
 from .parameter import *
-from .conftest import XcpTest
 from .set_cal_page_test import paging_handle
 
 
