@@ -1072,6 +1072,9 @@ void Xcp_Init(const Xcp_Type *pConfig)
                 Xcp_Internal.event._packet[idx] = 0x00u;
             }
             Xcp_EventQueueInit(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue);
+            for (idx = 0x00000000u; idx < Xcp_Ptr->general->maxSegment; idx ++) {
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[idx].freeze = FALSE;
+            }
             for (idx = 0x00000000u; idx < (sizeof(Xcp_Internal.seed.buffer) / sizeof(Xcp_Internal.seed.buffer[0x00u])); idx ++) {
                 Xcp_Internal.seed.buffer[idx] = 0x00u;
             }

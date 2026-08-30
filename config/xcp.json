@@ -31,6 +31,24 @@
           ]
         }
       ],
+      "segments": [
+        {
+          "name": "CAL_SEG_0",
+          "address": 4194304,
+          "length": 4096,
+          "address_extension": 0,
+          "compression_method": 0,
+          "encryption_method": 0,
+          "pages": [
+            {"init_segment": 0, "ecu_access": "DONT_CARE",
+             "xcp_read_access": "DONT_CARE", "xcp_write_access": "NOT_ALLOWED"},
+            {"init_segment": 0, "ecu_access": "WITHOUT_OTHER",
+             "xcp_read_access": "DONT_CARE", "xcp_write_access": "DONT_CARE"}
+          ],
+          "address_mappings": []
+        }
+      ],
+      "paging": {"freeze_supported": false},
       "events": [
         {
           "consistency": "ODT",
@@ -84,7 +102,7 @@
           "protected": false
         },
         "xcp_short_download_api_enable": {
-          "enabled": true,
+          "enabled": false,
           "protected": false
         },
         "xcp_set_cal_page_api_enable": {
