@@ -12,11 +12,30 @@ option(ENABLE_DOC_GEN "enables/disables documentation generation." OFF)
 option(ENABLE_PC_LINT "enables/disables static code analysis." OFF)
 set(MISRA_C_VERSION 2012 CACHE STRING "MISRA standard.")
 option(XCP_SUPPRESS_TX_SUPPORT "enables/disables transmission functionality of the XCP module." ON)
-set(XCP_PAGING_SUPPORTED STD_OFF CACHE STRING
-    "STD_ON/STD_OFF: whether the calibration page switching callbacks are compiled in; must match whether XCP_CONFIG_FILEPATH declares at least one segment.")
 set(XCP_PYTEST_ARGS "" CACHE STRING "extra arguments forwarded to pytest (e.g. -k download).")
 
 find_package(PythonInterp 3.6 REQUIRED)
+
+# Whether the PAG commands are compiled in follows from whether the configuration declares a
+# segment, which is the rule the generated Xcp_Cfg.h states and the README documents. Deriving it
+# here rather than defaulting it means the default build of a configuration that declares one
+# actually answers those commands: a fixed default of STD_OFF silently compiled all eight out and
+# answered ERR_CMD_UNKNOWN, since nothing on the library's include path pulls in Xcp_Cfg.h to
+# supply the value instead.
+execute_process(
+    COMMAND ${PYTHON_EXECUTABLE} -c
+        "import json,sys;c=json.load(open(sys.argv[1]));print('STD_ON' if c['configurations'][0].get('segments') else 'STD_OFF')"
+        ${XCP_CONFIG_FILEPATH}
+    OUTPUT_VARIABLE XCP_PAGING_SUPPORTED_DERIVED
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE XCP_PAGING_SUPPORTED_RESULT)
+
+if(NOT XCP_PAGING_SUPPORTED_RESULT EQUAL 0)
+    message(FATAL_ERROR "could not derive XCP_PAGING_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
+endif()
+
+set(XCP_PAGING_SUPPORTED ${XCP_PAGING_SUPPORTED_DERIVED} CACHE STRING
+    "STD_ON/STD_OFF: whether the calibration page switching callbacks are compiled in. Derived from whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why." FORCE)
 
 if (${ENABLE_DOC_GEN})
     find_package(Doxygen REQUIRED dot)
