@@ -1404,6 +1404,286 @@ class TestModifyBitsErrorHandling:
         pass
 
 
+class TestSetCalPageErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3
+
+    SET_CAL_PAGE is a mandatory command once paging is used, so it has no ERR_CMD_UNKNOWN row.
+    """
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x01, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    def test_returns_err_page_not_valid_for_an_unknown_page(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x01, 0x00, 0x01)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x26)
+
+    def test_returns_err_mode_not_valid_when_neither_ecu_nor_xcp_is_requested(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.1: both flags ECU and XCP may be
+        set simultaneously or separately. A request selecting neither asks for nothing and is
+        rejected.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x27)
+
+    def test_returns_err_segment_not_valid_for_an_unknown_segment(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x01, 0x01, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x28)
+
+    def test_returns_err_mode_not_valid_rather_than_err_segment_not_valid_when_both_apply(self):
+        """Coverage gap from the Task 15 review, generalised to SET_CAL_PAGE: a mode selecting
+        neither ECU nor XCP and an unknown segment can each individually justify a different
+        error. Xcp_DTOCmdStdSetCalPage checks the mode bits before it ever looks at the segment,
+        so ERR_MODE_NOT_VALID wins; swapping the two checks would still satisfy every other test
+        in this file.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        # mode 0x00 selects neither ECU nor XCP, and segment 0x01 does not exist (only segment
+        # 0 is configured): both ERR_MODE_NOT_VALID and ERR_SEGMENT_NOT_VALID are individually
+        # justified by this single request.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x00, 0x01, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x27)
+
+    def test_returns_err_segment_not_valid_rather_than_err_page_not_valid_when_both_apply(self):
+        """Same gap as above, one check further down: an unknown segment and an unknown page can
+        each individually justify a different error. Xcp_DTOCmdStdSetCalPage validates every
+        affected segment before it ever looks at the page, so ERR_SEGMENT_NOT_VALID wins.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        # segment 0x01 does not exist and page 0x01 does not exist either (only page 0 is
+        # configured on segment 0): both ERR_SEGMENT_NOT_VALID and ERR_PAGE_NOT_VALID are
+        # individually justified by this single request.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x01, 0x01, 0x01)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x28)
+
+
+class TestGetCalPageErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3
+
+    GET_CAL_PAGE is a mandatory command once paging is used, so it has no ERR_CMD_UNKNOWN row.
+    """
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEA, 0x01)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    @pytest.mark.skip(reason='GET_CAL_PAGE has no page parameter to validate: the request only '
+                             'carries mode and segment. Xcp_DTOCmdStdGetCalPage never produces '
+                             'ERR_PAGE_NOT_VALID even though 1.7.3.2.3 lists it for this command')
+    def test_returns_err_page_not_valid(self):
+        pass
+
+    def test_returns_err_mode_not_valid_for_any_mode_other_than_ecu_or_xcp(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.2: mode may be 0x01 (ECU access)
+        or 0x02 (XCP access). All other values are invalid.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEA, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x27)
+
+    def test_returns_err_segment_not_valid_for_an_unknown_segment(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEA, 0x01, 0x01)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x28)
+
+    def test_returns_err_mode_not_valid_rather_than_err_segment_not_valid_when_both_apply(self):
+        """Same gap as SET_CAL_PAGE: an invalid mode and an unknown segment can each
+        individually justify a different error. Xcp_DTOCmdStdGetCalPage checks the mode before
+        the segment, so ERR_MODE_NOT_VALID wins.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEA, 0x00, 0x01)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x27)
+
+
+class TestGetPagProcessorInfoErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
+
+    def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       xcp_get_pag_processor_info_api_enable=False,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE9,)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    @pytest.mark.skip(reason='GET_PAG_PROCESSOR_INFO takes a single packet ID and is, by design, '
+                             'not able to fail on syntax')
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        pass
+
+
+class TestGetSegmentInfoErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
+
+    def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       xcp_get_segment_info_api_enable=False,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    def test_returns_err_out_of_range_for_an_invalid_mode(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x03, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+    def test_returns_err_segment_not_valid_for_an_unknown_segment(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x00, 0x01, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x28)
+
+    def test_returns_err_segment_not_valid_rather_than_err_out_of_range_when_both_apply(self):
+        """An unknown segment and an invalid mode can each individually justify a different
+        error. Xcp_DTOCmdStdGetSegmentInfo checks the segment before it ever looks at mode, so
+        ERR_SEGMENT_NOT_VALID wins; swapping the two checks would still satisfy every other test
+        in this file.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        # mode 0x03 is invalid (only 0, 1 and 2 are defined) and segment 0x01 does not exist:
+        # both ERR_OUT_OF_RANGE and ERR_SEGMENT_NOT_VALID are individually justified by this
+        # single request.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x03, 0x01, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x28)
+
+
 @pytest.mark.parametrize('name, code', (('XCP_E_ASAM_CMD_SYNCH', 0x00),
                                         ('XCP_E_ASAM_CMD_BUSY', 0x10),
                                         ('XCP_E_ASAM_DAQ_ACTIVE', 0x11),
