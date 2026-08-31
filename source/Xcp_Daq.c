@@ -10,7 +10,7 @@
 #include "Xcp_Internal.h"
 
 /*------------------------------------------------------------------------------------------------*/
-/* local function definitions (static).                                                           */
+/* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
 
 uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo)

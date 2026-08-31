@@ -37,6 +37,10 @@ static boolean Xcp_PageIsValid(uint8 segment, uint8 page)
     return result;
 }
 
+/*------------------------------------------------------------------------------------------------*/
+/* command handler definitions.                                                                  */
+/*------------------------------------------------------------------------------------------------*/
+
 uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];

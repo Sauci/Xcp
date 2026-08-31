@@ -10,7 +10,7 @@
 #include "Xcp_Internal.h"
 
 /*------------------------------------------------------------------------------------------------*/
-/* local function definitions (static).                                                           */
+/* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
 
 uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo)

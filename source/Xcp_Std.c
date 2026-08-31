@@ -1032,6 +1032,10 @@ uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType 
     return E_OK;
 }
 
+/*------------------------------------------------------------------------------------------------*/
+/* command handler definitions.                                                                  */
+/*------------------------------------------------------------------------------------------------*/
+
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     (void)pPduInfo;
