@@ -1364,6 +1364,17 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                     Xcp_ClearProtectionStatus();
                                                 }
                                             }
+                                            else
+                                            {
+                                                /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
+                                                 * A command addressing a protected resource that has not been
+                                                 * unlocked answers ERR_ACCESS_LOCKED. Without this branch the
+                                                 * response buffer keeps whatever the previous command left in
+                                                 * it and is transmitted anyway, so the master reads a stale
+                                                 * positive response to a command the slave refused to run. */
+                                                Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_LOCKED,
+                                                                    &Xcp_Internal.cto_response.pdu_info);
+                                            }
                                         }
                                         else
                                         {

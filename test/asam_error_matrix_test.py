@@ -1193,9 +1193,28 @@ class TestDownloadNextErrorHandling:
     def test_returns_err_access_denied(self):
         pass
 
-    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_access_locked(self):
-        pass
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
+
+        The skip previously here claimed the memory mapping had to be known, which is about
+        address correctness and has nothing to do with resource locking. The test is writable,
+        and it failed when written: the dispatcher had no branch for a protected resource that
+        was never unlocked, so the response buffer kept the previous command's contents and was
+        transmitted anyway. The master read a stale positive response to a refused command.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       resource_protection_calibration_paging=True))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xEF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x25)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_write_protected(self):
@@ -1266,9 +1285,28 @@ class TestDownloadMaxErrorHandling:
     def test_returns_err_access_denied(self):
         pass
 
-    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_access_locked(self):
-        pass
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
+
+        The skip previously here claimed the memory mapping had to be known, which is about
+        address correctness and has nothing to do with resource locking. The test is writable,
+        and it failed when written: the dispatcher had no branch for a protected resource that
+        was never unlocked, so the response buffer kept the previous command's contents and was
+        transmitted anyway. The master read a stale positive response to a refused command.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       resource_protection_calibration_paging=True))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xEE, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x25)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_write_protected(self):
@@ -1329,9 +1367,28 @@ class TestShortDownloadErrorHandling:
     def test_returns_err_access_denied(self):
         pass
 
-    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_access_locked(self):
-        pass
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
+
+        The skip previously here claimed the memory mapping had to be known, which is about
+        address correctness and has nothing to do with resource locking. The test is writable,
+        and it failed when written: the dispatcher had no branch for a protected resource that
+        was never unlocked, so the response buffer kept the previous command's contents and was
+        transmitted anyway. The master read a stale positive response to a refused command.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       resource_protection_calibration_paging=True))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xED, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x25)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_write_protected(self):
@@ -1391,9 +1448,28 @@ class TestModifyBitsErrorHandling:
     def test_returns_err_access_denied(self):
         pass
 
-    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_access_locked(self):
-        pass
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
+
+        The skip previously here claimed the memory mapping had to be known, which is about
+        address correctness and has nothing to do with resource locking. The test is writable,
+        and it failed when written: the dispatcher had no branch for a protected resource that
+        was never unlocked, so the response buffer kept the previous command's contents and was
+        transmitted anyway. The master read a stale positive response to a refused command.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       resource_protection_calibration_paging=True))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xEC, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x25)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_returns_err_write_protected(self):
