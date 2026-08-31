@@ -76,10 +76,44 @@ The active page is deliberately **not** cached by the stack. The application may
 so `Xcp_GetCalPage` is asked every time rather than a shadow copy being kept, which would go stale exactly when it
 matters.
 
-`SET_CAL_PAGE` and `GET_CAL_PAGE` are mandatory once the group is enabled: the specification requires `GET_CAL_PAGE`
-wherever `SET_CAL_PAGE` is implemented, so a configuration enabling one without the other is rejected by `Xcp_Init`,
-which reports `XCP_E_INIT_FAILED` and leaves the module uninitialized. The same rule is enforced for `GET_SEED` and
-`UNLOCK`.
+The specification requires `GET_CAL_PAGE` wherever `SET_CAL_PAGE` is implemented. `Xcp_Init` enforces that one
+direction only: enabling `SET_CAL_PAGE` while `GET_CAL_PAGE` is disabled is rejected, reported as `XCP_E_INIT_FAILED`,
+and leaves the module uninitialized. The converse is legal -- `GET_CAL_PAGE` alone is a valid configuration, as is a
+paging build with both disabled, which answers `ERR_CMD_UNKNOWN` to each. The same one-directional rule is enforced for
+`GET_SEED` and `UNLOCK`.
+
+### Declaring segments and pages
+Segments live under `segments` in the *JSON* configuration, and FREEZE support is a module-level property under
+`paging`:
+
+| field                              | meaning                                                                        |
+|:-----------------------------------|:-------------------------------------------------------------------------------|
+| ```segments[].address```           | start address of the calibration region                                        |
+| ```segments[].length```            | its length                                                                     |
+| ```segments[].address_extension``` | address extension reported by `GET_SEGMENT_INFO` mode 1                        |
+| ```segments[].compression_method```| reported by `GET_SEGMENT_INFO` mode 1; the stack does not itself compress       |
+| ```segments[].encryption_method``` | reported the same way, and likewise not performed by the stack                  |
+| ```segments[].pages[]```           | the interchangeable copies; each has an `init_segment` and access properties    |
+| ```segments[].address_mappings[]```| optional source/destination/length triples, reported by mode 2                  |
+| ```paging.freeze_supported```      | whether FREEZE may be requested at all, module-wide                             |
+
+### Where this implementation resolves an ambiguous specification
+Two commands are described one way in the prose of section 1.6 and another way in the error matrix of section 1.7.3.2.3.
+Both are resolved in favour of the matrix, so that every **PAG** command reports a bad segment identically:
+
+- `GET_SEGMENT_INFO`: the prose says an unavailable segment returns `ERR_OUT_OF_RANGE`; this stack returns
+  `ERR_SEGMENT_NOT_VALID`, and reserves `ERR_OUT_OF_RANGE` for a bad mode, `SEGMENT_INFO` or `MAPPING_INDEX`.
+- `GET_PAGE_INFO`: resolved the same way, for the same reason.
+
+One matrix row is unreachable rather than unimplemented: 1.7.3.2.3 lists `ERR_PAGE_NOT_VALID` for `GET_CAL_PAGE`, but
+that request carries only an access mode and a segment number. There is no page parameter to validate.
+
+### Block transfer and MAX_BS
+`MAX_BS` bounds *master* block mode, whose packets are `DOWNLOAD_NEXT`. It does not bound slave block mode, which
+governs multi-response commands such as `UPLOAD`; the two are separate properties and `DOWNLOAD` consults only the
+master one. `DOWNLOAD_MAX` and `SHORT_DOWNLOAD` must not appear inside a block transfer sequence. The specification
+prescribes no error code for that violation, so the stack answers `ERR_SEQUENCE`, which is accurate and leaves the
+master able to recover.
 
 ## FREEZE mode
 `SET_SEGMENT_MODE` can mark a segment for freezing, which the specification describes as selecting that segment to be
@@ -99,8 +133,9 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
   **CMD**/**STIM** communication channel, not the CAN identifier directly. This is implemented this way to prevent 
   dependencies on the PDU mapping table in this module.
 - The `GET_ID` command only supports the request identification type 0 (*ASCII text*).
-- `GET_SEGMENT_INFO` mode 1 reports a segment's page and mapping counts, but the stack keeps no notion of which
-  page is currently active, so it cannot be asked for that; use `GET_CAL_PAGE`.
+- `SHORT_DOWNLOAD` can transfer no data at all when `MAX_CTO` is 8, which is the case for XCP on CAN: the command's
+  own header consumes the whole frame. The specification notes this; the stack accepts the command and rejects any
+  element count above `(MAX_CTO - 8) / AG` with `ERR_OUT_OF_RANGE`.
 ---
 # TODO
 - Protect variables used in both synchronous and asynchronous APIs.
