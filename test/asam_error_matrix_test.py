@@ -1153,6 +1153,257 @@ class TestDownloadErrorHandling:
     def test_download_err_memory_overflow(self, payload):
         pass
 
+
+class TestDownloadNextErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+
+    def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_download_next_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x02, 0x11, 0x22)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x02, 0x11)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    @pytest.mark.skip(reason='Xcp_DTOCmdStdDownloadNext only ever compares the announced count '
+                             'against the active block transfer and reports ERR_SEQUENCE on a '
+                             'mismatch; it has no path that produces ERR_OUT_OF_RANGE')
+    def test_returns_err_out_of_range(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_denied(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_locked(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_write_protected(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_memory_overflow(self):
+        pass
+
+    def test_returns_err_sequence_without_an_active_block_transfer(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.1: If the number of data
+        elements does not match the expected value, the error code ERR_SEQUENCE will be
+        returned. Outside of a block transfer there is nothing to match against, so the
+        expected count is reported as 0.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x02, 0x11, 0x22)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:3]) == (0xFE, 0x29, 0x00)
+
+
+class TestDownloadMaxErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+
+    def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8, xcp_download_max_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.2: the minimum request size of
+        this command is MAX_CTO, one short of which must still be rejected.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    @pytest.mark.skip(reason='Xcp_DTOCmdStdDownloadMax always writes a fixed MAX_CTO/AG-1 '
+                             'elements with no user-supplied count to range-check; it has no '
+                             'path that produces ERR_OUT_OF_RANGE')
+    def test_returns_err_out_of_range(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_denied(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_locked(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_write_protected(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_memory_overflow(self):
+        pass
+
+
+class TestShortDownloadErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+
+    def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_short_download_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    def test_returns_err_out_of_range_when_the_count_exceeds_capacity(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.3: If the number of elements
+        exceeds (MAX_CTO-8)/AG, the error code ERR_OUT_OF_RANGE will be returned.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity='BYTE', max_cto=16))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        payload = (0xED, 0x09, 0x00, 0x00) + tuple(u32_to_array(0x00003000, 'LITTLE_ENDIAN')) + tuple([0x00] * 8)
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(payload))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_denied(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_locked(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_write_protected(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_memory_overflow(self):
+        pass
+
+
+class TestModifyBitsErrorHandling:
+    """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+
+    def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_modify_bits_api_enable=False))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEC, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEC, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
+
+    def test_returns_err_out_of_range_for_a_shift_above_31(self):
+        """A shift of 32 or more is undefined behaviour on a 32 bit value; the specification
+        puts no bound on S, so the request is rejected rather than evaluated.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEC, 0x20, 0xFF, 0xFF, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_denied(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_access_locked(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_write_protected(self):
+        pass
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_returns_err_memory_overflow(self):
+        pass
+
+
 @pytest.mark.parametrize('name, code', (('XCP_E_ASAM_CMD_SYNCH', 0x00),
                                         ('XCP_E_ASAM_CMD_BUSY', 0x10),
                                         ('XCP_E_ASAM_DAQ_ACTIVE', 0x11),
