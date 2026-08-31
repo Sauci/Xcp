@@ -1157,6 +1157,50 @@ class TestDownloadErrorHandling:
 class TestDownloadNextErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
 
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_download_next_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1246,6 +1290,50 @@ class TestDownloadNextErrorHandling:
 class TestDownloadMaxErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
 
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8, xcp_download_max_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1319,6 +1407,50 @@ class TestDownloadMaxErrorHandling:
 
 class TestShortDownloadErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_short_download_api_enable=False))
@@ -1401,6 +1533,50 @@ class TestShortDownloadErrorHandling:
 
 class TestModifyBitsErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEC, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEC, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_modify_bits_api_enable=False))
@@ -1485,6 +1661,52 @@ class TestSetCalPageErrorHandling:
 
     SET_CAL_PAGE is a mandatory command once paging is used, so it has no ERR_CMD_UNKNOWN row.
     """
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x01, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x01, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
@@ -1591,6 +1813,52 @@ class TestGetCalPageErrorHandling:
     GET_CAL_PAGE is a mandatory command once paging is used, so it has no ERR_CMD_UNKNOWN row.
     """
 
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEA, 0x01, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEA, 0x01, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+
     def test_returns_err_cmd_syntax_if_the_request_is_too_short(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1660,6 +1928,52 @@ class TestGetCalPageErrorHandling:
 class TestGetPagProcessorInfoErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
 
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE9,)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE9,)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                        xcp_get_pag_processor_info_api_enable=False,
@@ -1683,6 +1997,52 @@ class TestGetPagProcessorInfoErrorHandling:
 
 class TestGetSegmentInfoErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -1762,6 +2122,52 @@ class TestGetSegmentInfoErrorHandling:
 
 class TestGetPageInfoErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE7, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE7, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -1844,6 +2250,52 @@ class TestGetPageInfoErrorHandling:
 
 class TestSetSegmentModeErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE6, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE6, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -1934,6 +2386,52 @@ class TestSetSegmentModeErrorHandling:
 class TestGetSegmentModeErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
 
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE5, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE5, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
+
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                        xcp_get_segment_mode_api_enable=False,
@@ -1978,6 +2476,52 @@ class TestGetSegmentModeErrorHandling:
 
 class TestCopyCalPageErrorHandling:
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.3"""
+
+    def test_returns_err_cmd_busy(self):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # A response the master never confirmed leaves the slave with one outstanding.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+        handle.lib.Xcp_MainFunction()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE4, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        # call_args holds the live response buffer. Asserting a transmission count here would
+        # fail, and not because the command was mishandled: with one response still outstanding
+        # the slave prepares ERR_CMD_BUSY but never sends it, so the master learns of it only by
+        # timing out. That is a pre-existing property of the single CTO buffer, unrelated to this
+        # command. What this pins is that the command reacts to the busy gate at all -- had its
+        # matrix row lost the bit, the command would have run and left its own response here.
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
+
+    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    def test_returns_err_pgm_active(self, mode_bit):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       segments=[segment(pages=[page()])]))
+        handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+        # SET_REQUEST leaves a store or clear request outstanding, because the callback failed.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode_bit, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE4, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
+
 
     def test_returns_err_cmd_unknown_if_the_command_is_disabled(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
