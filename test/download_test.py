@@ -34,12 +34,13 @@ def capture_writes(handle, element_size, byte_order='LITTLE_ENDIAN'):
     return written
 
 
-def test_download_writes_the_payload_to_the_mta_and_acknowledges():
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_download_writes_the_payload_to_the_mta_and_acknowledges(max_cto):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.1.1"""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    address_granularity='BYTE',
                                    master_block_mode=False,
-                                   max_cto=8))
+                                   max_cto=max_cto))
     connect(handle)
     set_mta(handle, 0xDEADBEEF)
     written = capture_writes(handle, 1)

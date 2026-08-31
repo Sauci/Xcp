@@ -7,9 +7,10 @@ from .parameter import *
 from .set_cal_page_test import paging_handle
 
 
-def test_copy_cal_page_delegates_to_the_integrator_and_acknowledges():
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_copy_cal_page_delegates_to_the_integrator_and_acknowledges(max_cto):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.6"""
-    handle = paging_handle(segment_count=4, page_count=4)
+    handle = paging_handle(segment_count=4, page_count=4, max_cto=max_cto)
     # can_if_transmit is reused across commands and never cleared between them, and CONNECT's
     # own positive-response PID is also 0xFF: without resetting the mock here, a broken dispatch
     # that never calls CanIf_Transmit for this request would still show the CONNECT ack that

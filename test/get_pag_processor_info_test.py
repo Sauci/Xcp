@@ -9,9 +9,11 @@ from .download_test import connect
 
 
 @pytest.mark.parametrize('segment_count', (1, 2, 5))
-def test_get_pag_processor_info_reports_the_configured_segment_count(segment_count):
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_get_pag_processor_info_reports_the_configured_segment_count(max_cto, segment_count):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.1: MAX_SEGMENT."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   max_cto=max_cto,
                                    segments=[segment(name='S{}'.format(i), pages=[page()])
                                              for i in range(segment_count)]))
     connect(handle)

@@ -8,8 +8,9 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
-def freeze_handle(freeze_supported=True, segment_count=2):
+def freeze_handle(freeze_supported=True, segment_count=2, max_cto=8):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   max_cto=max_cto,
                                    freeze_supported=freeze_supported,
                                    segments=[segment(name='S{}'.format(i), pages=[page()])
                                              for i in range(segment_count)]))
@@ -27,9 +28,10 @@ def test_segment_mode_defaults_to_freeze_disabled():
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:3]) == (0xFF, 0x00, 0x00)
 
 
-def test_set_segment_mode_freeze_is_reported_back_by_get_segment_mode():
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_set_segment_mode_freeze_is_reported_back_by_get_segment_mode(max_cto):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.4 and 1.6.3.2.5"""
-    handle = freeze_handle()
+    handle = freeze_handle(max_cto=max_cto)
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE6, 0x01, 0x01)))
     handle.lib.Xcp_MainFunction()

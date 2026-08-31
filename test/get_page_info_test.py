@@ -15,9 +15,11 @@ from .download_test import connect
         ('NOT_ALLOWED', 'NOT_ALLOWED', 'DONT_CARE', 0x30),
         ('WITHOUT_OTHER', 'WITH_OTHER', 'WITHOUT_OTHER', 0x19),
         ('DONT_CARE', 'DONT_CARE', 'DONT_CARE', 0x3F)))
-def test_get_page_info_packs_the_page_properties(ecu, xcp_read, xcp_write, expected):
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_get_page_info_packs_the_page_properties(max_cto, ecu, xcp_read, xcp_write, expected):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.3: bits 1:0, 3:2 and 5:4."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   max_cto=max_cto,
                                    segments=[segment(pages=[page(init_segment=0x07,
                                                                  ecu_access=ecu,
                                                                  xcp_read_access=xcp_read,

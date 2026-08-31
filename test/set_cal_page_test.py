@@ -8,8 +8,9 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
-def paging_handle(segment_count=2, page_count=2):
+def paging_handle(segment_count=2, page_count=2, max_cto=8):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   max_cto=max_cto,
                                    segments=[segment(name='S{}'.format(i),
                                                      pages=[page() for _ in range(page_count)])
                                              for i in range(segment_count)]))
@@ -17,9 +18,10 @@ def paging_handle(segment_count=2, page_count=2):
     return handle
 
 
-def test_set_cal_page_delegates_to_the_integrator_and_acknowledges():
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_set_cal_page_delegates_to_the_integrator_and_acknowledges(max_cto):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.1"""
-    handle = paging_handle()
+    handle = paging_handle(max_cto=max_cto)
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEB, 0x03, 0x01, 0x01)))
     handle.lib.Xcp_MainFunction()

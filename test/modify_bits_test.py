@@ -29,7 +29,8 @@ def run_modify_bits(handle, initial, shift, and_mask, xor_mask, byte_order='LITT
 
 
 @pytest.mark.parametrize('byte_order', byte_orders)
-def test_modify_bits_matches_the_specification_example(byte_order):
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_modify_bits_matches_the_specification_example(max_cto, byte_order):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.4 worked example.
 
     Byte order only changes how the masks and the memory value are marshalled to and from
@@ -38,7 +39,7 @@ def test_modify_bits_matches_the_specification_example(byte_order):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    address_granularity='BYTE',
                                    byte_order=byte_order,
-                                   max_cto=8))
+                                   max_cto=max_cto))
     connect(handle)
     set_mta(handle, 0x00004000, byte_order)
 

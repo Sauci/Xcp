@@ -11,9 +11,10 @@ from .set_cal_page_test import paging_handle
 
 
 @pytest.mark.parametrize('mode', (0x01, 0x02))
-def test_get_cal_page_returns_the_page_reported_by_the_integrator(mode):
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_get_cal_page_returns_the_page_reported_by_the_integrator(max_cto, mode):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.1.2"""
-    handle = paging_handle()
+    handle = paging_handle(max_cto=max_cto)
 
     def get_cal_page(_segment, _mode, p_page):
         p_page[0] = 0x01

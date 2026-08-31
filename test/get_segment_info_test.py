@@ -8,10 +8,10 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
-def info_handle(byte_order='LITTLE_ENDIAN'):
+def info_handle(byte_order='LITTLE_ENDIAN', max_cto=8):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    byte_order=byte_order,
-                                   max_cto=8,
+                                   max_cto=max_cto,
                                    segments=[segment(name='S0',
                                                      address=0x00400000,
                                                      length=0x1000,
@@ -28,9 +28,10 @@ def info_handle(byte_order='LITTLE_ENDIAN'):
 
 @pytest.mark.parametrize('segment_info, expected', ((0x00, 0x00400000), (0x01, 0x00001000)))
 @pytest.mark.parametrize('byte_order', byte_orders)
-def test_get_segment_info_mode_0_returns_address_and_length(segment_info, expected, byte_order):
+@pytest.mark.parametrize('max_cto', max_ctos)
+def test_get_segment_info_mode_0_returns_address_and_length(max_cto, segment_info, expected, byte_order):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.2, mode 0."""
-    handle = info_handle(byte_order)
+    handle = info_handle(byte_order, max_cto=max_cto)
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE8, 0x00, 0x00, segment_info, 0x00)))
     handle.lib.Xcp_MainFunction()

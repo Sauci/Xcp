@@ -10,7 +10,13 @@ from .download_test import connect, set_mta, capture_writes
 
 @pytest.mark.parametrize('ag, max_cto, expected_count', (('BYTE', 8, 7),
                                                          ('WORD', 8, 3),
-                                                         ('DWORD', 8, 1)))
+                                                         ('DWORD', 8, 1),
+                                                         ('BYTE', 128, 127),
+                                                         ('WORD', 128, 63),
+                                                         ('DWORD', 128, 31),
+                                                         ('BYTE', 256, 255),
+                                                         ('WORD', 256, 127),
+                                                         ('DWORD', 256, 63)))
 def test_download_max_writes_a_fixed_number_of_elements(ag, max_cto, expected_count):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.2: MAX_CTO/AG-1 elements.
 
