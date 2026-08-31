@@ -157,8 +157,26 @@ def test_upload_succeeds_with_slave_block_mode_disabled_and_payload_within_range
     handle.lib.Xcp_MainFunction()
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_read_slave_memory_u8.reset_mock()
+    handle.xcp_read_slave_memory_u16.reset_mock()
+    handle.xcp_read_slave_memory_u32.reset_mock()
+
     # UPLOAD
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, data_elements)))
     handle.lib.Xcp_MainFunction()
 
-    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
+    # Asserting the response PID alone would pass against the buffer CONNECT left behind, whose
+    # first byte is also 0xFF. Pin that a response was sent, that it is as long as the elements
+    # requested, and that the slave actually read each of them.
+    assert handle.can_if_transmit.call_count == 1
+
+    response = handle.can_if_transmit.call_args[0][1]
+    element_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[ag]
+    reads = (handle.xcp_read_slave_memory_u8.call_count +
+             handle.xcp_read_slave_memory_u16.call_count +
+             handle.xcp_read_slave_memory_u32.call_count)
+
+    assert response.SduDataPtr[0] == 0xFF
+    assert response.SduLength == 1 + (element_size - 1) + (data_elements * element_size)
+    assert reads == data_elements

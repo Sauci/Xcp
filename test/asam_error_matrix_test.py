@@ -1056,7 +1056,7 @@ class TestDownloadErrorHandling:
     DOWNLOAD              ERR_MEMORY_OVERFLOW -               display error
     """
 
-    def test_download_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -1068,7 +1068,7 @@ class TestDownloadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_download_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1093,7 +1093,7 @@ class TestDownloadErrorHandling:
                                                                                    (7, 'BYTE', 1, False),
                                                                                    (4, 'WORD', 1, False),
                                                                                    (2, 'DWORD', 1, False)))
-    def test_download_err_out_of_range(self, number_of_elements, ag, max_bs, master_block_mode):
+    def test_returns_err_out_of_range(self, number_of_elements, ag, max_bs, master_block_mode):
         """XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7: without block transfer mode,
         the number of data elements parameter has to be in the range [1..MAX_CTO-1]; an
         ERR_OUT_OF_RANGE is returned otherwise. 0 elements is out of range under every AG and
@@ -1118,14 +1118,14 @@ class TestDownloadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_download_err_access_denied(self):
+    def test_returns_err_access_denied(self):
         pass
 
     @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
-    def test_download_err_access_locked(self):
+    def test_returns_err_access_locked(self):
         pass
 
-    def test_download_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         """Exercises the test harness's config-time disable knob. XCP part 2 - Protocol Layer
         Specification 1.0/1.6.2.1 lists DOWNLOAD as mandatory, so a conformant integration can
         never disable it and this scenario is not part of DOWNLOAD's own matrix row; but the
@@ -1146,11 +1146,11 @@ class TestDownloadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_download_err_write_protected(self):
+    def test_returns_err_write_protected(self):
         pass
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_download_err_memory_overflow(self, payload):
+    def test_returns_err_memory_overflow(self):
         pass
 
 
