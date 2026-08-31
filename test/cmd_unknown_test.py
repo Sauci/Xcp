@@ -55,3 +55,25 @@ def test_disabled_optional_commands_return_err_cmd_unknown(pid, flag):
 
     assert handle.can_if_transmit.call_count == 1
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+
+@pytest.mark.parametrize('stim_pid', (0x00, 0x01, 0x7F, 0xBF))
+def test_identifiers_below_the_command_range_are_answered_with_silence(stim_pid):
+    """XCP part 2 - Protocol Layer Specification 1.0/1.1.5.1: master to slave, 0x00..0xBF is an
+    absolute or relative ODT number for STIM, not a command.
+
+    The companion of the two tests above. Those PIDs carry the is-CTO bit clear, so they reach
+    the DTO branch, which transmits nothing. That branch sits immediately beside the one that
+    answers a disabled command, and the two are one `else` apart: a fix to either that is
+    written a scope too high would make the slave answer STIM frames. Nothing else in the suite
+    pins this.
+    """
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
+    connect(handle)
+
+    handle.can_if_transmit.reset_mock()
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((stim_pid, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_count == 0
