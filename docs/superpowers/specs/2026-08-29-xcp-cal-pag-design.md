@@ -91,15 +91,23 @@ what a slave may emit; `ERR_SEQUENCE` is the accurate code and leaves the master
 recover. The pending block transfer is aborted.
 
 **DD4 — Where §1.6.3 prose and §1.7.3.2.3 disagree, the resolution is recorded per
-command.** Two such divergences exist, both noted inline in §8 below:
-`GET_PAGE_INFO` (prose says `ERR_OUT_OF_RANGE`, matrix says `ERR_PAGE_NOT_VALID` /
-`ERR_SEGMENT_NOT_VALID`) and `COPY_CAL_PAGE` (prose mandates `ERR_WRITE_PROTECTED`, matrix
-omits it).
+command.** Three such divergences exist, each noted inline in §8 below: `GET_PAGE_INFO`
+(prose says `ERR_OUT_OF_RANGE`, matrix says `ERR_PAGE_NOT_VALID` / `ERR_SEGMENT_NOT_VALID`),
+`GET_SEGMENT_INFO` (prose says an unavailable segment returns `ERR_OUT_OF_RANGE`, matrix lists
+`ERR_SEGMENT_NOT_VALID`, and this implementation follows the matrix so that every PAG command
+reports a bad segment identically, reserving `ERR_OUT_OF_RANGE` for a bad mode, `SEGMENT_INFO`
+or `MAPPING_INDEX`), and `COPY_CAL_PAGE` (prose mandates `ERR_WRITE_PROTECTED`, matrix omits
+it).
 
-**DD5 — `SHORT_DOWNLOAD` defaults to disabled.** Its capacity is `(MAX_CTO-8)/AG`
-elements, which is zero when `MAX_CTO = 8`. §1.6.2.2.3 says so outright: the command "will
-have no effect (no data bytes can be transferred) if MAX_CTO = 8 (e.g. XCP on CAN)". It is
-implemented for larger `MAX_CTO`, and `config/xcp.json` ships with it off.
+**DD5 — `SHORT_DOWNLOAD` transfers nothing at `MAX_CTO = 8`, but ships enabled.** Its
+capacity is `(MAX_CTO-8)/AG` elements, which is zero when `MAX_CTO = 8`. §1.6.2.2.3 says so
+outright: the command "will have no effect (no data bytes can be transferred) if MAX_CTO = 8
+(e.g. XCP on CAN)". This originally led `config/xcp.json` to ship with it off, which was wrong
+for a second reason that only became visible once the command existed: §1.6.1.1.1 defines the
+CONNECT `RESOURCE` CAL/PAG bit as asserting that `DOWNLOAD`, `DOWNLOAD_MAX`, `SHORT_DOWNLOAD`,
+`SET_CAL_PAGE` and `GET_CAL_PAGE` are all available, so disabling it made the slave advertise
+no calibration or paging support at all. It ships enabled; an integrator running at
+`MAX_CTO = 8` simply finds it accepts no payload, which the specification anticipates.
 
 ### 3.1 A non-divergence worth recording
 
