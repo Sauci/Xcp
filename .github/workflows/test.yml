@@ -6,6 +6,12 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{github.repository}}
 
+# GITHUB_TOKEN is minted per run by Actions itself, so pushing and pulling the image needs no
+# stored credentials. It only carries the scopes granted here.
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-push-image:
     name: Build and push image
@@ -19,8 +25,8 @@ jobs:
         uses: docker/login-action@v3
         with:
           registry: ${{env.REGISTRY}}
-          username: ${{secrets.PKG_REGISTRY_USERNAME}}
-          password: ${{secrets.PKG_REGISTRY_RW_TOKEN}}
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
       - name: Extract metadata (tags, labels) for Docker
         id: meta
         uses: docker/metadata-action@v5
@@ -47,8 +53,8 @@ jobs:
       # requirements.txt or the Dockerfile was never actually exercised by the branch making it.
       image: ${{needs.build-and-push-image.outputs.image}}
       credentials:
-        username: ${{secrets.PKG_REGISTRY_USERNAME}}
-        password: ${{secrets.PKG_REGISTRY_RW_TOKEN}}
+        username: ${{github.actor}}
+        password: ${{secrets.GITHUB_TOKEN}}
       volumes:
         - ${{github.workspace}}:/usr/project
     steps:
@@ -60,5 +66,7 @@ jobs:
         if: success() || failure()
         uses: codecov/codecov-action@v5
         with:
+          # Optional on a public repository: unset means a tokenless upload, which works but is
+          # rate limited. Add the secret if uploads start failing intermittently.
           token: ${{secrets.CODECOV_TOKEN}}
           files: ./build/Xcp.c.gcov,./build/Xcp_Std.c.gcov,./build/Xcp_Cal.c.gcov,./build/Xcp_Pag.c.gcov,./build/Xcp_Daq.c.gcov
