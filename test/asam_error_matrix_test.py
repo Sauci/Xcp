@@ -46,7 +46,7 @@ class TestDisconnectErrorHandling:
     #     handle.lib.Xcp_MainFunction()
     #     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
 
-    def test_disconnect_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -58,7 +58,7 @@ class TestDisconnectErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_disconnect_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -106,7 +106,7 @@ class TestSynchErrorHandling:
     #     handle.lib.Xcp_MainFunction()
     #     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
 
-    def test_synch_err_cmd_synch(self):
+    def test_returns_err_cmd_synch(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -116,7 +116,7 @@ class TestSynchErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x00)
 
     @pytest.mark.skip(reason='SYNCH command is not optional and won\'t fail...')
-    def test_synch_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         pass
 
 
@@ -128,7 +128,7 @@ class TestGetCommModInfoErrorHandling:
     GET_COMM_MODE_INFO    ERR_CMD_SYNTAX      -               retry other syntax
     """
 
-    def test_get_comm_mode_info_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -140,7 +140,7 @@ class TestGetCommModInfoErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.skip(reason='GET_COMM_MOD_INFO take a single packet ID and is, by design, not able to fail on syntax')
-    def test_get_comm_mode_info_err_cmd_syntax(self, mode_bit):
+    def test_returns_err_cmd_syntax(self, mode_bit):
         pass
 
 
@@ -154,7 +154,7 @@ class TestGetIdErrorHandling:
     GET_ID                ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
-    def test_get_id_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -165,7 +165,7 @@ class TestGetIdErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    def test_get_id_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_get_id_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -175,7 +175,7 @@ class TestGetIdErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.parametrize('payload', ((0xFA,),))
-    def test_get_id_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -185,7 +185,7 @@ class TestGetIdErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
     @pytest.mark.parametrize('requested_identification_type', range(0x01, 0xFF))
-    def test_get_id_err_out_of_range(self, requested_identification_type):
+    def test_returns_err_out_of_range(self, requested_identification_type):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -215,7 +215,7 @@ class TestSetRequestErrorHandling:
     #     handle.lib.Xcp_MainFunction()
     #     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
 
-    def test_set_request_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -227,7 +227,7 @@ class TestSetRequestErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_set_request_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -240,7 +240,7 @@ class TestSetRequestErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_set_request_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_set_request_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -250,7 +250,7 @@ class TestSetRequestErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.parametrize('payload', ((0xF9,), (0xF9, 0x00), (0xF9, 0x00, 0x00)))
-    def test_set_request_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -261,7 +261,7 @@ class TestSetRequestErrorHandling:
 
     @pytest.mark.parametrize('mode', (0b10000000, 0b01000000, 0b00100000, 0b00010000, 0b00000010))
     @pytest.mark.parametrize('session_configuration_id', (0x0001, 0x00FF, 0xFF00, 0x0100, 0xFFFF))
-    def test_set_request_err_out_of_range(self, mode, session_configuration_id):
+    def test_returns_err_out_of_range(self, mode, session_configuration_id):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -295,7 +295,7 @@ class TestGetSeedErrorHandling:
     #     handle.lib.Xcp_MainFunction()
     #     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
 
-    def test_get_seed_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -307,7 +307,7 @@ class TestGetSeedErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_get_seed_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -320,7 +320,7 @@ class TestGetSeedErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_get_seed_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_get_seed_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -330,7 +330,7 @@ class TestGetSeedErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.parametrize('payload', ((0xF8,), (0xF8, 0x00)))
-    def test_get_seed_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -341,7 +341,7 @@ class TestGetSeedErrorHandling:
 
     @pytest.mark.parametrize('mode', range(0x02, 0x0F))
     @pytest.mark.parametrize('resource', [0x00] + list(range(0x02, 0x0F)))
-    def test_get_seed_err_out_of_range_from_parameter(self, mode, resource):
+    def test_returns_err_out_of_range_from_parameter(self, mode, resource):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -351,7 +351,7 @@ class TestGetSeedErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
     @pytest.mark.parametrize('resource', (0x01, 0x01 << 0x02, 0x01 << 0x03, 0x01 << 0x04))
-    def test_get_seed_err_out_of_range_from_seed_function(self, resource):
+    def test_returns_err_out_of_range_from_seed_function(self, resource):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
@@ -369,7 +369,7 @@ class TestGetSeedErrorHandling:
 
     @pytest.mark.parametrize('resource', (0x01, 0x01 << 0x02, 0x01 << 0x03, 0x01 << 0x04))
     @pytest.mark.parametrize('seed_length', [0x00])
-    def test_get_seed_err_out_of_range_from_seed_length(self, resource, seed_length):
+    def test_returns_err_out_of_range_from_seed_length(self, resource, seed_length):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
@@ -388,7 +388,7 @@ class TestGetSeedErrorHandling:
                                                                         (0x01 << 0x02, 0x01 << 0x03),
                                                                         (0x01 << 0x03, 0x01 << 0x04),
                                                                         (0x01 << 0x04, 0x01 << 0x00)))
-    def test_get_seed_err_out_of_range_from_resource(self, initial_resource, consecutive_resource):
+    def test_returns_err_out_of_range_from_resource(self, initial_resource, consecutive_resource):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
@@ -406,7 +406,7 @@ class TestGetSeedErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
-    def test_get_seed_err_sequence(self):
+    def test_returns_err_sequence(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -438,7 +438,7 @@ class TestUnlockErrorHandling:
     #     handle.lib.Xcp_MainFunction()
     #     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
 
-    def test_unlock_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -450,7 +450,7 @@ class TestUnlockErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_unlock_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -463,7 +463,7 @@ class TestUnlockErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_unlock_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         # GET_SEED is disabled along with UNLOCK: XCP part 2 - Protocol Layer Specification
         # 1.0/1.4 requires UNLOCK whenever GET_SEED is implemented, so leaving GET_SEED enabled
         # here would make Xcp_Init reject the configuration before this command is ever sent.
@@ -478,7 +478,7 @@ class TestUnlockErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.parametrize('payload', ((0xF7,), (0xF7, 0x00)))
-    def test_unlock_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -489,7 +489,7 @@ class TestUnlockErrorHandling:
 
     @pytest.mark.parametrize('seed', [1], indirect=True)
     @pytest.mark.parametrize('key_length', [0x00])
-    def test_unlock_err_out_of_range(self, seed, key_length):
+    def test_returns_err_out_of_range(self, seed, key_length):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
@@ -520,7 +520,7 @@ class TestUnlockErrorHandling:
 
     @pytest.mark.parametrize('resource', (0b00000001, 0b00000100, 0b00001000, 0b00010000))
     @pytest.mark.parametrize('seed', [1], indirect=True)
-    def test_unlock_err_access_locked(self, resource, seed):
+    def test_returns_err_access_locked(self, resource, seed):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
@@ -550,7 +550,7 @@ class TestUnlockErrorHandling:
 
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x25)
 
-    def test_unlock_err_sequence_from_seed_request(self):
+    def test_returns_err_sequence_from_seed_request(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -562,7 +562,7 @@ class TestUnlockErrorHandling:
 
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x29)
 
-    def test_unlock_err_sequence_from_key_length(self):
+    def test_returns_err_sequence_from_key_length(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
         def get_seed_side_effect(_p_seed_buffer, _max_seed_length, p_seed_length):
@@ -600,7 +600,7 @@ class TestSetMtaErrorHandling:
     SET_MTA               ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
-    def test_set_mta_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -612,7 +612,7 @@ class TestSetMtaErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_set_mta_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -625,7 +625,7 @@ class TestSetMtaErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_set_mta_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_set_mta_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -641,7 +641,7 @@ class TestSetMtaErrorHandling:
                                          (0xF6, 0x00, 0x00, 0x00, 0x00),
                                          (0xF6, 0x00, 0x00, 0x00, 0x00, 0x00),
                                          (0xF6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
-    def test_set_mta_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -651,7 +651,7 @@ class TestSetMtaErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_set_mta_err_out_of_range(self):
+    def test_returns_err_out_of_range(self):
         pass
 
 
@@ -666,7 +666,7 @@ class TestUploadErrorHandling:
     UPLOAD                ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
-    def test_upload_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -678,7 +678,7 @@ class TestUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_upload_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -691,7 +691,7 @@ class TestUploadErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_upload_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_upload_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -701,7 +701,7 @@ class TestUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.parametrize('payload', ((0xF5,),))
-    def test_upload_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -711,7 +711,7 @@ class TestUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
     @pytest.mark.parametrize('number_of_elements', (0,))
-    def test_upload_err_out_of_range(self, number_of_elements):
+    def test_returns_err_out_of_range(self, number_of_elements):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -721,11 +721,11 @@ class TestUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_upload_err_access_denied(self):
+    def test_returns_err_access_denied(self):
         pass
 
     @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
-    def test_upload_err_access_locked(self):
+    def test_returns_err_access_locked(self):
         pass
 
 
@@ -742,7 +742,7 @@ class TestShortUploadErrorHandling:
     SHORT_UPLOAD          ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
     """
 
-    def test_short_upload_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -754,7 +754,7 @@ class TestShortUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_short_upload_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -767,7 +767,7 @@ class TestShortUploadErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_short_upload_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_short_upload_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -777,7 +777,7 @@ class TestShortUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
 
     @pytest.mark.parametrize('payload', ((0xF4,),))
-    def test_short_upload_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -792,7 +792,7 @@ class TestShortUploadErrorHandling:
                                                         (8, 'BYTE'),
                                                         (4, 'WORD'),
                                                         (2, 'DWORD')))
-    def test_short_upload_err_out_of_range(self, number_of_elements, ag):
+    def test_returns_err_out_of_range(self, number_of_elements, ag):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity=ag))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -809,11 +809,11 @@ class TestShortUploadErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_short_upload_err_access_denied(self):
+    def test_returns_err_access_denied(self):
         pass
 
     @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
-    def test_short_upload_err_access_locked(self):
+    def test_returns_err_access_locked(self):
         pass
 
 
@@ -830,7 +830,7 @@ class TestBuildChecksumErrorHandling:
     BUILD_CHECKSUM        ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
     """
 
-    def test_build_checksum_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -842,7 +842,7 @@ class TestBuildChecksumErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_build_checksum_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -855,7 +855,7 @@ class TestBuildChecksumErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    def test_build_checksum_err_cmd_unknown(self):
+    def test_returns_err_cmd_unknown(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_build_checksum_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -871,7 +871,7 @@ class TestBuildChecksumErrorHandling:
                                          (0xF3, 0x00, 0x00, 0x00, 0x00),
                                          (0xF3, 0x00, 0x00, 0x00, 0x00, 0x00),
                                          (0xF3, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),))
-    def test_build_checksum_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -880,7 +880,7 @@ class TestBuildChecksumErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
-    def test_build_checksum_err_out_of_range(self):
+    def test_returns_err_out_of_range(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -897,11 +897,11 @@ class TestBuildChecksumErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
-    def test_build_checksum_err_access_denied(self):
+    def test_returns_err_access_denied(self):
         pass
 
     @pytest.mark.skip(reason='XCP protocol layer specification 1.0 - 1.6.1.1.3: standard commands are never protected')
-    def test_build_checksum_err_access_locked(self):
+    def test_returns_err_access_locked(self):
         pass
 
 
@@ -915,7 +915,7 @@ class TestTransportLayerCmdErrorHandling:
     TRANSPORT_LAYER_CMD   ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
-    def test_transport_layer_cmd_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -927,7 +927,7 @@ class TestTransportLayerCmdErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_transport_layer_cmd_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -952,7 +952,7 @@ class TestTransportLayerCmdErrorHandling:
                                          (0xF2, 0xFD, 0x00, 0x00, 0x00),
                                          (0xF2, 0xFD, 0x00, 0x00, 0x00, 0x00),
                                          (0xF2, 0xFD, 0x00, 0x00, 0x00, 0x00, 0x00),))
-    def test_transport_layer_cmd_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -967,7 +967,7 @@ class TestTransportLayerCmdErrorHandling:
                                          (0xF2, 0xFF, 0x58, 0x43, 0x51, 0x00),
                                          (0xF2, 0xFF, 0x58, 0x43, 0x50, 0x02),
                                          (0xF2, 0xFE, 0xFF, 0xFF, 0x00, 0x00),))
-    def test_transport_layer_cmd_err_out_of_range(self, payload):
+    def test_returns_err_out_of_range(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -987,7 +987,7 @@ class TestUserCmdErrorHandling:
     USER_CMD              ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
-    def test_user_cmd_err_cmd_busy(self):
+    def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -999,7 +999,7 @@ class TestUserCmdErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
     @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
-    def test_user_cmd_err_pgm_active(self, mode_bit):
+    def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1013,7 +1013,7 @@ class TestUserCmdErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
     @pytest.mark.parametrize('payload', ((0xF1,), (0xF1, 0xFF)))
-    def test_user_cmd_err_cmd_syntax(self, payload):
+    def test_returns_err_cmd_syntax(self, payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
@@ -1023,7 +1023,7 @@ class TestUserCmdErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
     @pytest.mark.parametrize('response_payload', ((0xFE, 0x22),))
-    def test_user_cmd_err_out_of_range(self, response_payload):
+    def test_returns_err_out_of_range(self, response_payload):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction'))
 
         def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
