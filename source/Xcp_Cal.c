@@ -31,7 +31,27 @@ uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pP
     {
         expected = Xcp_Internal.block_transfer.requested_elements;
 
-        if (number_of_data_elements == expected)
+        if (number_of_data_elements != expected)
+        {
+            Xcp_FillErrorPacketWithData(XCP_E_ASAM_SEQUENCE,
+                                        &expected,
+                                        0x01u,
+                                        &Xcp_Internal.cto_response.pdu_info);
+
+            Xcp_BlockTransferAbort();
+        }
+        else if (pPduInfo->SduLength <
+                 (PduLengthType)(0x02u + alignment +
+                                 (Xcp_BlockTransferFrameElements(number_of_data_elements, element_size) *
+                                  element_size)))
+        {
+            /* The frame is shorter than the payload it announces. Without this the handler reads
+             * past the received PDU and writes whatever follows it into calibration memory. */
+            Xcp_BlockTransferAbort();
+
+            Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else
         {
             if (Xcp_BlockTransferWriteSlaveMemory(&pPduInfo->SduDataPtr[0x02u + alignment],
                                                   element_size) == E_NOT_OK)
@@ -44,15 +64,6 @@ uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pP
             {
                 *responseExpected = FALSE;
             }
-        }
-        else
-        {
-            Xcp_FillErrorPacketWithData(XCP_E_ASAM_SEQUENCE,
-                                        &expected,
-                                        0x01u,
-                                        &Xcp_Internal.cto_response.pdu_info);
-
-            Xcp_BlockTransferAbort();
         }
     }
     else
@@ -88,8 +99,22 @@ uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduIn
                                    Xcp_Ptr->general->masterBlockModeSupported,
                                    Xcp_Ptr->general->maxBS) == E_OK)
     {
-        if (Xcp_BlockTransferWriteSlaveMemory(&pPduInfo->SduDataPtr[0x02u + alignment],
-                                              element_size) == E_NOT_OK)
+        if (pPduInfo->SduLength <
+            (PduLengthType)(0x02u + alignment +
+                            (Xcp_BlockTransferFrameElements(number_of_data_elements, element_size) *
+                             element_size)))
+        {
+            /* The frame is shorter than the payload it announces. Without this the handler reads
+             * past the received PDU and writes whatever follows it into calibration memory. The
+             * dispatcher's generic check only enforces this command's minimum request size,
+             * which covers the header alone. The transfer opened just above is abandoned, so the
+             * slave is not left waiting for the rest of a block the master never began. */
+            Xcp_BlockTransferAbort();
+
+            Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else if (Xcp_BlockTransferWriteSlaveMemory(&pPduInfo->SduDataPtr[0x02u + alignment],
+                                                   element_size) == E_NOT_OK)
         {
             /* The whole payload has been written, so the command is acknowledged now. */
             Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
@@ -191,6 +216,14 @@ uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *p
          * If the number of elements exceeds (MAX_CTO-8)/AG, the error code ERR_OUT_OF_RANGE will
          * be returned. */
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if (pPduInfo->SduLength <
+             (PduLengthType)(0x08u + (number_of_data_elements * element_size)))
+    {
+        /* The count is within capacity but the frame does not actually carry it. Without this
+         * the handler reads past the received PDU and writes whatever follows it into
+         * calibration memory. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {

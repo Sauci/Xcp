@@ -1831,6 +1831,13 @@ Std_ReturnType Xcp_BlockTransferReadSlaveMemory()
  * @retval E_OK: More frames awaited, the slave expects consecutive frames from the master.
  * @retval E_NOT_OK: No more frames awaited by the slave, the master will stop sending frames.
  */
+uint8 Xcp_BlockTransferFrameElements(uint8 numberOfDataElements, uint8 elementSize)
+{
+    const uint16 capacity = (uint16)((Xcp_Ptr->general->maxCto - 0x02u) / elementSize);
+
+    return (uint8)(((uint16)numberOfDataElements < capacity) ? (uint16)numberOfDataElements : capacity);
+}
+
 Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize)
 {
     Std_ReturnType result = E_OK;
@@ -1839,14 +1846,8 @@ Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSi
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
-    if ((Xcp_Internal.block_transfer.requested_elements * elementSize) <= (Xcp_Ptr->general->maxCto - 0x02u))
-    {
-        Xcp_Internal.block_transfer.frame_elements = Xcp_Internal.block_transfer.requested_elements;
-    }
-    else
-    {
-        Xcp_Internal.block_transfer.frame_elements = ((Xcp_Ptr->general->maxCto - 0x02u) / elementSize);
-    }
+    Xcp_Internal.block_transfer.frame_elements =
+        Xcp_BlockTransferFrameElements(Xcp_Internal.block_transfer.requested_elements, elementSize);
 
     for (idx = 0x00u; idx < Xcp_Internal.block_transfer.frame_elements; idx++)
     {
