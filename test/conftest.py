@@ -278,7 +278,7 @@ class XcpTest(object):
         # otherwise suppress the generated header's own definition wherever it is not overridden.
         # A later -D wins, so appending the derived value corrects it.
         paging_define = ('XCP_PAGING_SUPPORTED={}'.format(
-                'STD_ON' if len(config['configurations'][0].get('segments', [])) > 0 else 'STD_OFF'),)
+                'STD_ON' if any(c.get('segments') for c in config['configurations']) else 'STD_OFF'),)
         # The module under test is only coupled to a configuration through the generated
         # runtime it links against, so key both on a digest of that generated source rather
         # than on the whole configuration. Configurations producing identical runtime source

@@ -24,7 +24,7 @@ find_package(PythonInterp 3.6 REQUIRED)
 # supply the value instead.
 execute_process(
     COMMAND ${PYTHON_EXECUTABLE} -c
-        "import json,sys;c=json.load(open(sys.argv[1]));print('STD_ON' if c['configurations'][0].get('segments') else 'STD_OFF')"
+        "import json,sys;c=json.load(open(sys.argv[1]));print('STD_ON' if any(x.get('segments') for x in c['configurations']) else 'STD_OFF')"
         ${XCP_CONFIG_FILEPATH}
     OUTPUT_VARIABLE XCP_PAGING_SUPPORTED_DERIVED
     OUTPUT_STRIP_TRAILING_WHITESPACE
