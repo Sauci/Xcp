@@ -38,6 +38,9 @@ def test_set_cal_page_with_the_all_bit_applies_to_every_segment():
     handle.lib.Xcp_MainFunction()
 
     assert [c[0][0] for c in handle.xcp_set_cal_page.call_args_list] == [0, 1, 2]
+    # The ALL flag selects the segments and is consumed here, so the integrator sees only the
+    # access bits it can act on -- 0x81 requests ECU access for every segment, not access 0x81.
+    assert [c[0][2] for c in handle.xcp_set_cal_page.call_args_list] == [0x01, 0x01, 0x01]
     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
 
 

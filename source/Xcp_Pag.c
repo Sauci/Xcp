@@ -96,7 +96,13 @@ uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPdu
                  * If the calibration data page cannot be set to the given mode, an
                  * ERR_MODE_NOT_VALID will be returned. The specification defines no rollback, so
                  * segments already switched stay switched. */
-                if (Xcp_SetCalPage((uint8)idx, page, mode) != E_OK)
+                /* Only the access bits reach the integrator. Bit 7 selects which SEGMENTs the
+                 * request applies to and has already been consumed above in choosing the range
+                 * to iterate, so forwarding it would hand the callback a flag about a decision
+                 * the stack has made for it. */
+                if (Xcp_SetCalPage((uint8)idx,
+                                   page,
+                                   (uint8)(mode & (XCP_CAL_PAGE_MODE_ECU | XCP_CAL_PAGE_MODE_XCP))) != E_OK)
                 {
                     error = XCP_E_ASAM_MODE_NOT_VALID;
 

@@ -17,7 +17,10 @@ extern "C" {
  * @brief activates a calibration page for the given access mode.
  * @param [in] segment logical data segment number
  * @param [in] page logical data page number
- * @param [in] mode 0x01 = ECU access, 0x02 = XCP access
+ * @param [in] mode bit mask of the accesses to activate this page for: 0x01 ECU access, 0x02 XCP
+ * access, or 0x03 for both. The master may request either or both, so compare bits rather than
+ * the whole value. The ALL flag of the request is not passed on: the stack has already resolved
+ * it into the set of segments this function is called for.
  * @retval E_OK the page has been activated
  * @retval E_NOT_OK the page cannot be set to the given mode; ERR_MODE_NOT_VALID is returned
  */
@@ -26,7 +29,9 @@ extern Std_ReturnType Xcp_SetCalPage(uint8 segment, uint8 page, uint8 mode);
 /**
  * @brief reports the calibration page currently active for the given access mode.
  * @param [in] segment logical data segment number
- * @param [in] mode 0x01 = ECU access, 0x02 = XCP access
+ * @param [in] mode exactly one access to report the page for: 0x01 ECU access or 0x02 XCP
+ * access. Unlike Xcp_SetCalPage this is never a combination; the stack rejects any other value
+ * with ERR_MODE_NOT_VALID before calling.
  * @param [out] pPage receives the logical data page number; untouched when E_NOT_OK is returned
  * @retval E_OK pPage has been written
  * @retval E_NOT_OK no page is active for that mode; ERR_MODE_NOT_VALID is returned

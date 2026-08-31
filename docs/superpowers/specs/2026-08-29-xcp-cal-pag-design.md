@@ -356,8 +356,11 @@ extern Std_ReturnType Xcp_CopyCalPage(uint8 srcSegment, uint8 srcPage,
 ```
 
 Three callbacks, each invoked only after the module has validated every parameter against
-configuration. In all three, `mode` uses the §1.6.3.1.2 encoding: `0x01` ECU access,
-`0x02` XCP access.
+configuration. `mode` uses the §1.6.3.1.2 encoding, `0x01` ECU access and `0x02` XCP access,
+but the two callbacks treat it differently: `Xcp_SetCalPage` receives a mask, since the master
+may request either access or both in one command, while `Xcp_GetCalPage` receives exactly one
+of the two, every other value having been rejected with `ERR_MODE_NOT_VALID` first. The `ALL`
+flag never reaches either: the module resolves it into the set of segments to call for.
 
 | Callback | Returns `E_NOT_OK` → |
 |:--|:--|
@@ -540,7 +543,8 @@ together or separately. When `ALL` is set the segment number is ignored and the 
 applies to every segment.
 
 Behaviour: validate the segment (unless `ALL`) and the page, then call `Xcp_SetCalPage` once
-per affected segment and per requested access mode. With `ALL` set, a failure on any
+per affected segment, passing the requested access bits as a mask. One call carries both
+accesses when the master asks for both. With `ALL` set, a failure on any
 segment aborts and returns the error; segments already switched are left switched, since
 §1.6.3.1.1 defines no rollback.
 
