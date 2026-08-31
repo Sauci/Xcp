@@ -102,7 +102,7 @@
           "protected": false
         },
         "xcp_short_download_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_set_cal_page_api_enable": {
