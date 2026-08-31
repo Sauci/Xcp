@@ -421,7 +421,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-const uint8 Xcp_PIDToCmdGroupTable[0x100u] = {
+static const uint8 Xcp_PIDToCmdGroupTable[0x100u] = {
     XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0x00 */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0x01 */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0x02 */
@@ -686,7 +686,7 @@ const uint8 Xcp_PIDToCmdGroupTable[0x100u] = {
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
+static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     0x00000000u, /* 0x00 */
     0x00000000u, /* 0x01 */
     0x00000000u, /* 0x02 */

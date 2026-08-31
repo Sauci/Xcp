@@ -297,7 +297,6 @@ void Xcp_BlockTransferAbort(void);
 uint8 Xcp_GetProtectionStatus(void);
 void Xcp_SetProtectionStatus(void);
 void Xcp_ClearProtectionStatus(void);
-Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const uint8 *pSlaveKey, uint16 masterKeyLength, const uint8 *pMasterKey);
 
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);

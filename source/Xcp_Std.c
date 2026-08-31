@@ -340,7 +340,7 @@ void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddress, uin
     return p_current_address;
 }
 
-Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const uint8 *pSlaveKey, uint16 masterKeyLength, const uint8 *pMasterKey) {
+static Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const uint8 *pSlaveKey, uint16 masterKeyLength, const uint8 *pMasterKey) {
     Std_ReturnType result = E_OK;
     uint16_least key_idx;
 
