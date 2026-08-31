@@ -302,25 +302,7 @@ Std_ReturnType Xcp_CheckMasterSlaveKeyMatch(uint16 slaveKeyLength, const uint8 *
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);
 
-uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
-uint8 Xcp_DTODaqPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo);

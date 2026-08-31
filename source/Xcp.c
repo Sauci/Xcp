@@ -336,23 +336,23 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xD0 */
     Xcp_CmdNotImplemented, /* 0xD1 */
     Xcp_CmdNotImplemented, /* 0xD2 */
-    Xcp_DTOCmdDaqAllocOdtEntry, /* 0xD3, optional */
-    Xcp_DTOCmdDaqAllocOdt, /* 0xD4, optional */
-    Xcp_DTOCmdDaqAllocDaq, /* 0xD5, optional */
-    Xcp_DTOCmdDaqFreeDaq, /* 0xD6, optional */
-    Xcp_DTOCmdDaqGetDaqEventInfo, /* 0xD7, optional */
-    Xcp_DTOCmdDaqGetDaqListInfo, /* 0xD8, optional */
-    Xcp_DTOCmdDaqGetDaqResolutionInfo, /* 0xD9, optional */
-    Xcp_DTOCmdDaqGetDaqProcessorInfo, /* 0xDA, optional */
-    Xcp_DTOCmdDaqReadDaq, /* 0xDB, optional */
-    Xcp_DTOCmdDaqGetDaqClock, /* 0xDC, optional */
-    Xcp_DTOCmdDaqStartStopSynch, /* 0xDD */
-    Xcp_DTOCmdDaqStartStopDaqList, /* 0xDE */
-    Xcp_DTOCmdDaqGetDaqListMode, /* 0xDF */
-    Xcp_DTOCmdDaqSetDaqListMode, /* 0xE0 */
-    Xcp_DTOCmdDaqWriteDaq, /* 0xE1 */
-    Xcp_DTOCmdDaqSetDaqPtr, /* 0xE2 */
-    Xcp_DTOCmdDaqClearDaqList, /* 0xE3 */
+    Xcp_CmdNotImplemented, /* 0xD3, optional */
+    Xcp_CmdNotImplemented, /* 0xD4, optional */
+    Xcp_CmdNotImplemented, /* 0xD5, optional */
+    Xcp_CmdNotImplemented, /* 0xD6, optional */
+    Xcp_CmdNotImplemented, /* 0xD7, optional */
+    Xcp_CmdNotImplemented, /* 0xD8, optional */
+    Xcp_CmdNotImplemented, /* 0xD9, optional */
+    Xcp_CmdNotImplemented, /* 0xDA, optional */
+    Xcp_CmdNotImplemented, /* 0xDB, optional */
+    Xcp_CmdNotImplemented, /* 0xDC, optional */
+    Xcp_CmdNotImplemented, /* 0xDD */
+    Xcp_CmdNotImplemented, /* 0xDE */
+    Xcp_CmdNotImplemented, /* 0xDF */
+    Xcp_CmdNotImplemented, /* 0xE0 */
+    Xcp_CmdNotImplemented, /* 0xE1 */
+    Xcp_CmdNotImplemented, /* 0xE2 */
+    Xcp_CmdNotImplemented, /* 0xE3 */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdStdCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
 #else

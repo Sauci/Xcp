@@ -8,12 +8,17 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
-@pytest.mark.parametrize('pid', tuple(range(0xC0, 0xD3)))
+@pytest.mark.parametrize('pid', tuple(range(0xC0, 0xE4)))
 def test_unimplemented_commands_return_err_cmd_unknown(pid):
     """XCP part 2 - Protocol Layer Specification 1.0/1.4: an attempt to execute a not implemented
     optional command will return ERR_CMD_UNKNOWN and does not have any effect.
     XCP part 2 - Protocol Layer Specification 1.0/1.1.5.1: 0xC0..0xFF are all CMD identifiers;
-    there is no DAQ identifier range from master to slave."""
+    there is no DAQ identifier range from master to slave.
+
+    Covers 0xC0..0xE3: the reserved range, the PGM group and the DAQ group, none of which this
+    module implements. The DAQ half used to stop at 0xD2, so the seventeen DAQ PIDs went
+    untested while their handlers returned E_OK without ever filling the response buffer -- the
+    slave transmitted whatever the previous command had left in it."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
     connect(handle)
 
