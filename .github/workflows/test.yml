@@ -47,21 +47,32 @@ jobs:
     name: Run tests
     needs: build-and-push-image
     runs-on: ubuntu-latest
-    container:
-      # Built from this commit by the job above. Previously hardcoded to :develop, which meant
-      # every branch ran its tests inside whatever image develop last produced -- so a change to
-      # requirements.txt or the Dockerfile was never actually exercised by the branch making it.
-      image: ${{needs.build-and-push-image.outputs.image}}
-      credentials:
-        username: ${{github.actor}}
-        password: ${{secrets.GITHUB_TOKEN}}
-      volumes:
-        - ${{github.workspace}}:/usr/project
+    # Deliberately NOT a job-level `container:`. Actions injects its own Node runtime into a job
+    # container to run JavaScript actions such as actions/checkout, and the current runtime is
+    # built against a musl newer than the Alpine 3.10 base of this image, which fails with
+    # "Error relocating .../node: secure_getenv: symbol not found". Running the actions on the
+    # host and the tests through `docker run` keeps each on a libc it was built for.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{env.REGISTRY}}
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
       - name: Run pytest tests
-        run: ./test.sh
+        # As the runner's own user, so the build artefacts the next step reads, and the post-job
+        # cleanup deletes, are not left owned by root. HOME is set because that uid has no entry
+        # in the image's passwd file.
+        run: >
+          docker run --rm
+          --user "$(id -u):$(id -g)"
+          --env HOME=/tmp
+          --volume "${{github.workspace}}:/usr/project"
+          --workdir /usr/project
+          "${{needs.build-and-push-image.outputs.image}}"
+          ./test.sh
       - name: Upload code coverage to Codecov
         if: success() || failure()
         uses: codecov/codecov-action@v5
