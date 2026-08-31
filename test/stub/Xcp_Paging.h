@@ -11,9 +11,7 @@
 extern "C" {
 #endif /* #ifdef __cplusplus */
 
-#ifndef STD_TYPES_H
 #include "Std_Types.h"
-#endif /* #ifndef STD_TYPES_H */
 
 /**
  * @brief activates a calibration page for the given access mode.

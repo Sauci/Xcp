@@ -13,13 +13,9 @@ extern "C" {
 
 #endif /* #ifdef __cplusplus */
 
-#ifndef STD_TYPES_H
 #include "Std_Types.h"
-#endif /* #ifndef STD_TYPES_H */
 
-#ifndef COMSTACK_TYPES_H
 #include "ComStack_Types.h"
-#endif /* #ifndef COMSTACK_TYPES_H */
 
 /**
  * @brief Calculates the checksum on the provided address range.

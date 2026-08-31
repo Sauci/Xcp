@@ -7,13 +7,9 @@
  * @ingroup XCP
  */
 
-#ifndef XCP_INTERNAL_H
 #include "Xcp_Internal.h"
-#endif /* #ifndef XCP_INTERNAL_H */
 
-#ifndef XCP_RT_H
 #include "Xcp_Rt.h"
-#endif /* #ifndef XCP_RT_H */
 
 #if (XCP_PAGING_SUPPORTED == STD_ON)
 

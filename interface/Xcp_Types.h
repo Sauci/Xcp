@@ -22,11 +22,7 @@ extern "C" {
  * @{
  */
 
-#ifndef COMSTACK_TYPES_H
-
 #include "ComStack_Types.h"
-
-#endif /* #ifndef COMSTACK_TYPES_H */
 
 /** @} */
 

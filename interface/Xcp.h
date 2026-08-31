@@ -73,11 +73,7 @@ extern "C" {
  */
 #include "XcpOnCan_Cbk.h"
 
-#ifndef CANIF_H
-
 #include "CanIf.h"
-
-#endif /* #ifndef CANIF_H */
 
 #if (XCP_DEV_ERROR_DETECT == STD_ON)
 

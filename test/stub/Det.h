@@ -13,9 +13,7 @@ extern "C" {
 
 #endif /* #ifdef __cplusplus */
 
-#ifndef STD_TYPES_H
 #include "Std_Types.h"
-#endif /* #ifndef STD_TYPES_H */
 
 extern Std_ReturnType
 Det_ReportError(uint16 moduleId, uint8 instanceId, uint8 apiId, uint8 errorId);

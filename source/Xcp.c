@@ -47,47 +47,27 @@ extern "C" {
 
 #endif /* ifdef __cplusplus */
 
-#ifndef XCP_H
-
 #include "Xcp.h"
-
-#endif /* #ifndef XCP_H */
-
-#ifndef XCP_RT_H
 
 #include "Xcp_Rt.h"
 
-#endif /* #ifndef XCP_RT_H */
-
-#ifndef XCP_TYPES_H
 #include "Xcp_Types.h"
-#endif /* #ifndef XCP_TYPES_H */
 
-#ifndef CANIF_H
 #include "CanIf.h"
-#endif /* #ifndef CANIF_H */
 
-#ifndef XCPONCAN_CBK_H
 #include "XcpOnCan_Cbk.h"
-#endif /* #ifndef XCPONCAN_CBK_H */
 
-#ifndef COMSTACK_TYPES_H
 #include "ComStack_Types.h"
-#endif /* #ifndef COMSTACK_TYPES_H */
 
 #if (XCP_DEV_ERROR_DETECT == STD_ON)
 
-#ifndef DET_H
 #include "Det.h"
-#endif /* #ifndef DET_H */
 
 #endif /* #if (XCP_DEV_ERROR_DETECT == STD_ON) */
 
 /** @} */
 
-#ifndef XCP_INTERNAL_H
 #include "Xcp_Internal.h"
-#endif /* #ifndef XCP_INTERNAL_H */
 
 /*------------------------------------------------------------------------------------------------*/
 /* local function declarations (static).                                                          */

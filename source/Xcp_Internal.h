@@ -17,19 +17,11 @@ extern "C" {
 
 #endif /* #ifdef __cplusplus */
 
-#ifndef XCP_H
-
 #include "Xcp.h"
-
-#endif /* #ifndef XCP_H */
 
 #if (XCP_DEV_ERROR_DETECT == STD_ON)
 
-#ifndef DET_H
-
 #include "Det.h"
-
-#endif /* #ifndef DET_H */
 
 #endif /* #if (XCP_DEV_ERROR_DETECT == STD_ON) */
 

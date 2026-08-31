@@ -7,9 +7,7 @@
  * @ingroup XCP
  */
 
-#ifndef XCP_INTERNAL_H
 #include "Xcp_Internal.h"
-#endif /* #ifndef XCP_INTERNAL_H */
 
 /*------------------------------------------------------------------------------------------------*/
 /* local function definitions (static).                                                           */
