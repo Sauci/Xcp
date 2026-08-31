@@ -1081,20 +1081,41 @@ class TestDownloadErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x12)
 
-    @pytest.mark.parametrize('number_of_elements, ag, max_bs, slave_block_mode', ((0, 'BYTE', 255, True),
-                                                                                  (0, 'WORD', 255, True),
-                                                                                  (0, 'DWORD', 255, True),
-                                                                                  (7, 'BYTE', 1, True),
-                                                                                  (4, 'WORD', 1, True),
-                                                                                  (2, 'DWORD', 1, True),
-                                                                                  (0, 'BYTE', 255, False),
-                                                                                  (0, 'WORD', 255, False),
-                                                                                  (0, 'DWORD', 255, False),
-                                                                                  (7, 'BYTE', 1, False),
-                                                                                  (4, 'WORD', 1, False),
-                                                                                  (2, 'DWORD', 1, False)))
-    def test_download_err_out_of_range(self, number_of_elements, ag, max_bs, slave_block_mode):
-        pass
+    @pytest.mark.parametrize('number_of_elements, ag, max_bs, master_block_mode', ((0, 'BYTE', 255, True),
+                                                                                   (0, 'WORD', 255, True),
+                                                                                   (0, 'DWORD', 255, True),
+                                                                                   (7, 'BYTE', 1, True),
+                                                                                   (4, 'WORD', 1, True),
+                                                                                   (2, 'DWORD', 1, True),
+                                                                                   (0, 'BYTE', 255, False),
+                                                                                   (0, 'WORD', 255, False),
+                                                                                   (0, 'DWORD', 255, False),
+                                                                                   (7, 'BYTE', 1, False),
+                                                                                   (4, 'WORD', 1, False),
+                                                                                   (2, 'DWORD', 1, False)))
+    def test_download_err_out_of_range(self, number_of_elements, ag, max_bs, master_block_mode):
+        """XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7: without block transfer mode,
+        the number of data elements parameter has to be in the range [1..MAX_CTO-1]; an
+        ERR_OUT_OF_RANGE is returned otherwise. 0 elements is out of range under every AG and
+        block-mode setting, and so is a count that exceeds what a single frame (or, in block
+        mode, MAX_BS consecutive frames) could carry.
+        """
+        handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                       address_granularity=ag,
+                                       master_block_mode=master_block_mode,
+                                       max_bs=max_bs,
+                                       max_cto=8))
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
+        handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xF0, number_of_elements, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
+        assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_download_err_access_denied(self):
@@ -1104,14 +1125,29 @@ class TestDownloadErrorHandling:
     def test_download_err_access_locked(self):
         pass
 
-    def test_download_err_write_protected(self):
+    def test_download_err_cmd_unknown(self):
+        """Exercises the test harness's config-time disable knob. XCP part 2 - Protocol Layer
+        Specification 1.0/1.6.2.1 lists DOWNLOAD as mandatory, so a conformant integration can
+        never disable it and this scenario is not part of DOWNLOAD's own matrix row; but the
+        generic dispatcher (XCP part 2 - Protocol Layer Specification 1.0/1.4: an attempt to
+        execute a not implemented optional command will return ERR_CMD_UNKNOWN) does not know
+        that, and answers ERR_CMD_UNKNOWN regardless of which command was switched off.
+        """
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_download_api_enable=False))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+        handle.can_if_transmit.reset_mock()
+
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF0, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
         handle.lib.Xcp_MainFunction()
+
+        assert handle.can_if_transmit.call_count == 1
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+    @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
+    def test_download_err_write_protected(self):
+        pass
 
     @pytest.mark.skip(reason='the memory mapping must be known in order to check if the provided address is correct...')
     def test_download_err_memory_overflow(self, payload):
