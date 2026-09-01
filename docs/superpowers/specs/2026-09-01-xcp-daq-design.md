@@ -125,6 +125,14 @@ The DAQ *runtime* is absent in its entirety. `Xcp_Daq.c` holds one stub,
 
 ## 3. Design decisions
 
+**Reconciliation note.** This section was written before implementation. After all twenty
+implementation tasks and the final whole-branch review, it was checked against the shipped code
+and five statements below were found to have drifted from what shipped: DD3, DD5, DD13 and DD14
+each needed a substantive correction, and DD5 carried two further mechanical inaccuracies about
+where the exclusive area is entered and what `test/stub/SchM_Xcp.h` does. All five are corrected
+in place below as of 2026-09-01. Where this document and `source/` still disagree, the code is
+authoritative — treat the gap as a defect in this document, not in the code.
+
 **DD1 — New DAQ code cites 1.1; existing comments keep their 1.0 citations.** §0 shows that
 every §1.6.4 citation shifts between revisions. Rewriting the module's existing citations to
 1.1 would touch every file for no behavioural gain and would risk the exact class of error
@@ -177,9 +185,12 @@ channel the integrator triggers when it has reason to.
 moves out of `Xcp_MainFunction` into one internal `Xcp_StartNextTransmission`, so there is a
 single place that decides what goes out next. Three contexts call it:
 
-- **`Xcp_TriggerEventChannel`**, after enqueueing, if nothing is in flight. It already holds
-  the exclusive area and has just produced the data, so the first frame of a burst leaves
-  without waiting for anything.
+- **`Xcp_TriggerEventChannel`**, after enqueueing, if nothing is in flight. It does **not**
+  already hold the exclusive area at that point — the last frame push
+  (`Xcp_DaqQueuePush`, `source/Xcp_DaqRuntime.c:216`) releases it before returning, so the call
+  at `source/Xcp_DaqRuntime.c:345` is bare. `Xcp_StartNextTransmission` takes the area itself
+  (`source/Xcp.c:1761`), rather than assuming a caller already holds it; a caller written to the
+  opposite assumption would double-enter a non-nesting area and deadlock.
 - **`Xcp_CanIfTxConfirmation`**, which continues the chain until the ring empties. This is
   what paces the stream by CAN bandwidth.
 - **`Xcp_MainFunction`**, whenever the module is idle with something queued.
@@ -241,9 +252,9 @@ a time, so a three-ODT list would lose two frames of every three.
 **DD5 — One exclusive area protects the transmit state.** DD2 and DD3 put three contexts on
 the same data, and under DD3 all three both produce and consume:
 `Xcp_TriggerEventChannel` runs in a task or an ISR, `Xcp_CanIfTxConfirmation` in CanIf's
-context, and `Xcp_MainFunction` in the integrator's background task. The DTO ring indices
-and `Xcp_Internal.ongoing_transmit_type` are therefore guarded by an AUTOSAR exclusive area,
-entered and left around `Xcp_StartNextTransmission` and around each ring operation:
+context, and `Xcp_MainFunction` in the integrator's background task. `Xcp_Internal.ongoing_transmit_type`,
+the DTO ring, the event queue and the ODT entry array are therefore guarded by one AUTOSAR
+exclusive area:
 
 ```c
 SchM_Enter_Xcp_DtoQueue();
@@ -251,14 +262,40 @@ SchM_Enter_Xcp_DtoQueue();
 SchM_Exit_Xcp_DtoQueue();
 ```
 
-`test/stub/SchM_Xcp.h` provides the stub. It counts entries and exits so a test can assert
-that every path leaves the area it entered, including the error paths.
+entered and left **inside** `Xcp_StartNextTransmission` itself (`source/Xcp.c:1761,1777,1783,1797`
+— not around the function by its callers) and around each ring, queue and array operation in
+turn.
 
-The scope is deliberately narrow: the transmit arbitration state and the DTO ring, nothing
-else. The README's standing TODO — "protect variables used in both synchronous and
-asynchronous APIs" — remains open for the rest of the module. This sub-project closes it only
-where it introduces a second context, rather than opening a module-wide concurrency audit
-inside a DAQ sub-project.
+`test/stub/SchM_Xcp.h` declares `SchM_Enter_Xcp_DtoQueue` and `SchM_Exit_Xcp_DtoQueue` `extern`
+and defines neither — it counts nothing. The held-state model that lets a test assert every
+path leaves the area it entered, including the error paths, is a boolean toggled by each mock's
+side effect, checked for both a mismatched enter/exit and a lock left held at teardown; it
+lives in `test/conftest.py:424-436,528`, not in the header.
+
+**The scope covers four things, not the two this paragraph used to name** — every one of them
+was pulled in only after this sub-project gave it a second context to race against, not because
+the area was scoped up front to cover it:
+
+- The transmit arbitration state, `Xcp_Internal.ongoing_transmit_type`.
+- The DTO ring's indices and count (`Xcp_DaqQueuePush`/`Peek`/`Pop`, `source/Xcp_DaqRuntime.c`).
+- The event queue's read and write indices, at all four of its access points:
+  `source/Xcp.c:1247` (`Xcp_MainFunction`'s `EV_STORE_CAL` push), `:1497`
+  (`Xcp_CanIfTxConfirmation`'s pop), `:1719` (`Xcp_TransmitOneFrame`'s get), and
+  `source/Xcp_DaqRuntime.c:332` (`Xcp_TriggerEventChannel`'s `EV_DAQ_OVERLOAD` push) — a second
+  producer DD16 introduced into what `Xcp_MainFunction` previously read and wrote alone.
+- The ODT entry array, on both sides: the writes `Xcp_DaqListClearEntries`
+  (`source/Xcp_Daq.c:57,72`) makes for `CLEAR_DAQ_LIST`, and the copy `Xcp_DaqSampleOdt`
+  (`source/Xcp_DaqRuntime.c:136,156`) reads it through. DD14 explains why both sides have to
+  take it, not only the reader.
+
+The area is named after the DTO ring because that is what needed it first, not because that is
+its scope. Whoever extends this module next should find what needs the area by asking whether
+their new state is reachable from more than one of `Xcp_TriggerEventChannel`,
+`Xcp_CanIfTxConfirmation` and `Xcp_MainFunction` — not by matching against the list above, which
+is a snapshot of what needed it as of this sub-project, not a definition of what the area
+covers. The README's standing TODO — "protect variables used in both synchronous and
+asynchronous APIs" — remains open for the rest of the module; this sub-project closes it only
+for the state its own three contexts put at risk.
 
 The area closes *before* `CanIf_Transmit` is called, never around it. Holding it across a
 lower-layer call would make the section unbounded, and §7.17 of the CAN Interface
@@ -345,13 +382,19 @@ after `CanIf_Transmit` returns. Bounded stack, unchanged throughput, and no same
 re-entry — which also removes the unbounded recursion a CanIf that confirms synchronously
 inside `CanIf_Transmit` would otherwise cause.
 
-**Single-outstanding per PDU is mandatory, not a simplification.** SWS_CANIF_00068 has CanIf
-*overwrite* an already-buffered instance of the same L-PDU when `Can_Write` returns
-`CAN_BUSY`. A second DAQ frame handed over before the first is confirmed therefore destroys
-the first silently — no error, no confirmation, one measurement sample simply missing.
-(SWS_CANIF_00837 covers the other case: a genuinely new L-PDU with all buffers busy gets
-`E_NOT_OK`.) This also retires the SP2b idea of several frames in flight on one PDU; only
-distinct PDUs could ever support it.
+**Single-outstanding is mandatory, not a simplification — and it is module-wide, not per
+PDU.** SWS_CANIF_00068 has CanIf *overwrite* an already-buffered instance of the same L-PDU
+when `Can_Write` returns `CAN_BUSY`. A second DAQ frame handed over before the first is
+confirmed therefore destroys the first silently — no error, no confirmation, one measurement
+sample simply missing. (SWS_CANIF_00837 covers the other case: a genuinely new L-PDU with all
+buffers busy gets `E_NOT_OK`.) That AUTOSAR rule only requires single-outstanding *per L-PDU*;
+what ships is stricter. `Xcp_Internal.ongoing_transmit_type` (`source/Xcp.c:1708`) is one
+scalar shared by CTO, event and DAQ alike, so at most one transmission of *any* kind is ever
+outstanding across the whole module at a time — even though a DAQ list's DTO can be mapped to a
+different PDU than the communication channel's CTO/event PDU, so two of the three could in
+principle be distinct L-PDUs. This also retires the SP2b idea of several frames in flight on
+distinct PDUs at once; the arbitrator would first have to be widened from one scalar to
+per-PDU state.
 
 **DD14 — The sampler copies ODT entry descriptors before dereferencing them.** §1.6.4.2.1.1
 allows `CLEAR_DAQ_LIST` on a RUNNING list — it is required to stop the transmission, which is
@@ -366,6 +409,21 @@ lock across arbitrary memory reads. Instead the sampler copies one ODT's entry d
 address, extension, length, bit offset — under the area, leaves it, and reads memory from the
 copies. A concurrently cleared entry then yields either a valid stale read or a length of
 zero, never a wild pointer. One acquisition per ODT, and a descriptor is a few bytes.
+
+**Both sides take the area — the sampler taking it alone is not sufficient.**
+`Xcp_DaqListClearEntries` (`source/Xcp_Daq.c:57,72`) enters and leaves the same area around its
+own per-ODT entry-reset loop, the one that zeroes address, extension, length and bit offset. A
+lock only the reader takes cannot close this window: if `CLEAR_DAQ_LIST` ran at task level
+without ever entering the area, nothing would stop the sampler's interrupt from firing
+mid-clear and copying a torn mix of an already-cleared address and a not-yet-cleared length (or
+the reverse) — precisely the address-0 dereference this design exists to prevent. Only a writer
+that also holds the area makes the reader's own entry actually exclude a clear in progress,
+including the case the sampler's own public documentation invites: the sampler running in an
+interrupt that preempts a clear already under way at task level. The implementation shipped
+one-sided at first — the sampler took the area, `Xcp_DaqListClearEntries` did not — and the gap
+was found and closed during Task 15 of the implementation plan; see
+`test/daq_concurrency_test.py::test_clear_daq_list_takes_the_exclusive_area` and
+`::test_a_clear_arriving_between_two_entry_reads_does_not_corrupt_the_frame`.
 
 **DD15 — `Xcp_TriggerEventChannel` is a vendor extension, and the specification leaves no
 alternative.** The API surface of SWS_Xcp R4.3.1 is `Xcp_Init`, `Xcp_GetVersionInfo`,
@@ -415,8 +473,10 @@ source/Xcp_Internal.h   shared declarations
 preserving DD6 of SP1: the suite exercises the linkage the shipped library uses, so a helper
 left `static` in one unit but called from another fails the tests rather than the build.
 
-One new integrator header, `test/stub/SchM_Xcp.h`, provides the exclusive area of DD5,
-joining `CanIf.h`, `Det.h` and the four `Xcp_*` callback headers already stubbed there.
+One new integrator header, `test/stub/SchM_Xcp.h`, `extern`-declares the two functions of
+DD5's exclusive area and defines neither, joining `CanIf.h`, `Det.h` and the four `Xcp_*`
+callback headers already stubbed there. The mock implementations, and the held-state model
+that verifies the area's balance in tests, live in `test/conftest.py`, not in this header.
 
 ## 5. Configuration model
 
@@ -772,7 +832,10 @@ on the established naming convention:
 The chain of DD3 is what makes an aperiodic main function survivable, so
 `daq_transmission_test.py` drives it the way the integration does: trigger a burst without
 calling `Xcp_MainFunction` at all, feed confirmations, and assert every frame goes out.
-Exclusive-area balance is asserted from the counters in `test/stub/SchM_Xcp.h`.
+Exclusive-area balance is asserted from the held-state model in `test/conftest.py`
+(`_dto_queue_area_balance`, backed by each mock's side effect at :424-436 and the teardown leak
+check at :528) — `test/stub/SchM_Xcp.h` only `extern`-declares the two functions and counts
+nothing itself.
 
 Existing files that change: `asam_error_matrix_test.py` gains rows for the nine commands and
 loses the `ERR_DAQ_ACTIVE` expectation on `CLEAR_DAQ_LIST` (D10); `connect_test.py` gains the
