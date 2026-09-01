@@ -37,6 +37,15 @@ static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
  * them `static`), and nothing used to reset them on (re-)initialisation -- so a re-initialised
  * module, and, in the test harness, a test sharing a compiled configuration with an earlier one,
  * would silently inherit a previous session's DAQ configuration.
+ * @note DD14: Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) copies one ODT's entries out from under
+ * this same exclusive area before reading memory through them, because CLEAR_DAQ_LIST may run in
+ * CanIf's receive context while the sampler walks the same array from a task or an interrupt --
+ * including the sampler's own interrupt preempting a clear already in progress at task level, the
+ * direction a lock taken only on the read side cannot help with. The inner loop below is wrapped
+ * per ODT, not once for the whole nest, so each critical section is bounded by maxOdtEntries field
+ * writes rather than maxOdt * maxOdtEntries: neither Xcp_Init (source/Xcp.c) nor
+ * Xcp_DTOCmdDaqClearDaqList, this function's only callers, hold the area themselves, so nesting
+ * across ODTs is not a concern either way.
  */
 void Xcp_DaqListClearEntries(uint16 daqListNumber)
 {
@@ -45,6 +54,8 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
 
     for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
     {
+        SchM_Enter_Xcp_DtoQueue();
+
         for (entry_idx = 0x00u;
              entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
              entry_idx++)
@@ -57,6 +68,8 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
             p_entry->length = 0x00u;
             p_entry->bitOffset = XCP_ODT_ENTRY_BIT_OFFSET_NONE;
         }
+
+        SchM_Exit_Xcp_DtoQueue();
     }
 }
 

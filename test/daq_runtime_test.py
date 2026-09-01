@@ -20,6 +20,15 @@ def exchange(handle, request):
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
 
 
+def configure_and_start(handle, daq_list, address, channel=0, prescaler=1):
+    """One written ODT entry (odt 0, entry 0) at `address`, bound to `channel`, then started."""
+    exchange(handle, (0xE2, 0x00) + tuple(u16_to_array(daq_list, 'LITTLE_ENDIAN')) + (0x00, 0x00))
+    exchange(handle, (0xE1, 0xFF, 0x01, 0x00) + tuple(u32_to_array(address, 'LITTLE_ENDIAN')))
+    exchange(handle, (0xE0, 0x00) + tuple(u16_to_array(daq_list, 'LITTLE_ENDIAN')) +
+             tuple(u16_to_array(channel, 'LITTLE_ENDIAN')) + (prescaler, 0x00))
+    exchange(handle, (0xDE, 0x01) + tuple(u16_to_array(daq_list, 'LITTLE_ENDIAN')))
+
+
 def test_daq_list_runtime_starts_stopped_with_a_prescaler_of_one():
     """A prescaler of 0 would divide a raster to nothing; 1.1/1.6.4.1.1.3 makes 1 the neutral
     value, so that is what a list must hold before the master ever sets a mode."""
@@ -113,3 +122,42 @@ def test_a_full_ring_drops_the_frame_instead_of_growing():
     # read instead.
     assert rt(handle).dtoQueue.write == rt(handle).dtoQueue.read, \
         'the write index only advances for frames actually stored'
+
+
+def test_trigger_only_samples_lists_bound_to_that_event_channel():
+    """DD11: the authoritative binding is the one SET_DAQ_LIST_MODE wrote at runtime, not
+    triggeredDaqListRef. Two lists, each bound to a DIFFERENT event channel: triggering one
+    channel must sample only the list bound to it, not both."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),
+                                         daq(name='DAQ2', max_odt=1, max_odt_entries=1)),
+                                   events=(event(triggered_daq_list_ref=['DAQ1']),
+                                           event(triggered_daq_list_ref=['DAQ2']))))
+    connect(handle)
+
+    addresses_read = list()
+
+    def read_slave_memory(p_address, _extension, _p_buffer):
+        addresses_read.append(int(handle.ffi.cast('uint32_t', p_address)))
+
+    handle.xcp_read_slave_memory_u8.side_effect = read_slave_memory
+
+    configure_and_start(handle, daq_list=0, address=0x1000, channel=0)
+    configure_and_start(handle, daq_list=1, address=0x2000, channel=1)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert rt(handle).dtoQueue.count == 1, 'only the list bound to channel 0 should have sampled'
+    assert addresses_read == [0x1000], 'DAQ1 (channel 0) was read, not DAQ2 (channel 1)'
+
+
+def test_the_prescaler_divides_the_trigger_rate():
+    """1.1/1.6.4.1.1.3: the prescaler divides the event channel's raster. Prescaler 3 must yield
+    one sampled round for every three triggers, not one round per trigger."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),)))
+    connect(handle)
+    configure_and_start(handle, daq_list=0, address=0x1000, prescaler=3)
+
+    for _ in range(9):
+        handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert rt(handle).dtoQueue.count == 3, 'nine triggers at prescaler 3 must yield three rounds'

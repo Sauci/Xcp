@@ -89,15 +89,18 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
  * every entry was empty, in which case pFrame must not be queued.
  * @details DD14: Xcp_DaqListClearEntries (source/Xcp_Daq.c) resets an entry's address to 0 field
  * by field, with no ordering guarantee relative to a concurrent reader, and CLEAR_DAQ_LIST may run
- * in CanIf's receive context while this walks the same array from a task or an interrupt. Reading
- * address and length as two separate accesses against the live, shared entry could therefore
- * observe a stale (not-yet-cleared) address together with an already-cleared length, or the
- * reverse -- and dereferencing a stale address while length still reads non-zero is exactly the
- * address-0 dereference this guards against. So every entry this function is about to read memory
- * through is copied field by field, under the exclusive area, into a local buffer, and the area is
- * released before any copy is dereferenced: a concurrent clear then yields, at worst, a stale
- * address paired with the copy's own consistent length, or a zero length -- never a dereference of
- * address 0.
+ * in CanIf's receive context while this walks the same array from a task or an interrupt --
+ * including this sampler itself running in an interrupt that preempts a clear already in progress
+ * at task level, which is exactly the context Xcp_TriggerEventChannel's own public documentation
+ * invites. Reading address and length as two separate accesses against the live, shared entry
+ * could therefore observe a stale (not-yet-cleared) address together with an already-cleared
+ * length, or the reverse -- and dereferencing a stale address while length still reads non-zero is
+ * exactly the address-0 dereference this guards against. So every entry this function is about to
+ * read memory through is copied field by field, under the exclusive area, into a local buffer, and
+ * the area is released before any copy is dereferenced. Xcp_DaqListClearEntries takes the same
+ * area around its own per-ODT entry-reset loop, so the exclusion is mutual: a concurrent clear
+ * yields, at worst, a stale address paired with the copy's own consistent length, or a zero
+ * length -- never a dereference of address 0.
  * @note The local buffer is sized XCP_MAX_DTO, not maxOdtEntries -- deliberately: maxOdtEntries is
  * how many entry *slots* the ODT was configured with, which bounds nothing about how many can be
  * simultaneously non-empty. That bound comes from WRITE_DAQ (source/Xcp_Daq.c), which refuses a
@@ -109,9 +112,11 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
  * compacted, and stops copying -- defensively; the bound above says this cannot trigger -- once
  * XCP_MAX_DTO copies have been made. This is what keeps a function that may run in an interrupt
  * from putting up to 255 (a uint8 count) full entries, or roughly 1 KB, on its stack.
- * @note This closes the read side only. Xcp_DaqListClearEntries does not itself take this
- * exclusive area, so the exclusion described above is not yet mutual against a concurrent clear
- * -- see the Task 15 report for the follow-up this implies.
+ * @note No test in this suite can observe whether the exclusion above actually holds:
+ * SchM_Enter_Xcp_DtoQueue and SchM_Exit_Xcp_DtoQueue are no-op mocks in the CFFI harness
+ * (test/conftest.py), by the same limitation Task 5 recorded for this area. Both sides taking the
+ * same area is therefore justified by reading the code on both sides, not by a passing test --
+ * see the Task 15 report, "Fix round 1", for what was and was not verified.
  */
 static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListNumber, uint8 odtNumber)
 {

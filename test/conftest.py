@@ -257,12 +257,23 @@ class _GeneratedSources(object):
 
 class XcpTest(object):
     _code_gen_cache = dict()
+    # Every live instance, so the _dto_queue_area_balance autouse fixture below can sweep
+    # dto_queue_area_violations after each test without each test remembering to check it itself.
+    _instances = list()
 
     def __init__(self,
                  config,
                  initialize=True,
                  rx_buffer_size=0x0FFF):
         self.available_rx_buffer = rx_buffer_size
+        # DD14/fix round 1: SchM_Enter_Xcp_DtoQueue and SchM_Exit_Xcp_DtoQueue below are given
+        # side effects that model the exclusive area as a single boolean, so nesting,
+        # ordering and imbalance are all observable instead of only being counted. dto_queue_area_held
+        # is readable directly by a test that wants to confirm a read happens outside the area;
+        # dto_queue_area_violations is swept by the autouse fixture below.
+        self.dto_queue_area_held = False
+        self.dto_queue_area_violations = list()
+        XcpTest._instances.append(self)
         # Owns every buffer handed to the C module, so none is freed while C still points at it.
         self._pdu_info_keepalive = list()
         self.can_if_tx_data = list()
@@ -409,8 +420,20 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
-        self.sch_m_enter_xcp_dto_queue.return_value = None
-        self.sch_m_exit_xcp_dto_queue.return_value = None
+        def enter_dto_queue_area():
+            if self.dto_queue_area_held:
+                self.dto_queue_area_violations.append(
+                        'SchM_Enter_Xcp_DtoQueue called while already held (nested or double enter)')
+            self.dto_queue_area_held = True
+
+        def exit_dto_queue_area():
+            if not self.dto_queue_area_held:
+                self.dto_queue_area_violations.append(
+                        'SchM_Exit_Xcp_DtoQueue called while not held (exit without a matching enter)')
+            self.dto_queue_area_held = False
+
+        self.sch_m_enter_xcp_dto_queue.side_effect = enter_dto_queue_area
+        self.sch_m_exit_xcp_dto_queue.side_effect = exit_dto_queue_area
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
@@ -476,3 +499,31 @@ class XcpTest(object):
     @property
     def include_directories(self):
         return os.getenv('include_directories').split(';')
+
+
+@pytest.fixture(autouse=True)
+def _dto_queue_area_balance():
+    """Fix round 1, finding A: every test in the suite gets this for free, because it is autouse
+    and every XcpTest registers itself. SchM_Enter/Exit_Xcp_DtoQueue's side effects (XcpTest.__init__
+    above) model the exclusive area as a boolean, so a violation here means a real nesting,
+    ordering, or enter/exit imbalance was exercised by the test that just ran -- not merely that
+    the mocks were called an unexpected number of times.
+
+    Raising this from inside SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue's own side effect would
+    not work: those run as CFFI `extern "Python+C"` callbacks, and a callback that raises has the
+    exception printed to stderr and swallowed at the C/Python boundary, not propagated to the test
+    that is still executing C code several frames up. Recording violations without raising, then
+    asserting here after control has returned to pure Python, sidesteps that entirely.
+    """
+    XcpTest._instances = list()
+
+    yield
+
+    violations = [(instance, violation)
+                  for instance in XcpTest._instances
+                  for violation in instance.dto_queue_area_violations]
+    XcpTest._instances = list()
+
+    assert violations == [], \
+        'SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue nesting or imbalance: {}'.format(
+                [v for _, v in violations])
