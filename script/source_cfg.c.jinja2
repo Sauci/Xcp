@@ -258,6 +258,9 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
         {%- if event.time_unit is not defined %}
 {{ raise('event channel {} has no time_unit configured'.format(event_index)) }}
         {%- endif %}
+        {%- if event.triggered_daq_list_ref | length == 0 %}
+{{ raise('event channel {} has an empty triggered_daq_list_ref; a zero-length C array is not portable'.format(event_index)) }}
+        {%- endif %}
         {%- for name in event.triggered_daq_list_ref %}
         {%- if name not in daq_index_by_name %}
 {{ raise('event channel {} references DAQ list "{}", which no configuration declares'.format(event_index, name)) }}

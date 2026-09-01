@@ -162,3 +162,12 @@ def test_generation_fails_when_an_event_has_no_time_unit():
                                        "time_cycle": 10,
                                        "type": "DAQ",
                                        "triggered_daq_list_ref": ["DAQ1"]},)))
+
+
+def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
+    """An empty triggered_daq_list_ref would emit a zero-length C array
+    (Xcp_EventChannelDaqListRef...[0x00u]) -- a GCC extension, an ISO C constraint violation, and
+    rejected by MISRA and several embedded toolchains. The schema has no minItems to catch it."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
+                              events=(event(triggered_daq_list_ref=[]),)))
