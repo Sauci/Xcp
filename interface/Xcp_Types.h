@@ -558,9 +558,78 @@ typedef struct {
     boolean freeze;
 } Xcp_SegmentRtType;
 
+/**
+ * @brief mutable state of one DAQ list.
+ * @details Everything the master changes through SET_DAQ_LIST_MODE and START_STOP_DAQ_LIST.
+ * The configured part of a DAQ list -- its ODTs, its FIRST_PID, its PDU mapping -- lives in
+ * Xcp_DaqListType and is generated const.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
+ */
+typedef struct {
+    /**
+     * @brief event channel this DAQ list is bound to, assigned by SET_DAQ_LIST_MODE.
+     */
+    uint16 eventChannelNumber;
+
+    /**
+     * @brief current mode, in the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6.
+     * @details Stored in the layout the slave reports rather than the one it receives:
+     * SET_DAQ_LIST_MODE puts DIRECTION at bit 0, while this byte puts SELECTED there.
+     */
+    uint8 mode;
+
+    /**
+     * @brief transmission rate prescaler; 1 means no reduction.
+     */
+    uint8 prescaler;
+
+    /**
+     * @brief events counted towards the next transmission, in [0, prescaler).
+     */
+    uint8 prescalerCounter;
+
+    /**
+     * @brief DAQ list priority. Only 0 is accepted while prioritisation is unimplemented.
+     */
+    uint8 priority;
+} Xcp_DaqListRtType;
+
+/**
+ * @brief one complete DTO packet, assembled at the sampling instant.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1.
+ */
+typedef struct {
+    /**
+     * @brief Tx PDU this frame goes out on, from the DAQ list's pdu_mapping.
+     */
+    PduIdType txPduId;
+
+    /**
+     * @brief bytes used in data, identification field included.
+     */
+    uint8 length;
+
+    uint8 data[XCP_MAX_DTO];
+} Xcp_DtoFrameType;
+
+/**
+ * @brief ring of assembled DTO frames awaiting transmission.
+ * @details count rather than a gap between read and write, so a full ring and an empty one are
+ * distinguishable without wasting an element.
+ */
+typedef struct {
+    Xcp_DtoFrameType *frame;
+    uint8 depth;
+    uint8 read;
+    uint8 write;
+    uint8 count;
+} Xcp_DtoQueueType;
+
 typedef struct {
     Xcp_EventQueueType *eventQueue;
     Xcp_SegmentRtType *segment;
+    Xcp_DaqListRtType *daqList;
+    Xcp_DtoQueueType *dtoQueue;
 } Xcp_RtType;
 
 typedef struct

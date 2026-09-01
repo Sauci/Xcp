@@ -1105,6 +1105,21 @@ void Xcp_Init(const Xcp_Type *pConfig)
             for (idx = 0x00000000u; idx < Xcp_Ptr->general->maxSegment; idx ++) {
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[idx].freeze = FALSE;
             }
+            for (idx = 0x00u; idx < Xcp_Ptr->general->daqCount; idx++)
+            {
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].eventChannelNumber = 0x0000u;
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode = 0x00u;
+                /* 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." */
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescaler = 0x01u;
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescalerCounter = 0x00u;
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].priority = 0x00u;
+            }
+
+            Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->read = 0x00u;
+            Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->write = 0x00u;
+            Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->count = 0x00u;
+
+            Xcp_Internal.daq_pointer.valid = FALSE;
             for (idx = 0x00000000u; idx < (sizeof(Xcp_Internal.seed.buffer) / sizeof(Xcp_Internal.seed.buffer[0x00u])); idx ++) {
                 Xcp_Internal.seed.buffer[idx] = 0x00u;
             }

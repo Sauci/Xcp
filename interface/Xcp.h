@@ -266,6 +266,8 @@ extern Xcp_StateType Xcp_State;
 
 extern const Xcp_Type *Xcp_Ptr;
 
+extern Xcp_RtType Xcp_Rt[];
+
 #endif /* #ifndef CFFI_ENABLE */
 
 /** @} */
