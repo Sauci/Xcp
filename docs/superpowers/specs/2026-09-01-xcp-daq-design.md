@@ -3,6 +3,9 @@
 **Date:** 2026-09-01
 **Baseline:** branch `develop`, commit `7d52623`
 **Reference:** *XCP -Part 2- Protocol Layer Specification -1.1*, ASAM e.V.
+**Also normative:** *AUTOSAR Specification of CAN Interface*, CP Release 4.3.1 (document ID
+012), for everything in DD3, DD5 and DD13 that concerns how this module may call `CanIf`.
+Both are in `docs/external/`, which is gitignored.
 **Roadmap:** `2026-08-29-xcp-part2-roadmap.md`
 
 Implements the mandatory basic and static commands of the data acquisition group (§1.6.4),
@@ -190,6 +193,13 @@ is the worst way to lose it.
 The cost accepted instead is one `CanIf_Transmit` inside the trigger's context — on CAN a
 mailbox write, in a context the integrator chooses.
 
+**This is the pattern AUTOSAR prescribes, not a deviation from it.** §7.11.2.1 of the CAN
+Interface specification instructs upper layers that need transmit order preserved to tie each
+transmit request to the previous transmit confirmation, requesting the next L-PDU only once
+the previous one has been confirmed. That CanTp and Com instead transmit from their main
+functions is a consequence of their own timing obligations — CanTp has `STmin` to honour — not
+evidence that chaining is disallowed.
+
 This also fixes D16: today the confirmation only clears flags, so a CTO block transfer and the
 event queue each advance by one frame per main function call for the same reason DAQ would
 have.
@@ -229,9 +239,12 @@ asynchronous APIs" — remains open for the rest of the module. This sub-project
 where it introduces a second context, rather than opening a module-wide concurrency audit
 inside a DAQ sub-project.
 
-Still single-outstanding: exactly one frame is in flight at a time, because `CanIf_Transmit`
-on a busy PDU refuses anyway. Several outstanding frames across distinct PDUs would need
-separate sent and confirmed indices, and that stays in SP2b.
+The area closes *before* `CanIf_Transmit` is called, never around it. Holding it across a
+lower-layer call would make the section unbounded, and §7.17 of the CAN Interface
+specification directs that such sections stay short and confined to copying data and updating
+counters and semaphores. The sequence is therefore: enter, choose the frame and mark it in
+flight, exit, transmit, and on refusal re-enter to unmark. DD13 covers the re-entrancy this
+leaves open.
 
 **DD6 — Overload drops the frame and reports it once per trigger.** When the ring is full the
 frame is discarded. With `overload_indication = EVENT` the slave pushes `EV_DAQ_OVERLOAD`
@@ -282,13 +295,56 @@ The sampler iterates DAQ lists and compares their assigned channel number. The c
 reference stays as metadata for `GET_DAQ_EVENT_INFO` in SP2b — its type is fixed here anyway
 because the generator must now emit it (D13).
 
+The cost is a scan of every DAQ list per trigger, O(`daqCount`), rather than a walk of a
+per-channel list maintained by `SET_DAQ_LIST_MODE`. At the two lists of the shipped
+configuration that is nothing; at fifty lists on a 1 ms raster it would be worth the index.
+Recorded rather than pre-built, because the index has to be maintained under the exclusive
+area too and nothing yet justifies it. DD14 covers the other hazard the scan is exposed to.
+
 **DD12 — The runtime lives in its own translation unit.** `source/Xcp_Daq.c` holds the nine
 command handlers, following the one-file-per-command-group layout DD1 of SP1 established.
-Sampling, frame assembly and the ring buffer go in a new `source/Xcp_DaqRuntime.c`;
-`Xcp_StartNextTransmission` stays in `Xcp.c`, since it arbitrates between all three packet
-kinds and only one of them is DAQ. It is a different responsibility from answering commands, it is
-what the runtime tests drive directly, and folding it into `Xcp_Daq.c` would produce the
-largest file in the repository.
+Sampling, frame assembly and the ring buffer go in a new `source/Xcp_DaqRuntime.c` — a
+different responsibility from answering commands, the thing the runtime tests drive directly,
+and enough code that folding it into `Xcp_Daq.c` would produce the largest file in the
+repository. `Xcp_StartNextTransmission` stays in `Xcp.c`, since it arbitrates between all
+three packet kinds and only one of them is DAQ.
+
+**DD13 — A re-entrancy guard keeps the module inside `CanIf_Transmit`'s contract.**
+SWS_CANIF_00005 gives `CanIf_Transmit` as synchronous and "Reentrant for different PduIds.
+Non reentrant for the same PduId." The note under SWS_CANIF_00412 puts the confirmation's
+call context on interrupt level or task level, so a transmit interrupt can confirm a frame
+while `Xcp_TriggerEventChannel` or `Xcp_MainFunction` is still inside `CanIf_Transmit` for
+that same PDU. Chaining from the confirmation at that moment would be exactly the prohibited
+same-PduId re-entrant call.
+
+`Xcp_StartNextTransmission` therefore carries a `transmit_in_progress` flag, set under the
+exclusive area on entry. A call that finds it set records that a restart is wanted and
+returns without touching `CanIf_Transmit`; the outermost call loops while that flag is set
+after `CanIf_Transmit` returns. Bounded stack, unchanged throughput, and no same-PduId
+re-entry — which also removes the unbounded recursion a CanIf that confirms synchronously
+inside `CanIf_Transmit` would otherwise cause.
+
+**Single-outstanding per PDU is mandatory, not a simplification.** SWS_CANIF_00068 has CanIf
+*overwrite* an already-buffered instance of the same L-PDU when `Can_Write` returns
+`CAN_BUSY`. A second DAQ frame handed over before the first is confirmed therefore destroys
+the first silently — no error, no confirmation, one measurement sample simply missing.
+(SWS_CANIF_00837 covers the other case: a genuinely new L-PDU with all buffers busy gets
+`E_NOT_OK`.) This also retires the SP2b idea of several frames in flight on one PDU; only
+distinct PDUs could ever support it.
+
+**DD14 — The sampler copies ODT entry descriptors before dereferencing them.** §1.6.4.2.1.1
+allows `CLEAR_DAQ_LIST` on a RUNNING list — it is required to stop the transmission, which is
+also why D10 removes `ERR_DAQ_ACTIVE` from its matrix row — and it resets every ODT entry to
+address 0. That handler runs in `Xcp_CanIfRxIndication`'s context while
+`Xcp_TriggerEventChannel` may be walking the same entries from a task or an interrupt.
+Checking RUNNING first does not close the window: the sampler passes the check, the command
+zeroes the entries, and the sampler dereferences address 0 inside an interrupt.
+
+Widening the exclusive area over the sampling loop is not the answer, because that holds a
+lock across arbitrary memory reads. Instead the sampler copies one ODT's entry descriptors —
+address, extension, length, bit offset — under the area, leaves it, and reads memory from the
+copies. A concurrently cleared entry then yields either a valid stale read or a length of
+zero, never a wild pointer. One acquisition per ODT, and a descriptor is a few bytes.
 
 ## 4. Source layout
 
@@ -404,6 +460,8 @@ For each DAQ list whose runtime mode has `RUNNING` set and whose `eventChannelNu
 2. For each ODT holding at least one entry with a non-zero length, assemble one frame:
    the identification field, then, for each such entry, `length` elements read through
    `Xcp_ReadSlaveMemoryTable[addressGranularity]` from `address` and `addressExtension`.
+   The entry descriptors are copied under the exclusive area first and the memory reads use
+   the copies, per DD14.
 3. Push the finished frame into the ring, tagged with the DAQ list's `pdu_mapping` PDU id.
    A full ring triggers DD6.
 
@@ -440,7 +498,9 @@ because the master's t1 timer is running.
 
 Three contexts call it, per DD3: `Xcp_TriggerEventChannel` after enqueueing,
 `Xcp_CanIfTxConfirmation` after clearing the completed transfer, and `Xcp_MainFunction`
-whenever `ongoing_transmit_type` is `NONE`. Only the third is a recovery path.
+whenever `ongoing_transmit_type` is `NONE`. Only the third is a recovery path. DD5 bounds the
+exclusive area to exclude the `CanIf_Transmit` call itself, and DD13 keeps the three contexts
+from stacking two calls for one PDU.
 
 Note that the confirmation's existing CTO branch already has work to do before arbitrating —
 a block transfer continues by refilling the response buffer — so `Xcp_StartNextTransmission`
@@ -652,7 +712,8 @@ on the established naming convention:
 | `get_daq_processor_info_test.py` | §7.8 |
 | `get_daq_resolution_info_test.py` | §7.9 |
 | `daq_runtime_test.py` | sampling, prescaler division, ring overflow and `EV_DAQ_OVERLOAD`, `Xcp_TriggerEventChannel` including the unknown-channel DET error |
-| `daq_transmission_test.py` | arbitration order, a full burst transmitted with `Xcp_MainFunction` never called, recovery from a `CanIf_Transmit` refusal through both the main function and the next trigger, and exclusive-area balance |
+| `daq_transmission_test.py` | arbitration order, a full burst transmitted with `Xcp_MainFunction` never called, recovery from a `CanIf_Transmit` refusal through both the main function and the next trigger, exclusive-area balance, and the DD13 guard under a `CanIf` stub that confirms synchronously from inside `CanIf_Transmit` |
+| `daq_concurrency_test.py` | never two `CanIf_Transmit` calls for one PDU on the stack (DD13), never a call made while inside the exclusive area (DD5), and `CLEAR_DAQ_LIST` interleaved with a sample yielding no dereference of a cleared address (DD14) |
 | `daq_identification_field_test.py` | all four field types against both byte orders |
 
 The chain of DD3 is what makes an aperiodic main function survivable, so
