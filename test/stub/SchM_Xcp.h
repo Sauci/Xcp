@@ -7,6 +7,12 @@
  * Xcp_CanIfTxConfirmation and Xcp_MainFunction all reach. It must suspend anything that can
  * call into this module -- typically the CAN transmit interrupt -- and must never be held
  * across a call to CanIf_Transmit.
+ *
+ * "Anything that can call into this module" includes Xcp_CanIfTxConfirmation itself: it updates
+ * ongoing_transmit_type outside the area before Xcp_StartNextTransmission reads it under one, so
+ * the area must exclude the confirmation's execution context too, not just concurrent callers of
+ * this module's other entry points. A primitive that does not -- a spinlock shared with a
+ * confirmation handled on another core, for instance -- does not satisfy this.
  */
 
 #ifndef SCHM_XCP_H

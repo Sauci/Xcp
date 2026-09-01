@@ -369,6 +369,10 @@ void Xcp_ClearProtectionStatus(void);
  * @details Safe from any context and at any time; a call arriving while another is inside
  * CanIf_Transmit records the wish and returns, and the outer call carries it out before
  * returning. Callers therefore never need to know whether a transmission is already running.
+ * @note Reads Xcp_Internal.ongoing_transmit_type under the exclusive area, but
+ * Xcp_CanIfTxConfirmation updates that field outside one before calling here. Correct only if
+ * SchM_Enter_Xcp_DtoQueue excludes the confirmation's own execution context, not merely other
+ * callers of this function -- see test/stub/SchM_Xcp.h.
  */
 void Xcp_StartNextTransmission(void);
 

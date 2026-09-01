@@ -80,6 +80,39 @@ def test_set_request_events_are_drained_by_the_confirmation_and_never_fill_the_q
     assert queue_full_errors == [], 'the confirmation chain must keep the event queue drained'
 
 
+def test_an_unconfirmed_event_still_occupies_its_slot_so_a_new_push_can_fail():
+    """Xcp_EventQueueGet peeks -- it does not advance `read`. An event selected for transmission
+    stays counted as occupying its ring slot until Xcp_EventQueuePop runs in the confirmation.
+    Combined with the ring's own full test (one slot always kept empty to tell full from empty),
+    the usable capacity for a *new* push while one event is in flight, unconfirmed, is
+    eventQueueSize - 2. At eventQueueSize == 2 that is zero: the second SET_REQUEST's push fails
+    outright and Xcp_ReportError(..., XCP_E_EVENT_QUEUE_FULL) fires. This is unrelated to
+    accumulation over many iterations -- it is a single push failing against a slot the ring has
+    not yet been told is free -- and it survives Task 16, whose DAQ overload path pushes into the
+    same ring."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, event_queue_size=2))
+
+    def store_calibration_data_to_non_volatile_memory(p_success):
+        p_success[0] = handle.define('E_OK')
+        return handle.define('E_OK')
+
+    handle.xcp_store_calibration_data_to_non_volatile_memory.side_effect = store_calibration_data_to_non_volatile_memory
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    for _ in range(2):
+        # SET_REQUEST
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, 0x01, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert len([c for c in handle.det_report_error.call_args_list
+                if c[0][3] == handle.define('XCP_E_EVENT_QUEUE_FULL')]) == 1
+
+
 @pytest.mark.parametrize('trailing_value', trailing_values)
 @pytest.mark.parametrize('max_cto', max_ctos)
 def test_set_request_sets_all_remaining_bytes_to_trailing_value(trailing_value, max_cto):
