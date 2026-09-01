@@ -13,7 +13,7 @@
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
 
-uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
@@ -77,7 +77,7 @@ uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pP
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
@@ -136,7 +136,7 @@ uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduIn
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     uint8 number_of_data_elements;
@@ -185,7 +185,7 @@ uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPd
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
@@ -252,7 +252,7 @@ uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *p
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 shift_value = pPduInfo->SduDataPtr[0x01u];
     uint16 and_mask;

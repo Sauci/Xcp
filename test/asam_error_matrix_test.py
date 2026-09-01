@@ -1227,7 +1227,7 @@ class TestDownloadNextErrorHandling:
         assert handle.can_if_transmit.call_count == 1
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
-    @pytest.mark.skip(reason='Xcp_DTOCmdStdDownloadNext only ever compares the announced count '
+    @pytest.mark.skip(reason='Xcp_DTOCmdCalDownloadNext only ever compares the announced count '
                              'against the active block transfer and reports ERR_SEQUENCE on a '
                              'mismatch; it has no path that produces ERR_OUT_OF_RANGE')
     def test_returns_err_out_of_range(self):
@@ -1363,7 +1363,7 @@ class TestDownloadMaxErrorHandling:
         assert handle.can_if_transmit.call_count == 1
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
-    @pytest.mark.skip(reason='Xcp_DTOCmdStdDownloadMax always writes a fixed MAX_CTO/AG-1 '
+    @pytest.mark.skip(reason='Xcp_DTOCmdCalDownloadMax always writes a fixed MAX_CTO/AG-1 '
                              'elements with no user-supplied count to range-check; it has no '
                              'path that produces ERR_OUT_OF_RANGE')
     def test_returns_err_out_of_range(self):
@@ -1767,7 +1767,7 @@ class TestSetCalPageErrorHandling:
     def test_returns_err_mode_not_valid_rather_than_err_segment_not_valid_when_both_apply(self):
         """Coverage gap from the Task 15 review, generalised to SET_CAL_PAGE: a mode selecting
         neither ECU nor XCP and an unknown segment can each individually justify a different
-        error. Xcp_DTOCmdStdSetCalPage checks the mode bits before it ever looks at the segment,
+        error. Xcp_DTOCmdPagSetCalPage checks the mode bits before it ever looks at the segment,
         so ERR_MODE_NOT_VALID wins; swapping the two checks would still satisfy every other test
         in this file.
         """
@@ -1788,7 +1788,7 @@ class TestSetCalPageErrorHandling:
 
     def test_returns_err_segment_not_valid_rather_than_err_page_not_valid_when_both_apply(self):
         """Same gap as above, one check further down: an unknown segment and an unknown page can
-        each individually justify a different error. Xcp_DTOCmdStdSetCalPage validates every
+        each individually justify a different error. Xcp_DTOCmdPagSetCalPage validates every
         affected segment before it ever looks at the page, so ERR_SEGMENT_NOT_VALID wins.
         """
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
@@ -1873,7 +1873,7 @@ class TestGetCalPageErrorHandling:
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
     @pytest.mark.skip(reason='GET_CAL_PAGE has no page parameter to validate: the request only '
-                             'carries mode and segment. Xcp_DTOCmdStdGetCalPage never produces '
+                             'carries mode and segment. Xcp_DTOCmdPagGetCalPage never produces '
                              'ERR_PAGE_NOT_VALID even though 1.7.3.2.3 lists it for this command')
     def test_returns_err_page_not_valid(self):
         pass
@@ -1909,7 +1909,7 @@ class TestGetCalPageErrorHandling:
 
     def test_returns_err_mode_not_valid_rather_than_err_segment_not_valid_when_both_apply(self):
         """Same gap as SET_CAL_PAGE: an invalid mode and an unknown segment can each
-        individually justify a different error. Xcp_DTOCmdStdGetCalPage checks the mode before
+        individually justify a different error. Xcp_DTOCmdPagGetCalPage checks the mode before
         the segment, so ERR_MODE_NOT_VALID wins.
         """
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, segments=[segment(pages=[page()])]))
@@ -2100,7 +2100,7 @@ class TestGetSegmentInfoErrorHandling:
 
     def test_returns_err_segment_not_valid_rather_than_err_out_of_range_when_both_apply(self):
         """An unknown segment and an invalid mode can each individually justify a different
-        error. Xcp_DTOCmdStdGetSegmentInfo checks the segment before it ever looks at mode, so
+        error. Xcp_DTOCmdPagGetSegmentInfo checks the segment before it ever looks at mode, so
         ERR_SEGMENT_NOT_VALID wins; swapping the two checks would still satisfy every other test
         in this file.
         """
@@ -2228,7 +2228,7 @@ class TestGetPageInfoErrorHandling:
 
     def test_returns_err_segment_not_valid_rather_than_err_page_not_valid_when_both_apply(self):
         """An unknown segment and an unknown page can each individually justify a different
-        error. Xcp_DTOCmdStdGetPageInfo checks the segment before it ever looks at the page, so
+        error. Xcp_DTOCmdPagGetPageInfo checks the segment before it ever looks at the page, so
         ERR_SEGMENT_NOT_VALID wins; swapping the two checks would still satisfy every other test
         in this file.
         """
@@ -2361,8 +2361,8 @@ class TestSetSegmentModeErrorHandling:
         """Coverage gap from the Task 15 review: no test combined an invalid segment with a
         freeze request against a freeze-unsupported slave, so the precedence between
         ERR_SEGMENT_NOT_VALID and ERR_MODE_NOT_VALID was unpinned -- swapping the two branches
-        in Xcp_DTOCmdStdSetSegmentMode would still pass every other test in this file.
-        Xcp_DTOCmdStdSetSegmentMode checks segment validity before freeze support, so
+        in Xcp_DTOCmdPagSetSegmentMode would still pass every other test in this file.
+        Xcp_DTOCmdPagSetSegmentMode checks segment validity before freeze support, so
         ERR_SEGMENT_NOT_VALID wins.
         """
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -2579,7 +2579,7 @@ class TestCopyCalPageErrorHandling:
 
     def test_returns_err_segment_not_valid_rather_than_err_page_not_valid_when_both_apply(self):
         """An unknown segment on one side of the copy and an unknown page on the other can each
-        individually justify a different error. Xcp_DTOCmdStdCopyCalPage checks both segments
+        individually justify a different error. Xcp_DTOCmdPagCopyCalPage checks both segments
         before it ever looks at either page, so ERR_SEGMENT_NOT_VALID wins; swapping the two
         checks would still satisfy every other test in this file.
         """

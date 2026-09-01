@@ -354,50 +354,50 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xE2 */
     Xcp_CmdNotImplemented, /* 0xE3 */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
+    Xcp_DTOCmdPagCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
 #else
     Xcp_CmdNotImplemented, /* COPY_CAL_PAGE 0xE4, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetSegmentMode, /* GET_SEGMENT_MODE 0xE5, optional */
+    Xcp_DTOCmdPagGetSegmentMode, /* GET_SEGMENT_MODE 0xE5, optional */
 #else
     Xcp_CmdNotImplemented, /* GET_SEGMENT_MODE 0xE5, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdSetSegmentMode, /* SET_SEGMENT_MODE 0xE6, optional */
+    Xcp_DTOCmdPagSetSegmentMode, /* SET_SEGMENT_MODE 0xE6, optional */
 #else
     Xcp_CmdNotImplemented, /* SET_SEGMENT_MODE 0xE6, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetPageInfo, /* GET_PAGE_INFO 0xE7, optional */
+    Xcp_DTOCmdPagGetPageInfo, /* GET_PAGE_INFO 0xE7, optional */
 #else
     Xcp_CmdNotImplemented, /* GET_PAGE_INFO 0xE7, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetSegmentInfo, /* GET_SEGMENT_INFO 0xE8, optional */
+    Xcp_DTOCmdPagGetSegmentInfo, /* GET_SEGMENT_INFO 0xE8, optional */
 #else
     Xcp_CmdNotImplemented, /* GET_SEGMENT_INFO 0xE8, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetPagProcessorInfo, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
+    Xcp_DTOCmdPagGetPagProcessorInfo, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
 #else
     Xcp_CmdNotImplemented, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetCalPage, /* GET_CAL_PAGE 0xEA */
+    Xcp_DTOCmdPagGetCalPage, /* GET_CAL_PAGE 0xEA */
 #else
     Xcp_CmdNotImplemented, /* GET_CAL_PAGE 0xEA */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdSetCalPage, /* SET_CAL_PAGE 0xEB */
+    Xcp_DTOCmdPagSetCalPage, /* SET_CAL_PAGE 0xEB */
 #else
     Xcp_CmdNotImplemented, /* SET_CAL_PAGE 0xEB */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
-    Xcp_DTOCmdStdModifyBits, /* MODIFY_BITS 0xEC, optional */
-    Xcp_DTOCmdStdShortDownload, /* SHORT_DOWNLOAD 0xED, optional */
-    Xcp_DTOCmdStdDownloadMax, /* DOWNLOAD_MAX 0xEE, optional */
-    Xcp_DTOCmdStdDownloadNext, /* 0xEF */
-    Xcp_DTOCmdStdDownload, /* 0xF0 */
+    Xcp_DTOCmdCalModifyBits, /* MODIFY_BITS 0xEC, optional */
+    Xcp_DTOCmdCalShortDownload, /* SHORT_DOWNLOAD 0xED, optional */
+    Xcp_DTOCmdCalDownloadMax, /* DOWNLOAD_MAX 0xEE, optional */
+    Xcp_DTOCmdCalDownloadNext, /* 0xEF */
+    Xcp_DTOCmdCalDownload, /* 0xF0 */
     Xcp_DTOCmdStdUserCmd, /* 0xF1, optional */
     Xcp_DTOCmdStdTransportLayerCmd, /* 0xF2, optional */
     Xcp_DTOCmdStdBuildChecksum, /* 0xF3, optional */

@@ -250,7 +250,7 @@ Pure move. No behaviour changes, no new logic. This is the last chance to do it 
   - `extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);`
   - `extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);`
   - `extern Xcp_InternalType Xcp_Internal;`
-  - every handler prototype, e.g. `uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo);`
+  - every handler prototype, e.g. `uint8 Xcp_DTOCmdCalDownload(boolean *responseExpected, const PduInfoType *pPduInfo);`
   - `static inline void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)` — defined, not just declared, because `Compiler.h` defines `LOCAL_INLINE` as `static inline`.
 
 - [ ] **Step 1: Create the private header**
@@ -298,7 +298,7 @@ Each new `.c` file starts with:
 Move, deleting the `static` keyword from each definition and deleting the now-duplicated forward declarations from `Xcp.c`:
 
 - `Xcp_Std.c` — `Xcp_CTOCmdStdConnect`, `Xcp_CTOCmdStdDisconnect`, `Xcp_CTOCmdStdGetStatus`, `Xcp_CTOCmdStdSynch`, `Xcp_DTOCmdStdGetCommModeInfo`, `Xcp_DTOCmdStdGetId`, `Xcp_DTOCmdStdSetRequest`, `Xcp_DTOCmdStdGetSeed`, `Xcp_DTOCmdStdUnlock`, `Xcp_DTOCmdStdSetMta`, `Xcp_DTOCmdStdUpload`, `Xcp_DTOCmdStdShortUpload`, `Xcp_DTOCmdStdBuildChecksum`, `Xcp_DTOCmdStdTransportLayerCmd`, `Xcp_DTOCmdStdUserCmd`, the nine `Xcp_BuildChecksum*` functions, `Xcp_CRC16Table`, `Xcp_CRC16CITTTable`, `Xcp_CRC32Table`, `Xcp_CheckMasterSlaveKeyMatch`.
-- `Xcp_Cal.c` — `Xcp_DTOCmdStdDownload`, `Xcp_DTOCmdStdDownloadNext`.
+- `Xcp_Cal.c` — `Xcp_DTOCmdCalDownload`, `Xcp_DTOCmdCalDownloadNext`.
 - `Xcp_Pag.c` — create with the include block only; it gains content in Task 13.
 - `Xcp_Daq.c` — the seventeen `Xcp_DTOCmdDaq*` handlers plus `Xcp_DTODaqPacket` and `Xcp_DTODaqStimPacket`.
 
@@ -651,7 +651,7 @@ git commit -m "fix: correct range check and block-mode bound in Xcp_DataTransfer
 The handler currently validates the element count and then has an empty success branch, so nothing is written and no positive response is built. It also gates on `slaveBlockModeSupported`, which is defect D8 — §1.6.1.2.1 makes `MAX_BS` a *master* block-mode parameter naming `DOWNLOAD_NEXT` explicitly.
 
 **Files:**
-- Modify: `source/Xcp_Cal.c` (`Xcp_DTOCmdStdDownload`)
+- Modify: `source/Xcp_Cal.c` (`Xcp_DTOCmdCalDownload`)
 - Test: `test/download_test.py` (create)
 
 **Interfaces:**
@@ -770,10 +770,10 @@ Expected: FAIL — `written` is empty because the success branch does nothing, a
 
 - [ ] **Step 3: Implement the handler**
 
-In `source/Xcp_Cal.c`, replace `Xcp_DTOCmdStdDownload` entirely:
+In `source/Xcp_Cal.c`, replace `Xcp_DTOCmdCalDownload` entirely:
 
 ```c
-uint8 Xcp_DTOCmdStdDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
@@ -850,7 +850,7 @@ git commit -m "feat: implement DOWNLOAD write path and gate block mode on master
 §1.6.2.2.1 requires a negative response carrying a payload — the expected element count in byte 2. No such mechanism exists; `Xcp_FillErrorPacket` writes a bare two-byte packet. This task introduces the general form, which defect D6 will reuse for `BUILD_CHECKSUM`.
 
 **Files:**
-- Modify: `source/Xcp.c` (add `Xcp_FillErrorPacketWithData`, `Xcp_BlockTransferAbort`), `source/Xcp_Internal.h`, `source/Xcp_Cal.c` (`Xcp_DTOCmdStdDownloadNext`)
+- Modify: `source/Xcp.c` (add `Xcp_FillErrorPacketWithData`, `Xcp_BlockTransferAbort`), `source/Xcp_Internal.h`, `source/Xcp_Cal.c` (`Xcp_DTOCmdCalDownloadNext`)
 - Test: `test/download_next_test.py` (create)
 
 **Interfaces:**
@@ -949,7 +949,7 @@ docker run --rm -v "$PWD":/usr/project -w /usr/project xcp-dev sh -c \
   'cd build && cmake .. -DXCP_PYTEST_ARGS="-k download_next" && make all && ctest -V'
 ```
 
-Expected: FAIL — `Xcp_DTOCmdStdDownloadNext` is an empty stub that returns `E_OK` with a stale buffer.
+Expected: FAIL — `Xcp_DTOCmdCalDownloadNext` is an empty stub that returns `E_OK` with a stale buffer.
 
 - [ ] **Step 3: Add the two helpers**
 
@@ -985,10 +985,10 @@ Add both prototypes to `source/Xcp_Internal.h`.
 
 - [ ] **Step 4: Implement the handler**
 
-In `source/Xcp_Cal.c`, replace `Xcp_DTOCmdStdDownloadNext` entirely:
+In `source/Xcp_Cal.c`, replace `Xcp_DTOCmdCalDownloadNext` entirely:
 
 ```c
-uint8 Xcp_DTOCmdStdDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
@@ -1075,7 +1075,7 @@ Per design decision DD3, arriving during an active block transfer yields `ERR_SE
 
 **Interfaces:**
 - Consumes: `Xcp_BlockTransferAbort` (Task 7), `Xcp_WriteSlaveMemoryTable` (Task 3).
-- Produces: `uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdCalDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1159,7 +1159,7 @@ Expected: FAIL — `0xEE` dispatches to `Xcp_DTODaqPacket`, so nothing is writte
 Append to `source/Xcp_Cal.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     uint8 number_of_data_elements;
@@ -1212,7 +1212,7 @@ uint8 Xcp_DTOCmdStdDownloadMax(boolean *responseExpected, const PduInfoType *pPd
 Add the prototype to `source/Xcp_Internal.h`, and in `source/Xcp.c` change the `Xcp_PIDTable` entry at `0xEE` from `Xcp_DTODaqPacket` to:
 
 ```c
-    Xcp_DTOCmdStdDownloadMax, /* DOWNLOAD_MAX 0xEE, optional */
+    Xcp_DTOCmdCalDownloadMax, /* DOWNLOAD_MAX 0xEE, optional */
 ```
 
 - [ ] **Step 4: Run the tests and watch them pass**
@@ -1244,7 +1244,7 @@ Carries its own address and extension, writes the block, and leaves the MTA poin
 
 **Interfaces:**
 - Consumes: `Xcp_CopyToU32WithOrder`, `Xcp_BlockTransferAbort`.
-- Produces: `uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdCalShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1337,7 +1337,7 @@ Expected: FAIL — `0xED` dispatches to `Xcp_DTODaqPacket`.
 Append to `source/Xcp_Cal.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
@@ -1400,7 +1400,7 @@ uint8 Xcp_DTOCmdStdShortDownload(boolean *responseExpected, const PduInfoType *p
 Add the prototype to `source/Xcp_Internal.h`, and change the `Xcp_PIDTable` entry at `0xED` to:
 
 ```c
-    Xcp_DTOCmdStdShortDownload, /* SHORT_DOWNLOAD 0xED, optional */
+    Xcp_DTOCmdCalShortDownload, /* SHORT_DOWNLOAD 0xED, optional */
 ```
 
 - [ ] **Step 4: Run the tests and watch them pass**
@@ -1434,7 +1434,7 @@ A 32-bit read-modify-write at the MTA. The masks are 16-bit and **must be widene
 
 **Interfaces:**
 - Consumes: `Xcp_CopyToU16WithOrder`, `Xcp_CopyToU32WithOrder`, `Xcp_CopyFromU32WithOrder`, `Xcp_ReadSlaveMemoryU32`, `Xcp_WriteSlaveMemoryU32`.
-- Produces: `uint8 Xcp_DTOCmdStdModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdCalModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1534,7 +1534,7 @@ Expected: FAIL — `0xEC` dispatches to `Xcp_DTODaqPacket`, so no write callback
 Append to `source/Xcp_Cal.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdCalModifyBits(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 shift_value = pPduInfo->SduDataPtr[0x01u];
     uint16 and_mask;
@@ -1586,7 +1586,7 @@ uint8 Xcp_DTOCmdStdModifyBits(boolean *responseExpected, const PduInfoType *pPdu
 Add the prototype to `source/Xcp_Internal.h`, and change the `Xcp_PIDTable` entry at `0xEC` to:
 
 ```c
-    Xcp_DTOCmdStdModifyBits, /* MODIFY_BITS 0xEC, optional */
+    Xcp_DTOCmdCalModifyBits, /* MODIFY_BITS 0xEC, optional */
 ```
 
 - [ ] **Step 4: Run the tests and watch them pass**
@@ -2168,7 +2168,7 @@ handler arrives, and until then leave the entry as it is:
 
 ```c
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
+    Xcp_DTOCmdPagCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
 #else
     Xcp_CmdNotImplemented, /* COPY_CAL_PAGE 0xE4, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
@@ -2207,7 +2207,7 @@ The active page is **not** cached in `Xcp_Rt`: the ECU application may switch pa
 
 **Interfaces:**
 - Consumes: `Xcp_SetCalPage`, `Xcp_GetCalPage` (Task 12), the segment model (Task 11).
-- Produces: `uint8 Xcp_DTOCmdStdSetCalPage(...)`, `uint8 Xcp_DTOCmdStdGetCalPage(...)`, and file-static `Xcp_SegmentIsValid` / `Xcp_PageIsValid` helpers in `Xcp_Pag.c`. Adds to `Xcp_Internal.h`: `#define XCP_CAL_PAGE_MODE_ECU (0x01u)`, `XCP_CAL_PAGE_MODE_XCP (0x02u)`, `XCP_CAL_PAGE_MODE_ALL (0x80u)`.
+- Produces: `uint8 Xcp_DTOCmdPagSetCalPage(...)`, `uint8 Xcp_DTOCmdPagGetCalPage(...)`, and file-static `Xcp_SegmentIsValid` / `Xcp_PageIsValid` helpers in `Xcp_Pag.c`. Adds to `Xcp_Internal.h`: `#define XCP_CAL_PAGE_MODE_ECU (0x01u)`, `XCP_CAL_PAGE_MODE_XCP (0x02u)`, `XCP_CAL_PAGE_MODE_ALL (0x80u)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2375,7 +2375,7 @@ static boolean Xcp_PageIsValid(uint8 segment, uint8 page)
     return result;
 }
 
-uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -2458,7 +2458,7 @@ uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPdu
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -2504,12 +2504,12 @@ Add the two mode macros and both handler prototypes to `source/Xcp_Internal.h`, 
 
 ```c
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetCalPage, /* GET_CAL_PAGE 0xEA */
+    Xcp_DTOCmdPagGetCalPage, /* GET_CAL_PAGE 0xEA */
 #else
     Xcp_CmdNotImplemented, /* GET_CAL_PAGE 0xEA */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdSetCalPage, /* SET_CAL_PAGE 0xEB */
+    Xcp_DTOCmdPagSetCalPage, /* SET_CAL_PAGE 0xEB */
 #else
     Xcp_CmdNotImplemented, /* SET_CAL_PAGE 0xEB */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
@@ -2581,7 +2581,7 @@ Answered entirely from the configuration model built in Task 11 — this is the 
 
 **Interfaces:**
 - Consumes: `maxSegment` and `pagProperties` (Task 11).
-- Produces: `uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdPagGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2640,7 +2640,7 @@ Expected: FAIL on all five cases, with a stale response buffer rather than the s
 Append to `source/Xcp_Pag.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     (void)pPduInfo;
 
@@ -2663,7 +2663,7 @@ Add the prototype to `source/Xcp_Internal.h`, and change the `Xcp_PIDTable` entr
 
 ```c
 #if (XCP_PAGING_SUPPORTED == STD_ON)
-    Xcp_DTOCmdStdGetPagProcessorInfo, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
+    Xcp_DTOCmdPagGetPagProcessorInfo, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
 #else
     Xcp_CmdNotImplemented, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
@@ -2698,7 +2698,7 @@ git commit -m "feat: implement GET_PAG_PROCESSOR_INFO"
 
 **Interfaces:**
 - Consumes: `Xcp_Rt[...].segment[...]` (Task 11), `Xcp_SegmentIsValid` (Task 13).
-- Produces: `uint8 Xcp_DTOCmdStdSetSegmentMode(...)`, `uint8 Xcp_DTOCmdStdGetSegmentMode(...)`, and the public `boolean Xcp_GetSegmentFreezeState(uint8 segment);`. Adds `#define XCP_SEGMENT_MODE_FREEZE (0x01u)` to `Xcp_Internal.h`.
+- Produces: `uint8 Xcp_DTOCmdPagSetSegmentMode(...)`, `uint8 Xcp_DTOCmdPagGetSegmentMode(...)`, and the public `boolean Xcp_GetSegmentFreezeState(uint8 segment);`. Adds `#define XCP_SEGMENT_MODE_FREEZE (0x01u)` to `Xcp_Internal.h`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2834,7 +2834,7 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment)
     return result;
 }
 
-uint8 Xcp_DTOCmdStdSetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagSetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -2866,7 +2866,7 @@ uint8 Xcp_DTOCmdStdSetSegmentMode(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
 
@@ -2925,7 +2925,7 @@ Three modes, all answered from generated configuration. Mode 0 returns the segme
 
 **Interfaces:**
 - Consumes: `Xcp_SegmentIsValid` (Task 13), `Xcp_CopyFromU32WithOrder` (Task 3).
-- Produces: `uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdPagGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3031,7 +3031,7 @@ Expected: FAIL — `0xE8` dispatches to `Xcp_DTODaqPacket`.
 Append to `source/Xcp_Pag.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -3139,7 +3139,7 @@ uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *
 }
 ```
 
-Add the prototype to `source/Xcp_Internal.h` and change the `Xcp_PIDTable` entry at `0xE8` to `Xcp_DTOCmdStdGetSegmentInfo`, using the guarded pattern from Task 12, falling back to `Xcp_CmdNotImplemented`.
+Add the prototype to `source/Xcp_Internal.h` and change the `Xcp_PIDTable` entry at `0xE8` to `Xcp_DTOCmdPagGetSegmentInfo`, using the guarded pattern from Task 12, falling back to `Xcp_CmdNotImplemented`.
 
 - [ ] **Step 4: Run the tests and watch them pass**
 
@@ -3172,7 +3172,7 @@ Returns `PAGE_PROPERTIES` and `INIT_SEGMENT` from configuration.
 
 **Interfaces:**
 - Consumes: `Xcp_SegmentIsValid`, `Xcp_PageIsValid` (Task 13).
-- Produces: `uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3240,7 +3240,7 @@ Expected: FAIL — `0xE7` dispatches to `Xcp_DTODaqPacket`.
 Append to `source/Xcp_Pag.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
     const uint8 page = pPduInfo->SduDataPtr[0x03u];
@@ -3272,7 +3272,7 @@ uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPd
 }
 ```
 
-Add the prototype to `source/Xcp_Internal.h` and change the `Xcp_PIDTable` entry at `0xE7` to `Xcp_DTOCmdStdGetPageInfo`, using the guarded pattern from Task 12, falling back to `Xcp_CmdNotImplemented`.
+Add the prototype to `source/Xcp_Internal.h` and change the `Xcp_PIDTable` entry at `0xE7` to `Xcp_DTOCmdPagGetPageInfo`, using the guarded pattern from Task 12, falling back to `Xcp_CmdNotImplemented`.
 
 - [ ] **Step 4: Run the tests and watch them pass**
 
@@ -3303,7 +3303,7 @@ Validates four parameters against configuration, then delegates. §1.6.3.2.6 man
 
 **Interfaces:**
 - Consumes: `Xcp_CopyCalPage` (Task 12), `Xcp_SegmentIsValid`, `Xcp_PageIsValid` (Task 13).
-- Produces: `uint8 Xcp_DTOCmdStdCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);`
+- Produces: `uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3372,7 +3372,7 @@ Expected: FAIL — `0xE4` dispatches to `Xcp_DTODaqPacket`.
 Append to `source/Xcp_Pag.c`:
 
 ```c
-uint8 Xcp_DTOCmdStdCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 src_segment = pPduInfo->SduDataPtr[0x01u];
     const uint8 src_page = pPduInfo->SduDataPtr[0x02u];
@@ -3414,7 +3414,7 @@ uint8 Xcp_DTOCmdStdCopyCalPage(boolean *responseExpected, const PduInfoType *pPd
 }
 ```
 
-Add the prototype to `source/Xcp_Internal.h` and change the `Xcp_PIDTable` entry at `0xE4` to `Xcp_DTOCmdStdCopyCalPage`, using the guarded pattern from Task 12, falling back to `Xcp_CmdNotImplemented`.
+Add the prototype to `source/Xcp_Internal.h` and change the `Xcp_PIDTable` entry at `0xE4` to `Xcp_DTOCmdPagCopyCalPage`, using the guarded pattern from Task 12, falling back to `Xcp_CmdNotImplemented`.
 
 - [ ] **Step 4: Run the tests and watch them pass**
 

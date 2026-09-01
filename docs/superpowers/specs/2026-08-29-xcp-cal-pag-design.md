@@ -697,7 +697,7 @@ the specified range `[1..MAX_CTO/AG-1]`, and the current condition
 `(8-2) > (3+0)` evaluates true and rejects it.
 
 **D8 — `DOWNLOAD` block transfer is gated on the wrong flag.**
-`Xcp_DTOCmdStdDownload` (`source/Xcp.c:2487`) and `Xcp_DataTransferInitialize`
+`Xcp_DTOCmdCalDownload` (`source/Xcp.c:2487`) and `Xcp_DataTransferInitialize`
 (`source/Xcp.c:3716`) both test `slaveBlockModeSupported`. Per §1.6.1.2.1, master block mode
 governs `DOWNLOAD`/`DOWNLOAD_NEXT` and carries `MAX_BS`; slave block mode governs `UPLOAD`.
 The module's own `GET_COMM_MODE_INFO` handler already reports `MAX_BS` and `MIN_ST` under

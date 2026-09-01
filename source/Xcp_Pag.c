@@ -41,7 +41,7 @@ static boolean Xcp_PageIsValid(uint8 segment, uint8 page)
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
 
-uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagSetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -139,7 +139,7 @@ uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPdu
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -180,7 +180,7 @@ uint8 Xcp_DTOCmdStdGetCalPage(boolean *responseExpected, const PduInfoType *pPdu
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetPagProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     (void)pPduInfo;
 
@@ -210,7 +210,7 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment)
     return result;
 }
 
-uint8 Xcp_DTOCmdStdSetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagSetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -250,7 +250,7 @@ uint8 Xcp_DTOCmdStdSetSegmentMode(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetSegmentMode(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
     uint8 error = 0x00u;
@@ -282,7 +282,7 @@ uint8 Xcp_DTOCmdStdGetSegmentMode(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
@@ -389,7 +389,7 @@ uint8 Xcp_DTOCmdStdGetSegmentInfo(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 segment = pPduInfo->SduDataPtr[0x02u];
     const uint8 page = pPduInfo->SduDataPtr[0x03u];
@@ -426,7 +426,7 @@ uint8 Xcp_DTOCmdStdGetPageInfo(boolean *responseExpected, const PduInfoType *pPd
     return E_OK;
 }
 
-uint8 Xcp_DTOCmdStdCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
+uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 src_segment = pPduInfo->SduDataPtr[0x01u];
     const uint8 src_page = pPduInfo->SduDataPtr[0x02u];

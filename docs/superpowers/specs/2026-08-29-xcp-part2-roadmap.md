@@ -214,7 +214,7 @@ and 0xFF at `source/Xcp.c:2639` before transmitting.)
 **D8 — `DOWNLOAD` block transfer is gated on the slave block-mode flag.** §1.6.1.2.1 defines
 `MAX_BS` as a *master* block-mode parameter and names its packets as `DOWNLOAD_NEXT` or
 `PROGRAM_NEXT`; `SLAVE_BLOCK_MODE` (§1.6.1.1.1) governs the opposite direction and belongs to
-`UPLOAD`. But `Xcp_DTOCmdStdDownload` (`source/Xcp.c:2487`) and `Xcp_DataTransferInitialize`
+`UPLOAD`. But `Xcp_DTOCmdCalDownload` (`source/Xcp.c:2487`) and `Xcp_DataTransferInitialize`
 (`source/Xcp.c:3716`) both test `slaveBlockModeSupported`, while the module's own
 `GET_COMM_MODE_INFO` handler correctly reports `MAX_BS` and `MIN_ST` under
 `masterBlockModeSupported` (`source/Xcp.c:3145`). The module contradicts what it advertises.
