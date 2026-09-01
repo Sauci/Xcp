@@ -111,3 +111,31 @@ def test_event_channel_may_reference_several_daq_lists():
     assert channel.triggeredDaqListRefCount == 2
     assert channel.triggeredDaqListRef[0].number == 0
     assert channel.triggeredDaqListRef[1].number == 1
+
+
+# The three tests below assert only that generation fails, never on the exception's message: the
+# generator's raise(...) call is not a registered Jinja global (see source_cfg.c.jinja2's comment
+# at its first call site), so every one of these actually aborts with jinja2.UndefinedError and the
+# message string these DAQ/event misconfigurations would otherwise explain never reaches it.
+
+
+def test_generation_fails_when_a_configured_pid_contradicts_the_derived_first_pid():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4 -- reproduces D12: DAQ1's 3 ODTs
+    claim absolute ODT numbers 0-2, so DAQ2's FIRST_PID is derived as 3, contradicting the 1
+    configured here for DAQ2, which claims absolute ODT numbers 1-5 and so overlaps DAQ1."""
+    with pytest.raises(Exception):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, dtos=[{"pid": 0}]),
+                                    daq(name='DAQ2', max_odt=5, dtos=[{"pid": 1}]))))
+
+
+def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1 caps a DAQ PID at 0xFB, so the total
+    ODT count across every DAQ list must not exceed 0xFC."""
+    with pytest.raises(Exception):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=100))))
+
+
+def test_generation_fails_when_an_event_channel_references_an_unknown_daq_list():
+    with pytest.raises(Exception):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
+                              events=(event(triggered_daq_list_ref=['NOPE']),)))

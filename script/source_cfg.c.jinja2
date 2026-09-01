@@ -135,6 +135,13 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- if first_pids.append(pid.next) %}{% endif %}
     {%- set pid.next = pid.next + daq.max_odt %}
     {%- endfor %}
+    {#- `raise(...)` here, and at every other call site in this file, is not a registered Jinja
+        global: bsw_code_gen builds a bare jinja2.Environment with no such name, and this pinned,
+        external dependency gives no hook to add one. Referencing the undefined name aborts
+        rendering with jinja2.exceptions.UndefinedError, which is the actual, intended effect --
+        generation stops. The string passed to raise(...) never reaches that exception, though, so
+        read it as documentation for whoever is looking at this template, not as output the caller
+        will ever see. #}
     {%- if pid.next > 252 %}
 {{ raise('{} ODTs across {} DAQ lists exceed the 0xFB PID ceiling of XCP part 2 1.1/1.1.4.1'.format(pid.next, configuration.daqs|length)) }}
     {%- endif %}
@@ -264,7 +271,7 @@ static const Xcp_DaqListType * const Xcp_EventChannelDaqListRef{{'%02X' % config
 static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % configuration.events|length}}] = {
     {%- for event in configuration.events %}
     {
-        {{event.consistency}}, /* XcpEventChannelConsistency */
+        {{event.consistency | default('ODT')}}, /* XcpEventChannelConsistency */
         {{'0x%02Xu' % event.triggered_daq_list_ref|length}}, /* XcpEventChannelMaxDaqList */
         {{'0x%04Xu' % loop.index0}}, /* XcpEventChannelNumber */
         {{'0x%02Xu' % event.priority}}, /* XcpEventChannelPriority */
