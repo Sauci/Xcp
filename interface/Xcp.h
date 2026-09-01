@@ -59,6 +59,8 @@ extern "C" {
 
 #include "Xcp_MemoryAccess.h"
 
+#include "SchM_Xcp.h"
+
 #if (XCP_PAGING_SUPPORTED == STD_ON)
 
 #include "Xcp_Paging.h"

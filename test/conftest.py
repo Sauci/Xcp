@@ -383,6 +383,8 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16 = MagicMock()
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
+        self.sch_m_enter_xcp_dto_queue = MagicMock()
+        self.sch_m_exit_xcp_dto_queue = MagicMock()
         self.xcp_user_cmd_function = MagicMock()
         self.config.ffi.def_extern('Xcp_UserCmdFunction')(self.xcp_user_cmd_function)
         self.xcp_user_cmd_function.return_value = self.define('E_OK')
@@ -407,6 +409,8 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
+        self.sch_m_enter_xcp_dto_queue.return_value = None
+        self.sch_m_exit_xcp_dto_queue.return_value = None
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
