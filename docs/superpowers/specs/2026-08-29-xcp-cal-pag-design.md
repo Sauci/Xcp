@@ -64,7 +64,11 @@ no caller. `DOWNLOAD` needs to call it, not to reimplement it.
 
 **DD1 — Split the source before adding to it.** `source/Xcp.c` is 3876 lines and this work
 adds roughly 1200 to 1600 more. The split is a move-only refactor performed first, verified
-by the existing suite passing unchanged.
+by the existing suite passing unchanged. One deviation, recorded after the fact: handler
+prototypes on `Xcp.c` each carried a `Xcp_START_SEC_CODE_FAST` / `Xcp_MemMap.h` pair, and the
+prototypes moved into `Xcp_Internal.h` as a bare block without them. The definitions were never
+wrapped on either side of the split, so the sections placed no code and the loss is one of
+consistency rather than behaviour, but the refactor is not strictly move-only.
 
 **DD2 — Segments and pages are declared in configuration; the integrator owns activation.**
 The module validates segment number, page number and mode against generated configuration
@@ -504,7 +508,8 @@ Response: `0xFF`.
 
 Writes the block at the given address and sets the MTA to the first element *after* it.
 `ERR_OUT_OF_RANGE` when the count exceeds `(MAX_CTO-8)/AG`. No block transfer; per DD3,
-`ERR_SEQUENCE` during one. Disabled by default per DD5.
+`ERR_SEQUENCE` during one. Enabled by default: see DD5 for why disabling it also cleared
+the `CONNECT` `RESOURCE` CAL/PAG bit.
 
 Response: `0xFF`.
 
@@ -723,8 +728,10 @@ commands; and every remaining `Xcp_DTODaqPacket` entry — the PGM range `0xC8..
 undefined range `0xC0..0xC7`, and any CAL/PAG PID whose API is disabled — is replaced by a
 new `Xcp_CmdNotImplemented` handler filling `ERR_CMD_UNKNOWN`. After this work
 `Xcp_DTODaqPacket` appears nowhere in `Xcp_PIDTable`. The `0x00..0xBF` entries correctly
-remain `Xcp_DTODaqStimPacket`, and the DAQ command stubs at `0xD3..0xE3` are left alone;
-SP2 owns those.
+remain `Xcp_DTODaqStimPacket`. The DAQ commands at `0xD3..0xE3` were initially left alone
+for SP2, but their stubs returned `E_OK` without filling the response buffer, so the slave
+transmitted the previous command's response; they now use `Xcp_CmdNotImplemented` too and the
+stubs are deleted. SP2 reinstates them when DAQ is implemented.
 
 **D3 — `Xcp_Errors.h`.** As specified in §5.
 
@@ -749,8 +756,10 @@ each with the same `enabled` / `protected` shape as the existing ones:
 The template stops emitting a literal `0x01u` for their enable bits.
 
 `config/xcp.json` ships with a single example segment carrying two pages, so the default
-configuration exercises the new path. `xcp_short_download_api_enable` defaults to false
-per DD5.
+configuration exercises the new path. `xcp_short_download_api_enable` originally defaulted to
+false per DD5, and was enabled once the command existed: leaving it off cleared the `CONNECT`
+`RESOURCE` CAL/PAG bit, since §1.6.1.1.1 defines that bit as asserting all five calibration
+commands are available.
 
 **`CONNECT` is deliberately left alone.** §1.6.1.1.1 defines the `CAL/PAG` resource bit by
 naming its commands exactly: "The commands DOWNLOAD, DOWNLOAD_MAX, SHORT_DOWNLOAD,

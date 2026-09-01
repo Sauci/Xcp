@@ -6,7 +6,6 @@ import random
 import pytest
 from bsw_code_gen import BSWCodeGen
 from cffi import FFI
-from cffi import cparser as cffi_cparser
 from importlib import import_module
 from io import StringIO
 from re import sub
@@ -170,12 +169,12 @@ class MockGen(FFI):
             pre_processor, cffi_header = self._parse_cache[parse_key]
             self._pp[self.name] = pre_processor
             self._ffi_header[self.name] = cffi_header
-            # cffi caches a single pycparser.CParser in cffi.cparser._parser_cache and reuses
-            # it for every cdef(). pycparser resets its own scope stack per parse, but the
-            # underlying PLY parser object is shared, so once any parse raises, PLY's symstack
-            # and statestack stay dirty and every later parse returns nonsense (AST nodes where
-            # dicts are expected, 'list' object is not callable, and so on). Force a fresh
-            # parser per module so one bad parse cannot poison the rest of the session.
+            # cffi caches one pycparser.CParser in cffi.cparser._parser_cache and reuses it for
+            # every cdef(), so a parse that raises leaves the shared PLY parser's symstack and
+            # statestack dirty and later parses return nonsense. Resetting that cache per module
+            # was tried and measured WORSE -- it forced 184 CParser constructions and the suite
+            # completed less often -- so it was reverted in 9e880ba. Left here as a warning: the
+            # residual flake looks like this, and this is not the fix.
             self.cdef(str(cffi_header))
             self.set_source(self.name, source,
                             include_dirs=include_dirs,

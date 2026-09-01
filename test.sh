@@ -31,8 +31,13 @@ for d in _cffi_xcp_*/usr/project/source; do
     if [ ! -d "$merged" ]; then
         cp -r "$d" "$merged" || exit 1
     else
-        gcov-tool merge "$merged" "$d" -o "$merged.tmp" >/dev/null 2>&1 &&
-            rm -rf "$merged" && mv "$merged.tmp" "$merged"
+        # Failing quietly here would leave $merged holding the first module's profile, which then
+        # gets reported as though it were the union -- the exact defect this merge exists to fix.
+        if ! gcov-tool merge "$merged" "$d" -o "$merged.tmp"; then
+            echo "test.sh: gcov-tool merge failed for $d; coverage would be one module's, not the union" >&2
+            exit 1
+        fi
+        rm -rf "$merged" && mv "$merged.tmp" "$merged" || exit 1
     fi
 done
 

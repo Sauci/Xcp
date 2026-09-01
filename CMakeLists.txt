@@ -34,8 +34,10 @@ if(NOT XCP_PAGING_SUPPORTED_RESULT EQUAL 0)
     message(FATAL_ERROR "could not derive XCP_PAGING_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
 endif()
 
+# Not FORCE: the derived value is the default, and an explicit -DXCP_PAGING_SUPPORTED=... has to
+# survive the next configure for the help string's "override" to mean anything.
 set(XCP_PAGING_SUPPORTED ${XCP_PAGING_SUPPORTED_DERIVED} CACHE STRING
-    "STD_ON/STD_OFF: whether the calibration page switching callbacks are compiled in. Derived from whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why." FORCE)
+    "STD_ON/STD_OFF: whether the calibration page switching callbacks are compiled in. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why.")
 
 if (${ENABLE_DOC_GEN})
     find_package(Doxygen REQUIRED dot)

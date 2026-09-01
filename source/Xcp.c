@@ -1827,9 +1827,10 @@ Std_ReturnType Xcp_BlockTransferReadSlaveMemory()
 }
 
 /**
- * @brief Processes memory write accesses on behalf of the master.
- * @retval E_OK: More frames awaited, the slave expects consecutive frames from the master.
- * @retval E_NOT_OK: No more frames awaited by the slave, the master will stop sending frames.
+ * @brief Number of elements the current frame of a block transfer carries.
+ * @details The count a master announces may span several frames; this is how many of them the
+ * current one holds, which is both what the write loop below consumes and what a handler must
+ * find in the received PDU before reading it.
  */
 uint8 Xcp_BlockTransferFrameElements(uint8 numberOfDataElements, uint8 elementSize)
 {
@@ -1838,6 +1839,11 @@ uint8 Xcp_BlockTransferFrameElements(uint8 numberOfDataElements, uint8 elementSi
     return (uint8)(((uint16)numberOfDataElements < capacity) ? (uint16)numberOfDataElements : capacity);
 }
 
+/**
+ * @brief Processes memory write accesses on behalf of the master.
+ * @retval E_OK: More frames awaited, the slave expects consecutive frames from the master.
+ * @retval E_NOT_OK: No more frames awaited by the slave, the master will stop sending frames.
+ */
 Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize)
 {
     Std_ReturnType result = E_OK;

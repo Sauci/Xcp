@@ -80,6 +80,15 @@ uint8 Xcp_DTOCmdStdSetCalPage(boolean *responseExpected, const PduInfoType *pPdu
             last = (uint8_least)(segment + 0x01u);
         }
 
+        if (first == last)
+        {
+            /* ALL against a configuration declaring no SEGMENT. Both loops below would run zero
+             * times and the command would be acknowledged for a switch that never happened, so
+             * refuse it as every other PAG command refuses that configuration. Reachable when
+             * the group is compiled in for a sibling configuration that does declare one. */
+            error = XCP_E_ASAM_SEGMENT_NOT_VALID;
+        }
+
         /* Validate every affected segment before switching any of them, so a bad page number
          * cannot leave the slave half-switched. */
         for (idx = first; idx < last; idx++)

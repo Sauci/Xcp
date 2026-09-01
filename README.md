@@ -16,7 +16,7 @@ The following definitions might be set by the user, depending on the needs.
 | ```ENABLE_PC_LINT```          | ```ON```/```OFF```               | ```OFF```                  | enables/disables generation of targets related to static code analysis (should be disabled if [PC-Lint](https://www.gimpel.com) software is not available)                       |
 | ```MISRA_C_VERSION```         | ```1998```/```2004```/```2012``` | ```2012```                 | specifies which version of **MISRA** should be used when performing static code analysis (only used if ```ENABLE_PC_LINT``` is set)                                              |
 | ```XCP_SUPPRESS_TX_SUPPORT``` | ```ON / OFF```                   | ```ON```                   | enables/disables transmission functionality of the XCP module                                                                                                                    | 
-| ```XCP_PAGING_SUPPORTED```    | ```STD_ON```/```STD_OFF```       | ```STD_OFF```              | enables/disables the **PAG** command group. normally left alone. The code generator derives it from whether the configuration declares any segment, and emits its own definition only when the macro is not already defined |
+| ```XCP_PAGING_SUPPORTED```    | ```STD_ON```/```STD_OFF```       | derived                    | enables/disables the **PAG** command group. Normally left alone: both CMake and the code generator derive it from whether any configuration declares a segment. An explicit ```-D``` overrides that, and survives reconfiguring |
 
 To use this feature, simply add ```-D<definition>=<value>``` when configuring the build with CMake.
 

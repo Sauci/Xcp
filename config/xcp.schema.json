@@ -173,7 +173,7 @@
             },
             "minItems": 1
           },
-          "segments": {"type": "array", "items": {"$ref": "#/definitions/segment"}},
+          "segments": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/segment"}},
           "paging": {"$ref": "#/definitions/paging"},
           "apis": {
             "description": "This container allows the user to enable/disable optional APIs from the driver. This is not part of the specification",
@@ -597,8 +597,8 @@
         "address_extension": {"type": "integer", "minimum": 0, "maximum": 255},
         "compression_method": {"type": "integer", "minimum": 0, "maximum": 255},
         "encryption_method": {"type": "integer", "minimum": 0, "maximum": 255},
-        "pages": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/page"}},
-        "address_mappings": {"type": "array", "items": {"$ref": "#/definitions/address_mapping"}}
+        "pages": {"type": "array", "minItems": 1, "maxItems": 255, "items": {"$ref": "#/definitions/page"}},
+        "address_mappings": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/address_mapping"}}
       },
       "required": ["name", "address", "length", "address_extension",
                    "compression_method", "encryption_method", "pages"],
