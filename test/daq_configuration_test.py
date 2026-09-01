@@ -3,6 +3,8 @@
 
 import pytest
 
+from jinja2.exceptions import UndefinedError
+
 from .parameter import *
 from .conftest import XcpTest
 
@@ -113,29 +115,50 @@ def test_event_channel_may_reference_several_daq_lists():
     assert channel.triggeredDaqListRef[1].number == 1
 
 
-# The three tests below assert only that generation fails, never on the exception's message: the
+# The four tests below assert only that generation fails, never on the exception's message: the
 # generator's raise(...) call is not a registered Jinja global (see source_cfg.c.jinja2's comment
-# at its first call site), so every one of these actually aborts with jinja2.UndefinedError and the
-# message string these DAQ/event misconfigurations would otherwise explain never reaches it.
+# at its first call site), so every one of these actually aborts with jinja2.exceptions.UndefinedError
+# and the message string these DAQ/event misconfigurations would otherwise explain never reaches it.
+# jinja2.exceptions.UndefinedError is still worth asserting on, narrower than a bare Exception: all
+# five raise(...) sites deterministically produce it, so the assertion stays agnostic about which
+# site fired and unattached to message text, while still ruling out an unrelated failure that never
+# reached the template at all (a typo'd daq()/event() keyword argument, an import error, ...).
 
 
 def test_generation_fails_when_a_configured_pid_contradicts_the_derived_first_pid():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4 -- reproduces D12: DAQ1's 3 ODTs
     claim absolute ODT numbers 0-2, so DAQ2's FIRST_PID is derived as 3, contradicting the 1
     configured here for DAQ2, which claims absolute ODT numbers 1-5 and so overlaps DAQ1."""
-    with pytest.raises(Exception):
+    with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, dtos=[{"pid": 0}]),
                                     daq(name='DAQ2', max_odt=5, dtos=[{"pid": 1}]))))
 
 
 def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
     """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1 caps a DAQ PID at 0xFB, so the total
-    ODT count across every DAQ list must not exceed 0xFC."""
-    with pytest.raises(Exception):
-        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=100))))
+    ODT count across every DAQ list must not exceed 0xFC (252).
+
+    253, not a round number: Xcp_GeneralType's own odtCount field (Task 1's guard, source_cfg.c
+    .jinja2's `counters.odt > 255`) independently rejects anything over 255, so a total that also
+    clears 255 -- 300, say -- would still abort generation even if this task's own >252 guard were
+    broken or deleted, and the test would stay green for the wrong reason. 253 sits strictly between
+    the two ceilings (252 < 253 <= 255), so only the guard this test exists to cover can reject it.
+    Verified empirically: rendering this exact configuration with only the >252 guard suppressed
+    produces 215,968 characters of clean C, with nothing else in the template objecting."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=53))))
 
 
 def test_generation_fails_when_an_event_channel_references_an_unknown_daq_list():
-    with pytest.raises(Exception):
+    with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
                               events=(event(triggered_daq_list_ref=['NOPE']),)))
+
+
+def test_generation_fails_when_an_event_has_no_time_unit():
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(events=({"consistency": "ODT",
+                                       "priority": 0,
+                                       "time_cycle": 10,
+                                       "type": "DAQ",
+                                       "triggered_daq_list_ref": ["DAQ1"]},)))
