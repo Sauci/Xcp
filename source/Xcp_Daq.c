@@ -609,3 +609,55 @@ uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint8 properties = 0x00u;
+    uint8 key_byte;
+
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4
+     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME,
+     * BIT_STIM, TIMESTAMP and PID_OFF are unimplemented and so are reported unsupported, which
+     * is what lets SET_DAQ_LIST_MODE refuse the matching mode bits. */
+    if (Xcp_Ptr->general->prescalerSupported == TRUE)
+    {
+        properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;
+    }
+
+    /* OVERLOAD_MSB stays clear: indicating an overload in the MSB of the PID would cap every
+     * ODT number below 0x7C whether or not an overload ever happened. */
+    if (Xcp_Ptr->general->overloadEvent == TRUE)
+    {
+        properties |= XCP_DAQ_PROPERTIES_OVERLOAD_EVENT;
+    }
+
+    /* DAQ_KEY_BYTE: identification field type in bits 7:6, address extension type in bits 5:4,
+     * optimisation type in bits 3:0. The address extension may differ within one ODT (0b00) and
+     * the optimisation type is OM_DEFAULT (0b0000), so only the field type contributes.
+     * This shift is only correct because Xcp_IdentificationFieldTypeType enumerates ABSOLUTE=0,
+     * RELATIVE_BYTE=1, RELATIVE_WORD=2, RELATIVE_WORD_ALIGNED=3 (interface/Xcp_Types.h), which
+     * matches the bit pattern this section of the specification assigns. Do not renumber that
+     * enum without updating this shift. */
+    key_byte = (uint8)((uint8)Xcp_Ptr->general->identificationFieldType << 0x06u);
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = properties;
+
+    Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->daqCount,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u],
+                             Xcp_Ptr->general->byteOrder);
+    Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->maxEventChannel,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                             Xcp_Ptr->general->byteOrder);
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->minDaq;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = key_byte;
+
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+

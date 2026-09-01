@@ -522,6 +522,7 @@ typedef struct
     const char *identification; /* not part of the specification... */
     const uint8 maxSegment; /* not part of the specification... */
     const uint8 pagProperties; /* not part of the specification... */
+    const boolean overloadEvent; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

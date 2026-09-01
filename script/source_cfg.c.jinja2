@@ -629,6 +629,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     "{{configuration.protocol_layer.identification}}", /* identification */
     {{'0x%02Xu' % (configuration.segments | default([]))|length}}, /* maxSegment */
     {% if configuration.paging is defined and configuration.paging.freeze_supported %}0x01u{% else %}0x00u{% endif %}, /* pagProperties */
+    {% if (configuration.protocol_layer.overload_indication | default('EVENT')) == 'EVENT' %}TRUE{% else %}FALSE{% endif %}, /* overload indication by event packet */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
