@@ -1,0 +1,62 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import pytest
+
+from .parameter import *
+from .conftest import XcpTest
+
+
+identification_field_cases = [
+    pytest.param('ABSOLUTE', 1, id='ident = ABSOLUTE'),
+    pytest.param('RELATIVE_BYTE', 2, id='ident = RELATIVE_BYTE'),
+    pytest.param('RELATIVE_WORD', 3, id='ident = RELATIVE_WORD'),
+    pytest.param('RELATIVE_WORD_ALIGNED', 4, id='ident = RELATIVE_WORD_ALIGNED')]
+
+
+@pytest.mark.parametrize('name, header_size', identification_field_cases)
+def test_identification_field_type_reaches_the_generated_configuration(name, header_size):
+    handle = XcpTest(DefaultConfig(identification_field_type=name))
+
+    assert handle.config.lib.Xcp[0].general.identificationFieldType == getattr(handle.lib, name)
+
+
+@pytest.mark.parametrize('name, header_size', identification_field_cases)
+def test_max_odt_entry_size_daq_is_max_dto_less_the_identification_field(name, header_size):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5"""
+    handle = XcpTest(DefaultConfig(identification_field_type=name, max_dto=8))
+
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeDaq == 8 - header_size
+
+
+def test_stim_odt_entry_size_is_zero_while_stimulation_is_out_of_scope():
+    handle = XcpTest(DefaultConfig())
+
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeStim == 0
+
+
+def test_prescaler_support_comes_from_the_configuration():
+    assert XcpTest(DefaultConfig(prescaler_supported=True)).config.lib.Xcp[0].general.prescalerSupported == 1
+    assert XcpTest(DefaultConfig(prescaler_supported=False)).config.lib.Xcp[0].general.prescalerSupported == 0
+
+
+def test_odt_counts_are_summed_over_every_daq_list():
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=9),
+                                         daq(name='DAQ2', max_odt=5, max_odt_entries=10))))
+
+    assert handle.config.lib.Xcp[0].general.odtCount == 3 + 5
+    assert handle.config.lib.Xcp[0].general.odtEntriesCount == (3 * 9) + (5 * 10)
+
+
+def test_min_daq_is_zero_because_no_daq_list_is_predefined():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4"""
+    handle = XcpTest(DefaultConfig())
+
+    assert handle.config.lib.Xcp[0].general.minDaq == 0
+
+
+@pytest.mark.parametrize('max_dto', (8, 16, 64))
+def test_max_dto_is_available_as_a_compile_time_macro(max_dto):
+    handle = XcpTest(DefaultConfig(max_dto=max_dto))
+
+    assert handle.define('XCP_MAX_DTO') == max_dto

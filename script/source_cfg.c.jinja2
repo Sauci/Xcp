@@ -49,6 +49,14 @@ static Xcp_OdtEntryType Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}
 {%- endfor %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
+    {#- odtEntrySizeDaq is needed here (XcpOdtEntryMaxSize, below) and again further down for
+        Xcp_GeneralConfig (XcpOdtEntrySizeDaq). Jinja does not share `set` bindings across separate
+        `for configuration in configurations` blocks, so each block re-derives it from
+        configuration.protocol_layer; the range/overflow validation lives with the later
+        derivation, immediately above Xcp_GeneralConfig. #}
+    {%- set identification_field_size = {'ABSOLUTE': 1, 'RELATIVE_BYTE': 2, 'RELATIVE_WORD': 3, 'RELATIVE_WORD_ALIGNED': 4} %}
+    {%- set identification_field_type = configuration.protocol_layer.identification_field_type | default('ABSOLUTE') %}
+    {%- set odt_entry_size_daq = configuration.protocol_layer.max_dto - identification_field_size[identification_field_type] %}
     {%- for daq in configuration.daqs %}
         {%- set daq_loop = loop %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
@@ -57,7 +65,7 @@ static Xcp_OdtEntryType Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}
 static Xcp_OdtType Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % daq_loop.index0}}[{{'0x%02Xu' % daq.max_odt}}] = {
         {%- for i in range(daq.max_odt) %}
     {
-        0x07u, /* hard-coded XcpOdtEntryMaxSize */
+        {{'0x%02Xu' % odt_entry_size_daq}}, /* XcpOdtEntryMaxSize */
         {{'0x%02Xu' % i}}, /* XcpOdtNumber */
         0x00u, /* XcpOdt2DtoMapping */
         &Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % daq_loop.index0}}Odt{{'%02X' % i}}[0x00u] /* reference to XcpOdtEntry */
@@ -224,29 +232,43 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 #include "Xcp_MemMap.h"
 {% endfor %}
 {%- for configuration in configurations %}
+{%- set identification_field_size = {'ABSOLUTE': 1, 'RELATIVE_BYTE': 2, 'RELATIVE_WORD': 3, 'RELATIVE_WORD_ALIGNED': 4} %}
+{%- set identification_field_type = configuration.protocol_layer.identification_field_type | default('ABSOLUTE') %}
+{%- set odt_entry_size_daq = configuration.protocol_layer.max_dto - identification_field_size[identification_field_type] %}
+{%- set counters = namespace(odt=0, odt_entries=0) %}
+{%- for daq in configuration.daqs %}
+{%- set counters.odt = counters.odt + daq.max_odt %}
+{%- set counters.odt_entries = counters.odt_entries + (daq.max_odt * daq.max_odt_entries) %}
+{%- endfor %}
+{%- if odt_entry_size_daq < 0 %}
+{{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
+{%- endif %}
+{%- if counters.odt > 255 or counters.odt_entries > 255 %}
+{{ raise('odtCount {} / odtEntriesCount {} exceed the uint8 fields of Xcp_GeneralType'.format(counters.odt, counters.odt_entries)) }}
+{%- endif %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
 static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
-    DAQ_STATIC, /* hard-coded XcpDaqConfigType */
+    DAQ_STATIC, /* XcpDaqConfigType; dynamic configuration arrives in SP2c */
     {{'0x%04Xu' % configuration.daqs|length}}, /* XcpDaqCount */
     TRUE, /* hard-coded XcpDevErrorDetect */
     FALSE, /* hard-coded XcpFlashProgrammingEnabled */
-    ABSOLUTE, /* hard-coded XcpIdentificationFieldType */
-    1000000, /* hard-coded XcpMainFunctionPeriod */
+    {{identification_field_type}}, /* XcpIdentificationFieldType */
+    1000000, /* XcpMainFunctionPeriod; unread by this module, see ECUC_Xcp_00014 */
     {{'0x%04Xu' % configuration.protocol_layer.max_cto}}, /* XcpMaxCto */
     {{'0x%04Xu' % configuration.protocol_layer.max_dto}}, /* XcpMaxDto */
     {{'0x%04Xu' % configuration.events|length}}, /* XcpMaxEventChannel */
-    0x00u, /* hard-coded XcpMinDaq */
-    0x00u, /* hard-coded XcpOdtCount */
-    0x00u, /* hard-coded XcpOdtEntriesCount */
-    0x00u, /* hard-coded XcpOdtEntrySizeDaq */
-    0x00u, /* hard-coded XcpOdtEntrySizeStim */
+    0x00u, /* XcpMinDaq; no DAQ list is PREDEFINED */
+    {{'0x%02Xu' % counters.odt}}, /* XcpOdtCount */
+    {{'0x%02Xu' % counters.odt_entries}}, /* XcpOdtEntriesCount */
+    {{'0x%02Xu' % odt_entry_size_daq}}, /* XcpOdtEntrySizeDaq */
+    0x00u, /* XcpOdtEntrySizeStim; STIM arrives in SP3 */
     TRUE, /* hard-coded XcpOnCanEnabled */
     FALSE, /* hard-coded XcpOnCddEnabled */
     FALSE, /* hard-coded XcpOnEthernetEnabled */
     FALSE, /* hard-coded XcpOnFlexRayEnabled */
-    FALSE, /* hard-coded XcpPrescalerSupported */
+    {% if configuration.protocol_layer.prescaler_supported | default(true) %}TRUE{% else %}FALSE{% endif %}, /* XcpPrescalerSupported */
     FALSE, /* hard-coded XcpSuppressTxSupport */
     0x0001u, /* hard-coded XcpTimestampTicks */
     FOUR_BYTE, /* hard-coded XcpTimestampType */

@@ -36,6 +36,12 @@ extern "C" {
 
 #endif /* #ifndef XCP_EVENT_USER_DATA_SIZE */
 
+#ifndef XCP_MAX_DTO
+
+#define XCP_MAX_DTO (0x08u)
+
+#endif /* #ifndef XCP_MAX_DTO */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/

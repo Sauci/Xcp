@@ -98,13 +98,18 @@ def segment(name='CAL_SEG',
             "address_mappings": list(address_mappings) if address_mappings is not None else []}
 
 
-class DAQ(object):
-    def __init__(self, name, type, max_odt, max_odt_entries, dtos):
-        self._name = name
-        self._type = type
-        self._max_odt = max_odt
-        self._max_odt_entries = max_odt_entries
-        self._dtos = dtos
+def daq(name='DAQ1',
+        type='DAQ',
+        max_odt=1,
+        max_odt_entries=1,
+        pdu_mapping='XCP_PDU_ID_TRANSMIT',
+        dtos=None):
+    return {"name": name,
+            "type": type,
+            "max_odt": max_odt,
+            "max_odt_entries": max_odt_entries,
+            "pdu_mapping": pdu_mapping,
+            "dtos": list(dtos) if dtos is not None else [{"pid": 0}]}
 
 
 class DefaultConfig(dict):
@@ -183,6 +188,10 @@ class DefaultConfig(dict):
                  event_queue_size=16,
                  max_cto=8,
                  max_dto=8,
+                 identification_field_type='ABSOLUTE',
+                 daq_queue_size=16,
+                 prescaler_supported=True,
+                 overload_indication='EVENT',
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
@@ -192,6 +201,7 @@ class DefaultConfig(dict):
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
         self._event_queue_size = event_queue_size
+        self._daq_queue_size = daq_queue_size
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -286,6 +296,10 @@ class DefaultConfig(dict):
                     "event_queue_size": event_queue_size,
                     "max_cto": max_cto,
                     "max_dto": max_dto,
+                    "identification_field_type": identification_field_type,
+                    "daq_queue_size": daq_queue_size,
+                    "prescaler_supported": prescaler_supported,
+                    "overload_indication": overload_indication,
                     "checksum_type": checksum_type,
                     "user_defined_checksum_function": user_defined_checksum_function,
                     "user_cmd_function": user_cmd_function,
@@ -318,6 +332,10 @@ class DefaultConfig(dict):
     @property
     def event_queue_size(self):
         return self._event_queue_size
+
+    @property
+    def daq_queue_size(self):
+        return self._daq_queue_size
 
 
 if __name__ == '__main__':

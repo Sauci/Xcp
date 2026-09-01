@@ -104,22 +104,43 @@ class Preprocessor(Pp):
         super(Preprocessor, self).__init__()
         self.defines = dict()
 
+    @staticmethod
+    def _token_to_int(token_value):
+        value = token_value.rstrip('UuLl')
+        try:
+            return int(value, 10)
+        except ValueError:
+            return int(value, 16)
+
     def on_directive_handle(self, directive, tokens, if_pass_thru, preceding_tokens):
         if directive.value == 'define':
             name = [t.value for t in tokens if t.type == 'CPP_ID']
             value = [t.value for t in tokens if t.type in 'CPP_INTEGER']
             if len(name) and len(value):
-                name = name[0]
-                value = value[0].rstrip('UuLl')
-                try:
-                    value = int(value, 10)
-                except ValueError:
-                    try:
-                        value = int(value, 16)
-                    except ValueError as e:
-                        raise e
-                self.defines[name] = value
+                self.defines[name[0]] = self._token_to_int(value[0])
         return super(Preprocessor, self).on_directive_handle(directive, tokens, if_pass_thru, preceding_tokens)
+
+    def resolve_effective_defines(self):
+        """pcpp calls on_directive_handle for every #define its scanner walks past while it
+        determines nesting -- including one sitting in a false #ifndef/#if branch -- and does not
+        tell the hook whether that branch was actually taken (`if_pass_thru` is a different, and
+        for our purposes unrelated, pcpp concept). So a header guarded as
+        `#ifndef X / #define X (fallback) / #endif`, where X was already defined to something else
+        via a compile definition, leaves self.defines holding the unused fallback rather than the
+        value actually in effect. self.macros is pcpp's own macro table, updated only for branches
+        it actually took, so once parsing has finished it is authoritative for any name still
+        defined; call this after parse()/write() to correct self.defines from it.
+        """
+        for name in list(self.defines):
+            macro = self.macros.get(name)
+            if macro is None:
+                continue
+            value = [t.value for t in macro.value if t.type in 'CPP_INTEGER']
+            if value:
+                try:
+                    self.defines[name] = self._token_to_int(value[0])
+                except ValueError:
+                    pass
 
 
 class MockGen(FFI):
@@ -161,6 +182,7 @@ class MockGen(FFI):
                 handle = StringIO()
                 pre_processor.write(handle)
                 expanded = handle.getvalue()
+                pre_processor.resolve_effective_defines()
                 func_decl = FunctionDecl(expanded)
                 # Built once: the original code constructed CFFIHeader twice per module, once to
                 # store and once to feed cdef.
@@ -278,6 +300,12 @@ class XcpTest(object):
         # header's own definition. A later -D wins, so appending the derived value corrects it.
         paging_define = ('XCP_PAGING_SUPPORTED={}'.format(
                 'STD_ON' if any(c.get('segments') for c in config['configurations']) else 'STD_OFF'),)
+        # XCP_MAX_DTO sizes the DTO frame buffers in Xcp_Types.h, which every module includes, so
+        # all three compiled modules must agree on it or the ring in the runtime module and the
+        # code that indexes it disagree on the element stride. Same reasoning as paging_define
+        # above: the generated Xcp_Cfg.h is not visible to the module under test.
+        max_dto_define = ('XCP_MAX_DTO=0x{:02X}'.format(
+                max(c['protocol_layer']['max_dto'] for c in config['configurations'])),)
         # The module under test is only coupled to a configuration through the generated
         # runtime it links against, so key both on a digest of that generated source rather
         # than on the whole configuration. Configurations producing identical runtime source
@@ -287,14 +315,20 @@ class XcpTest(object):
         # parametrisation; keying by hand on event_queue_size would silently break the first
         # time the runtime template gained another dependency. paging_define is discriminated by
         # the same digest, because it is a function of the segment count and the generated runtime
-        # sizes Xcp_SegmentRt00 by that same count.
-        rt_key = hashlib.sha1(code_gen.source_rt.encode('utf-8')).hexdigest()[0:8]
+        # sizes Xcp_SegmentRt00 by that same count. max_dto_define has no such relationship to
+        # source_rt -- nothing in the runtime template reads protocol_layer.max_dto -- so two
+        # configurations that differ only by max_dto would otherwise hash identically here and
+        # MockGen's `if self.name in sys.modules` cache hit would silently keep serving whichever
+        # one compiled first, including its baked-in XCP_MAX_DTO. Folding max_dto_define into the
+        # digest directly keeps it, rather than incidental correlation, responsible for the key.
+        rt_key = hashlib.sha1((code_gen.source_rt + max_dto_define[0]).encode('utf-8')).hexdigest()[0:8]
         self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
                           define_macros=tuple(self.compile_definitions) +
                                         ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
-                                        paging_define,
+                                        paging_define +
+                                        max_dto_define,
                           include_dirs=tuple(self.include_directories + [self.build_directory]),
                           compile_flags=_asan_flags(),
                           link_flags=_asan_flags(),
@@ -307,7 +341,8 @@ class XcpTest(object):
                                             ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
                                             ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),) +
-                                            paging_define,
+                                            paging_define +
+                                            max_dto_define,
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               compile_flags=_asan_flags(),
                               link_flags=_asan_flags(),
@@ -324,7 +359,8 @@ class XcpTest(object):
                             header,
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
-                                          paging_define,
+                                          paging_define +
+                                          max_dto_define,
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),

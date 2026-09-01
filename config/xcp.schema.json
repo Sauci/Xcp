@@ -455,6 +455,30 @@
                 "maximum": 65535,
                 "default": 8
               },
+              "identification_field_type": {
+                "description": "Type of Identification Field the slave uses when transferring DAQ packets (see XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1)",
+                "type": "string",
+                "enum": ["ABSOLUTE", "RELATIVE_BYTE", "RELATIVE_WORD", "RELATIVE_WORD_ALIGNED"],
+                "default": "ABSOLUTE"
+              },
+              "daq_queue_size": {
+                "description": "Number of complete DTO frames the slave may hold before a sampled frame is dropped",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 255,
+                "default": 16
+              },
+              "prescaler_supported": {
+                "description": "Sets PRESCALER_SUPPORTED in DAQ_PROPERTIES; when false, SET_DAQ_LIST_MODE rejects a prescaler above 1",
+                "type": "boolean",
+                "default": true
+              },
+              "overload_indication": {
+                "description": "How a DAQ processor overload is reported. EVENT transmits EV_DAQ_OVERLOAD; NONE drops silently",
+                "type": "string",
+                "enum": ["EVENT", "NONE"],
+                "default": "EVENT"
+              },
               "checksum_type": {
                 "type": "string",
                 "enum": [
