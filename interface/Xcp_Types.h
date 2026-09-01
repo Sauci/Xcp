@@ -571,6 +571,17 @@ typedef struct {
  * The configured part of a DAQ list -- its ODTs, its FIRST_PID, its PDU mapping -- lives in
  * Xcp_DaqListType and is generated const.
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
+ * @note mode, eventChannelNumber, prescaler and prescalerCounter are read by
+ * Xcp_TriggerEventChannel (a task or an ISR) and written by the command handlers of
+ * source/Xcp_Daq.c (CanIf's receive context -- SET_DAQ_LIST_MODE, START_STOP_DAQ_LIST,
+ * START_STOP_SYNCH, CLEAR_DAQ_LIST), with no exclusive area on either side. This is deliberate,
+ * not an oversight: it is the mirror image of the state the DAQ transmit exclusive area (DD5 in
+ * the design doc) does protect. A trigger interleaved with one of these writes can at worst see
+ * a torn read of one field -- a skewed prescaler cycle, or a mode change that takes effect one
+ * trigger later or earlier than intended, i.e. one extra or missing frame. None of these fields
+ * is a pointer, or a length paired with a pointer the way the ODT entry array is (DD14), so no
+ * interleaving here is ever memory-unsafe. That bound is what makes this acceptable rather than
+ * a defect; before reusing the argument for a new field, confirm it still holds.
  */
 typedef struct {
     /**
