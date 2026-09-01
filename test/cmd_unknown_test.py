@@ -8,7 +8,7 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
-@pytest.mark.parametrize('pid', tuple(pid for pid in range(0xC0, 0xE4) if pid != 0xE2))
+@pytest.mark.parametrize('pid', tuple(pid for pid in range(0xC0, 0xE4) if pid not in (0xE1, 0xE2)))
 def test_unimplemented_commands_return_err_cmd_unknown(pid):
     """XCP part 2 - Protocol Layer Specification 1.0/1.4: an attempt to execute a not implemented
     optional command will return ERR_CMD_UNKNOWN and does not have any effect.
@@ -20,7 +20,8 @@ def test_unimplemented_commands_return_err_cmd_unknown(pid):
     untested while their handlers returned E_OK without ever filling the response buffer -- the
     slave transmitted whatever the previous command had left in it.
 
-    0xE2 (SET_DAQ_PTR) is excluded: it is implemented now, and set_daq_ptr_test.py covers it."""
+    0xE1 (WRITE_DAQ) and 0xE2 (SET_DAQ_PTR) are excluded: both are implemented now, and
+    write_daq_test.py and set_daq_ptr_test.py cover them."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
     connect(handle)
 

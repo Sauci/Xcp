@@ -405,6 +405,7 @@ uint8 Xcp_DTOCmdPagGetSegmentInfo(boolean *responseExpected, const PduInfoType *
 uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);
