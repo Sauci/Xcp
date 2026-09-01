@@ -384,6 +384,21 @@ The name follows the module's existing convention and the parameter is the
 `XcpEventChannelNumber` of ECUC_Xcp_00170, so a channel is triggered by the same number
 `GET_DAQ_EVENT_INFO` will report for it in SP2b.
 
+**DD16 — An ODT entry's size is read in bytes.** §1.6.4.1.1.2 gives `WRITE_DAQ` byte 2 as
+"Size of DAQ element [AG]" with `0 <= size <= MAX_ODT_ENTRY_SIZE_x`, while §1.6.4.1.2.5 states
+the rules on that size in bytes: `GRANULARITY_ODT_ENTRY_SIZE_x` is one of {1,2,4,8},
+`SizeOf(element) mod GRANULARITY = 0`, and `SizeOf(element) <= MAX_ODT_ENTRY_SIZE_x`. Read as
+address-granularity units, the two sections contradict each other — `MAX_ODT_ENTRY_SIZE_x`
+would be in AG units in one and bytes in the other.
+
+This implementation reads the size in **bytes**, requires it to be a multiple of the address
+granularity's element size, and bounds it by `MAX_ODT_ENTRY_SIZE_DAQ` in bytes. That makes both
+sections consistent and makes `MAX_ODT_ENTRY_SIZE_DAQ` directly comparable with a DTO's
+capacity, which is the quantity an ODT actually has to fit inside. The two commands are held to
+each other in test: whatever `GET_DAQ_RESOLUTION_INFO` reports as the maximum is exactly the
+largest entry `WRITE_DAQ` accepts, across every address granularity and identification field
+type.
+
 ## 4. Source layout
 
 ```
@@ -771,6 +786,15 @@ narrowed resource condition (D14); `get_status_test.py` gains `DAQ_RUNNING` (D15
 - A master can configure a static DAQ list through `SET_DAQ_PTR` and `WRITE_DAQ`, bind it to
   an event channel with `SET_DAQ_LIST_MODE`, start it, and receive DTO frames whose contents
   match the sampled memory, under all four identification field types.
+- **Every byte of every DTO lands at the offset the specification puts it**, proven across the
+  product of address granularity (`BYTE`, `WORD`, `DWORD`), identification field type (all
+  four), byte order (both) and `MAX_DTO`, with `MAX_CTO` swept over the command path. The
+  matrix asserts the identification field bytes, the frame length, and the position and value
+  of every sampled element; it also holds `GET_DAQ_RESOLUTION_INFO` and `WRITE_DAQ` to each
+  other, since a master that trusts the reported maximum must not then be refused.
+- Measured data is passed through byte-for-byte as the integrator's read callback produced it.
+  `byte_order` governs the protocol's own words — the DAQ list number in the identification
+  field and the WORD parameters of the commands — and nothing else, exactly as for `UPLOAD`.
 - `CONNECT` reports the DAQ resource, `GET_STATUS` reports `DAQ_RUNNING`.
 - A burst is transmitted in full with `Xcp_MainFunction` never called once — the trigger
   starts the chain and confirmations finish it. This is the property DD3 exists for and the
