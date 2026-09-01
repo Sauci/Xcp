@@ -98,6 +98,12 @@ typedef enum
     DAQ_STATIC
 } Xcp_DaqConfigTypeType;
 
+/**
+ * @note These enumerator values are not arbitrary: XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.4.1.2.4 transmits them directly as bits 7:6 of GET_DAQ_PROCESSOR_INFO's DAQ_KEY_BYTE,
+ * so renumbering changes the wire format. An exhaustive test covers this and will fail loudly if
+ * it ever happens, but check the section above before relying on that.
+ */
 typedef enum
 {
     /**
