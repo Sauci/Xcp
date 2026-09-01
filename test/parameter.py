@@ -25,6 +25,42 @@ trailing_values = [pytest.param(v, id='trailing value = {:02X}h'.format(v)) for 
 cto_queue_sizes = [pytest.param(v, id='CTO_QUEUE_SIZE = {:02}d'.format(v)) for v in (0, 1, 255)]
 max_bss = [pytest.param(v, id='MAX_BS = {:02}d'.format(v)) for v in (0, 1, 255)]
 min_sts = [pytest.param(v, id='MIN_ST = {:02}d'.format(v)) for v in (0, 1, 255)]
+max_dtos = [pytest.param(v, id='MAX_DTO = {:03}d'.format(v)) for v in (8, 16, 64)]
+identification_field_types = [pytest.param(v, id='ident = {}'.format(v))
+                              for v in ('ABSOLUTE', 'RELATIVE_BYTE', 'RELATIVE_WORD',
+                                        'RELATIVE_WORD_ALIGNED')]
+
+identification_field_size = {'ABSOLUTE': 1,
+                             'RELATIVE_BYTE': 2,
+                             'RELATIVE_WORD': 3,
+                             'RELATIVE_WORD_ALIGNED': 4}
+
+
+def expected_identification_field(ident, first_pid, relative_odt, daq_list_number, byte_order,
+                                  fill=0):
+    """The bytes a DTO must start with, per XCP part 2 1.1/1.1.2.1."""
+    if ident == 'ABSOLUTE':
+        return (first_pid + relative_odt,)
+    if ident == 'RELATIVE_BYTE':
+        return (relative_odt, daq_list_number & 0xFF)
+    if ident == 'RELATIVE_WORD':
+        return (relative_odt,) + tuple(u16_to_array(daq_list_number, byte_order))
+    return (relative_odt, fill) + tuple(u16_to_array(daq_list_number, byte_order))
+
+
+def plan_odt_entries(capacity, element_size, wanted):
+    """Entry sizes that fit one ODT: each a multiple of the granularity, summing within
+    capacity. Returns fewer than `wanted` when the capacity cannot hold that many."""
+    sizes = []
+    remaining = capacity - (capacity % element_size)
+    while len(sizes) < wanted and remaining >= element_size:
+        size = element_size if (len(sizes) + 1) < wanted else min(remaining, element_size * 2)
+        size = size - (size % element_size)
+        if size == 0 or size > remaining:
+            break
+        sizes.append(size)
+        remaining -= size
+    return sizes
 
 
 def element_size_from_address_granularity(address_granularity):
