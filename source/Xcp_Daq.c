@@ -368,3 +368,44 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.6
+         * Xcp_DaqListRtType stores the mode in exactly this layout, so it needs no translation
+         * on the way out. The request of 1.6.4.1.1.3 uses a different one. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_DaqListRt(daq_list_number)->mode;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u; /* reserved */
+
+        Xcp_CopyFromU16WithOrder(Xcp_DaqListRt(daq_list_number)->eventChannelNumber,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_DaqListRt(daq_list_number)->prescaler;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = Xcp_DaqListRt(daq_list_number)->priority;
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+

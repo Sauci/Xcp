@@ -356,7 +356,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xDC, optional */
     Xcp_CmdNotImplemented, /* 0xDD */
     Xcp_CmdNotImplemented, /* 0xDE */
-    Xcp_CmdNotImplemented, /* 0xDF */
+    Xcp_DTOCmdDaqGetDaqListMode, /* GET_DAQ_LIST_MODE 0xDF, optional in 1.1 */
     Xcp_DTOCmdDaqSetDaqListMode, /* SET_DAQ_LIST_MODE 0xE0 */
     Xcp_DTOCmdDaqWriteDaq, /* WRITE_DAQ 0xE1 */
     Xcp_DTOCmdDaqSetDaqPtr, /* SET_DAQ_PTR 0xE2 */
