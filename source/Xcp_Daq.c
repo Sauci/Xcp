@@ -510,8 +510,11 @@ uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType
         /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4 */
         if (mode == XCP_DAQ_START_STOP_MODE_START)
         {
-            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
+            /* Reset the counter before setting RUNNING: once RUNNING is visible, a trigger
+             * preempting between the two writes must never sample against a stale counter
+             * left over from a previous run. */
             Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
         }
         else if (mode == XCP_DAQ_START_STOP_MODE_SELECT)
         {
@@ -587,8 +590,10 @@ uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *
             {
                 if (mode == XCP_DAQ_SYNCH_MODE_START_SELECTED)
                 {
-                    Xcp_DaqListRt(idx)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
+                    /* Reset the counter before setting RUNNING -- see the identical ordering
+                     * argument in Xcp_DTOCmdDaqStartStopDaqList above. */
                     Xcp_DaqListRt(idx)->prescalerCounter = 0x00u;
+                    Xcp_DaqListRt(idx)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
                 }
                 else
                 {
