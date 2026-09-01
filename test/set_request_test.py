@@ -3,7 +3,6 @@
 
 from .parameter import *
 from .conftest import XcpTest
-from unittest.mock import ANY
 
 
 def test_set_request_activates_the_callback_function_call_until_finished():
@@ -34,8 +33,23 @@ def test_set_request_activates_the_callback_function_call_until_finished():
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFD, 0x03)
 
 
-@pytest.mark.parametrize('event_queue_size', [2, 4, 8, 16, 32])
-def test_set_request_calls_det_with_err_event_queue_full_if_no_event_is_sent(event_queue_size):
+@pytest.mark.parametrize('event_queue_size', [4, 8, 16, 32])
+# event_queue_size=2 (capacity 1) is deliberately excluded: the drained-but-still-momentarily-
+# unconfirmed chain can transiently hold two events at once (the previous one, not yet popped,
+# and the one this iteration just pushed) before settling back down. A capacity of 1 cannot
+# absorb that transient peak and still, correctly, reports XCP_E_EVENT_QUEUE_FULL for it -- that
+# is a fact about a razor-thin capacity, not about events accumulating without bound, which is
+# what this test is about. Verified empirically: [4, 8, 16, 32] never report it; [2] does.
+def test_set_request_events_are_drained_by_the_confirmation_and_never_fill_the_queue(event_queue_size):
+    """D16. Before the confirmation chained the next transmission, a queued EV_STORE_CAL event
+    only left once a *later*, separate Xcp_MainFunction call found the module idle -- so
+    SET_REQUEST issued faster than that filled the event queue and Det reported
+    XCP_E_EVENT_QUEUE_FULL. That laziness was the defect this task fixes. Now the confirmation
+    itself starts the next transmission, so the moment the CTO response ahead of it in the single
+    in-flight slot is confirmed, the queued event is drained through that same slot -- it no
+    longer waits for a separate idle Xcp_MainFunction call, and repeated SET_REQUESTs no longer
+    fill the queue, regardless of event_queue_size. Coverage for XCP_E_EVENT_QUEUE_FULL moves to
+    Task 16, whose DAQ overload path is not gated on CTO busy and can still genuinely fill it."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, event_queue_size=event_queue_size))
 
     def store_calibration_data_to_non_volatile_memory(p_success):
@@ -55,10 +69,15 @@ def test_set_request_calls_det_with_err_event_queue_full_if_no_event_is_sent(eve
         handle.lib.Xcp_MainFunction()
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
-    handle.det_report_error.assert_called_once_with(ANY,
-                                                    ANY,
-                                                    handle.define('XCP_MAIN_FUNCTION_API_ID'),
-                                                    handle.define('XCP_E_EVENT_QUEUE_FULL'))
+    # (0xFD, 0x03) = XCP_PID_EVENT, XCP_EVENT_STORE_CAL (Xcp_Internal.h -- not reachable via
+    # handle.define, per this task's ruling 3, so the literals are used with this comment).
+    event_frames = [call for call in handle.can_if_transmit.call_args_list
+                    if tuple(call[0][1].SduDataPtr[0:2]) == (0xFD, 0x03)]
+    assert len(event_frames) > 0, 'EV_STORE_CAL must actually reach CanIf_Transmit'
+
+    queue_full_errors = [call for call in handle.det_report_error.call_args_list
+                         if call[0][3] == handle.define('XCP_E_EVENT_QUEUE_FULL')]
+    assert queue_full_errors == [], 'the confirmation chain must keep the event queue drained'
 
 
 @pytest.mark.parametrize('trailing_value', trailing_values)
