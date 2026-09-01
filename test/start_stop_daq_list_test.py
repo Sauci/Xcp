@@ -113,3 +113,26 @@ def test_the_session_status_reports_daq_running():
     start_stop(handle, 0x00)
 
     assert exchange(handle, (0xFD,), length=2)[1] & 0x40 == 0
+
+
+def test_daq_running_survives_stopping_one_of_two_running_lists():
+    """1.1/1.6.1.1.3 defines DAQ_RUNNING as "at least one DAQ list has been started and is in
+    data transfer mode" -- a property of every list together, not of the one just stopped. This
+    is why Xcp_DaqSessionStatusUpdate rescans every list on every start/stop instead of tracking
+    a count or toggling a flag: with two lists running, stopping one must leave the bit set,
+    because the other is still transmitting. Do not "simplify" the rescan away."""
+    handle = daq_handle()
+    configure(handle, daq_list=0)
+    configure(handle, daq_list=1)
+    start_stop(handle, 0x01, daq_list=0)
+    start_stop(handle, 0x01, daq_list=1)
+
+    assert exchange(handle, (0xFD,), length=2)[1] & 0x40 != 0
+
+    start_stop(handle, 0x00, daq_list=0)
+
+    assert exchange(handle, (0xFD,), length=2)[1] & 0x40 != 0, 'DAQ2 is still running'
+
+    start_stop(handle, 0x00, daq_list=1)
+
+    assert exchange(handle, (0xFD,), length=2)[1] & 0x40 == 0
