@@ -146,7 +146,6 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
              * .number is never read back below -- ascending scan order already IS ascending ODT
              * entry order, which is the frame layout 1.1/1.1.4.1 wants. */
             entry[copied].address = p_live->address;
-            entry[copied].bitOffset = p_live->bitOffset;
             entry[copied].addressExtension = p_live->addressExtension;
             entry[copied].length = p_live->length;
             copied++;
@@ -163,8 +162,8 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
 
         /* 1.1/1.6.4.1.1.2, DD8: BIT_OFFSET is validated and stored by WRITE_DAQ but does not
          * change what is sampled here. For DIRECTION = DAQ the master applies BIT_MASK to what it
-         * receives; the slave transmits the element unmodified, so entry[idx].bitOffset is not
-         * read here. */
+         * receives; the slave transmits the element unmodified, so entry[] above does not copy
+         * bitOffset -- there is nothing here that would ever read it. */
         for (element = 0x00u; element < (uint8_least)(entry[idx].length / element_size); element++)
         {
             Xcp_ReadSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](
