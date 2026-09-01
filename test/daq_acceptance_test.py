@@ -1,12 +1,44 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import itertools
 import pytest
 
 from .parameter import *
 from .conftest import XcpTest
 from .download_test import connect
+
+
+def value_for_address(address, element_size):
+    """The byte pattern a correctly-addressed read of `element_size` bytes must return: the low
+    byte of the address, then consecutive bytes from there. install_memory's mock computes exactly
+    this from the address argument it actually receives, so a frame's contents encode *where* each
+    element was read from. A test that wants to know what a read SHOULD have returned -- as
+    opposed to merely what the mock WAS called with -- calls this directly against an
+    independently-computed expected address (see expected_addresses), so a wrong per-element
+    address advance produces the wrong bytes at a known offset instead of merely a
+    differently-ordered but still-distinct sequence."""
+    base = address & 0xFF
+    return bytes(((base + i) & 0xFF) for i in range(element_size))
+
+
+def expected_addresses(odt, sizes, element_size):
+    """Replicates DaqSession.write_odt's own address arithmetic, so a test can independently
+    predict, for every element write_odt configured, the exact address Xcp_DaqSampleOdt must read
+    it from -- in the same order the ODT is sampled (entry order, then element order within an
+    entry).
+
+    Only valid for the entry shapes write_odt is actually given in this file: every entry but the
+    last sized exactly `element_size` (one element), the last sized up to `2 * element_size` --
+    exactly what plan_odt_entries produces, and what every single-entry `sizes` list trivially
+    satisfies. write_odt addresses entry `index` at `base + index * element_size`, which only
+    matches this generator's own `base + element * element_size` per-element addressing when
+    entries before the last never span more than one element; a `sizes` list with more than one
+    multi-element entry would need a running byte offset instead, which write_odt does not
+    compute."""
+    for index, size in enumerate(sizes):
+        base = 0x00010000 + (odt * 0x100) + (index * element_size)
+        for element in range(size // element_size):
+            yield base + (element * element_size)
 
 
 class DaqSession(object):
@@ -18,18 +50,21 @@ class DaqSession(object):
         self.reads = []
 
     def exchange(self, request):
+        self.handle.can_if_transmit.reset_mock()
         self.handle.lib.Xcp_CanIfRxIndication(0x0001, self.handle.get_pdu_info(request))
         self.handle.lib.Xcp_MainFunction()
         self.handle.lib.Xcp_CanIfTxConfirmation(0x0002, self.handle.define('E_OK'))
         return tuple(self.handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
 
     def install_memory(self, element_size):
-        """Every read yields a distinct, position-revealing byte pattern."""
-        counter = itertools.count(1)
-
-        def read(_address, _extension, p_buffer):
-            base = next(counter) & 0xFF
-            value = bytes(((base + i) & 0xFF) for i in range(element_size))
+        """Every read's returned bytes are a deterministic function of the address argument alone
+        (value_for_address), never of call order: a wrong per-element address advance -- e.g.
+        re-reading an entry's base address for every element instead of stepping by element_size
+        -- then produces the wrong bytes at a known offset, rather than merely a
+        differently-ordered but still-distinct sequence that a call-order-keyed pattern could not
+        tell apart from correct."""
+        def read(address, _extension, p_buffer):
+            value = value_for_address(int(self.handle.ffi.cast('uint32_t', address)), element_size)
             for i, b in enumerate(value):
                 p_buffer[i] = int(b)
             self.reads.append(value)
@@ -98,12 +133,10 @@ def test_every_dto_byte_lands_where_the_specification_puts_it(ag, ident, byte_or
 
     assert first_pid == 2, 'DAQ2 follows DAQ1, which owns two ODTs'
 
-    session.reads.clear()
     frames = session.trigger()
 
     assert len(frames) == 3, 'one frame per non-empty ODT'
 
-    read_index = 0
     for odt, (pdu_id, frame) in enumerate(frames):
         header = expected_identification_field(ident, first_pid, odt, 1, byte_order)
 
@@ -111,12 +144,55 @@ def test_every_dto_byte_lands_where_the_specification_puts_it(ag, ident, byte_or
         assert len(frame) == len(header) + sum(sizes), 'ODT {} length'.format(odt)
 
         offset = len(header)
-        for size in sizes:
-            for _ in range(size // element_size):
-                assert bytes(frame[offset:offset + element_size]) == session.reads[read_index], \
-                    'ODT {} element at offset {}'.format(odt, offset)
-                offset += element_size
-                read_index += 1
+        for address in expected_addresses(odt, sizes, element_size):
+            expected = value_for_address(address, element_size)
+            assert bytes(frame[offset:offset + element_size]) == expected, \
+                'ODT {} element at offset {} (address 0x{:08X})'.format(odt, offset, address)
+            offset += element_size
+
+
+@pytest.mark.parametrize('max_dto', max_dtos)
+@pytest.mark.parametrize('ag', address_granularities)
+def test_a_dto_filled_to_capacity_has_every_byte_in_place(ag, max_dto):
+    """The matrix above caps every ODT at 3 entries (plan_odt_entries(wanted=3)), so it never
+    frames anywhere near a DTO's real capacity -- at BYTE granularity MAX_DTO 8, 16 and 64 all
+    produce the identical entry plan [1, 1, 2], so those three configurations emit byte-identical
+    frames and MAX_DTO's positional effect was pinned only by the number GET_DAQ_RESOLUTION_INFO
+    reports, never by an actual frame's length or content.
+
+    RELATIVE_WORD_ALIGNED is used throughout because it is the only identification field type
+    whose MAX_ODT_ENTRY_SIZE_DAQ (= MAX_DTO - 4) stays a multiple of every address granularity's
+    element size for all three MAX_DTO values in this matrix (8, 16 and 64 are all multiples of
+    4) -- so a single WRITE_DAQ entry can legally claim the *entire* reported capacity in one
+    write, filling the DTO to the exact byte rather than just close to it."""
+    element_size = element_size_from_address_granularity(ag)
+    capacity = max_dto - identification_field_size['RELATIVE_WORD_ALIGNED']
+
+    handle = XcpTest(DefaultConfig(address_granularity=ag,
+                                   identification_field_type='RELATIVE_WORD_ALIGNED',
+                                   max_dto=max_dto,
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),)))
+    connect(handle)
+    session = DaqSession(handle, 'LITTLE_ENDIAN')
+    session.install_memory(element_size)
+    session.write_odt(daq_list=0, odt=0, sizes=[capacity], element_size=element_size)
+    session.start(daq_list=0)
+
+    frames = session.trigger()
+
+    assert len(frames) == 1
+    header = expected_identification_field('RELATIVE_WORD_ALIGNED', 0, 0, 0, 'LITTLE_ENDIAN')
+    frame = frames[0][1]
+
+    assert len(frame) == len(header) + capacity == max_dto, \
+        'the DTO is exactly full: identification field plus every capacity byte, nothing more'
+
+    offset = len(header)
+    for address in expected_addresses(0, [capacity], element_size):
+        expected = value_for_address(address, element_size)
+        assert bytes(frame[offset:offset + element_size]) == expected, \
+            'byte at offset {} (address 0x{:08X})'.format(offset, address)
+        offset += element_size
 
 
 @pytest.mark.parametrize('ag', address_granularities)
@@ -148,9 +224,17 @@ def test_write_daq_accepts_exactly_what_get_daq_resolution_info_promises(ag, ide
         'the largest promised entry is accepted'
 
     session.exchange((0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))
-    assert session.exchange((0xE1, 0xFF, max_entry_size + 1, 0x00) +
+    # The tightest granularity-valid size that must still be refused: max_entry_size + 1 can
+    # overshoot by more than one granularity step (e.g. DWORD/RELATIVE_BYTE/MAX_DTO=8 has
+    # max_entry_size=6, largest=4, so +1 gives 7 -- itself not a multiple of 4, so refusing it
+    # would be indistinguishable from the misalignment check write_daq_test.py already covers,
+    # leaving sizes 5, 6 and 7 untested). largest + element_size is always a multiple of the
+    # granularity and always exceeds max_entry_size by construction (largest is the greatest such
+    # multiple not exceeding it), so refusing it isolates the size-vs-ceiling comparison alone.
+    refused_size = largest + element_size
+    assert session.exchange((0xE1, 0xFF, refused_size, 0x00) +
                             tuple(u32_to_array(0x1000, 'LITTLE_ENDIAN')))[0:2] == (0xFE, 0x22), \
-        'one byte past it is refused'
+        'the next granularity-valid size past the largest accepted one is refused'
 
 
 def test_a_list_configured_only_past_odt_0_is_still_recognised_as_configured():
@@ -259,6 +343,29 @@ def test_two_lists_on_one_channel_are_both_sampled_with_distinct_identification(
     assert headers[0] != headers[1], 'each list is identifiable in its own frames'
     assert headers[0] == expected_identification_field(ident, 0, 0, 0, 'LITTLE_ENDIAN')
     assert headers[1] == expected_identification_field(ident, 1, 0, 1, 'LITTLE_ENDIAN')
+
+
+@pytest.mark.parametrize('trailing_value', trailing_values)
+def test_the_relative_word_aligned_fill_byte_carries_the_configured_trailing_value(trailing_value):
+    """1.1/1.1.2.1 gives the RELATIVE_WORD_ALIGNED FILL byte no defined value;
+    source/Xcp_DaqRuntime.c fills it with the same trailing value Xcp_FinalizeResPacket pads
+    responses with. Asserting only the default (0) proves nothing: DefaultConfig's own default
+    trailing_value is 0, so a deleted FILL-byte write and a correct one are indistinguishable at
+    that value. Swept over both ends of `trailing_values` -- already defined in parameter.py but,
+    until now, never exercised by any DAQ test -- so the non-zero case is the one that actually
+    distinguishes a real write from an incidental zero."""
+    handle = XcpTest(DefaultConfig(identification_field_type='RELATIVE_WORD_ALIGNED',
+                                   trailing_value=trailing_value,
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),)))
+    connect(handle)
+    session = DaqSession(handle, 'LITTLE_ENDIAN')
+    session.install_memory(1)
+    session.write_odt(daq_list=0, odt=0, sizes=[1], element_size=1)
+    session.start(daq_list=0)
+
+    frames = session.trigger()
+
+    assert frames[0][1][1] == trailing_value, 'FILL byte carries the configured trailing value'
 
 
 @pytest.mark.parametrize('prescaler', (1, 2, 5))
