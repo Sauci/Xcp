@@ -258,10 +258,13 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
   `ALLOC_ODT_ENTRY`) answer `ERR_CMD_UNKNOWN`.
 - `WRITE_DAQ_MULTIPLE`, `READ_DAQ`, `GET_DAQ_CLOCK`, `GET_DAQ_LIST_INFO` and `GET_DAQ_EVENT_INFO` are not
   implemented.
-- At most one DTO frame is in flight per PDU at a time, and this is mandatory rather than a simplification: the
-  AUTOSAR CAN Interface specification (SWS_CANIF_00068) has `CanIf` *overwrite* an already-buffered instance of the
-  same L-PDU when `Can_Write` returns `CAN_BUSY`. Handing `CanIf` a second frame for a PDU before the first is
-  confirmed destroys the first silently — no error, no confirmation, one measurement sample simply missing.
+- At most one DTO frame is in flight at a time: `Xcp_StartNextTransmission` arbitrates a single transmit slot
+  across command responses, event packets and DAQ frames alike, and starts the next one only once the current one
+  is confirmed. This is mandatory rather than a simplification, not merely a design choice this implementation
+  happens to make: the AUTOSAR CAN Interface specification (SWS_CANIF_00068) has `CanIf` *overwrite* an
+  already-buffered instance of the same L-PDU when `Can_Write` returns `CAN_BUSY`, so handing `CanIf` a second
+  frame for a PDU before the first is confirmed would destroy the first silently — no error, no confirmation, one
+  measurement sample simply missing.
 - The test suite that exercises the exclusive area (see *The exclusive area* above) is single-threaded. It models
   the area as a real lock — detecting imbalance, mismatched nesting, and a lock left held at teardown — so a
   one-sided guard or a missing exit is caught directly. What it cannot do is observe a genuine race: the
