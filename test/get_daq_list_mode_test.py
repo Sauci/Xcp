@@ -33,11 +33,16 @@ def test_get_daq_list_mode_reports_a_freshly_initialised_list():
 
 
 def test_get_daq_list_mode_reports_what_set_daq_list_mode_stored():
-    handle = daq_handle()
-    exchange(handle, (0xE0, 0x00, 0x01, 0x00, 0x00, 0x00, 0x03, 0x00), length=1)
+    """Channel 0 is the untouched power-up default (source/Xcp.c's Xcp_Init), so asserting it
+    back would pass even if SET_DAQ_LIST_MODE's store were deleted. SET_DAQ_LIST_MODE rejects any
+    channel at or above maxEventChannel (source/Xcp_Daq.c), and the default configuration
+    declares only one channel, so a second channel has to be configured before channel 1 can be
+    set and read back as a real round trip."""
+    handle = daq_handle(events=(event(triggered_daq_list_ref=['DAQ1']), event(triggered_daq_list_ref=['DAQ1'])))
+    exchange(handle, (0xE0, 0x00, 0x01, 0x00, 0x01, 0x00, 0x03, 0x00), length=1)
 
     assert get_mode(handle, daq_list=1)[6] == 3, 'prescaler'
-    assert get_mode(handle, daq_list=1)[4:6] == (0x00, 0x00), 'event channel, little endian'
+    assert get_mode(handle, daq_list=1)[4:6] == (0x01, 0x00), 'event channel, little endian'
 
 
 def test_get_daq_list_mode_reports_running_and_selected():
@@ -60,6 +65,21 @@ def test_get_daq_list_mode_writes_the_event_channel_in_the_configured_byte_order
     handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].eventChannelNumber = 0x0001
 
     assert get_mode(handle, byte_order='BIG_ENDIAN')[4:6] == (0x00, 0x01)
+
+
+def test_get_daq_list_mode_reports_priority():
+    """SET_DAQ_LIST_MODE refuses any nonzero priority by specification (1.1/1.6.4.1.1.3: "If the
+    ECU doesn't support the prioritization of DAQ lists, a DAQ list priority > 0 is not allowed
+    and will be indicated by returning ERR_OUT_OF_RANGE"), so a round trip through the command
+    cannot exercise the priority byte -- the runtime state is poked directly instead, as tests
+    above already do for mode and for the event channel's byte order. Do not "fix" this by
+    routing it through SET_DAQ_LIST_MODE: that command's own restriction means it would quietly
+    delete the only coverage of this byte."""
+    handle = daq_handle()
+    # 0x7F has bits set in both nibbles, so a truncation or a wrong-field read would be visible.
+    handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].priority = 0x7F
+
+    assert get_mode(handle)[7] == 0x7F
 
 
 def test_get_daq_list_mode_rejects_an_unknown_list():
