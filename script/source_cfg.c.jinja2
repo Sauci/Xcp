@@ -240,7 +240,7 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- set counters.odt = counters.odt + daq.max_odt %}
 {%- set counters.odt_entries = counters.odt_entries + (daq.max_odt * daq.max_odt_entries) %}
 {%- endfor %}
-{%- if odt_entry_size_daq < 0 %}
+{%- if odt_entry_size_daq < 1 %}
 {{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
 {%- if counters.odt > 255 or counters.odt_entries > 255 %}
