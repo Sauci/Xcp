@@ -152,3 +152,43 @@ def test_write_daq_refuses_to_overfill_an_odt():
     assert write_daq(handle, size=2)[0] == 0xFF
     assert write_daq(handle, size=2)[0] == 0xFF
     assert write_daq(handle, size=2) == (0xFE, 0x2A)
+
+
+def test_write_daq_excludes_the_targeted_entrys_own_stale_length_from_the_capacity_check():
+    """DD8: Xcp_OdtUsedBytes excludes the entry being (re)written from its own sum, so
+    repositioning to an already-written entry and rewriting it with a different size weighs the
+    new size against the OTHER entries only -- not against the entry's own stale length.
+
+    At MAX_DTO 8 / ABSOLUTE, MAX_ODT_ENTRY_SIZE_DAQ is 7. Entry 0 first takes 5 bytes and entry 1
+    takes 1 (6 of 7 used). Repositioning back to entry 0 and rewriting it with size 3:
+    - Correct (excludes entry 0's own stale length): 1 (entry 1) + 3 = 4 <= 7, accepted.
+    - Inverted condition (sums ONLY entry 0's own stale length, `==` instead of `!=`):
+      5 (entry 0's stale 5, not the 1 entry 1 actually holds) + 3 = 8 > 7, wrongly rejected.
+    - Exclusion dropped entirely (sums every entry unconditionally): 5 (entry 0's stale length,
+      still uncounted-out) + 1 (entry 1) + 3 = 9 > 7, wrongly rejected.
+    All three readings diverge on this data (5, 1, 3 was chosen so they would), so accepting here
+    is evidence the exclusion is both present and correctly directed, not a coincidence of small
+    numbers all fitting comfortably either way.
+
+    This configuration (max_odt=1, max_odt_entries=4, otherwise every DefaultConfig default) is
+    byte-identical to several sibling tests' in this file, e.g.
+    test_write_daq_refuses_to_overfill_an_odt, and XcpTest/MockGen caches compiled modules by
+    configuration hash: Xcp_Init resets Xcp_Rt and Xcp_Internal but never the config module's own
+    ODT entry fields, so a sibling test's leftover entry lengths persist into this one. This
+    test's margin is exact (7 vs 8) where its siblings' are not, so it is the first one actually
+    sensitive to that leftover state -- entries 0 and 1 are about to be overwritten by the
+    sequence below anyway, but entries 2 and 3 are not, so they are cleared explicitly first to
+    make the sequence deterministic regardless of what ran before it."""
+    handle = daq_handle(max_odt_entries=4)
+    for index in range(4):
+        entry(handle, index=index).length = 0
+
+    set_daq_ptr(handle)
+
+    assert write_daq(handle, size=5)[0] == 0xFF
+    assert write_daq(handle, size=1)[0] == 0xFF
+
+    set_daq_ptr(handle, entry=0)
+
+    assert write_daq(handle, size=3)[0] == 0xFF
+    assert entry(handle, index=0).length == 3
