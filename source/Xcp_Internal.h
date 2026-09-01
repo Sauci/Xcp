@@ -406,6 +406,16 @@ uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPd
 uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief resets every ODT entry of one DAQ list to its power-up state.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqClearDaqList which is its main caller, but
+ * declared here with external linkage because Xcp_Init (Xcp.c) calls it too, for every
+ * configured DAQ list, so a re-initialised module never inherits a previous session's DAQ
+ * configuration left in the generated (mutable, module-level static) ODT entry arrays.
+ */
+void Xcp_DaqListClearEntries(uint16 daqListNumber);
+uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);

@@ -360,7 +360,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xE0 */
     Xcp_DTOCmdDaqWriteDaq, /* WRITE_DAQ 0xE1 */
     Xcp_DTOCmdDaqSetDaqPtr, /* SET_DAQ_PTR 0xE2 */
-    Xcp_CmdNotImplemented, /* 0xE3 */
+    Xcp_DTOCmdDaqClearDaqList, /* CLEAR_DAQ_LIST 0xE3 */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdPagCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
 #else
@@ -1137,6 +1137,11 @@ void Xcp_Init(const Xcp_Type *pConfig)
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescaler = 0x01u;
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescalerCounter = 0x00u;
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].priority = 0x00u;
+                /* The generated ODT entry arrays are module-level mutable statics with no
+                 * initialisation of their own; reset them here too, or a re-initialised module
+                 * inherits a previous session's DAQ configuration. See
+                 * Xcp_DaqListClearEntries's own doc comment (Xcp_Daq.c). */
+                Xcp_DaqListClearEntries((uint16)idx);
             }
 
             Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->read = 0x00u;

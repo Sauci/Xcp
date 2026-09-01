@@ -26,6 +26,41 @@ static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
 }
 
 /**
+ * @brief resets every ODT entry of one DAQ list to its power-up state.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1: "For a configurable DAQ
+ * list, all ODT entries will be reset to address=0, extension=0 and size=0 (if valid :
+ * bit_offset = 0xFF)." Bounded by daqListNumber's own maxOdt/maxOdtEntries, not any other list's,
+ * so clearing one list never touches another's entries.
+ * @note Despite living beside this file's other file-local helpers, this one has external
+ * linkage and a declaration in Xcp_Internal.h: Xcp_Init (source/Xcp.c) calls it too. The
+ * generated ODT entry arrays are module-level mutable statics (script/source_cfg.c.jinja2 emits
+ * them `static`), and nothing used to reset them on (re-)initialisation -- so a re-initialised
+ * module, and, in the test harness, a test sharing a compiled configuration with an earlier one,
+ * would silently inherit a previous session's DAQ configuration.
+ */
+void Xcp_DaqListClearEntries(uint16 daqListNumber)
+{
+    uint8_least odt_idx;
+    uint8_least entry_idx;
+
+    for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
+    {
+        for (entry_idx = 0x00u;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx++)
+        {
+            Xcp_OdtEntryType *p_entry =
+                    &Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].odtEntry[entry_idx];
+
+            p_entry->address = NULL_PTR;
+            p_entry->addressExtension = 0x00u;
+            p_entry->length = 0x00u;
+            p_entry->bitOffset = XCP_ODT_ENTRY_BIT_OFFSET_NONE;
+        }
+    }
+}
+
+/**
  * @brief bytes already claimed by the written entries of one ODT.
  * @details An ODT becomes one DTO frame, so the entries it holds have to fit in what the frame
  * leaves after the identification field. Entries not yet written have length 0 and contribute
@@ -189,6 +224,58 @@ uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduIn
             Xcp_Internal.daq_pointer.odtEntryNumber++;
         }
         else
+        {
+            Xcp_Internal.daq_pointer.valid = FALSE;
+        }
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1
+         * "For a configurable DAQ list, all ODT entries will be reset to address=0, extension=0
+         * and size=0 (if valid : bit_offset = 0xFF)." */
+        Xcp_DaqListClearEntries(daq_list_number);
+
+        /* "For PREDEFINED and configurable DAQ lists, the running Data Transmission on this list
+         * will be stopped and all DAQ list states are reset." The command is therefore legal
+         * while the list runs -- see defect D10 against the error matrix. */
+        Xcp_DaqListRt(daq_list_number)->mode = 0x00u;
+        Xcp_DaqListRt(daq_list_number)->eventChannelNumber = 0x0000u;
+        Xcp_DaqListRt(daq_list_number)->prescaler = 0x01u;
+        Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+        Xcp_DaqListRt(daq_list_number)->priority = 0x00u;
+
+        /* The pointer names an entry this command has just reset, so it no longer names
+         * anything meaningful. */
+        if ((Xcp_Internal.daq_pointer.valid == TRUE) &&
+            (Xcp_Internal.daq_pointer.daqListNumber == daq_list_number))
         {
             Xcp_Internal.daq_pointer.valid = FALSE;
         }
