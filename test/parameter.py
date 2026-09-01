@@ -104,12 +104,32 @@ def daq(name='DAQ1',
         max_odt_entries=1,
         pdu_mapping='XCP_PDU_ID_TRANSMIT',
         dtos=None):
+    # No "pid" here when the caller does not pass dtos: FIRST_PID is derived and assigned by the
+    # slave (XCP part 2 1.1/1.6.4.1.1.4), so a caller with no opinion on it should not assert one.
+    # The generator's `dto.pid | default(0)` fallback keeps Xcp_DtoConfig buildable, and leaving
+    # "pid" undefined keeps source_cfg.c.jinja2's FIRST_PID validation from firing on a value this
+    # helper made up rather than one the caller actually configured.
     return {"name": name,
             "type": type,
             "max_odt": max_odt,
             "max_odt_entries": max_odt_entries,
             "pdu_mapping": pdu_mapping,
-            "dtos": list(dtos) if dtos is not None else [{"pid": 0}]}
+            "dtos": list(dtos) if dtos is not None else [{}]}
+
+
+def event(consistency='ODT',
+          priority=0,
+          time_cycle=10,
+          time_unit='TIMESTAMP_UNIT_1MS',
+          type='DAQ',
+          triggered_daq_list_ref=None):
+    return {"consistency": consistency,
+            "priority": priority,
+            "time_cycle": time_cycle,
+            "time_unit": time_unit,
+            "type": type,
+            "triggered_daq_list_ref": list(triggered_daq_list_ref)
+            if triggered_daq_list_ref is not None else ['DAQ1']}
 
 
 class DefaultConfig(dict):
@@ -117,6 +137,7 @@ class DefaultConfig(dict):
                  channel_rx_pdu_ref=0x0001,
                  channel_tx_pdu_ref=0x0002,
                  default_daq_dto_pdu_mapping=0x0003,
+                 events=None,
                  daqs=({
                      "name": "DAQ1",
                      "type": "DAQ",
@@ -211,17 +232,7 @@ class DefaultConfig(dict):
                 "daqs": list(daqs),
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
-                "events": [
-                    {
-                        "consistency": "ODT",
-                        "priority": 0,
-                        "time_cycle": 10,
-                        "time_unit": "TIMESTAMP_UNIT_1MS",
-                        "triggered_daq_list_ref": [
-                            "DAQ1"
-                        ]
-                    }
-                ],
+                "events": list(events) if events is not None else [event()],
                 "apis": {
                     "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
                     "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},

@@ -26,7 +26,7 @@
           "pdu_mapping": "XCP_PDU_ID_TRANSMIT",
           "dtos": [
             {
-              "pid": 1
+              "pid": 3
             }
           ]
         }
@@ -55,6 +55,7 @@
           "priority": 0,
           "time_cycle": 10,
           "time_unit": "TIMESTAMP_UNIT_1MS",
+          "type": "DAQ",
           "triggered_daq_list_ref": [
             "DAQ1"
           ]

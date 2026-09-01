@@ -36,6 +36,7 @@ static Xcp_OdtEntryType Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}
     {
         NULL_PTR, /* XcpOdtEntryAddress */
         0x00u, /* XcpOdtEntryBitOffset */
+        0x00u, /* XcpOdtEntryAddressExtension */
         0x00u, /* XcpOdtEntryLength */
         {{'0x%02Xu' % j}} /* XcpOdtEntryNumber */
     },
@@ -110,7 +111,7 @@ static const Xcp_TxPduType Xcp_CommunicationChannelTxPduConfig{{'%02X' % loop.in
 static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % loop.index0}}[{{'0x%02Xu' % daq.dtos|length}}] = {
         {%- for dto in daq.dtos %}
     {
-        {{'0x%04Xu' % dto.pid}}, /* XcpDtoPid */
+        {{'0x%04Xu' % (dto.pid | default(0))}}, /* XcpDtoPid */
         {
             {{daq.pdu_mapping}}, /* XcpDto2PduMapping */
             NULL_PTR
@@ -125,6 +126,26 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
 {%- endfor %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
+    {#- FIRST_PID is derived, not configured: absolute ODT numbers must be contiguous and unique
+        across every DAQ list, so first_pids[i] is the running sum of the preceding lists' max_odt
+        (XCP part 2 1.1/1.6.4.1.1.4). #}
+    {%- set first_pids = [] %}
+    {%- set pid = namespace(next=0) %}
+    {%- for daq in configuration.daqs %}
+    {%- if first_pids.append(pid.next) %}{% endif %}
+    {%- set pid.next = pid.next + daq.max_odt %}
+    {%- endfor %}
+    {%- if pid.next > 252 %}
+{{ raise('{} ODTs across {} DAQ lists exceed the 0xFB PID ceiling of XCP part 2 1.1/1.1.4.1'.format(pid.next, configuration.daqs|length)) }}
+    {%- endif %}
+    {%- for daq in configuration.daqs %}
+        {%- set daq_index = loop.index0 %}
+        {%- for dto in daq.dtos %}
+        {%- if dto.pid is defined and loop.index0 == 0 and dto.pid != first_pids[daq_index] %}
+{{ raise('DAQ list {} configures pid {} but its derived FIRST_PID is {}; FIRST_PID is assigned by the slave (XCP part 2 1.1/1.6.4.1.1.4)'.format(daq.name, dto.pid, first_pids[daq_index])) }}
+        {%- endif %}
+        {%- endfor %}
+    {%- endfor %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
@@ -132,6 +153,7 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
     {%- for daq in configuration.daqs %}
     {
         {{'0x%04Xu' % loop.index0}}, /* XcpDaqListNumber */
+        {{'0x%02Xu' % first_pids[loop.index0]}}, /* FIRST_PID, derived */
         {{daq.type}}, /* XcpDaqListType */
         {{'0x%02Xu' % daq.max_odt}}, /* XcpMaxOdt */
         {{'0x%02Xu' % daq.max_odt_entries}}, /* XcpMaxOdtEntries */
@@ -215,6 +237,49 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 {%- endfor %}
+{%- for configuration in configurations %}
+    {%- set configuration_loop = loop %}
+    {%- set daq_index_by_name = {} %}
+    {%- for daq in configuration.daqs %}
+        {%- if daq_index_by_name.update({daq.name: loop.index0}) %}{% endif %}
+    {%- endfor %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+    {%- for event in configuration.events %}
+        {%- set event_index = loop.index0 %}
+        {%- for name in event.triggered_daq_list_ref %}
+        {%- if name not in daq_index_by_name %}
+{{ raise('event channel {} references DAQ list "{}", which no configuration declares'.format(event_index, name)) }}
+        {%- endif %}
+        {%- endfor %}
+
+static const Xcp_DaqListType * const Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % event_index}}[{{'0x%02Xu' % event.triggered_daq_list_ref|length}}] = {
+        {%- for name in event.triggered_daq_list_ref %}
+    &Xcp_DaqListConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % daq_index_by_name[name]}}],
+        {%- endfor %}
+};
+    {%- endfor %}
+
+static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % configuration.events|length}}] = {
+    {%- for event in configuration.events %}
+    {
+        {{event.consistency}}, /* XcpEventChannelConsistency */
+        {{'0x%02Xu' % event.triggered_daq_list_ref|length}}, /* XcpEventChannelMaxDaqList */
+        {{'0x%04Xu' % loop.index0}}, /* XcpEventChannelNumber */
+        {{'0x%02Xu' % event.priority}}, /* XcpEventChannelPriority */
+        {{'0x%02Xu' % event.time_cycle}}, /* XcpEventChannelTimeCycle */
+        {{event.time_unit}}, /* XcpEventChannelTimeUnit */
+        {{event.type}}, /* XcpEventChannelType */
+        &Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % loop.index0}}[0x00u],
+        {{'0x%08Xu' % event.triggered_daq_list_ref|length}}
+    },
+    {%- endfor %}
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{%- endfor %}
 {% for configuration in configurations %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -223,7 +288,7 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
     &Xcp_CommunicationChannelConfig[{{'0x%02Xu' % loop.index0}}], /* reference to XcpCommunicationChannel */
     &Xcp_DaqListConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDaqList */
     {{'%04Xu' % configuration.daqs | length}},
-    NULL_PTR, /* reference to XcpEventChannel */
+    &Xcp_EventChannelConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpEventChannel */
     NULL_PTR, /* reference to XcpPdu */
     &Xcp_SegmentConfig{{'%02X' % loop.index0}}[0x00u] /* reference to XcpSegment */
 };

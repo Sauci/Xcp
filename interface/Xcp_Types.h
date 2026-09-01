@@ -314,6 +314,12 @@ typedef struct
     uint8 bitOffset;
 
     /**
+     * @brief address extension of the memory the ODT entry references.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2, WRITE_DAQ byte 3.
+     */
+    uint8 addressExtension;
+
+    /**
      * @brief length of the referenced memory area that is referenced by the ODT entry
      */
     uint8 length;
@@ -355,6 +361,14 @@ typedef struct
 typedef struct
 {
     const uint16 number;
+
+    /**
+     * @brief absolute ODT number of this DAQ list's first ODT.
+     * @details Assigned by the slave, not the master, and reported in the positive response to
+     * START_STOP_DAQ_LIST. The absolute ODT number of ODT i is firstPid + i.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4.
+     */
+    const uint8 firstPid;
     const Xcp_EventChannelTypeType type;
     const uint8 maxOdt;
     const uint8 maxOdtEntries;
@@ -406,9 +420,12 @@ typedef struct
     Xcp_EventChannelTypeType type;
 
     /**
-     * @brief References all DAQ lists that are trigged by this event channel.
+     * @brief References all DAQ lists that are triggered by this event channel.
+     * @details An array of pointers rather than one pointer plus a count: the configured
+     * references name arbitrary DAQ lists, which a single pointer into the DAQ list array could
+     * only express if they happened to be contiguous.
      */
-    const Xcp_DaqListType *triggeredDaqListRef;
+    const Xcp_DaqListType * const *triggeredDaqListRef;
     const uint32 triggeredDaqListRefCount;
 } Xcp_EventChannelType;
 

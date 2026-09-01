@@ -60,3 +60,54 @@ def test_max_dto_is_available_as_a_compile_time_macro(max_dto):
     handle = XcpTest(DefaultConfig(max_dto=max_dto))
 
     assert handle.define('XCP_MAX_DTO') == max_dto
+
+
+def test_first_pid_is_the_running_sum_of_preceding_odt_counts():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4"""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3),
+                                         daq(name='DAQ2', max_odt=5),
+                                         daq(name='DAQ3', max_odt=2))))
+
+    assert handle.config.lib.Xcp[0].config.daqList[0].firstPid == 0
+    assert handle.config.lib.Xcp[0].config.daqList[1].firstPid == 3
+    assert handle.config.lib.Xcp[0].config.daqList[2].firstPid == 8
+
+
+def test_odt_entries_start_with_a_cleared_address_extension():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1 resets extension to 0."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=2),)))
+
+    assert handle.config.lib.Xcp[0].config.daqList[0].odt[0].odtEntry[0].addressExtension == 0
+    assert handle.config.lib.Xcp[0].config.daqList[0].odt[0].odtEntry[1].addressExtension == 0
+
+
+def test_event_channels_are_generated_rather_than_left_null():
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1), daq(name='DAQ2', max_odt=1))))
+
+    assert handle.config.lib.Xcp[0].config.eventChannel != handle.config.ffi.NULL
+    assert handle.config.lib.Xcp[0].general.maxEventChannel == 1
+    assert handle.config.lib.Xcp[0].config.eventChannel[0].number == 0
+    assert handle.config.lib.Xcp[0].config.eventChannel[0].timeCycle == 10
+    assert handle.config.lib.Xcp[0].config.eventChannel[0].timeUnit == handle.lib.TIMESTAMP_UNIT_1MS
+
+
+def test_event_channel_references_resolve_to_the_named_daq_lists():
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3), daq(name='DAQ2', max_odt=5)),
+                                   events=(event(triggered_daq_list_ref=['DAQ2']),)))
+
+    channel = handle.config.lib.Xcp[0].config.eventChannel[0]
+
+    assert channel.triggeredDaqListRefCount == 1
+    assert channel.triggeredDaqListRef[0].number == 1
+    assert channel.triggeredDaqListRef[0].firstPid == 3
+
+
+def test_event_channel_may_reference_several_daq_lists():
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1), daq(name='DAQ2', max_odt=1)),
+                                   events=(event(triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
+
+    channel = handle.config.lib.Xcp[0].config.eventChannel[0]
+
+    assert channel.triggeredDaqListRefCount == 2
+    assert channel.triggeredDaqListRef[0].number == 0
+    assert channel.triggeredDaqListRef[1].number == 1
