@@ -138,7 +138,9 @@ extern "C" {
  * ALTERNATING somewhere in bits 6..7. Refusing the whole class is conformant whichever bit
  * ALTERNATING turns out to occupy.
  */
-#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (0xF1u)
+#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
+    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_TIMESTAMP | XCP_DAQ_LIST_MODE_REQ_PID_OFF | \
+     (0x01u << 0x06u) | (0x01u << 0x07u)) /* bits 6-7 reserved: 1.1 places ALTERNATING somewhere in them */
 
 /* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */
 #define XCP_DAQ_LIST_MODE_SELECTED (0x01u << 0x00u)
