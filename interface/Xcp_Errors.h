@@ -103,4 +103,11 @@
  */
 #define XCP_E_ASAM_VERIFY (0x32u)
 
+/**
+* @brief Access to the requested resource is temporary not possible (see ASAM protocol layer
+* specification 1.7.3.1). Introduced in version 1.1; absent from 1.0. Nothing in this module
+* emits it, since it describes a condition only an integrator's callbacks can detect.
+ */
+#define XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE (0x33u)
+
 #endif /* #ifndef XCP_ERRORS_H */
