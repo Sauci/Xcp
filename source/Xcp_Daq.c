@@ -279,6 +279,15 @@ uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduIn
                        .odt[Xcp_Internal.daq_pointer.odtNumber]
                        .odtEntry[Xcp_Internal.daq_pointer.odtEntryNumber];
 
+        /* No exclusive area around these four writes, unlike Xcp_DaqListClearEntries's writes
+         * to this same odtEntry array (DD5/DD14 in the design doc). That is safe, not an
+         * oversight: the DAQ_ACTIVE check a few lines above already refused this request unless
+         * the addressed list is stopped, and Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) only
+         * ever walks a list's entries while it is RUNNING. So a list this function is about to
+         * write is never being sampled, and a list being sampled is never reachable from here --
+         * the two are mutually exclusive by construction (the RUNNING flag), not by a lock. This
+         * reasoning breaks if WRITE_DAQ is ever allowed to touch a RUNNING list; do not remove
+         * the DAQ_ACTIVE check above without adding an exclusive area here. */
         p_entry->address = (uint32 *)address;
         p_entry->addressExtension = extension;
         p_entry->bitOffset = bit_offset;
