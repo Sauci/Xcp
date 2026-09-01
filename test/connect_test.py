@@ -20,12 +20,17 @@ def test_command_connect_sets_the_packet_id_byte_to_pid_response_on_positive_res
                                                               (0, (True, True, True, True, False)),
                                                               (1, (True, True, True, True, True))))
 def test_connect_sets_the_resource_cal_pag_bit_according_to_enabled_apis(resource_cal_pag_bit, api_enable):
+    # XCP part 2 - Protocol Layer Specification 1.0/1.4: if SET_CAL_PAGE is implemented,
+    # GET_CAL_PAGE is required. The walk below enables one more API at each step, so
+    # GET_CAL_PAGE (api_enable[3]) must come on no later than SET_CAL_PAGE (api_enable[4]) --
+    # the reverse order would ask Xcp_Init for an invalid configuration, which it rightly
+    # refuses to initialize (leaving Xcp_State XCP_UNINITIALIZED, and CONNECT unanswered).
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    xcp_download_api_enable=api_enable[0],
                                    xcp_download_max_api_enable=api_enable[1],
                                    xcp_short_download_api_enable=api_enable[2],
-                                   xcp_set_cal_page_api_enable=api_enable[3],
-                                   xcp_get_cal_page_api_enable=api_enable[4]))
+                                   xcp_get_cal_page_api_enable=api_enable[3],
+                                   xcp_set_cal_page_api_enable=api_enable[4]))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()
     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & 0x01 == resource_cal_pag_bit
@@ -115,7 +120,7 @@ def test_connect_sets_the_resource_stim_bit_according_to_enabled_apis(resource_s
                                                           (0, (True, False, False)),
                                                           (0, (True, True, False)),
                                                           (1, (True, True, True))))
-def test_connect_sets_the_resource_cal_pag_bit_according_to_enabled_apis(resource_pgm_bit, api_enable):
+def test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis(resource_pgm_bit, api_enable):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    xcp_program_clear_api_enable=api_enable[0],
                                    xcp_program_api_enable=api_enable[1],

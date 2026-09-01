@@ -31,6 +31,24 @@
           ]
         }
       ],
+      "segments": [
+        {
+          "name": "CAL_SEG_0",
+          "address": 4194304,
+          "length": 4096,
+          "address_extension": 0,
+          "compression_method": 0,
+          "encryption_method": 0,
+          "pages": [
+            {"init_segment": 0, "ecu_access": "DONT_CARE",
+             "xcp_read_access": "DONT_CARE", "xcp_write_access": "NOT_ALLOWED"},
+            {"init_segment": 0, "ecu_access": "WITHOUT_OTHER",
+             "xcp_read_access": "DONT_CARE", "xcp_write_access": "DONT_CARE"}
+          ],
+          "address_mappings": []
+        }
+      ],
+      "paging": {"freeze_supported": false},
       "events": [
         {
           "consistency": "ODT",
@@ -176,6 +194,38 @@
           "protected": false
         },
         "xcp_get_comm_mode_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_download_next_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_modify_bits_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_pag_processor_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_segment_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_page_info_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_set_segment_mode_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_get_segment_mode_api_enable": {
+          "enabled": true,
+          "protected": false
+        },
+        "xcp_copy_cal_page_api_enable": {
           "enabled": true,
           "protected": false
         },

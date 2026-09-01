@@ -152,6 +152,61 @@ static const Xcp_CommunicationChannelType Xcp_CommunicationChannelConfig[{{'0x%0
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
+{%- for configuration in configurations %}
+{%- set configuration_loop = loop %}
+{%- for segment in configuration.segments | default([]) %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_PageType Xcp_PageConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[{{'0x%02Xu' % segment.pages|length}}] = {
+    {%- for page in segment.pages %}
+    {
+        {{'0x%02Xu' % page.init_segment}}, /* initSegment */
+        ({% if page.ecu_access == 'NOT_ALLOWED' %}0x00u{% elif page.ecu_access == 'WITHOUT_OTHER' %}0x01u{% elif page.ecu_access == 'WITH_OTHER' %}0x02u{% else %}0x03u{% endif %} << 0x00u) |
+        ({% if page.xcp_read_access == 'NOT_ALLOWED' %}0x00u{% elif page.xcp_read_access == 'WITHOUT_OTHER' %}0x01u{% elif page.xcp_read_access == 'WITH_OTHER' %}0x02u{% else %}0x03u{% endif %} << 0x02u) |
+        ({% if page.xcp_write_access == 'NOT_ALLOWED' %}0x00u{% elif page.xcp_write_access == 'WITHOUT_OTHER' %}0x01u{% elif page.xcp_write_access == 'WITH_OTHER' %}0x02u{% else %}0x03u{% endif %} << 0x04u) /* pageProperties */
+    },
+    {%- endfor %}
+};
+
+static const Xcp_AddressMappingType Xcp_AddressMappingConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[{{'0x%02Xu' % ((segment.address_mappings | default([]))|length + 1)}}] = {
+    {%- for mapping in segment.address_mappings | default([]) %}
+    {
+        {{'0x%08Xu' % mapping.source_address}},
+        {{'0x%08Xu' % mapping.destination_address}},
+        {{'0x%08Xu' % mapping.length}}
+    },
+    {%- endfor %}
+    {0x00000000u, 0x00000000u, 0x00000000u} /* sentinel, keeps the array non-empty */
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{%- endfor %}
+
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % ((configuration.segments | default([]))|length + 1)}}] = {
+{%- for segment in configuration.segments | default([]) %}
+    {
+        {{'0x%08Xu' % segment.address}},
+        {{'0x%08Xu' % segment.length}},
+        {{'0x%02Xu' % segment.address_extension}},
+        {{'0x%02Xu' % segment.compression_method}},
+        {{'0x%02Xu' % segment.encryption_method}},
+        {{'0x%02Xu' % segment.pages|length}},
+        &Xcp_PageConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[0x00u],
+        {{'0x%02Xu' % (segment.address_mappings | default([]))|length}},
+        &Xcp_AddressMappingConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[0x00u]
+    },
+{%- endfor %}
+    {0x00000000u, 0x00000000u, 0x00u, 0x00u, 0x00u, 0x00u, NULL_PTR, 0x00u, NULL_PTR} /* sentinel */
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{%- endfor %}
 {% for configuration in configurations %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -161,7 +216,8 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
     &Xcp_DaqListConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDaqList */
     {{'%04Xu' % configuration.daqs | length}},
     NULL_PTR, /* reference to XcpEventChannel */
-    NULL_PTR /* reference to XcpPdu */
+    NULL_PTR, /* reference to XcpPdu */
+    &Xcp_SegmentConfig{{'%02X' % loop.index0}}[0x00u] /* reference to XcpSegment */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
@@ -391,14 +447,14 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xBD */
         (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xBE */
         (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xBF */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC0 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC1 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC2 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC3 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC4 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC5 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC6 */
-        (0x01u << 0x07u) /* enable */ | (0x00u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC7 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC0 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC1 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC2 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC3 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC4 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC5 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC6 */
+        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC7 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
         ({% if configuration.apis.xcp_program_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* PROGRAM_MAX 0xC9, optional */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* PROGRAM_NEXT 0xCA, optional */
@@ -427,18 +483,18 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         ({% if configuration.apis.xcp_write_daq_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_write_daq_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x08u, /* WRITE_DAQ 0xE1 */
         ({% if configuration.apis.xcp_set_daq_ptr_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_set_daq_ptr_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x06u, /* SET_DAQ_PTR 0xE2 */
         ({% if configuration.apis.xcp_clear_daq_list_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_clear_daq_list_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* CLEAR_DAQ_LIST 0xE3 */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x05u, /* COPY_CAL_PAGE 0xE4, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* GET_SEGMENT_MODE 0xE5, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* SET_SEGMENT_MODE 0xE6, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* GET_PAGE_INFO 0xE7, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x05u, /* GET_SEGMENT_INFO 0xE8, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x01u, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
+        ({% if configuration.apis.xcp_copy_cal_page_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_copy_cal_page_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x05u, /* COPY_CAL_PAGE 0xE4, optional */
+        ({% if configuration.apis.xcp_get_segment_mode_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_get_segment_mode_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* GET_SEGMENT_MODE 0xE5, optional */
+        ({% if configuration.apis.xcp_set_segment_mode_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_set_segment_mode_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* SET_SEGMENT_MODE 0xE6, optional */
+        ({% if configuration.apis.xcp_get_page_info_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_get_page_info_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* GET_PAGE_INFO 0xE7, optional */
+        ({% if configuration.apis.xcp_get_segment_info_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_get_segment_info_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x05u, /* GET_SEGMENT_INFO 0xE8, optional */
+        ({% if configuration.apis.xcp_get_pag_processor_info_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_get_pag_processor_info_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x01u, /* GET_PAG_PROCESSOR_INFO 0xE9, optional */
         ({% if configuration.apis.xcp_get_cal_page_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_get_cal_page_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* GET_CAL_PAGE 0xEA */
         ({% if configuration.apis.xcp_set_cal_page_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_set_cal_page_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* SET_CAL_PAGE 0xEB */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x06u, /* MODIFY_BITS 0xEC, optional */
+        ({% if configuration.apis.xcp_modify_bits_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_modify_bits_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x06u, /* MODIFY_BITS 0xEC, optional */
         ({% if configuration.apis.xcp_short_download_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_short_download_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x08u, /* SHORT_DOWNLOAD 0xED, optional */
         ({% if configuration.apis.xcp_download_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_max_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* DOWNLOAD_MAX 0xEE, optional */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* DOWNLOAD_NEXT 0xEF, optional */
+        ({% if configuration.apis.xcp_download_next_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_next_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* DOWNLOAD_NEXT 0xEF, optional */
         ({% if configuration.apis.xcp_download_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_download_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* DOWNLOAD 0xF0 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* USER_CMD 0xF1, optional */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x01u, /* TRANSPORT_LAYER_CMD 0xF2, optional Note: the size depends on sub-command and is checked in the callback itself. */
@@ -474,6 +530,8 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %}, /* userCmdFunction */
     {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
     "{{configuration.protocol_layer.identification}}", /* identification */
+    {{'0x%02Xu' % (configuration.segments | default([]))|length}}, /* maxSegment */
+    {% if configuration.paging is defined and configuration.paging.freeze_supported %}0x01u{% else %}0x00u{% endif %}, /* pagProperties */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

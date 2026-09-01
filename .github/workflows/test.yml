@@ -6,26 +6,38 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{github.repository}}
 
+# GITHUB_TOKEN is minted per run by Actions itself, so pushing and pulling the image needs no
+# stored credentials. It only carries the scopes granted here.
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-push-image:
     name: Build and push image
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{steps.meta.outputs.tags}}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Log in to the Container registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ${{env.REGISTRY}}
-          username: ${{secrets.PKG_REGISTRY_USERNAME}}
-          password: ${{secrets.PKG_REGISTRY_RW_TOKEN}}
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{env.REGISTRY}}/${{env.IMAGE_NAME}}
+          # A tag naming the commit, so the test job below runs against the image built from
+          # this very ref. The branch tag alone is not enough: it resolves to whatever was last
+          # pushed for that branch.
+          tags: type=sha,format=long,prefix=
       - name: Build and push Docker image
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
@@ -34,21 +46,38 @@ jobs:
   run-tests:
     name: Run tests
     needs: build-and-push-image
-    runs-on: ubuntu-20.04
-    container:
-      image: ghcr.io/sauci/xcp:develop
-      credentials:
-        username: ${{secrets.PKG_REGISTRY_USERNAME}}
-        password: ${{secrets.PKG_REGISTRY_RW_TOKEN}}
-      volumes:
-        - ${{github.workspace}}:/usr/project
+    runs-on: ubuntu-latest
+    # Deliberately NOT a job-level `container:`. Actions injects its own Node runtime into a job
+    # container to run JavaScript actions such as actions/checkout, and the current runtime is
+    # built against a musl newer than the Alpine 3.10 base of this image, which fails with
+    # "Error relocating .../node: secure_getenv: symbol not found". Running the actions on the
+    # host and the tests through `docker run` keeps each on a libc it was built for.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{env.REGISTRY}}
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
       - name: Run pytest tests
-        run: ./test.sh
+        # As the runner's own user, so the build artefacts the next step reads, and the post-job
+        # cleanup deletes, are not left owned by root. HOME is set because that uid has no entry
+        # in the image's passwd file.
+        run: >
+          docker run --rm
+          --user "$(id -u):$(id -g)"
+          --env HOME=/tmp
+          --volume "${{github.workspace}}:/usr/project"
+          --workdir /usr/project
+          "${{needs.build-and-push-image.outputs.image}}"
+          ./test.sh
       - name: Upload code coverage to Codecov
         if: success() || failure()
-        uses: codecov/codecov-action@v1
+        uses: codecov/codecov-action@v5
         with:
-          files: ./build/Xcp.c.gcov
+          # Optional on a public repository: unset means a tokenless upload, which works but is
+          # rate limited. Add the secret if uploads start failing intermittently.
+          token: ${{secrets.CODECOV_TOKEN}}
+          files: ./build/Xcp.c.gcov,./build/Xcp_Std.c.gcov,./build/Xcp_Cal.c.gcov,./build/Xcp_Pag.c.gcov,./build/Xcp_Daq.c.gcov

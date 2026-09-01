@@ -14,3 +14,9 @@ test/ffi/*.o
 test/ffi/*.so
 test/ffi/*.gcno
 test/ffi/*.gcda
+.claude/worktrees/
+.superpowers/
+
+# Vendor specifications and anything derived from them. Copyrighted, and this repository is
+# public, so they must never be committed even by an accidental `git add -A`.
+docs/external/

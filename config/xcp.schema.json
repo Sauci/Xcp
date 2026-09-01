@@ -173,6 +173,8 @@
             },
             "minItems": 1
           },
+          "segments": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/segment"}},
+          "paging": {"$ref": "#/definitions/paging"},
           "apis": {
             "description": "This container allows the user to enable/disable optional APIs from the driver. This is not part of the specification",
             "type": "object",
@@ -279,6 +281,30 @@
               "xcp_get_comm_mode_info_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_download_next_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_modify_bits_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_pag_processor_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_segment_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_page_info_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_set_segment_mode_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_get_segment_mode_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_copy_cal_page_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "resource_protection": {
                 "type": "object",
                 "properties": {
@@ -342,6 +368,14 @@
               "xcp_program_api_enable",
               "xcp_program_max_api_enable",
               "xcp_get_comm_mode_info_api_enable",
+              "xcp_download_next_api_enable",
+              "xcp_modify_bits_api_enable",
+              "xcp_get_pag_processor_info_api_enable",
+              "xcp_get_segment_info_api_enable",
+              "xcp_get_page_info_api_enable",
+              "xcp_set_segment_mode_api_enable",
+              "xcp_get_segment_mode_api_enable",
+              "xcp_copy_cal_page_api_enable",
               "resource_protection"
             ]
           },
@@ -528,6 +562,55 @@
         "enabled",
         "protected"
       ]
+    },
+    "page_access_type": {
+      "type": "string",
+      "enum": ["NOT_ALLOWED", "WITHOUT_OTHER", "WITH_OTHER", "DONT_CARE"]
+    },
+    "page": {
+      "type": "object",
+      "properties": {
+        "init_segment": {"type": "integer", "minimum": 0, "maximum": 255},
+        "ecu_access": {"$ref": "#/definitions/page_access_type"},
+        "xcp_read_access": {"$ref": "#/definitions/page_access_type"},
+        "xcp_write_access": {"$ref": "#/definitions/page_access_type"}
+      },
+      "required": ["init_segment", "ecu_access", "xcp_read_access", "xcp_write_access"],
+      "additionalProperties": false
+    },
+    "address_mapping": {
+      "type": "object",
+      "properties": {
+        "source_address": {"type": "integer", "minimum": 0},
+        "destination_address": {"type": "integer", "minimum": 0},
+        "length": {"type": "integer", "minimum": 0}
+      },
+      "required": ["source_address", "destination_address", "length"],
+      "additionalProperties": false
+    },
+    "segment": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "address": {"type": "integer", "minimum": 0},
+        "length": {"type": "integer", "minimum": 0},
+        "address_extension": {"type": "integer", "minimum": 0, "maximum": 255},
+        "compression_method": {"type": "integer", "minimum": 0, "maximum": 255},
+        "encryption_method": {"type": "integer", "minimum": 0, "maximum": 255},
+        "pages": {"type": "array", "minItems": 1, "maxItems": 255, "items": {"$ref": "#/definitions/page"}},
+        "address_mappings": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/address_mapping"}}
+      },
+      "required": ["name", "address", "length", "address_extension",
+                   "compression_method", "encryption_method", "pages"],
+      "additionalProperties": false
+    },
+    "paging": {
+      "type": "object",
+      "properties": {
+        "freeze_supported": {"type": "boolean"}
+      },
+      "required": ["freeze_supported"],
+      "additionalProperties": false
     }
   }
 }

@@ -22,11 +22,7 @@ extern "C" {
  * @{
  */
 
-#ifndef COMSTACK_TYPES_H
-
 #include "ComStack_Types.h"
-
-#endif /* #ifndef COMSTACK_TYPES_H */
 
 /** @} */
 
@@ -410,6 +406,52 @@ typedef struct
     const uint32 triggeredDaqListRefCount;
 } Xcp_EventChannelType;
 
+/**
+ * @brief address range within a SEGMENT that has an address mapping applied.
+ * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.2, mode 2.
+ */
+typedef struct
+{
+    const uint32 sourceAddress;
+    const uint32 destinationAddress;
+    const uint32 length;
+} Xcp_AddressMappingType;
+
+/**
+ * @brief a single calibration PAGE of a SEGMENT.
+ * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.3.
+ */
+typedef struct
+{
+    /**
+     * @brief SEGMENT that initializes this PAGE.
+     */
+    const uint8 initSegment;
+
+    /**
+     * @brief PAGE_PROPERTIES, packed as ecu access at bits 1:0, XCP read access at bits 3:2 and
+     * XCP write access at bits 5:4.
+     */
+    const uint8 pageProperties;
+} Xcp_PageType;
+
+/**
+ * @brief a logical calibration data SEGMENT.
+ * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.2.
+ */
+typedef struct
+{
+    const uint32 address;
+    const uint32 length;
+    const uint8 addressExtension;
+    const uint8 compressionMethod;
+    const uint8 encryptionMethod;
+    const uint8 maxPages;
+    const Xcp_PageType *page;
+    const uint8 maxMapping;
+    const Xcp_AddressMappingType *addressMapping;
+} Xcp_SegmentType;
+
 typedef struct
 {
     const Xcp_DaqConfigTypeType daqConfigType;
@@ -455,6 +497,8 @@ typedef struct
     uint8 (*const userCmdFunction)(const PduInfoType *pCtoPduInfo, PduInfoType *pResErrPduInfo); /* not part of the specification... */
     const uint8 trailingValue; /* not part of the specification... */
     const char *identification; /* not part of the specification... */
+    const uint8 maxSegment; /* not part of the specification... */
+    const uint8 pagProperties; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**
@@ -467,6 +511,7 @@ typedef struct
     const uint16 daqListCount; /* not part of the specification... */
     const Xcp_EventChannelType *eventChannel;
     const void *pdu;
+    const Xcp_SegmentType *segment;
 } Xcp_ConfigType;
 
 typedef struct {
@@ -483,7 +528,16 @@ typedef struct {
 } Xcp_EventQueueType;
 
 typedef struct {
+    /**
+     * @brief FREEZE mode of this SEGMENT.
+     * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.3.2.4.
+     */
+    boolean freeze;
+} Xcp_SegmentRtType;
+
+typedef struct {
     Xcp_EventQueueType *eventQueue;
+    Xcp_SegmentRtType *segment;
 } Xcp_RtType;
 
 typedef struct

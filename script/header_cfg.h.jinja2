@@ -1,17 +1,26 @@
 #ifndef XCP_CFG_H
 #define XCP_CFG_H
 
-#ifndef XCP_TYPES_H
 #include "Xcp_Types.h"
-#endif /* #ifndef XCP_TYPES_H */
 
-#ifndef XCP_CHECKSUM_H
 #include "Xcp_Checksum.h"
-#endif /* #ifndef XCP_CHECKSUM_H */
 
 #ifndef XCP_USER_CMD_H
 #include "Xcp_UserCmd.h"
 #endif /* #ifndef XCP_USER_CMD_H */
+
+{%- set paging = namespace(supported=false) %}
+{%- for configuration in configurations %}
+{%- if (configuration.segments | default([]))|length > 0 %}
+{%- set paging.supported = true %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_PAGING_SUPPORTED
+
+/* One macro gates the whole module, so it is on when ANY configuration declares a segment. */
+#define XCP_PAGING_SUPPORTED ({% if paging.supported %}STD_ON{% else %}STD_OFF{% endif %})
+
+#endif /* #ifndef XCP_PAGING_SUPPORTED */
 
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"

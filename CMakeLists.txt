@@ -12,8 +12,35 @@ option(ENABLE_DOC_GEN "enables/disables documentation generation." OFF)
 option(ENABLE_PC_LINT "enables/disables static code analysis." OFF)
 set(MISRA_C_VERSION 2012 CACHE STRING "MISRA standard.")
 option(XCP_SUPPRESS_TX_SUPPORT "enables/disables transmission functionality of the XCP module." ON)
+set(XCP_PYTEST_ARGS "" CACHE STRING "extra arguments forwarded to pytest (e.g. -k download).")
 
 find_package(PythonInterp 3.6 REQUIRED)
+
+# Whether the PAG commands are compiled in follows from whether the configuration declares a
+# segment, which is the rule the generated Xcp_Cfg.h states and the README documents. Deriving it
+# here rather than defaulting it means the default build of a configuration that declares one
+# actually answers those commands: a fixed default of STD_OFF silently compiled all eight out and
+# answered ERR_CMD_UNKNOWN, since nothing on the library's include path pulls in Xcp_Cfg.h to
+# supply the value instead.
+execute_process(
+    COMMAND ${PYTHON_EXECUTABLE} -c
+        "import json,sys;c=json.load(open(sys.argv[1]));print('ON' if any(x.get('segments') for x in c['configurations']) else 'OFF')"
+        ${XCP_CONFIG_FILEPATH}
+    OUTPUT_VARIABLE XCP_PAGING_SUPPORTED_DERIVED
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE XCP_PAGING_SUPPORTED_RESULT)
+
+if(NOT XCP_PAGING_SUPPORTED_RESULT EQUAL 0)
+    message(FATAL_ERROR "could not derive XCP_PAGING_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
+endif()
+
+# An option, like every other switch here, so that -DXCP_PAGING_SUPPORTED=ON does what a reader
+# of the others would expect. The AUTOSAR STD_ON/STD_OFF spelling is applied where the definition
+# reaches the compiler, as it is for ENABLE_DET. Not FORCE: an explicit -D has to survive the
+# next configure for the help string's "override" to mean anything.
+option(XCP_PAGING_SUPPORTED
+    "enables/disables the calibration page switching commands. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why."
+    ${XCP_PAGING_SUPPORTED_DERIVED})
 
 if (${ENABLE_DOC_GEN})
     find_package(Doxygen REQUIRED dot)
@@ -27,7 +54,12 @@ add_subdirectory(extern)
 add_subdirectory(generated)
 # add_subdirectory(debug)
 
-add_library(Xcp STATIC source/Xcp.c)
+add_library(Xcp STATIC
+    source/Xcp.c
+    source/Xcp_Std.c
+    source/Xcp_Cal.c
+    source/Xcp_Pag.c
+    source/Xcp_Daq.c)
 
 target_compile_definitions(Xcp
     PRIVATE XCP_DEV_ERROR_DETECT=$<IF:$<BOOL:${ENABLE_DET}>,STD_ON,STD_OFF>
@@ -41,7 +73,8 @@ target_compile_definitions(Xcp
     PUBLIC XCP_GET_VERSION_INFO_API=STD_ON # ECUC_Xcp_00283
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
-    PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>
+    PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>)
 
 target_include_directories(Xcp
     PUBLIC interface
@@ -57,11 +90,11 @@ if (${XCP_ENABLE_TEST})
 
     add_test(NAME Xcp_UnitTest
         COMMAND ${PYTHON_EXECUTABLE} -W ignore::DeprecationWarning
-        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v -x
+        -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v -x ${XCP_PYTEST_ARGS}
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h
-        --source ${PROJECT_SOURCE_DIR}/source/Xcp.c
+        --source "${PROJECT_SOURCE_DIR}/source/Xcp.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Std.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Cal.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Pag.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Daq.c"
         --compile_definitions $<JOIN:$<TARGET_PROPERTY:Xcp,COMPILE_DEFINITIONS>,$<SEMICOLON>>
         --include_directories $<JOIN:$<TARGET_PROPERTY:Xcp,INCLUDE_DIRECTORIES>,$<SEMICOLON>>
         --junitxml=./report/${PROJECT_NAME}.xml

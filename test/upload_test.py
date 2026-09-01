@@ -138,3 +138,45 @@ def test_upload_returns_err_out_of_range_if_slave_block_mode_is_enabled_and_payl
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+
+
+@pytest.mark.parametrize('ag, max_cto, data_elements', (('BYTE', 0x08, 0x03),
+                                                        ('BYTE', 0x08, 0x07),
+                                                        ('WORD', 0x08, 0x01),
+                                                        ('WORD', 0x08, 0x03),
+                                                        ('DWORD', 0x08, 0x01)))
+def test_upload_succeeds_with_slave_block_mode_disabled_and_payload_within_range(ag, max_cto, data_elements):
+    """XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.7: n is in [1..MAX_CTO/AG-1]."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   address_granularity=ag,
+                                   slave_block_mode=False,
+                                   max_cto=max_cto))
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_read_slave_memory_u8.reset_mock()
+    handle.xcp_read_slave_memory_u16.reset_mock()
+    handle.xcp_read_slave_memory_u32.reset_mock()
+
+    # UPLOAD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, data_elements)))
+    handle.lib.Xcp_MainFunction()
+
+    # Asserting the response PID alone would pass against the buffer CONNECT left behind, whose
+    # first byte is also 0xFF. Pin that a response was sent, that it is as long as the elements
+    # requested, and that the slave actually read each of them.
+    assert handle.can_if_transmit.call_count == 1
+
+    response = handle.can_if_transmit.call_args[0][1]
+    element_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[ag]
+    reads = (handle.xcp_read_slave_memory_u8.call_count +
+             handle.xcp_read_slave_memory_u16.call_count +
+             handle.xcp_read_slave_memory_u32.call_count)
+
+    assert response.SduDataPtr[0] == 0xFF
+    assert response.SduLength == 1 + (element_size - 1) + (data_elements * element_size)
+    assert reads == data_elements

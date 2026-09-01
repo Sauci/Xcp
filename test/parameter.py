@@ -64,6 +64,40 @@ def payload_to_array(payload, number_of_data_elements, element_size, byte_order)
                                        number_of_data_elements), payload)
 
 
+def page(init_segment=0,
+         ecu_access='DONT_CARE',
+         xcp_read_access='DONT_CARE',
+         xcp_write_access='DONT_CARE'):
+    return {"init_segment": init_segment,
+            "ecu_access": ecu_access,
+            "xcp_read_access": xcp_read_access,
+            "xcp_write_access": xcp_write_access}
+
+
+def address_mapping(source_address=0, destination_address=0, length=0):
+    return {"source_address": source_address,
+            "destination_address": destination_address,
+            "length": length}
+
+
+def segment(name='CAL_SEG',
+            address=0x00400000,
+            length=0x1000,
+            address_extension=0,
+            compression_method=0,
+            encryption_method=0,
+            pages=None,
+            address_mappings=None):
+    return {"name": name,
+            "address": address,
+            "length": length,
+            "address_extension": address_extension,
+            "compression_method": compression_method,
+            "encryption_method": encryption_method,
+            "pages": list(pages) if pages is not None else [page()],
+            "address_mappings": list(address_mappings) if address_mappings is not None else []}
+
+
 class DAQ(object):
     def __init__(self, name, type, max_odt, max_odt_entries, dtos):
         self._name = name
@@ -90,6 +124,8 @@ class DefaultConfig(dict):
                          }
                      ]
                  },),
+                 segments=(),
+                 freeze_supported=False,
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -124,6 +160,14 @@ class DefaultConfig(dict):
                  xcp_program_api_enable=True,
                  xcp_program_max_api_enable=True,
                  xcp_get_comm_mode_info_api_enable=True,
+                 xcp_download_next_api_enable=True,
+                 xcp_modify_bits_api_enable=True,
+                 xcp_get_pag_processor_info_api_enable=True,
+                 xcp_get_segment_info_api_enable=True,
+                 xcp_get_page_info_api_enable=True,
+                 xcp_set_segment_mode_api_enable=True,
+                 xcp_get_segment_mode_api_enable=True,
+                 xcp_copy_cal_page_api_enable=True,
                  resource_protection_calibration_paging=False,
                  resource_protection_data_acquisition=False,
                  resource_protection_data_stimulation=False,
@@ -155,6 +199,8 @@ class DefaultConfig(dict):
                     "channel_tx_pdu_ref": "XCP_PDU_ID_CTO_TX"
                 },
                 "daqs": list(daqs),
+                "segments": list(segments),
+                "paging": {"freeze_supported": freeze_supported},
                 "events": [
                     {
                         "consistency": "ODT",
@@ -209,6 +255,18 @@ class DefaultConfig(dict):
                     "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},
                     "xcp_get_comm_mode_info_api_enable": {"enabled": xcp_get_comm_mode_info_api_enable,
                                                           "protected": False},
+                    "xcp_download_next_api_enable": {"enabled": xcp_download_next_api_enable, "protected": False},
+                    "xcp_modify_bits_api_enable": {"enabled": xcp_modify_bits_api_enable, "protected": False},
+                    "xcp_get_pag_processor_info_api_enable": {"enabled": xcp_get_pag_processor_info_api_enable,
+                                                              "protected": False},
+                    "xcp_get_segment_info_api_enable": {"enabled": xcp_get_segment_info_api_enable,
+                                                        "protected": False},
+                    "xcp_get_page_info_api_enable": {"enabled": xcp_get_page_info_api_enable, "protected": False},
+                    "xcp_set_segment_mode_api_enable": {"enabled": xcp_set_segment_mode_api_enable,
+                                                        "protected": False},
+                    "xcp_get_segment_mode_api_enable": {"enabled": xcp_get_segment_mode_api_enable,
+                                                        "protected": False},
+                    "xcp_copy_cal_page_api_enable": {"enabled": xcp_copy_cal_page_api_enable, "protected": False},
                     "resource_protection": {
                         "calibration_paging": resource_protection_calibration_paging,
                         "data_acquisition": resource_protection_data_acquisition,
