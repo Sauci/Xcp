@@ -359,7 +359,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xDF */
     Xcp_CmdNotImplemented, /* 0xE0 */
     Xcp_CmdNotImplemented, /* 0xE1 */
-    Xcp_CmdNotImplemented, /* 0xE2 */
+    Xcp_DTOCmdDaqSetDaqPtr, /* SET_DAQ_PTR 0xE2 */
     Xcp_CmdNotImplemented, /* 0xE3 */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdPagCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
