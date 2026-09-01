@@ -4,8 +4,10 @@
 **Baseline:** branch `develop`, commit `7d52623`
 **Reference:** *XCP -Part 2- Protocol Layer Specification -1.1*, ASAM e.V.
 **Also normative:** *AUTOSAR Specification of CAN Interface*, CP Release 4.3.1 (document ID
-012), for everything in DD3, DD5 and DD13 that concerns how this module may call `CanIf`.
-Both are in `docs/external/`, which is gitignored.
+012), for everything in DD3, DD5 and DD13 that concerns how this module may call `CanIf`; and
+*AUTOSAR Specification of Module XCP*, CP Release 4.3.1 (document ID 412), for
+`Xcp_MainFunction` and the module's API surface. All are in `docs/external/`, which is
+gitignored.
 **Roadmap:** `2026-08-29-xcp-part2-roadmap.md`
 
 Implements the mandatory basic and static commands of the data acquisition group (§1.6.4),
@@ -76,8 +78,8 @@ cite. New DAQ comments are qualified `1.1/...`. See DD1.
 | §1.8.6 | `EV_DAQ_OVERLOAD` |
 
 Plus the DAQ configuration model, the sampling and transmission runtime, the
-`Xcp_TriggerEventChannel` public API, the exclusive area of DD5, the `DAQ_RUNNING` bit of
-§1.6.1.1.3 and the DAQ resource bit of §1.6.1.1.1.
+`Xcp_TriggerEventChannel` public API (a vendor extension — see DD15), the exclusive area of
+DD5, the `DAQ_RUNNING` bit of §1.6.1.1.3 and the DAQ resource bit of §1.6.1.1.1.
 
 **Out of scope, deferred to SP2b** — `WRITE_DAQ_MULTIPLE` (§1.6.4.1.2.1), `READ_DAQ`
 (§1.6.4.1.2.2), `GET_DAQ_CLOCK` (§1.6.4.1.2.3), `GET_DAQ_EVENT_INFO` (§1.6.4.1.2.7),
@@ -146,6 +148,19 @@ The integrator honours the promise by calling the trigger from a context running
 rate; the README documents the obligation. A trigger naming a channel at or above
 `maxEventChannel` raises a DET error and samples nothing.
 
+**AUTOSAR reaches the same conclusion from the other direction.** ECUC_Xcp_00014
+(`XcpMainFunctionPeriod`) states that the XCP module does not require the period — it exists
+so the BSW scheduler can plan its tasks. A module forbidden to depend on knowing its own
+period cannot convert a channel's sampling period into a count of main function invocations,
+so a main-function timer is not implementable within the standard, independently of whether
+the period happens to be stable.
+
+There is a genuine tension in AUTOSAR here worth naming, because it looks at first like a
+contradiction: ECUC_Xcp_00173 describes `XcpEventChannelTimeCycle` as the sampling period
+used to process the channel, while ECUC_Xcp_00014 withholds the one value that would be
+needed to act on it. The consistent reading — and the only implementable one — is that the
+time cycle describes the raster rather than commands it, which is what DD2 does.
+
 An earlier revision of this design had `Xcp_MainFunction` fire cyclic channels from a divider
 computed at generation time as `time_cycle × time_unit ÷ main_function_period`. It was
 withdrawn during review as unsound. Counting main function invocations measures elapsed time
@@ -175,11 +190,17 @@ breaks the chain — `CanIf_Transmit` refusing, after which nothing is in flight
 confirmation is coming, so something has to retry. That is not a new obligation; CTO responses
 and event packets already depend on the main function for exactly this.
 
-The contract the README states, and the reason a background task can honour it:
+SWS_Xcp_00824 requires `Xcp_MainFunction` to be called cyclically, and §8.5 of that
+specification has the BSW scheduler call it directly and requires it to be non reentrant.
+This design assumes both: it never expects two concurrent calls, and it does expect the call
+to recur. What it deliberately does *not* assume is any particular period, per ECUC_Xcp_00014.
 
-> Call `Xcp_MainFunction` cyclically. Its rate bounds how quickly the stack recovers after the
-> CAN interface refuses a transmission. It does not affect the DAQ measurement raster, which
-> the integrator sets through `Xcp_TriggerEventChannel`, and it does not affect throughput.
+The contract the README states:
+
+> Call `Xcp_MainFunction` cyclically, as SWS_Xcp_00824 requires. Its rate bounds how quickly
+> the stack recovers after the CAN interface refuses a transmission. It does not affect the
+> DAQ measurement raster, which the integrator sets through `Xcp_TriggerEventChannel`, and it
+> does not affect throughput.
 
 The rejected alternative was to leave the start to `Xcp_MainFunction` and let confirmations
 drain the ring afterwards. It keeps `CanIf_Transmit` out of the trigger's context, which
@@ -345,6 +366,23 @@ lock across arbitrary memory reads. Instead the sampler copies one ODT's entry d
 address, extension, length, bit offset — under the area, leaves it, and reads memory from the
 copies. A concurrently cleared entry then yields either a valid stale read or a length of
 zero, never a wild pointer. One acquisition per ODT, and a descriptor is a few bytes.
+
+**DD15 — `Xcp_TriggerEventChannel` is a vendor extension, and the specification leaves no
+alternative.** The API surface of SWS_Xcp R4.3.1 is `Xcp_Init`, `Xcp_GetVersionInfo`,
+`Xcp_SetTransmissionMode`, the three `Xcp_<Lo>` callbacks and `Xcp_MainFunction`. There is no
+standard service by which an integrator triggers a DAQ event channel, and the specification
+says nothing normative about how event channels are processed — it delegates the mechanics of
+§1.6.4 to the ASAM document.
+
+So an implementation has exactly two options: drive channels from `Xcp_MainFunction`, which
+DD2 shows the standard itself makes unimplementable, or add a service. This design adds one.
+It is marked in the README as a vendor extension rather than a standard service, alongside
+the extensions the module already carries — the JSON configuration, `Xcp_MemoryAccess.h`,
+`Xcp_Paging.h`, `Xcp_SeedKey.h` and the rest.
+
+The name follows the module's existing convention and the parameter is the
+`XcpEventChannelNumber` of ECUC_Xcp_00170, so a channel is triggered by the same number
+`GET_DAQ_EVENT_INFO` will report for it in SP2b.
 
 ## 4. Source layout
 
