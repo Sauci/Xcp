@@ -1221,7 +1221,10 @@ class TestDownloadNextErrorHandling:
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
         handle.can_if_transmit.reset_mock()
 
-        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x02, 0x11)))
+        # Two bytes: below the three DOWNLOAD_NEXT shares with DOWNLOAD. A three byte frame
+        # announcing more than it carries is a handler level error now, not a syntax one, and
+        # truncated_frame_test.py covers it.
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xEF, 0x02)))
         handle.lib.Xcp_MainFunction()
 
         assert handle.can_if_transmit.call_count == 1
