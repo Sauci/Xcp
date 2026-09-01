@@ -99,6 +99,23 @@ def test_clear_daq_list_rejects_an_unknown_list():
     assert response(handle, (0xE3, 0x00, 0x02, 0x00)) == (0xFE, 0x22)
 
 
+def test_clear_daq_list_updates_the_daq_running_session_status():
+    """1.1/1.6.1.1.3: "If at least one DAQ list has been started, the slave device is in data
+    transfer mode. The GET_STATUS command will return the DAQ_RUNNING status bit set." That bit
+    is a property of every list together (Xcp_DaqSessionStatusUpdate), not just the one being
+    cleared: CLEAR_DAQ_LIST resets the cleared list's own mode directly, so without also calling
+    that helper, clearing the only running list would leave DAQ_RUNNING set in session_status."""
+    handle = daq_handle()
+    fill(handle)
+    response(handle, (0xDE, 0x01, 0x00, 0x00))  # START_STOP_DAQ_LIST, start, DAQ_LIST_NUMBER=0
+
+    assert response(handle, (0xFD,))[1] & 0x40 != 0
+
+    response(handle, (0xE3, 0x00, 0x00, 0x00))
+
+    assert response(handle, (0xFD,))[1] & 0x40 == 0
+
+
 def test_xcp_init_clears_odt_entries_left_by_a_previous_session():
     """The generated ODT entry arrays are module-level mutable statics (script/source_cfg.c.jinja2
     emits them `static`) that Xcp_Init did not used to reset. Two consequences: a re-initialised

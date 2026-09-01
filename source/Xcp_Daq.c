@@ -83,6 +83,62 @@ static uint8 Xcp_OdtUsedBytes(uint16 daqListNumber, uint8 odtNumber, uint8 exclu
     return used;
 }
 
+/**
+ * @brief TRUE when at least one ODT entry of the list has been written.
+ * @details A list with no entry has nothing to sample, so starting or selecting it would put the
+ * slave into data transfer mode with no data to transfer.
+ */
+static boolean Xcp_DaqListIsConfigured(uint16 daqListNumber)
+{
+    boolean result = FALSE;
+    uint8_least odt_idx;
+    uint8_least entry_idx;
+
+    for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
+    {
+        for (entry_idx = 0x00u;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx++)
+        {
+            if (Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].odtEntry[entry_idx].length != 0x00u)
+            {
+                result = TRUE;
+            }
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief Recomputes the DAQ_RUNNING bit of the session status.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.3: the bit means "at least one
+ * DAQ list has been started and is in data transfer mode", so it is a property of every list
+ * together and is recomputed whenever one of them starts or stops.
+ */
+static void Xcp_DaqSessionStatusUpdate(void)
+{
+    uint16 idx;
+    boolean running = FALSE;
+
+    for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+    {
+        if ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+        {
+            running = TRUE;
+        }
+    }
+
+    if (running == TRUE)
+    {
+        Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_DAQ_RUNNING;
+    }
+    else
+    {
+        Xcp_Internal.session_status &= (uint8)(~XCP_SESSION_STATUS_MASK_DAQ_RUNNING);
+    }
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -272,6 +328,10 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
         Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
         Xcp_DaqListRt(daq_list_number)->priority = 0x00u;
 
+        /* The mode reset above may have just stopped the only list that was running, so
+         * DAQ_RUNNING (1.1/1.6.1.1.3) needs recomputing across every list, not just this one. */
+        Xcp_DaqSessionStatusUpdate();
+
         /* The pointer names an entry this command has just reset, so it no longer names
          * anything meaningful. */
         if ((Xcp_Internal.daq_pointer.valid == TRUE) &&
@@ -400,6 +460,67 @@ uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = Xcp_DaqListRt(daq_list_number)->priority;
 
         Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if (mode > XCP_DAQ_START_STOP_MODE_SELECT)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if ((mode != XCP_DAQ_START_STOP_MODE_STOP) &&
+             (Xcp_DaqListIsConfigured(daq_list_number) == FALSE))
+    {
+        error = XCP_E_ASAM_DAQ_CONFIG;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4 */
+        if (mode == XCP_DAQ_START_STOP_MODE_START)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
+            Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+        }
+        else if (mode == XCP_DAQ_START_STOP_MODE_SELECT)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_SELECTED;
+        }
+        else
+        {
+            Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_RUNNING);
+        }
+
+        Xcp_DaqSessionStatusUpdate();
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        /* 1.1/1.6.4.1.1.4: FIRST_PID may be ignored by a master using a relative identification
+         * field type, but the response format does not change, so it is always sent. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] =
+                Xcp_Ptr->config->daqList[daq_list_number].firstPid;
+
+        Xcp_FinalizeResPacket(0x02u, &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {
