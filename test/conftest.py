@@ -507,7 +507,10 @@ def _dto_queue_area_balance():
     and every XcpTest registers itself. SchM_Enter/Exit_Xcp_DtoQueue's side effects (XcpTest.__init__
     above) model the exclusive area as a boolean, so a violation here means a real nesting,
     ordering, or enter/exit imbalance was exercised by the test that just ran -- not merely that
-    the mocks were called an unexpected number of times.
+    the mocks were called an unexpected number of times. Fix round 2 adds the other half: a test
+    that leaves the area HELD at teardown (an Enter with no matching Exit -- a leaked lock, which
+    in a real integration means interrupts stay masked) is caught too, not just a double-enter or
+    an exit-without-enter.
 
     Raising this from inside SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue's own side effect would
     not work: those run as CFFI `extern "Python+C"` callbacks, and a callback that raises has the
@@ -522,8 +525,12 @@ def _dto_queue_area_balance():
     violations = [(instance, violation)
                   for instance in XcpTest._instances
                   for violation in instance.dto_queue_area_violations]
+    leaked = [instance for instance in XcpTest._instances if instance.dto_queue_area_held]
     XcpTest._instances = list()
 
     assert violations == [], \
         'SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue nesting or imbalance: {}'.format(
                 [v for _, v in violations])
+    assert leaked == [], \
+        'SchM_Enter_Xcp_DtoQueue left the area held at teardown -- a leaked lock -- in {} instance(s)'.format(
+                len(leaked))

@@ -112,11 +112,17 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
  * compacted, and stops copying -- defensively; the bound above says this cannot trigger -- once
  * XCP_MAX_DTO copies have been made. This is what keeps a function that may run in an interrupt
  * from putting up to 255 (a uint8 count) full entries, or roughly 1 KB, on its stack.
- * @note No test in this suite can observe whether the exclusion above actually holds:
- * SchM_Enter_Xcp_DtoQueue and SchM_Exit_Xcp_DtoQueue are no-op mocks in the CFFI harness
- * (test/conftest.py), by the same limitation Task 5 recorded for this area. Both sides taking the
- * same area is therefore justified by reading the code on both sides, not by a passing test --
- * see the Task 15 report, "Fix round 1", for what was and was not verified.
+ * @note The exclusive area is modelled in the CFFI harness (test/conftest.py): the
+ * SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue mocks track a boolean "held" state via a side
+ * effect, and an autouse fixture asserts, after every test in the suite, that the area was never
+ * double-entered, never exited without a matching enter, and never left held at teardown (a
+ * leaked lock). test/daq_concurrency_test.py::test_clear_daq_list_takes_the_exclusive_area
+ * asserts Xcp_DaqListClearEntries enters the area at all; its
+ * ::test_a_clear_arriving_between_two_entry_reads_does_not_corrupt_the_frame exercises DD14's
+ * guarantee directly by injecting a CLEAR_DAQ_LIST from inside the memory-read callback while
+ * this function's second (read) loop is already running, and checking that the resulting frame
+ * is unaffected. See the Task 15 report, "Fix round 1" and "Fix round 2", for what was verified
+ * and how.
  */
 static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListNumber, uint8 odtNumber)
 {
