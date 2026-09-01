@@ -530,3 +530,82 @@ uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    uint8 error = 0x00u;
+    uint16 idx;
+    boolean any_selected = FALSE;
+
+    *responseExpected = TRUE;
+
+    for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+    {
+        if ((Xcp_DaqListRt(idx)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u)
+        {
+            any_selected = TRUE;
+        }
+    }
+
+    if (mode > XCP_DAQ_SYNCH_MODE_STOP_SELECTED)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if ((mode == XCP_DAQ_SYNCH_MODE_START_SELECTED) && (any_selected == FALSE))
+    {
+        /* Starting the selected lists when none is selected starts nothing, which is a DAQ
+         * configuration the master did not intend. 1.7.3.2.4 lists ERR_DAQ_CONFIG here. */
+        error = XCP_E_ASAM_DAQ_CONFIG;
+    }
+    else
+    {
+        for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+        {
+            const boolean selected =
+                    (boolean)(((Xcp_DaqListRt(idx)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u)
+                              ? TRUE : FALSE);
+
+            /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.5 */
+            if (mode == XCP_DAQ_SYNCH_MODE_STOP_ALL)
+            {
+                Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_RUNNING);
+            }
+            else if (selected == TRUE)
+            {
+                if (mode == XCP_DAQ_SYNCH_MODE_START_SELECTED)
+                {
+                    Xcp_DaqListRt(idx)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
+                    Xcp_DaqListRt(idx)->prescalerCounter = 0x00u;
+                }
+                else
+                {
+                    Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_RUNNING);
+                }
+            }
+            else
+            {
+                /* Not selected, and the mode applies only to selected lists. */
+            }
+
+            /* "The slave device software has to reset the mode SELECTED of a DAQ list after
+             * successful execution of a START_STOP_SYNCH." All three modes are an execution. */
+            Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_SELECTED);
+        }
+
+        Xcp_DaqSessionStatusUpdate();
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
