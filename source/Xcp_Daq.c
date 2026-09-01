@@ -295,3 +295,76 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 prescaler = pPduInfo->SduDataPtr[0x06u];
+    const uint8 priority = pPduInfo->SduDataPtr[0x07u];
+    uint16 daq_list_number;
+    uint16 event_channel_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x04u], &event_channel_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((Xcp_DaqListRt(daq_list_number)->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+    {
+        error = XCP_E_ASAM_DAQ_ACTIVE;
+    }
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
+     * DIRECTION selects stimulation, TIMESTAMP a timestamped mode and PID_OFF a DTO without an
+     * identification field; 1.1 adds ALTERNATING. None is implemented, and 1.7.3.2.4 lists
+     * ERR_MODE_NOT_VALID for this command, which is precisely what an unsupported mode is. */
+    else if ((mode & XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED) != 0x00u)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if (event_channel_number >= Xcp_Ptr->general->maxEventChannel)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((prescaler == 0x00u) ||
+             ((prescaler > 0x01u) && (Xcp_Ptr->general->prescalerSupported == FALSE)))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    /* 1.1/1.6.4.1.1.3 names the code for this one outright: "If the ECU doesn't support the
+     * prioritization of DAQ lists, a DAQ list priority > 0 is not allowed and will be indicated
+     * by returning ERR_OUT_OF_RANGE." */
+    else if (priority != 0x00u)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else
+    {
+        Xcp_DaqListRt(daq_list_number)->eventChannelNumber = event_channel_number;
+        Xcp_DaqListRt(daq_list_number)->prescaler = prescaler;
+        Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+        Xcp_DaqListRt(daq_list_number)->priority = priority;
+
+        /* The stored mode uses the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6, which is not the
+         * layout this request arrives in. Nothing this phase accepts sets a flag, so there is
+         * nothing to translate -- but do not be tempted to assign `mode` here when TIMESTAMP or
+         * DIRECTION become supported: they sit at different bits in the two bytes. */
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
