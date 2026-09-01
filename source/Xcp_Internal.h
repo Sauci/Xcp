@@ -334,6 +334,14 @@ LOCAL_INLINE void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)
 extern Xcp_InternalType Xcp_Internal;
 extern const Xcp_Type *Xcp_Ptr;
 
+/**
+ * @brief Defined in Xcp.c. Only interface/Xcp.h's CFFI_ENABLE block declared this before now, so
+ * Xcp.c (which defines it) was the only translation unit that could reference it; a second one
+ * -- Xcp_DaqRuntime.c's Xcp_TriggerEventChannel -- now does too and needs it declared here, same
+ * as Xcp_Ptr immediately above.
+ */
+extern Xcp_StateType Xcp_State;
+
 /*------------------------------------------------------------------------------------------------*/
 /* global function declarations.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -375,6 +383,22 @@ void Xcp_ClearProtectionStatus(void);
  * callers of this function -- see test/stub/SchM_Xcp.h.
  */
 void Xcp_StartNextTransmission(void);
+
+/**
+ * @brief Hands back the PduIdType and PduInfoType of the frame at the head of the DTO ring.
+ * @retval E_NOT_OK the ring is empty; *pTxPduId and *ppPduInfo are not written.
+ * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive
+ * area (Xcp_TransmitOneFrame's selection, Xcp.c). *ppPduInfo points at storage the ring itself
+ * owns, valid only until the corresponding Xcp_DaqQueuePop.
+ */
+Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo);
+
+/**
+ * @brief Releases the frame at the head of the DTO ring after its transmission is confirmed.
+ * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive
+ * area (Xcp_CanIfTxConfirmation, Xcp.c). A no-op on an empty ring.
+ */
+void Xcp_DaqQueuePop(void);
 
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);

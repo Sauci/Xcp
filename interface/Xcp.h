@@ -150,6 +150,11 @@ extern "C" {
 #define XCP_MAIN_FUNCTION_API_ID (0x04u)
 
 /**
+ * @brief API id of Xcp_TriggerEventChannel, for development error reporting.
+ */
+#define XCP_TRIGGER_EVENT_CHANNEL_API_ID (0x06u)
+
+/**
  * @brief @ref Xcp_CanIfTxConfirmation API ID.
  */
 #define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
@@ -196,6 +201,11 @@ extern "C" {
  * @note This error is not part of the specification.
  */
 #define XCP_E_EVENT_QUEUE_FULL (0x04u)
+
+/**
+ * @brief The event channel number handed to Xcp_TriggerEventChannel does not exist.
+ */
+#define XCP_E_INVALID_EVENT_CHANNEL (0x05u)
 
 /** @} */
 
@@ -366,6 +376,30 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment);
  * @brief the main function for scheduling the CAN TP.
  */
 void Xcp_MainFunction(void);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+/**
+ * @brief Samples every running DAQ list bound to an event channel and queues the result.
+ *
+ * @details The integrator calls this from whatever context the event actually occurs in -- a
+ * periodic task, an interrupt, an end-of-conversion -- because that context is the "generic
+ * signal source that effectively determines the data transmission timing" of XCP part 2 -
+ * Protocol Layer Specification 1.1/1.6.4.1.1.3. The module holds no clock and will never trigger
+ * a channel on its own. The rate at which this is called should match the time cycle the
+ * configuration declares for the channel, because that is what the slave reports to the master.
+ *
+ * @note Not an AUTOSAR service. SWS_Xcp R4.3.1 defines no way to trigger a DAQ event channel, so
+ * this is a vendor extension of this module.
+ *
+ * @param [in] eventChannelNumber Index of the event channel, as configured. Out-of-range values
+ * raise XCP_E_INVALID_EVENT_CHANNEL and sample nothing.
+ */
+void Xcp_TriggerEventChannel(uint16 eventChannelNumber);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
