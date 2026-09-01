@@ -145,7 +145,7 @@ Event channels live under `events`:
 
 | field                                | meaning                                                                           |
 |:--------------------------------------|:------------------------------------------------------------------------------------|
-| ```events[].consistency```            | `DAQ`, `EVENT` or `ODT` consistency, reported to the master                        |
+| ```events[].consistency```            | `DAQ`, `EVENT` or `ODT` consistency; reported to the master by `GET_DAQ_EVENT_INFO`, not implemented in this phase, see Limitations |
 | ```events[].priority```               | the channel's own priority; carried through configuration but not consulted by any command implemented in this phase — not to be confused with a DAQ list's priority, set through `SET_DAQ_LIST_MODE` and limited to 0, see Limitations |
 | ```events[].time_cycle```             | the sampling period this channel promises; 0 means "not cyclic"                    |
 | ```events[].time_unit```              | the unit of `time_cycle`, one of the `TIMESTAMP_UNIT_*` values                     |
