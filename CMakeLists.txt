@@ -24,7 +24,7 @@ find_package(PythonInterp 3.6 REQUIRED)
 # supply the value instead.
 execute_process(
     COMMAND ${PYTHON_EXECUTABLE} -c
-        "import json,sys;c=json.load(open(sys.argv[1]));print('STD_ON' if any(x.get('segments') for x in c['configurations']) else 'STD_OFF')"
+        "import json,sys;c=json.load(open(sys.argv[1]));print('ON' if any(x.get('segments') for x in c['configurations']) else 'OFF')"
         ${XCP_CONFIG_FILEPATH}
     OUTPUT_VARIABLE XCP_PAGING_SUPPORTED_DERIVED
     OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -34,10 +34,13 @@ if(NOT XCP_PAGING_SUPPORTED_RESULT EQUAL 0)
     message(FATAL_ERROR "could not derive XCP_PAGING_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
 endif()
 
-# Not FORCE: the derived value is the default, and an explicit -DXCP_PAGING_SUPPORTED=... has to
-# survive the next configure for the help string's "override" to mean anything.
-set(XCP_PAGING_SUPPORTED ${XCP_PAGING_SUPPORTED_DERIVED} CACHE STRING
-    "STD_ON/STD_OFF: whether the calibration page switching callbacks are compiled in. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why.")
+# An option, like every other switch here, so that -DXCP_PAGING_SUPPORTED=ON does what a reader
+# of the others would expect. The AUTOSAR STD_ON/STD_OFF spelling is applied where the definition
+# reaches the compiler, as it is for ENABLE_DET. Not FORCE: an explicit -D has to survive the
+# next configure for the help string's "override" to mean anything.
+option(XCP_PAGING_SUPPORTED
+    "enables/disables the calibration page switching commands. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why."
+    ${XCP_PAGING_SUPPORTED_DERIVED})
 
 if (${ENABLE_DOC_GEN})
     find_package(Doxygen REQUIRED dot)
@@ -71,7 +74,7 @@ target_compile_definitions(Xcp
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
     PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>
-    PUBLIC XCP_PAGING_SUPPORTED=${XCP_PAGING_SUPPORTED})
+    PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>)
 
 target_include_directories(Xcp
     PUBLIC interface
