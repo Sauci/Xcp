@@ -288,7 +288,7 @@ Std_ReturnType Xcp_BlockTransferReadSlaveMemory(void);
 Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize);
 
 /**
- * @brief number of elements the next frame of a block transfer carries.
+ * @brief number of elements the current frame of a block transfer carries.
  * @details The count a master announces may span several frames; this is how many of them the
  * current one holds, which is what a handler must find in the received PDU before reading it.
  */

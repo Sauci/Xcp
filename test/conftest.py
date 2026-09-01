@@ -273,9 +273,9 @@ class XcpTest(object):
         # the separate configuration module it is not linked against (undefined symbol at import
         # time). Thread the same value through as a compile definition instead, derived from the
         # same configuration.segments the generated header keys off, and give it to every module:
-        # self.compile_definitions carries the CMake cache default, a fixed STD_OFF, which would
-        # otherwise suppress the generated header's own definition wherever it is not overridden.
-        # A later -D wins, so appending the derived value corrects it.
+        # self.compile_definitions carries whatever the CMake build derived, which is not
+        # necessarily what this configuration needs, and it would otherwise suppress the generated
+        # header's own definition. A later -D wins, so appending the derived value corrects it.
         paging_define = ('XCP_PAGING_SUPPORTED={}'.format(
                 'STD_ON' if any(c.get('segments') for c in config['configurations']) else 'STD_OFF'),)
         # The module under test is only coupled to a configuration through the generated

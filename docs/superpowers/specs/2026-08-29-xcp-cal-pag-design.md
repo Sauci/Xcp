@@ -3,9 +3,34 @@
 **Date:** 2026-08-29
 **Baseline:** branch `develop`, commit `b21724c`
 **Reference:** *XCP -Part 2- Protocol Layer Specification -1.0*, ASAM e.V., 2003-04-08.
-Section numbering is identical in 1.1, so every citation below is valid under both. Version 1.1
-is the reference for new work; the differences it makes to this sub-project are noted in DD5 and
-in §1.7.3.1, where 1.1 adds `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` (0x33).
+Version 1.1 is the reference for new work.
+
+Citations below use 1.0 numbering. It carries over to 1.1 for the CAL commands (§1.6.2.x),
+`CONNECT` (§1.6.1.1.1) and the error sections (§1.7.3.x), **but not for the PAG group**: 1.0
+splits it into §1.6.3.1 mandatory and §1.6.3.2 optional, while 1.1 merges both into a single
+§1.6.3.1 "Optional commands" and renumbers accordingly.
+
+| command | 1.0 | 1.1 |
+|:--|:--|:--|
+| `SET_CAL_PAGE` | §1.6.3.1.1 | §1.6.3.1.1 |
+| `GET_CAL_PAGE` | §1.6.3.1.2 | §1.6.3.1.2 |
+| `GET_PAG_PROCESSOR_INFO` | §1.6.3.2.1 | §1.6.3.1.3 |
+| `GET_SEGMENT_INFO` | §1.6.3.2.2 | §1.6.3.1.4 |
+| `GET_PAGE_INFO` | §1.6.3.2.3 | §1.6.3.1.5 |
+| `SET_SEGMENT_MODE` | §1.6.3.2.4 | §1.6.3.1.6 |
+| `GET_SEGMENT_MODE` | §1.6.3.2.5 | §1.6.3.1.7 |
+| `COPY_CAL_PAGE` | §1.6.3.2.6 | §1.6.3.1.8 |
+
+`SET_CAL_PAGE` and `GET_CAL_PAGE` are categorised mandatory in 1.0 and optional in 1.1. The
+§1.4 dependency rules survive the change unaltered -- "If SET_CAL_PAGE is implemented,
+GET_CAL_PAGE is required" and the same for `GET_SEED` and `UNLOCK` -- so `Xcp_Init`'s check is
+correct under both.
+
+The other difference 1.1 makes to this sub-project is in §1.7.3.1, which gains
+`ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` (0x33). See also DD5.
+
+The C sources are unaffected either way: every citation there is version-qualified as
+"XCP part 2 - Protocol Layer Specification 1.0/..."
 **Roadmap:** `2026-08-29-xcp-part2-roadmap.md`
 
 Completes the calibration command group (§1.6.2) and implements the page switching command
@@ -53,10 +78,10 @@ Three generic mechanisms are complete for these commands and must not be rebuilt
   raises itself do not consult it, so a handler may emit an error the matrix does not list.
 - **`Xcp_PIDToCmdGroupTable`** already maps 0xE4–0xF0 to
   `XCP_RESOURCE_PROTECTION_STATUS_MASK_CAL_PAG`, so seed-and-key protection works.
-- **`ctoInfo[]`** already carries a correct minimum request size for every command in this
-  sub-project. The one exception is `DOWNLOAD_MAX`, whose true minimum is `MAX_CTO` and
-  cannot be expressed in a four-bit field; its handler checks the length itself, as
-  `TRANSPORT_LAYER_CMD` already does.
+- **`ctoInfo[]`** already carries a minimum request size for every command in this
+  sub-project, with two exceptions. `DOWNLOAD_MAX`'s true minimum is `MAX_CTO` and cannot be
+  expressed in a four-bit field, so its handler checks the length itself, as
+  `TRANSPORT_LAYER_CMD` already does. `DOWNLOAD_NEXT`'s was simply wrong -- see DD7.
 
 Block transfer is likewise complete but unreachable. `Xcp_BlockTransferWriteSlaveMemory`
 writes one frame's worth of elements through `Xcp_WriteSlaveMemoryTable`, post-increments
@@ -81,14 +106,6 @@ page state — activating a page, reading back which page is active, and copying
 delegated to the integrator. This matches how seed-and-key, memory access, checksum and
 user commands already work, and it keeps spec-conformant error codes out of integrator
 code.
-
-**DD6 — The test harness compiles real translation units.** After the split, `CMakeLists.txt`
-builds five translation units. The harness compiles the same five separately rather than
-`#include`-ing them into one, so the suite exercises the linkage the shipped library
-actually uses: a helper left `static` in one unit but called from another fails the tests
-instead of passing them and failing the library build. Per-file coverage falls out of this
-for free. Nothing is lost, because the harness never depended on single-unit symbol
-visibility — see §4.2.
 
 **DD3 — `DOWNLOAD_MAX` and `SHORT_DOWNLOAD` inside a block transfer return
 `ERR_SEQUENCE`.** §1.6.2.2.2 and §1.6.2.2.3 state both "mustn't be used within a block
@@ -119,6 +136,14 @@ all five is therefore a conservative choice under 1.1 rather than a mandate -- n
 command the slave will not answer -- not a rule the newer specification imposes. The shipped
 configuration enables all five, so the bit is set either way. An integrator running at
 `MAX_CTO = 8` simply finds the command accepts no payload, which the specification anticipates.
+
+**DD6 — The test harness compiles real translation units.** After the split, `CMakeLists.txt`
+builds five translation units. The harness compiles the same five separately rather than
+`#include`-ing them into one, so the suite exercises the linkage the shipped library
+actually uses: a helper left `static` in one unit but called from another fails the tests
+instead of passing them and failing the library build. Per-file coverage falls out of this
+for free. Nothing is lost, because the harness never depended on single-unit symbol
+visibility — see §4.2.
 
 **DD7 — `DOWNLOAD_NEXT` shares `DOWNLOAD`'s minimum request size.** Its `ctoInfo` minimum was
 `0x04` against `DOWNLOAD`'s `0x03`. §1.6.2.2.1 states it outright: "The DOWNLOAD_NEXT command

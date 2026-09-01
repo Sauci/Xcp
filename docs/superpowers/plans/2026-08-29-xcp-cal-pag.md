@@ -1236,7 +1236,7 @@ git commit -m "feat: implement DOWNLOAD_MAX"
 
 ## Task 9: SHORT_DOWNLOAD
 
-Carries its own address and extension, writes the block, and leaves the MTA pointing at the first element past it. Capacity is `(MAX_CTO-8)/AG`, which is **zero** on XCP-on-CAN — §1.6.2.2.3 says so outright, so the command is implemented but ships disabled (design decision DD5, applied in Task 11's default configuration).
+Carries its own address and extension, writes the block, and leaves the MTA pointing at the first element past it. Capacity is `(MAX_CTO-8)/AG`, which is **zero** on XCP-on-CAN — §1.6.2.2.3 says so outright, so the command is implemented but transfers nothing at that MAX_CTO. It ships ENABLED: see DD5, which was revised once the command existed, because disabling it also cleared CONNECT's CAL/PAG resource bit.
 
 **Files:**
 - Modify: `source/Xcp_Cal.c`, `source/Xcp_Internal.h`, `source/Xcp.c` (`Xcp_PIDTable` entry `0xED`)
@@ -1950,7 +1950,7 @@ Add `segments=(), freeze_supported=False` to the `DefaultConfig.__init__` signat
 
 - [ ] **Step 7: Update the shipped configuration**
 
-In `config/xcp.json`, add after the `daqs` array, applying design decision DD5 by leaving `SHORT_DOWNLOAD` off:
+In `config/xcp.json`, add after the `daqs` array. Note that DD5 was later revised: `SHORT_DOWNLOAD` ships enabled, not off.
 
 ```json
       "segments": [
@@ -3674,7 +3674,7 @@ In `README.md`:
 - Add a **Calibration and page switching** section documenting the `segments` array and the `paging` object of the configuration file, the three `Xcp_Paging.h` callbacks, and `Xcp_GetSegmentFreezeState` with the note that an integrator's `Xcp_StoreCalibrationDataToNonVolatileMemory` should query it per segment.
 - Record the two resolved specification divergences: `GET_PAGE_INFO` returns `ERR_SEGMENT_NOT_VALID`/`ERR_PAGE_NOT_VALID` per §1.7.3.2.3 rather than the `ERR_OUT_OF_RANGE` of the §1.6.3.2.3 prose; `COPY_CAL_PAGE` returns `ERR_WRITE_PROTECTED` per the §1.6.3.2.6 prose although §1.7.3.2.3 omits it.
 - Record that `DOWNLOAD_MAX` and `SHORT_DOWNLOAD` return `ERR_SEQUENCE` when they arrive inside a block transfer, a case for which the specification prescribes no code.
-- Note under **Limitations** that `SHORT_DOWNLOAD` carries no data when `MAX_CTO = 8`, per §1.6.2.2.3, and ships disabled.
+- Note under **Limitations** that `SHORT_DOWNLOAD` carries no data when `MAX_CTO = 8`, per §1.6.2.2.3. It ships enabled; see the revised DD5.
 - Note that `DOWNLOAD` block transfer follows `MASTER_BLOCK_MODE` and `MAX_BS`, while `UPLOAD` follows `SLAVE_BLOCK_MODE`.
 - Remove from the **TODO** list any item this work closes.
 
