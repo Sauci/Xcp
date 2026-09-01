@@ -72,9 +72,9 @@ cite. New DAQ comments are qualified `1.1/...`. See DD1.
 | §1.7.3.2.4 | the DAQ error matrix rows for the nine commands |
 | §1.8.6 | `EV_DAQ_OVERLOAD` |
 
-Plus the DAQ configuration model, the sampling and transmission runtime, event channel
-scheduling, the `Xcp_TriggerEventChannel` public API, the `DAQ_RUNNING` bit of §1.6.1.1.3
-and the DAQ resource bit of §1.6.1.1.1.
+Plus the DAQ configuration model, the sampling and transmission runtime, the
+`Xcp_TriggerEventChannel` public API, the exclusive area of DD5, the `DAQ_RUNNING` bit of
+§1.6.1.1.3 and the DAQ resource bit of §1.6.1.1.1.
 
 **Out of scope, deferred to SP2b** — `WRITE_DAQ_MULTIPLE` (§1.6.4.1.2.1), `READ_DAQ`
 (§1.6.4.1.2.2), `GET_DAQ_CLOCK` (§1.6.4.1.2.3), `GET_DAQ_EVENT_INFO` (§1.6.4.1.2.7),
@@ -127,26 +127,52 @@ recorded in commit `dfedf30`. Instead each comment states the revision it was wr
 against, so a reader always knows which document to open. New DAQ comments read
 `XCP part 2 - Protocol Layer Specification 1.1/1.6.4...`.
 
-**DD2 — The event channel timer divider is computed at generation time.** Deciding whether a
-channel is due needs `time_cycle × time_unit ÷ main_function_period`. Evaluating that at
-runtime would put floating point into a BSW main function. The generator computes an integer
-`mainFunctionCycles` per channel instead, and the runtime compares a `uint16` counter against
-it. Generation fails if the quotient rounds to zero — a channel that must fire faster than
-the main function runs is a configuration error, not something to round up silently.
-`time_cycle = 0` is *not* an error: §1.6.4.1.2.7 defines it as "not cyclic", so it yields a
-divider of 0, meaning the channel is reachable only through `Xcp_TriggerEventChannel`.
+**DD2 — The module keeps no clock; the integrator triggers every event channel.** The only
+way a channel fires is the new public `Xcp_TriggerEventChannel(uint16 eventChannelNumber)`.
+Phase 1 contains no timekeeping of any kind.
 
-**DD3 — Both a timer and an explicit trigger API.** `Xcp_MainFunction` fires cyclic channels
-from their divider; the new public `Xcp_TriggerEventChannel(uint16 eventChannelNumber)` fires
-any channel from wherever the event actually occurs. Both call one internal sampler, so there
-is a single sampling path to test. The API is what makes `time_cycle = 0` channels usable and
-what allows sampling from a task or ISR at the instant the data is valid — the timer alone
-bounds every sampling instant by the main function period.
+§1.6.4.1.1.3 defines an event channel as "the generic signal source that effectively
+determines the data transmission timing". That source is a 10 ms task, a crank-angle
+interrupt, an end-of-conversion — something only the integrator can identify. §1.1.4.1 calls
+what this group performs *synchronous* data acquisition, and data is synchronous with its
+source or with nothing.
 
-**DD4 — Sample into a queue of complete frames; transmit from `Xcp_MainFunction`.** At the
-event instant every RUNNING DAQ list on the channel is sampled and each of its ODTs is
-assembled into a finished DTO frame, which is pushed whole into a ring buffer.
-`Xcp_MainFunction` drains the ring.
+`time_cycle` and `time_unit` therefore describe a raster the slave *promises*, reported to
+the master through `GET_DAQ_EVENT_INFO` in SP2b. They are not a schedule the module executes.
+The integrator honours the promise by calling the trigger from a context running at that
+rate; the README documents the obligation. A trigger naming a channel at or above
+`maxEventChannel` raises a DET error and samples nothing.
+
+An earlier revision of this design had `Xcp_MainFunction` fire cyclic channels from a divider
+computed at generation time as `time_cycle × time_unit ÷ main_function_period`. It was
+withdrawn during review as unsound. Counting main function invocations measures elapsed time
+only if the period is constant, and an integrator calling `Xcp_MainFunction` from a
+background task has no constant period — under load the count measures scheduler pressure. It
+also capped every sampling raster at the main function's own rate, which is precisely
+backwards for a slave whose fastest signals are the ones worth measuring. Nothing survives of
+it: no `mainFunctionCycles`, no `main_function_period` configuration key, no
+"channel faster than the main function" validation, and no special case for
+`time_cycle = 0`, which §1.6.4.1.2.7 defines as "not cyclic" and which is now simply one more
+channel the integrator triggers when it has reason to.
+
+**DD3 — Transmission is paced by confirmations, not by the main function.**
+`Xcp_CanIfTxConfirmation` starts the next queued transmission instead of merely clearing
+state, so the DTO stream is bounded by CAN bandwidth rather than by how often the integrator's
+background task runs. `Xcp_MainFunction` starts a transmission only when the module is idle —
+after a `CanIf_Transmit` refusal, or when the first frame of a burst arrives with nothing in
+flight.
+
+Arbitration therefore moves out of `Xcp_MainFunction` into one internal
+`Xcp_StartNextTransmission`, called from both contexts, so there is a single place that
+decides what goes out next.
+
+This also fixes D16: today the confirmation only clears flags, so a CTO block transfer and the
+event queue each advance by one frame per main function call for the same reason DAQ would
+have.
+
+**DD4 — Sample into a queue of complete frames.** At the event instant every RUNNING DAQ list
+on the channel is sampled and each of its ODTs is assembled into a finished DTO frame, which
+is pushed whole into a ring buffer. DD3 governs how the ring is drained.
 
 The alternative — enqueueing ODT references and reading memory when the frame reaches CanIf —
 costs two bytes per entry instead of `MAX_DTO + 3`, but the values would then reflect
@@ -157,17 +183,31 @@ synchronous with anything. Rejected as a correctness defect.
 Sampling and transmitting inline with no queue was also rejected: CanIf accepts one frame at
 a time, so a three-ODT list would lose two frames of every three.
 
-**DD5 — One outstanding DAQ frame, one `CanIf_Transmit` attempt per main function call.**
-This matches the CTO and event paths exactly and needs no new confirmation bookkeeping. It
-caps DTO throughput at one frame per main function period. That is the normal AUTOSAR
-arrangement — events fire from the integrator's task at 10 ms while the main function drains
-at 1 ms, and the ring absorbs the burst — but it *is* a ceiling, and it is documented in the
-README rather than left for an integrator to discover.
+**DD5 — One exclusive area protects the transmit state.** DD2 and DD3 put three contexts on
+the same data: `Xcp_TriggerEventChannel` produces frames from a task or an ISR,
+`Xcp_CanIfTxConfirmation` consumes them from CanIf's context, and `Xcp_MainFunction` also
+consumes. The DTO ring indices and `Xcp_Internal.ongoing_transmit_type` are therefore guarded
+by an AUTOSAR exclusive area, entered and left around `Xcp_StartNextTransmission` and around
+each ring operation:
 
-The alternative, looping until `CanIf_Transmit` refuses, breaks the single-outstanding
-invariant the whole confirmation path is built on: it needs separate sent and confirmed
-indices in the ring and a per-PDU outstanding count. That is a self-contained SP2b change,
-not a phase 1 one.
+```c
+SchM_Enter_Xcp_DtoQueue();
+...
+SchM_Exit_Xcp_DtoQueue();
+```
+
+`test/stub/SchM_Xcp.h` provides the stub. It counts entries and exits so a test can assert
+that every path leaves the area it entered, including the error paths.
+
+The scope is deliberately narrow: the transmit arbitration state and the DTO ring, nothing
+else. The README's standing TODO — "protect variables used in both synchronous and
+asynchronous APIs" — remains open for the rest of the module. This sub-project closes it only
+where it introduces a second context, rather than opening a module-wide concurrency audit
+inside a DAQ sub-project.
+
+Still single-outstanding: exactly one frame is in flight at a time, because `CanIf_Transmit`
+on a busy PDU refuses anyway. Several outstanding frames across distinct PDUs would need
+separate sent and confirmed indices, and that stays in SP2b.
 
 **DD6 — Overload drops the frame and reports it once per trigger.** When the ring is full the
 frame is discarded. With `overload_indication = EVENT` the slave pushes `EV_DAQ_OVERLOAD`
@@ -220,15 +260,16 @@ because the generator must now emit it (D13).
 
 **DD12 — The runtime lives in its own translation unit.** `source/Xcp_Daq.c` holds the nine
 command handlers, following the one-file-per-command-group layout DD1 of SP1 established.
-Sampling, frame assembly, the ring buffer and event scheduling go in a new
-`source/Xcp_DaqRuntime.c`. It is a different responsibility from answering commands, it is
+Sampling, frame assembly and the ring buffer go in a new `source/Xcp_DaqRuntime.c`;
+`Xcp_StartNextTransmission` stays in `Xcp.c`, since it arbitrates between all three packet
+kinds and only one of them is DAQ. It is a different responsibility from answering commands, it is
 what the runtime tests drive directly, and folding it into `Xcp_Daq.c` would produce the
 largest file in the repository.
 
 ## 4. Source layout
 
 ```
-source/Xcp.c            generic engine, dispatch tables, Xcp_MainFunction arbitration
+source/Xcp.c            generic engine, dispatch tables, Xcp_StartNextTransmission
 source/Xcp_Std.c        STD command group
 source/Xcp_Cal.c        CAL command group
 source/Xcp_Pag.c        PAG command group
@@ -241,6 +282,9 @@ source/Xcp_Internal.h   shared declarations
 preserving DD6 of SP1: the suite exercises the linkage the shipped library uses, so a helper
 left `static` in one unit but called from another fails the tests rather than the build.
 
+One new integrator header, `test/stub/SchM_Xcp.h`, provides the exclusive area of DD5,
+joining `CanIf.h`, `Det.h` and the four `Xcp_*` callback headers already stubbed there.
+
 ## 5. Configuration model
 
 ### 5.1 Schema — new `protocol_layer` keys
@@ -248,13 +292,14 @@ left `static` in one unit but called from another fails the tests rather than th
 | key | type | default | purpose |
 |:--|:--|:--|:--|
 | `identification_field_type` | enum | `ABSOLUTE` | §1.1.2.1 field type; `ABSOLUTE`, `RELATIVE_BYTE`, `RELATIVE_WORD`, `RELATIVE_WORD_ALIGNED` |
-| `main_function_period` | number | — | seconds; the period `Xcp_MainFunction` is called at |
 | `daq_queue_size` | integer | 16 | DTO ring depth, mirroring `cto_queue_size` and `event_queue_size` |
 | `prescaler_supported` | boolean | `true` | `PRESCALER_SUPPORTED` in `DAQ_PROPERTIES` |
 | `overload_indication` | enum | `EVENT` | `EVENT` or `NONE`; see DD6 |
 
-`main_function_period` is required. `Xcp_GeneralType.mainFunctionPeriod` exists today but the
-template hard-codes it to `1000000`, which is not a period in any unit.
+There is deliberately no `main_function_period` key. DD2 removed the only thing that would
+have read it. `Xcp_GeneralType.mainFunctionPeriod` keeps its hard-coded `1000000`, which is
+not a period in any unit — it is the AUTOSAR `XcpMainFunctionPeriod` parameter, unread by
+this module today, and correcting it belongs to whichever sub-project first needs it.
 
 ### 5.2 Derived, no longer hard-coded
 
@@ -263,7 +308,6 @@ template hard-codes it to `1000000`, which is not a period in any unit.
 | field | today | becomes |
 |:--|:--|:--|
 | `identificationFieldType` | `ABSOLUTE` | from `protocol_layer.identification_field_type` |
-| `mainFunctionPeriod` | `1000000` | from `protocol_layer.main_function_period` |
 | `prescalerSupported` | `FALSE` | from `protocol_layer.prescaler_supported` |
 | `daqConfigType` | `DAQ_STATIC` | `DAQ_STATIC` — correct in phase 1, derived in SP2c |
 | `minDaq` | `0x00u` | `0x00u` — no predefined lists in phase 1 |
@@ -286,17 +330,17 @@ reserving 0x100 bytes per entry the way the CTO buffers do.
 
 `config->eventChannel` generates as `NULL_PTR` today; the `events` array is parsed and
 discarded. The generator now emits `Xcp_EventChannelType[]` with `number`, `consistency`,
-`priority`, `timeCycle`, `timeUnit`, `type`, the resolved `triggeredDaqListRef` and the
-derived `mainFunctionCycles` of DD2.
+`priority`, `timeCycle`, `timeUnit`, `type` and the resolved `triggeredDaqListRef`.
+`timeCycle` and `timeUnit` are carried for `GET_DAQ_EVENT_INFO` in SP2b; per DD2 nothing in
+phase 1 acts on them.
 
 ### 5.4 Type changes in `Xcp_Types.h`
 
 - `Xcp_OdtEntryType` gains `uint8 addressExtension`. `WRITE_DAQ` carries one at byte 3 and
   the structure has nowhere to put it, so sampling could not honour it.
 - `Xcp_DaqListType` gains `const uint8 firstPid` (DD7).
-- `Xcp_EventChannelType` gains `const uint16 mainFunctionCycles`, and
-  `triggeredDaqListRef` changes from `const Xcp_DaqListType *` to an array of pointers
-  (D13).
+- `Xcp_EventChannelType.triggeredDaqListRef` changes from `const Xcp_DaqListType *` to an
+  array of pointers (D13).
 - New `Xcp_DaqListRtType` and `Xcp_DtoQueueType`, both reached through `Xcp_RtType`
   exactly as `Xcp_SegmentRtType` is, and generated per configuration by
   `source_rt.c.jinja2`.
@@ -326,8 +370,9 @@ struct {
 
 ### 6.1 Sampling
 
-`Xcp_DaqSampleEventChannel(uint16 eventChannelNumber)` is the only sampling entry point. Both
-the `Xcp_MainFunction` timer and `Xcp_TriggerEventChannel` call it.
+`Xcp_TriggerEventChannel(uint16 eventChannelNumber)` is the only sampling entry point, and
+per DD2 the integrator is the only caller. A channel number at or above `maxEventChannel`
+raises `XCP_E_INVALID_EVENT_CHANNEL` through `Xcp_ReportError` and samples nothing.
 
 For each DAQ list whose runtime mode has `RUNNING` set and whose `eventChannelNumber` matches:
 
@@ -354,17 +399,26 @@ The WORD forms are written through the existing `Xcp_CopyFromU16WithOrder`, so
 
 ### 6.3 Transmission
 
-`ongoing_transmit_type` gains `ONGOING_TRANSMIT_TYPE_DAQ`. `Xcp_MainFunction` arbitrates in
-this order, one `CanIf_Transmit` attempt per call:
+`ongoing_transmit_type` gains `ONGOING_TRANSMIT_TYPE_DAQ`. Arbitration moves into one
+internal function, `Xcp_StartNextTransmission`, which under the exclusive area of DD5 picks,
+in order:
 
 1. a pending CTO response
 2. a queued event packet
 3. the oldest queued DAQ frame
 
-CTO first means a command response can never be starved by measurement traffic, which
-matters because the master's t1 timer is running. `Xcp_CanIfTxConfirmation` pops the ring on
-success, as it already clears the CTO and event flags. See DD5 for the throughput ceiling
-this ordering and the single-outstanding invariant impose.
+CTO first means a command response can never be starved by measurement traffic, which matters
+because the master's t1 timer is running.
+
+Two contexts call it. `Xcp_CanIfTxConfirmation` calls it after clearing the completed
+transfer, which is what paces the stream by CAN bandwidth rather than by the main function
+(DD3). `Xcp_MainFunction` calls it when `ongoing_transmit_type` is `NONE`, which restarts the
+chain after a `CanIf_Transmit` refusal and starts it when the first frame of a burst arrives
+with nothing in flight.
+
+Note that the confirmation's existing CTO branch already has work to do before arbitrating —
+a block transfer continues by refilling the response buffer — so `Xcp_StartNextTransmission`
+is called after that branch completes, not instead of it.
 
 `Xcp_CanIfTriggerTransmit` is left as it is. The DAQ path uses `CanIf_Transmit` like every
 other path in the module; serving trigger-transmit CanIf configurations is a separate
@@ -533,9 +587,17 @@ status as "at least one DAQ list has been started and is in data transfer mode".
 unmodified. A `XCP_SESSION_STATUS_MASK_DAQ_RUNNING` joins the existing masks and is
 maintained by the start and stop paths.
 
+**D16 — `Xcp_CanIfTxConfirmation` never starts the next transmission.** It clears the pending
+flag and returns, so anything queued waits for the next `Xcp_MainFunction`. A `UPLOAD` block
+transfer refills its response buffer in the confirmation but still does not transmit it, and
+the event queue behaves the same way. Every multi-frame exchange in the module therefore
+advances at the rate the integrator happens to call the main function, which for a background
+task is not a rate at all. DD3 fixes this for all three paths at once by having the
+confirmation call `Xcp_StartNextTransmission`.
+
 ## 9. Generator and schema changes
 
-- `config/xcp.schema.json`: the five new `protocol_layer` keys of §5.1.
+- `config/xcp.schema.json`: the four new `protocol_layer` keys of §5.1.
 - `script/source_cfg.c.jinja2`: the derived values of §5.2, the event channel array of §5.3,
   `firstPid` per DAQ list, and the `addressExtension` initialiser on every ODT entry.
 - `script/header_cfg.h.jinja2`: the `XCP_MAX_DTO` macro.
@@ -543,9 +605,9 @@ maintained by the start and stop paths.
   ring per configuration, alongside the existing event queue and segment runtime.
 - `config/xcp.json`: the new keys, and the `dtos[].pid` correction of D12.
 
-Generation-time validation added: the `FIRST_PID` uniqueness and 0xFB bound of DD7, the
-non-zero event channel divider of DD2, and `max_odt_entries × MAX_ODT_ENTRY_SIZE_DAQ`
-against what an ODT can actually carry.
+Generation-time validation added: the `FIRST_PID` uniqueness and 0xFB bound of DD7, and
+`max_odt_entries × MAX_ODT_ENTRY_SIZE_DAQ` against what an ODT can actually carry. Every
+`events[].triggered_daq_list_ref` name must resolve to a declared DAQ list.
 
 ## 10. Test strategy
 
@@ -563,12 +625,19 @@ on the established naming convention:
 | `clear_daq_list_test.py` | §7.7 |
 | `get_daq_processor_info_test.py` | §7.8 |
 | `get_daq_resolution_info_test.py` | §7.9 |
-| `daq_runtime_test.py` | sampling, prescaler division, ring overflow and `EV_DAQ_OVERLOAD`, main function arbitration, `Xcp_TriggerEventChannel` |
+| `daq_runtime_test.py` | sampling, prescaler division, ring overflow and `EV_DAQ_OVERLOAD`, `Xcp_TriggerEventChannel` including the unknown-channel DET error |
+| `daq_transmission_test.py` | arbitration order, the confirmation-driven chain of DD3 with `Xcp_MainFunction` never called, restart after a `CanIf_Transmit` refusal, and exclusive-area balance |
 | `daq_identification_field_test.py` | all four field types against both byte orders |
+
+The chain of DD3 is what makes an aperiodic main function survivable, so
+`daq_transmission_test.py` drives it the way the integration does: enqueue a burst, call
+`Xcp_MainFunction` exactly once, then feed confirmations and assert every frame still goes
+out. Exclusive-area balance is asserted from the counters in `test/stub/SchM_Xcp.h`.
 
 Existing files that change: `asam_error_matrix_test.py` gains rows for the nine commands and
 loses the `ERR_DAQ_ACTIVE` expectation on `CLEAR_DAQ_LIST` (D10); `connect_test.py` gains the
 narrowed resource condition (D14); `get_status_test.py` gains `DAQ_RUNNING` (D15);
+`upload_test.py` gains the block transfer continuing on confirmation alone (D16);
 `conftest.py`'s `DefaultConfig` gains the new keys and the harness compiles six units.
 
 ## 11. Acceptance
@@ -578,7 +647,11 @@ narrowed resource condition (D14); `get_status_test.py` gains `DAQ_RUNNING` (D15
   an event channel with `SET_DAQ_LIST_MODE`, start it, and receive DTO frames whose contents
   match the sampled memory, under all four identification field types.
 - `CONNECT` reports the DAQ resource, `GET_STATUS` reports `DAQ_RUNNING`.
+- Frames keep flowing when `Xcp_MainFunction` is not called at all between a
+  `CanIf_Transmit` and its confirmation, which is the property DD3 exists for and the one an
+  aperiodic main function would otherwise break.
+- Every path into and out of the exclusive area is balanced, error paths included.
 - Generation fails, with a message naming the offending configuration, on overlapping
-  absolute ODT numbers, on a `FIRST_PID` above 0xFB, and on an event channel faster than the
-  main function.
+  absolute ODT numbers, on a `FIRST_PID` above 0xFB, and on an unresolvable
+  `triggered_daq_list_ref`.
 - The existing suite passes unchanged.
