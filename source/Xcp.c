@@ -1233,9 +1233,21 @@ void Xcp_MainFunction(void)
     {
         if (Xcp_StoreCalibrationDataToNonVolatileMemory(&store_calibration_status) == E_OK)
         {
+            Std_ReturnType push_result;
+
             Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_STORE_CAL_REQ;
 
-            if (Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, &store_calibration_status, 0x00000001u) == E_OK)
+            /* Fix round 2: this push and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are now two
+             * producers into the same event queue, reachable from different contexts, while
+             * Xcp_TransmitOneFrame reads read/write under this area to select what to send next.
+             * Only the push itself goes inside -- Xcp_StoreCalibrationDataToNonVolatileMemory
+             * above and Xcp_ReportError below are both external calls and must not extend the
+             * section. */
+            SchM_Enter_Xcp_DtoQueue();
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, &store_calibration_status, 0x00000001u);
+            SchM_Exit_Xcp_DtoQueue();
+
+            if (push_result == E_OK)
             {
                 Xcp_Internal.event.successful_transmission_pending = TRUE;
             }
@@ -1478,9 +1490,14 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
                 if (result == E_OK)
                 {
+                    /* Fix round 2: only the pop and the flag it gates go inside -- same reasoning
+                     * as the push in Xcp_MainFunction above; no external call sits in this branch
+                     * to keep out. */
+                    SchM_Enter_Xcp_DtoQueue();
                     if (Xcp_EventQueuePop(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue) == E_OK) {
                         Xcp_Internal.event.successful_transmission_pending = FALSE;
                     }
+                    SchM_Exit_Xcp_DtoQueue();
                 }
 
                 break;
