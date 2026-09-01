@@ -364,6 +364,14 @@ uint8 Xcp_GetProtectionStatus(void);
 void Xcp_SetProtectionStatus(void);
 void Xcp_ClearProtectionStatus(void);
 
+/**
+ * @brief Hands CanIf the next packet awaiting transmission, if the module is idle.
+ * @details Safe from any context and at any time; a call arriving while another is inside
+ * CanIf_Transmit records the wish and returns, and the outer call carries it out before
+ * returning. Callers therefore never need to know whether a transmission is already running.
+ */
+void Xcp_StartNextTransmission(void);
+
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);
 

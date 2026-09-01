@@ -6,6 +6,7 @@ import pytest_cases
 
 from .parameter import *
 from .conftest import XcpTest
+from .download_test import connect
 
 
 @pytest_cases.fixture()
@@ -180,3 +181,18 @@ def test_upload_succeeds_with_slave_block_mode_disabled_and_payload_within_range
     assert response.SduDataPtr[0] == 0xFF
     assert response.SduLength == 1 + (element_size - 1) + (data_elements * element_size)
     assert reads == data_elements
+
+
+def test_upload_block_transfer_completes_without_further_main_function_calls():
+    """D16. Before the confirmation chained, this needed one Xcp_MainFunction per frame."""
+    handle = XcpTest(DefaultConfig(max_cto=8, slave_block_mode=True))
+    connect(handle)
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, 20)))
+    handle.lib.Xcp_MainFunction()
+
+    for _ in range(2):
+        handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert handle.can_if_transmit.call_count == 3

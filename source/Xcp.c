@@ -110,6 +110,14 @@ static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue);
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static void Xcp_TransmitOneFrame(void);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -991,6 +999,22 @@ const Xcp_Type *Xcp_Ptr = NULL_PTR;
 #define Xcp_STOP_SEC_VAR_FAST_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
+#define Xcp_START_SEC_VAR_FAST_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+/**
+ * @brief TRUE while a call to Xcp_StartNextTransmission is inside CanIf_Transmit.
+ */
+static boolean Xcp_TransmitInProgress = FALSE;
+
+/**
+ * @brief TRUE when a call arrived while another was in progress and found work to do.
+ */
+static boolean Xcp_TransmitRestartWanted = FALSE;
+
+#define Xcp_STOP_SEC_VAR_FAST_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
@@ -1200,8 +1224,6 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     uint8 store_calibration_status;
-    uint8 event_packet_id;
-    uint8 event_code;
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
      * The STORE_CAL_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
@@ -1226,21 +1248,10 @@ void Xcp_MainFunction(void)
         }
     }
 
-    if (Xcp_Internal.ongoing_transmit_type == ONGOING_TRANSMIT_TYPE_NONE) {
-        /* We prioritize the transmission of the CTO response first, then the asynchronous events. */
-        if (Xcp_Internal.cto_response.successful_transmission_pending == TRUE) {
-            if (CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Internal.cto_response.pdu_info) == E_OK) {
-                Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_CTO;
-            }
-        } else if (Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, &event_packet_id, &event_code) == E_OK) {
-            Xcp_Internal.event.pdu_info.SduDataPtr[0x00u] = event_packet_id;
-            Xcp_Internal.event.pdu_info.SduDataPtr[0x01u] = event_code;
-
-            if (CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Internal.event.pdu_info) == E_OK) {
-                Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_EVENT;
-            }
-        }
-    }
+    /* SWS_Xcp_00824 has the BSW scheduler call this cyclically. Nothing here depends on how
+     * often: the trigger and the transmit confirmation drive transmission between them, and
+     * this call is what resumes the chain after CanIf has refused a frame. */
+    Xcp_StartNextTransmission();
 }
 
 /** @} */
@@ -1474,6 +1485,12 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                 break;
             }
         }
+
+        /* D16: the confirmation used to clear a flag and return, so every multi-frame exchange
+         * advanced one frame per Xcp_MainFunction call. Continuing the chain here paces it by
+         * CAN bandwidth instead. The CTO branch has already refilled the response buffer for a
+         * block transfer, so the frame this picks up is the one that branch just prepared. */
+        Xcp_StartNextTransmission();
     } else {
         Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
     }
@@ -1637,6 +1654,110 @@ static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue) {
     }
 
     return result;
+}
+
+/**
+ * @brief Chooses one packet and hands it to CanIf.
+ * @details The choice happens under the exclusive area; CanIf_Transmit is called outside it,
+ * because holding the area across a lower-layer call would make the section unbounded, and
+ * because a CanIf that confirms synchronously would otherwise re-enter the area.
+ */
+static void Xcp_TransmitOneFrame(void)
+{
+    PduIdType pdu_id = 0x0000u;
+    PduInfoType *p_pdu_info = NULL_PTR;
+    boolean transmit = FALSE;
+    uint8 event_packet_id;
+    uint8 event_code;
+
+    SchM_Enter_Xcp_DtoQueue();
+
+    if (Xcp_Internal.ongoing_transmit_type == ONGOING_TRANSMIT_TYPE_NONE)
+    {
+        /* The command response goes first: the master's time-out is running against it, and
+         * measurement traffic must never delay it. */
+        if (Xcp_Internal.cto_response.successful_transmission_pending == TRUE)
+        {
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_CTO;
+            pdu_id = Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id;
+            p_pdu_info = &Xcp_Internal.cto_response.pdu_info;
+            transmit = TRUE;
+        }
+        else if (Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                   &event_packet_id,
+                                   &event_code) == E_OK)
+        {
+            Xcp_Internal.event.pdu_info.SduDataPtr[0x00u] = event_packet_id;
+            Xcp_Internal.event.pdu_info.SduDataPtr[0x01u] = event_code;
+
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_EVENT;
+            pdu_id = Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id;
+            p_pdu_info = &Xcp_Internal.event.pdu_info;
+            transmit = TRUE;
+        }
+        else
+        {
+            /* Task 17 adds the DAQ arm here. */
+        }
+    }
+
+    SchM_Exit_Xcp_DtoQueue();
+
+    if (transmit == TRUE)
+    {
+        if (CanIf_Transmit(pdu_id, p_pdu_info) != E_OK)
+        {
+            /* No confirmation is coming for a refused frame, so release the slot; the next
+             * Xcp_MainFunction retries. */
+            SchM_Enter_Xcp_DtoQueue();
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_NONE;
+            SchM_Exit_Xcp_DtoQueue();
+        }
+    }
+}
+
+void Xcp_StartNextTransmission(void)
+{
+    boolean run;
+
+    SchM_Enter_Xcp_DtoQueue();
+
+    if (Xcp_TransmitInProgress == TRUE)
+    {
+        /* Reached from Xcp_CanIfTxConfirmation on a CanIf that confirms inside CanIf_Transmit.
+         * Re-entering CanIf_Transmit for the same PduId is forbidden by SWS_CANIF_00005, so
+         * leave the work to the call already running. */
+        Xcp_TransmitRestartWanted = TRUE;
+        run = FALSE;
+    }
+    else
+    {
+        Xcp_TransmitInProgress = TRUE;
+        run = TRUE;
+    }
+
+    SchM_Exit_Xcp_DtoQueue();
+
+    while (run == TRUE)
+    {
+        Xcp_TransmitOneFrame();
+
+        SchM_Enter_Xcp_DtoQueue();
+
+        if (Xcp_TransmitRestartWanted == TRUE)
+        {
+            Xcp_TransmitRestartWanted = FALSE;
+        }
+        else
+        {
+            /* Clearing the guard and testing for a pending restart must happen together: a
+             * confirmation landing between the two would set a flag nobody would ever read. */
+            Xcp_TransmitInProgress = FALSE;
+            run = FALSE;
+        }
+
+        SchM_Exit_Xcp_DtoQueue();
+    }
 }
 
 void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo)
