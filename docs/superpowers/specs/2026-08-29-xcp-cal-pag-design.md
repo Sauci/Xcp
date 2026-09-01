@@ -2,7 +2,10 @@
 
 **Date:** 2026-08-29
 **Baseline:** branch `develop`, commit `b21724c`
-**Reference:** *XCP -Part 2- Protocol Layer Specification -1.0*, ASAM e.V., 2003-04-08
+**Reference:** *XCP -Part 2- Protocol Layer Specification -1.0*, ASAM e.V., 2003-04-08.
+Section numbering is identical in 1.1, so every citation below is valid under both. Version 1.1
+is the reference for new work; the differences it makes to this sub-project are noted in DD5 and
+in §1.7.3.1, where 1.1 adds `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` (0x33).
 **Roadmap:** `2026-08-29-xcp-part2-roadmap.md`
 
 Completes the calibration command group (§1.6.2) and implements the page switching command
@@ -107,11 +110,15 @@ it).
 capacity is `(MAX_CTO-8)/AG` elements, which is zero when `MAX_CTO = 8`. §1.6.2.2.3 says so
 outright: the command "will have no effect (no data bytes can be transferred) if MAX_CTO = 8
 (e.g. XCP on CAN)". This originally led `config/xcp.json` to ship with it off, which was wrong
-for a second reason that only became visible once the command existed: §1.6.1.1.1 defines the
-CONNECT `RESOURCE` CAL/PAG bit as asserting that `DOWNLOAD`, `DOWNLOAD_MAX`, `SHORT_DOWNLOAD`,
-`SET_CAL_PAGE` and `GET_CAL_PAGE` are all available, so disabling it made the slave advertise
-no calibration or paging support at all. It ships enabled; an integrator running at
-`MAX_CTO = 8` simply finds it accepts no payload, which the specification anticipates.
+for a second reason that only became visible once the command existed: §1.6.1.1.1 in **1.0**
+defines the CONNECT `RESOURCE` CAL/PAG bit as asserting that `DOWNLOAD`, `DOWNLOAD_MAX`,
+`SHORT_DOWNLOAD`, `SET_CAL_PAGE` and `GET_CAL_PAGE` are all available, so disabling it made the
+slave advertise no calibration or paging support at all. Note that **1.1 removes that
+sentence**: its CAL/PAG flag reads only "calibration/paging available", unqualified. Requiring
+all five is therefore a conservative choice under 1.1 rather than a mandate -- never claim a
+command the slave will not answer -- not a rule the newer specification imposes. The shipped
+configuration enables all five, so the bit is set either way. An integrator running at
+`MAX_CTO = 8` simply finds the command accepts no payload, which the specification anticipates.
 
 **DD7 — `DOWNLOAD_NEXT` shares `DOWNLOAD`'s minimum request size.** Its `ctoInfo` minimum was
 `0x04` against `DOWNLOAD`'s `0x03`. §1.6.2.2.1 states it outright: "The DOWNLOAD_NEXT command
