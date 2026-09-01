@@ -113,14 +113,18 @@ CONNECT `RESOURCE` CAL/PAG bit as asserting that `DOWNLOAD`, `DOWNLOAD_MAX`, `SH
 no calibration or paging support at all. It ships enabled; an integrator running at
 `MAX_CTO = 8` simply finds it accepts no payload, which the specification anticipates.
 
-**DD6 — `DOWNLOAD_NEXT` shares `DOWNLOAD`'s minimum request size.** Its `ctoInfo` minimum was
-`0x04` against `DOWNLOAD`'s `0x03`, an asymmetry 1.0's prose does not explain, so it was left
-alone rather than changed on a guess. Version 1.1 settles it at §1.6.2.2.1: "The DOWNLOAD_NEXT
-command has exactly the same structure as the DOWNLOAD command." Same structure means the same
-minimum, so it is now `0x03`. A frame that is short of the payload it announces is caught by the
-handler's own length check rather than by the dispatcher's generic gate, which reports
-`ERR_SEQUENCE` or `ERR_CMD_SYNTAX` as the situation warrants instead of `ERR_CMD_SYNTAX` for
-both.
+**DD7 — `DOWNLOAD_NEXT` shares `DOWNLOAD`'s minimum request size.** Its `ctoInfo` minimum was
+`0x04` against `DOWNLOAD`'s `0x03`. §1.6.2.2.1 states it outright: "The DOWNLOAD_NEXT command
+has exactly the same structure as the DOWNLOAD command." Same structure means the same minimum,
+so it is now `0x03`. A frame short of the payload it announces is caught by the handler's own
+length check rather than by the dispatcher's generic gate, which reports `ERR_SEQUENCE` or
+`ERR_CMD_SYNTAX` as the situation warrants instead of `ERR_CMD_SYNTAX` for both.
+
+Both whole-branch reviews called this asymmetry unexplained and it was left alone on that
+basis, which was wrong: the sentence is in 1.0 §1.6.2.2.1, on the same page as the position
+table, and was there the whole time. Nobody had searched the specification for it. "No reason
+found" was reported when the accurate statement was "not looked for", and two reviewers using
+the same word made the omission look like a finding.
 
 ### 3.1 A non-divergence worth recording
 
