@@ -236,7 +236,8 @@ typedef struct {
     enum {
         ONGOING_TRANSMIT_TYPE_NONE,
         ONGOING_TRANSMIT_TYPE_CTO,
-        ONGOING_TRANSMIT_TYPE_EVENT
+        ONGOING_TRANSMIT_TYPE_EVENT,
+        ONGOING_TRANSMIT_TYPE_DAQ
     } ongoing_transmit_type;
     struct {
         /**
@@ -399,6 +400,17 @@ Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo);
  * area (Xcp_CanIfTxConfirmation, Xcp.c). A no-op on an empty ring.
  */
 void Xcp_DaqQueuePop(void);
+
+/**
+ * @brief Appends one packet to an event queue.
+ * @retval E_NOT_OK the queue was full; nothing was written.
+ * @details Defined in Xcp.c, static there until now; given external linkage, the same move SP1
+ * made for the block-transfer helpers, because Xcp_TriggerEventChannel (Xcp_DaqRuntime.c) needs
+ * it too, to raise EV_DAQ_OVERLOAD. Tolerates pUserData == NULL_PTR when userDataSize == 0x00u:
+ * the definition's copy loop is bounded by userDataSize and never runs when it is zero, so
+ * pUserData is not dereferenced in that case.
+ */
+Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize);
 
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);

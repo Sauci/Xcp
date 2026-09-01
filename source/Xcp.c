@@ -86,13 +86,9 @@ static void Xcp_EventQueueInit(Xcp_EventQueueType *pEventQueue);
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-#define Xcp_START_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-static Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize);
-
-#define Xcp_STOP_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
+/* Xcp_EventQueuePush has external linkage now (Xcp_Internal.h declares it, included above), so
+ * unlike its neighbours below it gets no local forward declaration here -- the header already
+ * provides one, and a second, static one would conflict with it. */
 
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1489,6 +1485,21 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
                 break;
             }
+            case ONGOING_TRANSMIT_TYPE_DAQ:
+            {
+                Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_NONE;
+
+                if (result == E_OK)
+                {
+                    /* The frame stayed in the ring while CanIf owned it, because CanIf_Transmit
+                     * is asynchronous and the buffer it was handed must outlive the call. */
+                    SchM_Enter_Xcp_DtoQueue();
+                    Xcp_DaqQueuePop();
+                    SchM_Exit_Xcp_DtoQueue();
+                }
+
+                break;
+            }
         }
 
         /* D16: the confirmation used to clear a flag and return, so every multi-frame exchange
@@ -1605,7 +1616,7 @@ static void Xcp_EventQueueInit(Xcp_EventQueueType *pEventQueue) {
     }
 }
 
-static Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize)
+Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize)
 {
     Std_ReturnType result;
     uint32_least idx;
@@ -1700,9 +1711,14 @@ static void Xcp_TransmitOneFrame(void)
             p_pdu_info = &Xcp_Internal.event.pdu_info;
             transmit = TRUE;
         }
+        else if (Xcp_DaqQueuePeek(&pdu_id, &p_pdu_info) == E_OK)
+        {
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_DAQ;
+            transmit = TRUE;
+        }
         else
         {
-            /* Task 17 adds the DAQ arm here. */
+            /* Nothing to send. */
         }
     }
 

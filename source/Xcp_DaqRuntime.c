@@ -18,8 +18,8 @@
 /**
  * @brief PduInfoType handed to CanIf for the frame currently at the head of the ring.
  * @details CanIf_Transmit is asynchronous, so the frame it points at must stay in the ring until
- * its confirmation; only Xcp_DaqQueuePop releases it. Filled by Xcp_DaqQueuePeek. Nothing calls
- * Xcp_DaqQueuePeek yet -- the arbitration in Xcp_TransmitOneFrame (Xcp.c) that will is Task 16's.
+ * its confirmation; only Xcp_DaqQueuePop releases it. Filled by Xcp_DaqQueuePeek, called from the
+ * DAQ arm of Xcp_TransmitOneFrame's arbitration (Xcp.c).
  */
 static PduInfoType Xcp_DaqTxPduInfo;
 
@@ -190,9 +190,9 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
  * @details Caller-side locking: the exclusive area is taken here, not by the caller, so a
  * sampling loop holds it once per frame rather than for its whole duration. count rather than a
  * read/write gap distinguishes a full ring from an empty one without wasting a slot.
- * @note A full ring simply drops the frame in this task; nothing counts the drop or reports
- * EV_DAQ_OVERLOAD yet -- that is Task 16's, once the arbitration that would let the ring drain is
- * also in place.
+ * @note A full ring simply drops the frame; Xcp_TriggerEventChannel is the caller, and it is what
+ * counts the drop across the whole trigger and raises EV_DAQ_OVERLOAD, at most once, once the
+ * sampling loop that calls this is done.
  */
 static Std_ReturnType Xcp_DaqQueuePush(const Xcp_DtoFrameType *pFrame)
 {
@@ -228,7 +228,7 @@ Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo)
     Std_ReturnType result = E_NOT_OK;
 
     /* Called with the exclusive area already held, from Xcp_TransmitOneFrame's selection
-     * (Xcp.c). Nothing calls this yet; Task 16 adds that caller. */
+     * (Xcp.c). */
     if (p_queue->count != 0x00u)
     {
         Xcp_DaqTxPduInfo.SduDataPtr = &p_queue->frame[p_queue->read].data[0x00u];
@@ -248,8 +248,7 @@ void Xcp_DaqQueuePop(void)
 {
     Xcp_DtoQueueType *p_queue = Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue;
 
-    /* Called with the exclusive area already held, from Xcp_CanIfTxConfirmation (Xcp.c). Nothing
-     * calls this yet; Task 16 adds that caller. */
+    /* Called with the exclusive area already held, from Xcp_CanIfTxConfirmation (Xcp.c). */
     if (p_queue->count != 0x00u)
     {
         p_queue->read = (uint8)((uint8)(p_queue->read + 0x01u) % p_queue->depth);
@@ -270,6 +269,12 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
     else
     {
         uint16 daq_idx;
+
+        /* Accumulates across every DAQ list and every ODT this one trigger samples, not reset
+         * per list or per ODT: 1.1/1.8.6 requires the slave to "take care not to overload
+         * another cycle with this additional packet", so at most one EV_DAQ_OVERLOAD is raised
+         * for the whole trigger, however many individual pushes failed within it. */
+        boolean overloaded = FALSE;
 
         /* DD11: the authoritative binding of a DAQ list to an event channel is the one
          * SET_DAQ_LIST_MODE wrote at runtime (Xcp_Rt[...].daqList[...].eventChannelNumber), not
@@ -297,19 +302,31 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
 
                         if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx) == E_OK)
                         {
-                            /* A full ring silently drops the frame here; Task 16 counts the drop
-                             * and raises EV_DAQ_OVERLOAD. Nothing to hand the failure to in the
-                             * meantime: this is a vendor-extension API triggered by the
-                             * integrator's own context, not a master request with a response
-                             * packet to carry an error in. */
-                            (void)Xcp_DaqQueuePush(&frame);
+                            if (Xcp_DaqQueuePush(&frame) != E_OK)
+                            {
+                                overloaded = TRUE;
+                            }
                         }
                     }
                 }
             }
         }
 
-        /* Task 16 adds the Xcp_StartNextTransmission() call here, once Xcp_TransmitOneFrame
-         * knows how to drain this ring (its DAQ arm is Task 16's too). */
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.8.6
+         * One event covers the whole trigger however many frames were lost: the slave "must take
+         * care not to overload another cycle with this additional packet". */
+        if ((overloaded == TRUE) && (Xcp_Ptr->general->overloadEvent == TRUE))
+        {
+            if (Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                   XCP_PID_EVENT,
+                                   XCP_EVENT_DAQ_OVERLOAD,
+                                   NULL_PTR,
+                                   0x00000000u) != E_OK)
+            {
+                Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID, XCP_E_EVENT_QUEUE_FULL);
+            }
+        }
+
+        Xcp_StartNextTransmission();
     }
 }

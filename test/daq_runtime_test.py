@@ -98,9 +98,11 @@ def test_a_stopped_list_samples_nothing():
 
 
 def test_a_full_ring_drops_the_frame_instead_of_growing():
-    """A full ring in this task simply drops the frame; nothing counts the drop or reports
-    EV_DAQ_OVERLOAD yet -- that arrives once the arbitration that lets the ring drain does too.
-    This only guarantees the ring itself never grows past its configured depth."""
+    """A full ring drops the frame; this checks only that the ring itself never grows past its
+    configured depth, regardless of what else the trigger does with the drop. Task 16 does count
+    the drop and raise EV_DAQ_OVERLOAD by the time this runs (default overload_indication is
+    'EVENT') -- see test_an_overloaded_trigger_queues_exactly_one_overload_event below for that,
+    and daq_transmission_test.py for the end-to-end (CanIf-observing) version."""
     handle = XcpTest(DefaultConfig(daq_queue_size=2,
                                    daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=1),)))
     connect(handle)
@@ -122,6 +124,35 @@ def test_a_full_ring_drops_the_frame_instead_of_growing():
     # read instead.
     assert rt(handle).dtoQueue.write == rt(handle).dtoQueue.read, \
         'the write index only advances for frames actually stored'
+
+
+def test_an_overloaded_trigger_queues_exactly_one_overload_event():
+    """DD6 and 1.1/1.8.6, checked at the runtime-state level (the event ring's own read/write
+    pointers and the queued entry's content) rather than by observing CanIf_Transmit --
+    daq_transmission_test.py has the end-to-end version. Same setup as
+    test_a_full_ring_drops_the_frame_instead_of_growing above: three ODTs, a two-slot DTO ring,
+    so one trigger drops one frame and must still raise only one event for it."""
+    handle = XcpTest(DefaultConfig(daq_queue_size=2,
+                                   daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=1),)))
+    connect(handle)
+
+    for odt in range(3):
+        exchange(handle, (0xE2, 0x00) + tuple(u16_to_array(0, 'LITTLE_ENDIAN')) + (odt, 0x00))
+        exchange(handle, (0xE1, 0xFF, 0x01, 0x00) + tuple(u32_to_array(0x1000 + odt, 'LITTLE_ENDIAN')))
+    exchange(handle, (0xE0, 0x00) + tuple(u16_to_array(0, 'LITTLE_ENDIAN')) +
+             tuple(u16_to_array(0, 'LITTLE_ENDIAN')) + (0x01, 0x00))
+    exchange(handle, (0xDE, 0x01) + tuple(u16_to_array(0, 'LITTLE_ENDIAN')))
+
+    assert rt(handle).eventQueue.write == rt(handle).eventQueue.read, 'nothing queued before the trigger'
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert rt(handle).eventQueue.write == 1, 'exactly one event was queued for the whole trigger'
+    # 0xFD, 0x06 = XCP_PID_EVENT, XCP_EVENT_DAQ_OVERLOAD (Xcp_Internal.h -- not reachable via
+    # handle.define, per this task's ruling 1, so the literals are used with this comment).
+    assert rt(handle).eventQueue.queue[0].packetID == 0xFD
+    assert rt(handle).eventQueue.queue[0].eventCode == 0x06
+    assert rt(handle).eventQueue.queue[0].userDataSize == 0, 'no payload accompanies EV_DAQ_OVERLOAD'
 
 
 def test_trigger_only_samples_lists_bound_to_that_event_channel():
