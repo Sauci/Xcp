@@ -155,16 +155,40 @@ it: no `mainFunctionCycles`, no `main_function_period` configuration key, no
 `time_cycle = 0`, which §1.6.4.1.2.7 defines as "not cyclic" and which is now simply one more
 channel the integrator triggers when it has reason to.
 
-**DD3 — Transmission is paced by confirmations, not by the main function.**
-`Xcp_CanIfTxConfirmation` starts the next queued transmission instead of merely clearing
-state, so the DTO stream is bounded by CAN bandwidth rather than by how often the integrator's
-background task runs. `Xcp_MainFunction` starts a transmission only when the module is idle —
-after a `CanIf_Transmit` refusal, or when the first frame of a burst arrives with nothing in
-flight.
+**DD3 — `Xcp_MainFunction` is the recovery path, not the transmission path.** Arbitration
+moves out of `Xcp_MainFunction` into one internal `Xcp_StartNextTransmission`, so there is a
+single place that decides what goes out next. Three contexts call it:
 
-Arbitration therefore moves out of `Xcp_MainFunction` into one internal
-`Xcp_StartNextTransmission`, called from both contexts, so there is a single place that
-decides what goes out next.
+- **`Xcp_TriggerEventChannel`**, after enqueueing, if nothing is in flight. It already holds
+  the exclusive area and has just produced the data, so the first frame of a burst leaves
+  without waiting for anything.
+- **`Xcp_CanIfTxConfirmation`**, which continues the chain until the ring empties. This is
+  what paces the stream by CAN bandwidth.
+- **`Xcp_MainFunction`**, whenever the module is idle with something queued.
+
+Steady-state acquisition therefore never involves the main function at all: the trigger starts
+the chain and confirmations sustain it. What the main function is for is the one case that
+breaks the chain — `CanIf_Transmit` refusing, after which nothing is in flight and no
+confirmation is coming, so something has to retry. That is not a new obligation; CTO responses
+and event packets already depend on the main function for exactly this.
+
+The contract the README states, and the reason a background task can honour it:
+
+> Call `Xcp_MainFunction` cyclically. Its rate bounds how quickly the stack recovers after the
+> CAN interface refuses a transmission. It does not affect the DAQ measurement raster, which
+> the integrator sets through `Xcp_TriggerEventChannel`, and it does not affect throughput.
+
+The rejected alternative was to leave the start to `Xcp_MainFunction` and let confirmations
+drain the ring afterwards. It keeps `CanIf_Transmit` out of the trigger's context, which
+matters when the trigger is an interrupt, and it loses no throughput — one main function call
+still drains everything queued. But sampled frames then wait in the ring until the main
+function next runs, so a 50 ms stall against a 10 ms event releases five bursts at once, every
+frame stale. Phase 1 carries no timestamp, so the master reads arrival time as sample time and
+cannot see the staleness. Freshness is the point of data acquisition, and invisible staleness
+is the worst way to lose it.
+
+The cost accepted instead is one `CanIf_Transmit` inside the trigger's context — on CAN a
+mailbox write, in a context the integrator chooses.
 
 This also fixes D16: today the confirmation only clears flags, so a CTO block transfer and the
 event queue each advance by one frame per main function call for the same reason DAQ would
@@ -184,11 +208,11 @@ Sampling and transmitting inline with no queue was also rejected: CanIf accepts 
 a time, so a three-ODT list would lose two frames of every three.
 
 **DD5 — One exclusive area protects the transmit state.** DD2 and DD3 put three contexts on
-the same data: `Xcp_TriggerEventChannel` produces frames from a task or an ISR,
-`Xcp_CanIfTxConfirmation` consumes them from CanIf's context, and `Xcp_MainFunction` also
-consumes. The DTO ring indices and `Xcp_Internal.ongoing_transmit_type` are therefore guarded
-by an AUTOSAR exclusive area, entered and left around `Xcp_StartNextTransmission` and around
-each ring operation:
+the same data, and under DD3 all three both produce and consume:
+`Xcp_TriggerEventChannel` runs in a task or an ISR, `Xcp_CanIfTxConfirmation` in CanIf's
+context, and `Xcp_MainFunction` in the integrator's background task. The DTO ring indices
+and `Xcp_Internal.ongoing_transmit_type` are therefore guarded by an AUTOSAR exclusive area,
+entered and left around `Xcp_StartNextTransmission` and around each ring operation:
 
 ```c
 SchM_Enter_Xcp_DtoQueue();
@@ -383,6 +407,10 @@ For each DAQ list whose runtime mode has `RUNNING` set and whose `eventChannelNu
 3. Push the finished frame into the ring, tagged with the DAQ list's `pdu_mapping` PDU id.
    A full ring triggers DD6.
 
+Once every list on the channel has been sampled, the trigger calls
+`Xcp_StartNextTransmission` if nothing is in flight (DD3). It starts the chain once per
+trigger, not once per frame, so a burst is enqueued whole before any of it goes out.
+
 ### 6.2 The identification field
 
 | type | bytes | content |
@@ -410,11 +438,9 @@ in order:
 CTO first means a command response can never be starved by measurement traffic, which matters
 because the master's t1 timer is running.
 
-Two contexts call it. `Xcp_CanIfTxConfirmation` calls it after clearing the completed
-transfer, which is what paces the stream by CAN bandwidth rather than by the main function
-(DD3). `Xcp_MainFunction` calls it when `ongoing_transmit_type` is `NONE`, which restarts the
-chain after a `CanIf_Transmit` refusal and starts it when the first frame of a burst arrives
-with nothing in flight.
+Three contexts call it, per DD3: `Xcp_TriggerEventChannel` after enqueueing,
+`Xcp_CanIfTxConfirmation` after clearing the completed transfer, and `Xcp_MainFunction`
+whenever `ongoing_transmit_type` is `NONE`. Only the third is a recovery path.
 
 Note that the confirmation's existing CTO branch already has work to do before arbitrating —
 a block transfer continues by refilling the response buffer — so `Xcp_StartNextTransmission`
@@ -626,13 +652,13 @@ on the established naming convention:
 | `get_daq_processor_info_test.py` | §7.8 |
 | `get_daq_resolution_info_test.py` | §7.9 |
 | `daq_runtime_test.py` | sampling, prescaler division, ring overflow and `EV_DAQ_OVERLOAD`, `Xcp_TriggerEventChannel` including the unknown-channel DET error |
-| `daq_transmission_test.py` | arbitration order, the confirmation-driven chain of DD3 with `Xcp_MainFunction` never called, restart after a `CanIf_Transmit` refusal, and exclusive-area balance |
+| `daq_transmission_test.py` | arbitration order, a full burst transmitted with `Xcp_MainFunction` never called, recovery from a `CanIf_Transmit` refusal through both the main function and the next trigger, and exclusive-area balance |
 | `daq_identification_field_test.py` | all four field types against both byte orders |
 
 The chain of DD3 is what makes an aperiodic main function survivable, so
-`daq_transmission_test.py` drives it the way the integration does: enqueue a burst, call
-`Xcp_MainFunction` exactly once, then feed confirmations and assert every frame still goes
-out. Exclusive-area balance is asserted from the counters in `test/stub/SchM_Xcp.h`.
+`daq_transmission_test.py` drives it the way the integration does: trigger a burst without
+calling `Xcp_MainFunction` at all, feed confirmations, and assert every frame goes out.
+Exclusive-area balance is asserted from the counters in `test/stub/SchM_Xcp.h`.
 
 Existing files that change: `asam_error_matrix_test.py` gains rows for the nine commands and
 loses the `ERR_DAQ_ACTIVE` expectation on `CLEAR_DAQ_LIST` (D10); `connect_test.py` gains the
@@ -647,9 +673,11 @@ narrowed resource condition (D14); `get_status_test.py` gains `DAQ_RUNNING` (D15
   an event channel with `SET_DAQ_LIST_MODE`, start it, and receive DTO frames whose contents
   match the sampled memory, under all four identification field types.
 - `CONNECT` reports the DAQ resource, `GET_STATUS` reports `DAQ_RUNNING`.
-- Frames keep flowing when `Xcp_MainFunction` is not called at all between a
-  `CanIf_Transmit` and its confirmation, which is the property DD3 exists for and the one an
-  aperiodic main function would otherwise break.
+- A burst is transmitted in full with `Xcp_MainFunction` never called once — the trigger
+  starts the chain and confirmations finish it. This is the property DD3 exists for and the
+  one an aperiodic main function would otherwise break.
+- A `CanIf_Transmit` refusal strands nothing: the next `Xcp_MainFunction` call resumes the
+  chain, and so does the next trigger.
 - Every path into and out of the exclusive area is balanced, error paths included.
 - Generation fails, with a message naming the offending configuration, on overlapping
   absolute ODT numbers, on a `FIRST_PID` above 0xFB, and on an unresolvable
