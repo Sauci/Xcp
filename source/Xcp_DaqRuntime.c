@@ -317,11 +317,26 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
          * care not to overload another cycle with this additional packet". */
         if ((overloaded == TRUE) && (Xcp_Ptr->general->overloadEvent == TRUE))
         {
-            if (Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
-                                   XCP_PID_EVENT,
-                                   XCP_EVENT_DAQ_OVERLOAD,
-                                   NULL_PTR,
-                                   0x00000000u) != E_OK)
+            Std_ReturnType push_result;
+
+            /* The event queue now has two producers that can each run in a different context --
+             * Xcp_MainFunction (EV_STORE_CAL) and this trigger (EV_DAQ_OVERLOAD, documented to be
+             * callable from an interrupt) -- while Xcp_TransmitOneFrame, the one consumer, reads
+             * read/write under this same area. Without it, a trigger preempting a push already in
+             * progress could compute the same pre-update write index, and both writers would then
+             * target the same slot: one event silently lost, the surviving entry a mixture of
+             * both writers' fields. Xcp_DaqQueuePush, three lines above, takes the same area for
+             * the identical reason. Xcp_ReportError (which calls Det_ReportError) stays outside: it is
+             * an external call, and the area must stay short. */
+            SchM_Enter_Xcp_DtoQueue();
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                             XCP_PID_EVENT,
+                                             XCP_EVENT_DAQ_OVERLOAD,
+                                             NULL_PTR,
+                                             0x00000000u);
+            SchM_Exit_Xcp_DtoQueue();
+
+            if (push_result != E_OK)
             {
                 Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID, XCP_E_EVENT_QUEUE_FULL);
             }

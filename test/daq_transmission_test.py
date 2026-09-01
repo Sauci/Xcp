@@ -214,6 +214,10 @@ def test_a_full_ring_drops_the_frame_and_reports_one_overload_event():
         transmitted.append(tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]))
         handle.lib.Xcp_CanIfTxConfirmation(0x0003, handle.define('E_OK'))
 
+    assert transmitted[0] == (0xFD, 0x06), \
+        'the event arm outranks the DAQ arm: the overload event goes out before either ' \
+        'surviving DAQ frame, not after'
+
     events = [frame for frame in transmitted if frame[0] == 0xFD]
     assert events == [(0xFD, 0x06)], 'exactly one EV_DAQ_OVERLOAD must cover all three drops'
 
