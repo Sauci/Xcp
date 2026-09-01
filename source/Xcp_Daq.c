@@ -661,3 +661,48 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+     * The granularity is what an ODT entry's size must be a multiple of and what its address
+     * must be aligned to, which is exactly the address granularity's element size (1, 2 or 4) --
+     * one of the {1,2,4,8} this section allows. WRITE_DAQ (Task 7) checks a new entry's size
+     * against this same Xcp_ElementSizeForAddressGranularity() result, so the two commands agree
+     * on what counts as a legal entry size by construction. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] =
+            Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+
+    /* MAX_ODT_ENTRY_SIZE_DAQ is the same derived value (MAX_DTO minus the identification field
+     * size, Task 1) that WRITE_DAQ refuses entries larger than
+     * (source/Xcp_Daq.c:Xcp_DTOCmdDaqWriteDaq, "size > Xcp_Ptr->general->odtEntrySizeDaq"). A
+     * master that trusts what this command reports can never have WRITE_DAQ refuse it. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->odtEntrySizeDaq;
+
+    /* Data stimulation arrives in SP3; until then a STIM granularity of 0 says so, and there is
+     * no WRITE_DAQ-equivalent for STIM yet to disagree with it. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->odtEntrySizeStim;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+     * "If the slave doesn't support a time stamped mode, the parameters TIMESTAMP_MODE and
+     * TIMESTAMP_TICKS are invalid" -- permitted explicitly because TIMESTAMP_SUPPORTED
+     * (DAQ_PROPERTIES bit 4, GET_DAQ_PROCESSOR_INFO) is clear. These two bytes are not a stand-in
+     * for "unimplemented"; they are the specification's own way of saying the fields carry no
+     * meaning, and must not be read as e.g. "timestamp mode 0" or "zero ticks of delay". */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+
+    Xcp_CopyFromU16WithOrder(0x0000u,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u],
+                             Xcp_Ptr->general->byteOrder);
+
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
