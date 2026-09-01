@@ -49,7 +49,10 @@ if [ -d "$merged" ]; then
         [ -d "$d" ] && cp "$d"/*.gcno "$merged/" 2>/dev/null && break
     done
 
-    for f in Xcp.c Xcp_Std.c Xcp_Cal.c Xcp_Pag.c Xcp_Daq.c; do
+    # Hand-maintained, one entry per translation unit in the Xcp target: update alongside
+    # CMakeLists.txt's add_library/--source lists when a source is added, and keep in sync with
+    # the Codecov `files:` list in .github/workflows/test.yml, which enumerates the same set.
+    for f in Xcp.c Xcp_Std.c Xcp_Cal.c Xcp_Pag.c Xcp_Daq.c Xcp_DaqRuntime.c; do
         [ -f "$merged/${f%.c}.gcno" ] && (cd "$merged" && gcov "$f") && cp "$merged/$f.gcov" .
     done
 fi

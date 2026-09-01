@@ -80,4 +80,6 @@ jobs:
           # Optional on a public repository: unset means a tokenless upload, which works but is
           # rate limited. Add the secret if uploads start failing intermittently.
           token: ${{secrets.CODECOV_TOKEN}}
-          files: ./build/Xcp.c.gcov,./build/Xcp_Std.c.gcov,./build/Xcp_Cal.c.gcov,./build/Xcp_Pag.c.gcov,./build/Xcp_Daq.c.gcov
+          # Hand-maintained, one entry per translation unit in the Xcp target: keep in sync with
+          # the `for f in ...` gcov loop in test.sh, which enumerates the same set.
+          files: ./build/Xcp.c.gcov,./build/Xcp_Std.c.gcov,./build/Xcp_Cal.c.gcov,./build/Xcp_Pag.c.gcov,./build/Xcp_Daq.c.gcov,./build/Xcp_DaqRuntime.c.gcov
