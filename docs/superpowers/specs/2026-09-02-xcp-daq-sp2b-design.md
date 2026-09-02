@@ -100,16 +100,26 @@ express the counter's tick rate.
 clock, **when the `GET_DAQ_CLOCK` command packet has been received**", and "the accuracy of the time
 synchronization between the master and the slave device is depending on the accuracy of this value".
 
-This module receives in `Xcp_CanIfRxIndication` and assembles responses in `Xcp_MainFunction`.
-Sampling the clock while assembling would add the entire main-function latency to the one number the
-master uses to compute its clock offset — and since DD2 established that the main function's period
-is neither constant nor knowable, that error is not even a fixed bias the master could calibrate
-out. The command would be present and quietly wrong.
+**Corrected during implementation.** This decision was written on the belief that the module
+receives in `Xcp_CanIfRxIndication` and assembles responses later in `Xcp_MainFunction`, so a late
+read would fold the whole main-function latency into the master's clock offset. **That belief is
+false.** `Xcp_PIDTable[pid](...)` is dispatched inside `Xcp_CanIfRxIndication` (`source/Xcp.c`), and
+`Xcp_MainFunction` performs only the `STORE_CAL_REQ` service and `Xcp_StartNextTransmission()` — it
+never indexes the PID table. Reception and response assembly happen in the same call.
 
-`Xcp_CanIfRxIndication` therefore calls `Xcp_GetDaqTimestamp()` when the received PID is 0xDC and
-stores the value in `Xcp_Internal` beside the pending CTO request. No new exclusive area is needed:
-the CTO path is already serialised by its busy flag, and this value rides that serialisation. The
-implementation must confirm that rather than assume it — see §8.
+What survives is the requirement itself: §1.6.4.1.2.3 asks for the clock value at reception, and the
+module satisfies it because the handler *runs* at reception. What does not survive is the shape this
+decision originally prescribed. Capturing into `Xcp_Internal` and reading the field in the handler
+would be module-lifetime storage for a value written and read three lines apart, buying no accuracy,
+adding a reentrancy failure mode a local cannot have — a nested `Xcp_CanIfRxIndication` between
+capture and dispatch would clobber it — and costing RAM in builds where both ends are compiled out.
+
+`Xcp_DTOCmdDaqGetDaqClock` therefore calls `Xcp_GetDaqTimestamp()` directly. No shared state, and no
+exclusive area: the value never outlives its call.
+
+The reentrancy question the original text raised is real but larger than this command. If
+`Xcp_CanIfRxIndication` is genuinely re-entrant, it races `cto_response`, `last_pid` and
+`Xcp_ClearProtectionStatus()` for **every** CTO, not just this one — see §8.
 
 **DD19 — The timestamp is switchable per DAQ list; `TIMESTAMP_FIXED` is reported clear.** The
 alternative — timestamps fixed on at build time — would have made the capacity question disappear by
@@ -352,13 +362,19 @@ remain in it and keep answering `ERR_MODE_NOT_VALID` (DD9).
 
 ## 8. Risks
 
-**The clock capture rides an assumed serialisation.** DD18 stores the captured timestamp in
-`Xcp_Internal` from `Xcp_CanIfRxIndication`, which may run in interrupt context, and reads it from
-`Xcp_MainFunction`. The claim that the CTO busy flag already serialises this is a claim about
-existing code, not a new invariant, and SP2a found three one-sided-lock defects by auditing exactly
-this kind of assumption. The implementation must trace every writer and reader of the CTO request
-state before relying on it, and extend the exclusive area if the trace does not hold. The
-`_callback_invariants` fixture will catch an imbalance if one is introduced.
+**~~The clock capture rides an assumed serialisation.~~ Resolved, and it found a larger
+question.** The trace this risk demanded was run, and it disproved the premise rather than
+confirming it — see DD18. There is no capture and no shared field, so nothing rides any
+serialisation.
+
+The trace did surface something wider. `Xcp_CanIfRxIndication` checks the CTO busy flag, dispatches,
+and only then sets the flag. If that function can preempt itself — the module's headers do not say
+either way — then `cto_response`, `last_pid` and `Xcp_ClearProtectionStatus()` are all raced, for
+every one of the 256 PID entries, not merely for `GET_DAQ_CLOCK`. A lock scoped to one command's
+data would close nothing. Closing it properly means an exclusive area around the whole
+busy-check/dispatch/set-flag sequence, which changes behaviour for every command and needs its own
+design and regression surface. **Out of scope for SP2b, and recorded here as the question SP2b
+found rather than one it created.**
 
 **The acceptance test's cross product.** §10 adds a timestamp dimension to a parametrisation that
 already produces a large share of 12455 tests at 3m30s. Sweeping it fully against every existing
