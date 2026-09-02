@@ -415,7 +415,22 @@ uint8 Xcp_DTOCmdDaqWriteDaqMultiple(boolean *responseExpected, const PduInfoType
 
     *responseExpected = TRUE;
 
-    if (pPduInfo->SduLength < (PduLengthType)(0x02u + ((PduLengthType)count * 0x08u)))
+    /* count comes straight off the wire and nothing else bounds it, so it is bounded here first,
+     * against a limit derived from MAX_CTO rather than by reconstructing the request length.
+     * That ordering is the point: PduLengthType is integrator-supplied and AUTOSAR permits uint8
+     * for a CAN-only stack, where the (PduLengthType)(0x02u + count * 0x08u) below wraps --
+     * count = 32 gives 258, truncating to 2, which any 8-byte SDU satisfies, and the loop would
+     * then read SduDataPtr[2..257] and feed 31 fabricated entries to Xcp_DaqApplyOdtEntry. The
+     * comparison below is reached only for a count this build's MAX_CTO could actually carry, so
+     * its arithmetic cannot overflow whatever PduLengthType is. MAX_CTO >= 10 whenever this
+     * command is enabled -- script/source_cfg.c.jinja2 refuses to generate otherwise, per XCP
+     * part 2 1.1/1.6.4.1.2.1 -- so this bound is never zero. ERR_OUT_OF_RANGE, whose prescribed
+     * master action in 1.7.3.2.4 is "retry other parameter": fewer elements. */
+    if ((uint16)count > (uint16)((Xcp_Ptr->general->maxCto - 0x02u) / 0x08u))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if (pPduInfo->SduLength < (PduLengthType)(0x02u + ((PduLengthType)count * 0x08u)))
     {
         error = XCP_E_ASAM_CMD_SYNTAX;
     }
