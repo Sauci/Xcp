@@ -428,6 +428,61 @@ class DefaultConfig(dict):
         return self._daq_queue_size
 
 
+class MultiConfig(dict):
+    """A configuration file carrying more than one configuration.
+
+    DefaultConfig always emits exactly one, so until this existed every aggregation over
+    `configurations` was unexercised: the `any`/`max` folds in script/header_cfg.h.jinja2, the
+    matching ones in test/conftest.py's own compile definitions, and CMakeLists.txt's derivation
+    of the same macros. So was the distinction those aggregations exist to preserve -- a
+    build-wide macro says what SOME configuration needs, and a command must still gate on what
+    *the active* configuration declares (Xcp_Ptr->general->...). A single-configuration harness
+    cannot tell the two apart, because there the build-wide answer and the per-configuration
+    answer are always the same.
+
+    Composed from already-built DefaultConfig instances rather than from a second parallel set of
+    keyword arguments, so each configuration is still described exactly the way every other test
+    in the suite describes one. Select which one Xcp_Init runs against with XcpTest's
+    configuration_index.
+    """
+
+    def __init__(self, *configs):
+        if len(configs) < 2:
+            raise ValueError('MultiConfig exists to hold more than one configuration; '
+                             'use DefaultConfig directly for one')
+        # Every configuration in one generated file shares the PDU reference *names*
+        # (XCP_PDU_ID_CTO_RX and friends are literals in DefaultConfig's communication/daqs
+        # blocks), and test/conftest.py passes each name to the compiler exactly once. Two
+        # configurations asking for different numeric values for one name is therefore not
+        # something the generated file could express; refuse it here rather than silently
+        # applying the first one's value to both.
+        for attribute in ('channel_rx_pdu', 'channel_tx_pdu', 'default_daq_dto_pdu_mapping'):
+            values = set(getattr(config, attribute) for config in configs)
+            if len(values) != 1:
+                raise ValueError('{} differs between configurations ({}), but every configuration '
+                                 'in one generated file shares that PDU reference name'.format(
+                                         attribute, sorted(values)))
+        self._channel_rx_pdu = configs[0].channel_rx_pdu
+        self._channel_tx_pdu = configs[0].channel_tx_pdu
+        self._default_daq_dto_pdu_mapping = configs[0].default_daq_dto_pdu_mapping
+        # XCP_EVENT_QUEUE_SIZE is one compile definition for the whole module, so it takes the
+        # largest any configuration asks for -- the same fold header_cfg.h.jinja2 applies to
+        # XCP_MAX_DTO.
+        self._event_queue_size = max(config.event_queue_size for config in configs)
+        self._daq_queue_size = max(config.daq_queue_size for config in configs)
+        super(MultiConfig, self).__init__(
+                configurations=[configuration
+                                for config in configs
+                                for configuration in config['configurations']])
+
+    get_id = DefaultConfig.get_id
+    channel_rx_pdu = DefaultConfig.channel_rx_pdu
+    channel_tx_pdu = DefaultConfig.channel_tx_pdu
+    default_daq_dto_pdu_mapping = DefaultConfig.default_daq_dto_pdu_mapping
+    event_queue_size = DefaultConfig.event_queue_size
+    daq_queue_size = DefaultConfig.daq_queue_size
+
+
 if __name__ == '__main__':
     a = DefaultConfig()
     print(a.get_id)

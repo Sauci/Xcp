@@ -266,7 +266,13 @@ class XcpTest(object):
     def __init__(self,
                  config,
                  initialize=True,
-                 rx_buffer_size=0x0FFF):
+                 rx_buffer_size=0x0FFF,
+                 configuration_index=0):
+        # Which of the generated file's configurations Xcp_Init runs against, i.e. which element
+        # of `const Xcp_Type Xcp[]` becomes Xcp_Ptr. Only ever other than 0 for a MultiConfig
+        # (test/parameter.py): with one configuration there is nothing to choose, and a
+        # build-wide macro and the active configuration's own fields can never disagree.
+        self.configuration_index = configuration_index
         self.available_rx_buffer = rx_buffer_size
         # DD14/fix round 1: SchM_Enter_Xcp_DtoQueue and SchM_Exit_Xcp_DtoQueue below are given
         # side effects that model the exclusive area as a single boolean, so nesting,
@@ -503,7 +509,13 @@ class XcpTest(object):
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
-            self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
+            # addressof(array, index) rather than a plain cast of the array, so a
+            # configuration_index other than 0 selects that element of Xcp[] the way an
+            # integrator's own Xcp_Init(&Xcp[n]) call would. Index 0 is byte-for-byte the cast
+            # this replaced.
+            self.code.lib.Xcp_Init(self.code.ffi.cast(
+                    'const Xcp_Type *',
+                    self.config.ffi.addressof(self.config.lib.Xcp, configuration_index)))
 
     def _guarded_callback(self, name, mock):
         """Wraps a mock so an exception it raises is recorded rather than only printed.
