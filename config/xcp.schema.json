@@ -149,15 +149,12 @@
                     "type": "object",
                     "properties": {
                       "pid": {
-                        "description": "Packet identifier (PID) of the DTO that identifies the ODT the content of the DTO (see ECUC_Xcp_00066)",
+                        "description": "Packet identifier (PID) of the DTO that identifies the ODT the content of the DTO (see ECUC_Xcp_00066). Optional: FIRST_PID is assigned by the slave rather than configured (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4), and this module derives it from the ODT counts of the preceding DAQ lists. Where it is set, source_cfg.c.jinja2 checks the first DTO of each list against the derived value and fails generation on a mismatch, so setting it asserts the derived numbering rather than choosing it.",
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 251
                       }
-                    },
-                    "required": [
-                      "pid"
-                    ]
+                    }
                   },
                   "minItems": 1
                 }
