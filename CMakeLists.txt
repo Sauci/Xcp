@@ -54,13 +54,17 @@ add_subdirectory(extern)
 add_subdirectory(generated)
 # add_subdirectory(debug)
 
+# Absolute, so that $<TARGET_PROPERTY:Xcp,SOURCES> can be consumed as-is. CMake keeps the SOURCES
+# property exactly as written here, and the pytest harness, the gcov merge in test.sh and the
+# Codecov upload all read that property rather than repeating the list. Adding a translation unit
+# should mean editing this list and nothing else.
 add_library(Xcp STATIC
-    source/Xcp.c
-    source/Xcp_Std.c
-    source/Xcp_Cal.c
-    source/Xcp_Pag.c
-    source/Xcp_Daq.c
-    source/Xcp_DaqRuntime.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Std.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Cal.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Pag.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Daq.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_DaqRuntime.c)
 
 target_compile_definitions(Xcp
     PRIVATE XCP_DEV_ERROR_DETECT=$<IF:$<BOOL:${ENABLE_DET}>,STD_ON,STD_OFF>
@@ -89,13 +93,21 @@ target_link_libraries(Xcp
 if (${XCP_ENABLE_TEST})
     enable_testing()
 
+    # test.sh runs cmake, so it cannot itself be a configured template. Publishing the list into the
+    # build directory gets the same result the other way round: the script reads what CMake knows
+    # instead of repeating it. file(GENERATE), not configure_file, because only the former expands
+    # generator expressions.
+    file(GENERATE
+        OUTPUT ${CMAKE_BINARY_DIR}/xcp_sources.txt
+        CONTENT "$<JOIN:$<TARGET_PROPERTY:Xcp,SOURCES>,\n>\n")
+
     add_test(NAME Xcp_UnitTest
         COMMAND ${PYTHON_EXECUTABLE} -W ignore::DeprecationWarning
         -m pytest ${CMAKE_CURRENT_SOURCE_DIR}/test -v -x ${XCP_PYTEST_ARGS}
         --build_directory ${CMAKE_BINARY_DIR}
         --script_directory ${PROJECT_SOURCE_DIR}/script
         --header ${PROJECT_SOURCE_DIR}/interface/Xcp.h
-        --source "${PROJECT_SOURCE_DIR}/source/Xcp.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Std.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Cal.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Pag.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_Daq.c$<SEMICOLON>${PROJECT_SOURCE_DIR}/source/Xcp_DaqRuntime.c"
+        --source "$<JOIN:$<TARGET_PROPERTY:Xcp,SOURCES>,$<SEMICOLON>>"
         --compile_definitions $<JOIN:$<TARGET_PROPERTY:Xcp,COMPILE_DEFINITIONS>,$<SEMICOLON>>
         --include_directories $<JOIN:$<TARGET_PROPERTY:Xcp,INCLUDE_DIRECTORIES>,$<SEMICOLON>>
         --junitxml=./report/${PROJECT_NAME}.xml

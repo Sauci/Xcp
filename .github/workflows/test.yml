@@ -73,6 +73,18 @@ jobs:
           --workdir /usr/project
           "${{needs.build-and-push-image.outputs.image}}"
           ./test.sh
+      # test.sh writes one path per line for each translation unit it actually produced coverage
+      # for, from the list CMake generated out of $<TARGET_PROPERTY:Xcp,SOURCES>. Reading it here
+      # keeps add_library the only place the set of sources is written down.
+      - name: Collect the coverage report list
+        if: success() || failure()
+        id: coverage
+        run: |
+          if [ ! -s build/coverage_files.txt ]; then
+            echo 'no coverage reports were produced; refusing to upload an empty set' >&2
+            exit 1
+          fi
+          echo "files=$(paste -sd, build/coverage_files.txt)" >> "$GITHUB_OUTPUT"
       - name: Upload code coverage to Codecov
         if: success() || failure()
         uses: codecov/codecov-action@v5
@@ -80,6 +92,4 @@ jobs:
           # Optional on a public repository: unset means a tokenless upload, which works but is
           # rate limited. Add the secret if uploads start failing intermittently.
           token: ${{secrets.CODECOV_TOKEN}}
-          # Hand-maintained, one entry per translation unit in the Xcp target: keep in sync with
-          # the `for f in ...` gcov loop in test.sh, which enumerates the same set.
-          files: ./build/Xcp.c.gcov,./build/Xcp_Std.c.gcov,./build/Xcp_Cal.c.gcov,./build/Xcp_Pag.c.gcov,./build/Xcp_Daq.c.gcov,./build/Xcp_DaqRuntime.c.gcov
+          files: ${{steps.coverage.outputs.files}}
