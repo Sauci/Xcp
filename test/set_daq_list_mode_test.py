@@ -27,6 +27,26 @@ def set_mode(handle, mode=0x00, daq_list=0, channel=0, prescaler=1, priority=0,
                     tuple(u16_to_array(channel, byte_order)) + (prescaler, priority))
 
 
+def fill_odt_zero_to_capacity(handle, daq_list=0, byte_order='LITTLE_ENDIAN'):
+    """SET_DAQ_PTR to ODT 0 entry 0, then WRITE_DAQ one byte at a time -- relying on the pointer's
+    auto post-increment within the ODT (1.1/1.6.4.1.1.2) -- until the ODT holds odtEntrySizeDaq
+    bytes, the same MAX_ODT_ENTRY_SIZE_DAQ GET_DAQ_RESOLUTION_INFO reports. Asserts capacity was
+    actually reached: a helper that silently filled less would make a caller relying on a full
+    ODT 0 pass for the wrong reason."""
+    capacity = handle.lib.Xcp_Ptr.general.odtEntrySizeDaq
+
+    assert response(handle, (0xE2, 0x00) + tuple(u16_to_array(daq_list, byte_order)) +
+                    (0x00, 0x00))[0] == 0xFF
+
+    for _ in range(capacity):
+        assert response(handle, (0xE1, 0xFF, 0x01, 0x00) +
+                        tuple(u32_to_array(0xDEADBEEF, byte_order)))[0] == 0xFF
+
+    used = sum(handle.lib.Xcp_Ptr.config.daqList[daq_list].odt[0].odtEntry[idx].length
+              for idx in range(handle.lib.Xcp_Ptr.config.daqList[daq_list].maxOdtEntries))
+    assert used == capacity, 'fill_odt_zero_to_capacity only reached {} of {} bytes'.format(used, capacity)
+
+
 def test_set_daq_list_mode_stores_channel_prescaler_and_priority():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3"""
     handle = daq_handle()
@@ -109,3 +129,46 @@ def test_set_daq_list_mode_reads_words_in_the_configured_byte_order():
 
     assert set_mode(handle, daq_list=1, byte_order='BIG_ENDIAN')[0] == 0xFF
     assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[1].prescaler == 1
+
+
+def test_set_daq_list_mode_accepts_timestamp_when_a_clock_is_configured():
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='WORD')))
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
+    # XCP_DAQ_LIST_MODE_TIMESTAMP (GET_DAQ_LIST_MODE layout, 1.1/1.6.4.1.2.6): accepting the
+    # request is not enough on its own -- Task 5 reads this stored bit to decide whether to
+    # timestamp the DTO, so the request must actually reach the runtime mode.
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) != 0x00
+
+
+def test_set_daq_list_mode_refuses_timestamp_without_a_clock():
+    """ERR_MODE_NOT_VALID, not ERR_OUT_OF_RANGE: the mode is unsupported by this build, which is
+    exactly what 1.7.3.2.4 lists the code for (DD9)."""
+    handle = XcpTest(DefaultConfig())
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_MODE_NOT_VALID'))
+
+
+def test_enabling_timestamp_is_refused_when_odt_zero_is_already_full():
+    """The master may write entries before setting the mode. MAX_ODT_ENTRY_SIZE_DAQ, which
+    GET_DAQ_RESOLUTION_INFO reports, does not change; the timestamp reduces ODT 0's budget, so an
+    ODT 0 already filled to that reported maximum can no longer carry a timestamp.
+    ERR_OUT_OF_RANGE, whose prescribed master action -- retry other parameter -- is exactly the
+    recovery available: drop an entry, or leave the timestamp off."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=8),)))
+    connect(handle)
+    fill_odt_zero_to_capacity(handle, daq_list=0)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_OUT_OF_RANGE'))

@@ -132,14 +132,16 @@ extern "C" {
 #define XCP_DAQ_LIST_MODE_REQ_PID_OFF (0x01u << 0x05u)
 
 /**
- * @brief every mode bit this implementation does not honour.
- * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. Everything else is
- * refused: DIRECTION selects STIM, TIMESTAMP and PID_OFF are unimplemented, and 1.1 places
- * ALTERNATING somewhere in bits 6..7. Refusing the whole class is conformant whichever bit
- * ALTERNATING turns out to occupy.
+ * @brief every mode bit this implementation refuses outright, regardless of configuration.
+ * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. TIMESTAMP is not in
+ * this mask any more: Xcp_DTOCmdDaqSetDaqListMode decides that bit itself, depending on whether
+ * this build has a clock configured and whether ODT 0 still has room for one. What remains here
+ * is refused unconditionally: DIRECTION selects STIM, out of scope until SP3; PID_OFF is
+ * unimplemented until Task 7; and 1.1 places ALTERNATING somewhere in bits 6..7 -- refusing the
+ * whole class is conformant whichever bit it turns out to occupy.
  */
 #define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
-    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_TIMESTAMP | XCP_DAQ_LIST_MODE_REQ_PID_OFF | \
+    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_PID_OFF | \
      (0x01u << 0x06u) | (0x01u << 0x07u)) /* bits 6-7 reserved: 1.1 places ALTERNATING somewhere in them */
 
 /* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */

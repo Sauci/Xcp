@@ -400,12 +400,35 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         error = XCP_E_ASAM_DAQ_ACTIVE;
     }
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
-     * DIRECTION selects stimulation, TIMESTAMP a timestamped mode and PID_OFF a DTO without an
-     * identification field; 1.1 adds ALTERNATING. None is implemented, and 1.7.3.2.4 lists
-     * ERR_MODE_NOT_VALID for this command, which is precisely what an unsupported mode is. */
+     * DIRECTION selects stimulation and PID_OFF a DTO without an identification field; 1.1 adds
+     * ALTERNATING somewhere in bits 6..7. None of these three is implemented, and 1.7.3.2.4 lists
+     * ERR_MODE_NOT_VALID for this command, which is precisely what an unsupported mode is.
+     * TIMESTAMP is handled separately below: whether it is honoured depends on this build's
+     * configuration, not on a blanket refusal. */
     else if ((mode & XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED) != 0x00u)
     {
         error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
+     * TIMESTAMP asks for a mode this build may not have a clock for. DD9: an unsupported mode is
+     * what ERR_MODE_NOT_VALID means. */
+    else if (((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u) &&
+             (Xcp_Ptr->general->timestampType == NO_TIME_STAMP))
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    /* The timestamp occupies Xcp_TimestampWireSize(timestampType) bytes of ODT 0 only (1.1/1.1.2.2,
+     * Diagram 10), so enabling it shrinks that ODT's budget below the MAX_ODT_ENTRY_SIZE_DAQ that
+     * GET_DAQ_RESOLUTION_INFO reports and WRITE_DAQ enforced when the entries were written. An ODT
+     * 0 already filled past the reduced budget cannot carry one. 0xFFu as excludedEntry excludes
+     * nothing -- every configured slot is counted; no real index can equal it because the loop in
+     * Xcp_OdtUsedBytes bounds idx strictly below maxOdtEntries, itself a uint8. */
+    else if (((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u) &&
+             ((uint16)Xcp_OdtUsedBytes(daq_list_number, 0x00u, 0xFFu) >
+              (uint16)(Xcp_Ptr->general->odtEntrySizeDaq -
+                       Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType))))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
     }
     else if (event_channel_number >= Xcp_Ptr->general->maxEventChannel)
     {
@@ -431,9 +454,18 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         Xcp_DaqListRt(daq_list_number)->priority = priority;
 
         /* The stored mode uses the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6, which is not the
-         * layout this request arrives in. Nothing this phase accepts sets a flag, so there is
-         * nothing to translate -- but do not be tempted to assign `mode` here when TIMESTAMP or
-         * DIRECTION become supported: they sit at different bits in the two bytes. */
+         * layout this request arrives in -- TIMESTAMP happens to sit at bit 4 in both, but that is
+         * a coincidence, not a shortcut: do not be tempted to assign `mode` wholesale here when
+         * DIRECTION becomes supported too, as it sits at a different bit in each byte (request bit
+         * 0, stored bit 1). Xcp_DTOCmdDaqGetDaqListMode (below) reads this same bit back. */
+        if ((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_TIMESTAMP;
+        }
+        else
+        {
+            Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_TIMESTAMP);
+        }
     }
 
     if (error == 0x00u)
