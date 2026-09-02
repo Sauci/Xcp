@@ -24,14 +24,18 @@ def daq_handle(**kwargs):
 
 def test_daq_properties_report_what_this_phase_implements():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE static (bit 0
-    clear), PRESCALER_SUPPORTED set (bit 1), RESUME/BIT_STIM/TIMESTAMP/PID_OFF clear (bits 2-5),
+    clear), PRESCALER_SUPPORTED set (bit 1), RESUME/BIT_STIM clear (bits 2-3), TIMESTAMP_SUPPORTED
+    clear (bit 4 -- this handle's configuration declares no clock), PID_OFF_SUPPORTED set (bit 5
+    -- daq_handle()'s identification field type defaults to ABSOLUTE;
+    test/daq_pid_off_test.py::test_pid_off_supported_is_advertised_only_for_absolute_identification
+    covers all four identification types, including the other three, where the bit clears),
     OVERLOAD_MSB clear (bit 6), overload reported by event packet (bit 7).
 
     Checked as one exact byte rather than a mask on the two bits this phase drives, so a stray
     bit anywhere -- including a wrongly-set OVERLOAD_MSB -- fails this test too."""
     handle = daq_handle(prescaler_supported=True, overload_indication='EVENT')
 
-    assert info(handle)[1] == 0x82
+    assert info(handle)[1] == 0xA2
 
 
 def test_daq_properties_drop_the_overload_bit_when_indication_is_off():

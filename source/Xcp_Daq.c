@@ -478,6 +478,16 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }
+    /* 1.1/1.1.2.1: PID_OFF is 'only allowed if the Identification Field Type is absolute ODT
+     * number', and identification then falls to the transport layer, which 1.1.2.1 says needs
+     * 'separate CAN-Ids for each DAQ list and only one ODT for each DAQ list'. This module gives a
+     * DAQ list exactly one TX PDU, so a single-ODT list satisfies that and no other list can. */
+    else if (((mode & XCP_DAQ_LIST_MODE_REQ_PID_OFF) != 0x00u) &&
+             ((Xcp_Ptr->general->identificationFieldType != ABSOLUTE) ||
+              (Xcp_Ptr->config->daqList[daq_list_number].maxOdt != 0x01u)))
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
     else
     {
         Xcp_DaqListRt(daq_list_number)->eventChannelNumber = event_channel_number;
@@ -486,10 +496,11 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         Xcp_DaqListRt(daq_list_number)->priority = priority;
 
         /* The stored mode uses the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6, which is not the
-         * layout this request arrives in -- TIMESTAMP happens to sit at bit 4 in both, but that is
-         * a coincidence, not a shortcut: do not be tempted to assign `mode` wholesale here when
-         * DIRECTION becomes supported too, as it sits at a different bit in each byte (request bit
-         * 0, stored bit 1). Xcp_DTOCmdDaqGetDaqListMode (below) reads this same bit back. */
+         * layout this request arrives in -- TIMESTAMP and PID_OFF happen to sit at the same bit in
+         * both, but that is a coincidence, not a shortcut: do not be tempted to assign `mode`
+         * wholesale here when DIRECTION becomes supported too, as it sits at a different bit in
+         * each byte (request bit 0, stored bit 1). Xcp_DTOCmdDaqGetDaqListMode (below) reads these
+         * same bits back. */
         if ((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u)
         {
             Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_TIMESTAMP;
@@ -497,6 +508,18 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         else
         {
             Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_TIMESTAMP);
+        }
+
+        /* Re-specified in full on every request, not only ever settable: a master that turns
+         * PID_OFF back off in a later SET_DAQ_LIST_MODE must see it actually cleared here, exactly
+         * as TIMESTAMP is above. */
+        if ((mode & XCP_DAQ_LIST_MODE_REQ_PID_OFF) != 0x00u)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_PID_OFF;
+        }
+        else
+        {
+            Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_PID_OFF);
         }
     }
 
@@ -710,10 +733,11 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     *responseExpected = TRUE;
 
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4
-     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME, BIT_STIM
-     * and PID_OFF are unimplemented and so are reported unsupported, which is what lets
-     * SET_DAQ_LIST_MODE refuse the matching mode bits. TIMESTAMP_SUPPORTED is not in that group:
-     * it follows whether the configuration declares a clock, set just below. */
+     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME and
+     * BIT_STIM are unimplemented and so are reported unsupported, which is what lets
+     * SET_DAQ_LIST_MODE refuse the matching mode bits. TIMESTAMP_SUPPORTED and PID_OFF_SUPPORTED
+     * are not in that group: TIMESTAMP_SUPPORTED follows whether the configuration declares a
+     * clock, set just below; PID_OFF_SUPPORTED follows the identification field type, set here. */
     if (Xcp_Ptr->general->prescalerSupported == TRUE)
     {
         properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;
@@ -725,6 +749,15 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     if (Xcp_Ptr->general->timestampType != NO_TIME_STAMP)
     {
         properties |= XCP_DAQ_PROPERTIES_TIMESTAMP_SUPPORTED;
+    }
+
+    /* PID_OFF_SUPPORTED (bit 5): 1.1/1.1.2.1 permits turning off the Identification Field "only
+     * ... if the Identification Field Type is absolute ODT number" -- with any other type no DAQ
+     * list could ever accept the bit (Xcp_DTOCmdDaqSetDaqListMode also requires a single-ODT list,
+     * a per-list condition GET_DAQ_PROCESSOR_INFO's one build-wide byte cannot express here). */
+    if (Xcp_Ptr->general->identificationFieldType == ABSOLUTE)
+    {
+        properties |= XCP_DAQ_PROPERTIES_PID_OFF_SUPPORTED;
     }
 
     /* OVERLOAD_MSB stays clear: indicating an overload in the MSB of the PID would cap every
