@@ -76,7 +76,7 @@ def test_pid_off_is_refused_for_a_multi_odt_list():
 def test_a_pid_off_dto_carries_no_identification_field():
     handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE',
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
     configure_one_entry(handle, daq_list=0, odt=0, size=1, address=0x1234)
     start_daq_list(handle, daq_list=0, mode=0x20)
@@ -91,7 +91,7 @@ def test_a_pid_off_dto_carries_no_identification_field():
 def test_pid_off_with_a_timestamp_puts_the_timestamp_at_offset_zero():
     handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE', timestamp=timestamp(size='WORD'),
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
     handle.xcp_get_daq_timestamp.return_value = 0xBEEF
     configure_one_entry(handle, daq_list=0, odt=0, size=1)

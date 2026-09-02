@@ -161,8 +161,8 @@ def test_trigger_only_samples_lists_bound_to_that_event_channel():
     channel must sample only the list bound to it, not both."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),
                                          daq(name='DAQ2', max_odt=1, max_odt_entries=1)),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),
-                                           event(triggered_daq_list_ref=['DAQ2']))))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),
+                                           event(name='EVT2', triggered_daq_list_ref=['DAQ2']))))
     connect(handle)
 
     addresses_read = list()

@@ -47,6 +47,11 @@
                   ],
                   "default": "ODT"
                 },
+                "name": {
+                  "description": "ASCII name of this event channel, published through GET_DAQ_EVENT_INFO (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7) when protocol_layer.publish_names is true. No NUL terminator is transmitted, so this must be printable ASCII.",
+                  "type": "string",
+                  "pattern": "^[\\x20-\\x7E]+$"
+                },
                 "priority": {
                   "description": "Priority of the event channel",
                   "type": "integer",
@@ -471,6 +476,11 @@
               },
               "prescaler_supported": {
                 "description": "Sets PRESCALER_SUPPORTED in DAQ_PROPERTIES; when false, SET_DAQ_LIST_MODE rejects a prescaler above 1",
+                "type": "boolean",
+                "default": true
+              },
+              "publish_names": {
+                "description": "Whether event channel names are compiled in and reported through GET_DAQ_EVENT_INFO's EVENT_CHANNEL_NAME_LENGTH (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7). When false, every event channel reports EVENT_CHANNEL_NAME_LENGTH 0, which that section defines as 'if not available'. When true, every events[] entry must declare a name.",
                 "type": "boolean",
                 "default": true
               },

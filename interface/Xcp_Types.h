@@ -455,6 +455,19 @@ typedef struct
      */
     const Xcp_DaqListType * const *triggeredDaqListRef;
     const uint32 triggeredDaqListRefCount;
+
+    /**
+     * @brief ASCII name of this event channel, without NUL terminator, or NULL_PTR when names are
+     * not published. GET_DAQ_EVENT_INFO sets the MTA here so the master can UPLOAD it.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7.
+     */
+    const uint8 *namePtr;
+
+    /**
+     * @brief Length of namePtr in bytes. 0 means the name is not available, which
+     * 1.1/1.6.4.1.2.7 permits explicitly.
+     */
+    const uint8 nameLength;
 } Xcp_EventChannelType;
 
 /**

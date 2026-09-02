@@ -728,6 +728,99 @@ uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *
 }
 
 /**
+ * @brief maps the configured consistency level onto DAQ_EVENT_PROPERTIES' CONSISTENCY_DAQ and
+ * CONSISTENCY_EVENT bits.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7: 00 is consistency on ODT
+ * level (the default -- neither bit set) and 10 is CONSISTENCY_EVENT (event channel level). 01,
+ * CONSISTENCY_DAQ (DAQ list level), has no case here: Xcp_EventChannelConsistencyType
+ * (interface/Xcp_Types.h) only distinguishes ODT from EVENT, so DAQ-list-level consistency is
+ * not a configuration this module can express yet.
+ */
+static uint8 Xcp_EventConsistencyBits(Xcp_EventChannelConsistencyType consistency)
+{
+    uint8 bits;
+
+    switch (consistency)
+    {
+        case EVENT:
+            bits = XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_EVENT;
+            break;
+        case ODT:
+        default:
+            bits = 0x00u;
+            break;
+    }
+
+    return bits;
+}
+
+/**
+ * @brief GET_DAQ_EVENT_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7.
+ * @details Defined immediately before Xcp_DTOCmdDaqGetDaqListInfo, its neighbour in the PID
+ * table (0xD7 before 0xD8) and its closest sibling in shape: both take a channel/list number,
+ * answer ERR_OUT_OF_RANGE for one that does not exist, and build a PROPERTIES byte the same way.
+ * @note MAX_DAQ_LIST reports the *configured* triggeredDaqListRefCount -- "the maximum number of
+ * DAQ lists in this event channel". That is a different question from the *runtime* binding
+ * SET_DAQ_LIST_MODE writes to Xcp_Rt[...].daqList[...].eventChannelNumber (DD23, see
+ * Xcp_DTOCmdDaqGetDaqListInfo's own EVENT_FIXED comment below), which is which list is bound
+ * right now, and until this task triggeredDaqListRef had no runtime role at all.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 event_channel_number;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &event_channel_number, Xcp_Ptr->general->byteOrder);
+
+    if (event_channel_number >= Xcp_Ptr->general->maxEventChannel)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        const Xcp_EventChannelType *p_channel = &Xcp_Ptr->config->eventChannel[event_channel_number];
+        uint8 properties = 0x00u;
+
+        /* DAQ_EVENT_PROPERTIES: DAQ set for DAQ and DAQ_STIM, the same condition
+         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its DAQ bit. STIM
+         * stays clear even for a DAQ_STIM channel for the same reason that comment gives: data
+         * stimulation arrives in SP3. */
+        if ((p_channel->type == DAQ) || (p_channel->type == DAQ_STIM))
+        {
+            properties |= XCP_DAQ_EVENT_PROPERTIES_DAQ;
+        }
+
+        properties |= Xcp_EventConsistencyBits(p_channel->consistency);
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = properties;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = (uint8)p_channel->triggeredDaqListRefCount;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_channel->nameLength;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = p_channel->timeCycle;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = (uint8)p_channel->timeUnit;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = p_channel->priority;
+
+        /* 1.1/1.6.4.1.2.7: the command "automatically sets the Memory Transfer Address (MTA) to
+         * the location from which the master device may upload the event channel name". No
+         * Xcp_SetMta exists to call: Xcp_DTOCmdStdSetMta (source/Xcp_Std.c, SET_MTA's own
+         * handler) writes these same two fields directly rather than through a wrapper, so this
+         * does the same. Only when there is somewhere real to point, though -- with nothing to
+         * publish, moving the MTA to NULL_PTR would silently invalidate whatever the master had
+         * already set with SET_MTA, so it is left alone instead. */
+        if (p_channel->nameLength != 0x00u)
+        {
+            Xcp_Internal.memory_transfer.address = (void *)p_channel->namePtr;
+            Xcp_Internal.memory_transfer.extension = 0x00u;
+        }
+
+        Xcp_FinalizeResPacket(0x07u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+/**
  * @brief GET_DAQ_LIST_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1.
  * @details Unlike its neighbours in the PID table (0xD9 GET_DAQ_RESOLUTION_INFO, 0xDA
  * GET_DAQ_PROCESSOR_INFO, 0xDB READ_DAQ, all 1.6.4.1.2.x), this command's own section sits in a

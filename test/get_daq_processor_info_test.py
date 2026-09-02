@@ -71,7 +71,8 @@ def test_max_daq_and_max_event_channel_and_min_daq():
     if GET_DAQ_PROCESSOR_INFO's own byte-6 assignment were ever deleted, this response would
     still carry that leftover 0x01 instead of 0x00. Confirmed by mutation -- see
     task-13-report.md."""
-    handle = daq_handle(events=(event(triggered_daq_list_ref=['DAQ1']), event(triggered_daq_list_ref=['DAQ2'])))
+    handle = daq_handle(events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),
+                                event(name='EVT2', triggered_daq_list_ref=['DAQ2'])))
 
     response = info(handle)
 
@@ -87,7 +88,8 @@ def test_words_follow_the_configured_byte_order():
     configuration. Same distinctive counts as above (3 DAQ lists, 2 event channels), so neither
     0x0003 nor 0x0002 is byte-palindromic under a swap."""
     handle = daq_handle(byte_order='BIG_ENDIAN',
-                        events=(event(triggered_daq_list_ref=['DAQ1']), event(triggered_daq_list_ref=['DAQ2'])))
+                        events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),
+                                event(name='EVT2', triggered_daq_list_ref=['DAQ2'])))
 
     response = info(handle)
 

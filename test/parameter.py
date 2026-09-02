@@ -172,14 +172,22 @@ def event(consistency='ODT',
           time_cycle=10,
           time_unit='TIMESTAMP_UNIT_1MS',
           type='DAQ',
-          triggered_daq_list_ref=None):
-    return {"consistency": consistency,
-            "priority": priority,
-            "time_cycle": time_cycle,
-            "time_unit": time_unit,
-            "type": type,
-            "triggered_daq_list_ref": list(triggered_daq_list_ref)
-            if triggered_daq_list_ref is not None else ['DAQ1']}
+          triggered_daq_list_ref=None,
+          name=None):
+    # name=None omits the key entirely rather than inventing one: protocol_layer.publish_names
+    # defaults to True (DefaultConfig below), and script/source_cfg.c.jinja2 rejects a published
+    # event channel with no name, so a caller testing that guard must see it fire, not see this
+    # helper paper over the missing name.
+    result = {"consistency": consistency,
+              "priority": priority,
+              "time_cycle": time_cycle,
+              "time_unit": time_unit,
+              "type": type,
+              "triggered_daq_list_ref": list(triggered_daq_list_ref)
+              if triggered_daq_list_ref is not None else ['DAQ1']}
+    if name is not None:
+        result["name"] = name
+    return result
 
 
 class DefaultConfig(dict):
@@ -270,6 +278,7 @@ class DefaultConfig(dict):
                  identification_field_type='ABSOLUTE',
                  daq_queue_size=16,
                  prescaler_supported=True,
+                 publish_names=True,
                  overload_indication='EVENT',
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
@@ -297,6 +306,7 @@ class DefaultConfig(dict):
             "identification_field_type": identification_field_type,
             "daq_queue_size": daq_queue_size,
             "prescaler_supported": prescaler_supported,
+            "publish_names": publish_names,
             "overload_indication": overload_indication,
             "checksum_type": checksum_type,
             "user_defined_checksum_function": user_defined_checksum_function,
@@ -315,7 +325,12 @@ class DefaultConfig(dict):
                 "daqs": list(daqs),
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
-                "events": list(events) if events is not None else [event()],
+                # event()'s own bare default omits "name" (see its docstring comment), and
+                # publish_names defaults to True two lines above -- so DefaultConfig's own
+                # fallback event needs a name of its own, or every test that builds DefaultConfig()
+                # without an explicit events= would trip script/source_cfg.c.jinja2's publish_names
+                # guard by accident.
+                "events": list(events) if events is not None else [event(name='EVT1')],
                 "apis": {
                     "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
                     "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},

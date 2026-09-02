@@ -38,7 +38,8 @@ def test_get_daq_list_mode_reports_what_set_daq_list_mode_stored():
     channel at or above maxEventChannel (source/Xcp_Daq.c), and the default configuration
     declares only one channel, so a second channel has to be configured before channel 1 can be
     set and read back as a real round trip."""
-    handle = daq_handle(events=(event(triggered_daq_list_ref=['DAQ1']), event(triggered_daq_list_ref=['DAQ1'])))
+    handle = daq_handle(events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),
+                                event(name='EVT2', triggered_daq_list_ref=['DAQ1'])))
     exchange(handle, (0xE0, 0x00, 0x01, 0x00, 0x01, 0x00, 0x03, 0x00), length=1)
 
     assert get_mode(handle, daq_list=1)[6] == 3, 'prescaler'

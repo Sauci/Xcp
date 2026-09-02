@@ -327,7 +327,7 @@ def test_two_lists_on_one_channel_are_both_sampled_with_distinct_identification(
     handle = XcpTest(DefaultConfig(identification_field_type=ident,
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),
                                          daq(name='DAQ2', max_odt=1, max_odt_entries=1)),
-                                   events=(event(triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
     connect(handle)
 
     session = DaqSession(handle, 'LITTLE_ENDIAN')

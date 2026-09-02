@@ -218,7 +218,7 @@ def test_the_timestamp_follows_the_identification_field_in_the_first_odt(ident, 
     handle = XcpTest(DefaultConfig(timestamp=timestamp(size=size), byte_order=byte_order,
                                    identification_field_type=ident, max_dto=9,
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
     handle.xcp_get_daq_timestamp.return_value = 0x89ABCDEF
     configure_one_entry(handle, daq_list=0, odt=0, size=1)
@@ -237,7 +237,7 @@ def test_only_the_first_odt_of_a_cycle_carries_a_timestamp():
     misreport the sample instant of the later ODTs."""
     handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
                                    daqs=(daq(name='DAQ1', max_odt=2, max_odt_entries=1),),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
     handle.xcp_get_daq_timestamp.return_value = 0x11223344
     configure_one_entry(handle, daq_list=0, odt=0, size=1)
@@ -256,7 +256,7 @@ def test_the_clock_is_read_once_per_cycle_not_once_per_odt():
     'first ODT of a DAQ cycle' model, and would call into integrator code more often than needed."""
     handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
                                    daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=1),),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
     for odt in range(3):
         configure_one_entry(handle, daq_list=0, odt=odt, size=1)
@@ -271,7 +271,7 @@ def test_the_clock_is_read_once_per_cycle_not_once_per_odt():
 def test_no_timestamp_is_transmitted_when_the_mode_is_off():
     handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
-                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
     configure_one_entry(handle, daq_list=0, odt=0, size=1)
     start_daq_list(handle, daq_list=0, mode=0x00)

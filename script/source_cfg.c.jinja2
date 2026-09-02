@@ -273,12 +273,19 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 {{ raise('event channel {} references DAQ list "{}", which no configuration declares'.format(event_index, name)) }}
         {%- endif %}
         {%- endfor %}
+        {%- if configuration.protocol_layer.publish_names | default(true) and event.name is not defined %}
+{{ raise('event channel {} has no name but publish_names is enabled; set a name or set publish_names to false'.format(event_index)) }}
+        {%- endif %}
 
 static const Xcp_DaqListType * const Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % event_index}}[{{'0x%02Xu' % event.triggered_daq_list_ref|length}}] = {
         {%- for name in event.triggered_daq_list_ref %}
     &Xcp_DaqListConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % daq_index_by_name[name]}}],
         {%- endfor %}
 };
+        {%- if configuration.protocol_layer.publish_names | default(true) and event.name is defined %}
+
+static const uint8 Xcp_EventChannelName{{'%02X' % configuration_loop.index0}}{{'%02X' % event_index}}[] = "{{event.name}}";
+        {%- endif %}
     {%- endfor %}
 
 static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % configuration.events|length}}] = {
@@ -292,7 +299,14 @@ static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration
         {{event.time_unit}}, /* XcpEventChannelTimeUnit */
         {{event.type}}, /* XcpEventChannelType */
         &Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % loop.index0}}[0x00u],
-        {{'0x%08Xu' % event.triggered_daq_list_ref|length}}
+        {{'0x%08Xu' % event.triggered_daq_list_ref|length}},
+        {%- if configuration.protocol_layer.publish_names | default(true) and event.name is defined %}
+        &Xcp_EventChannelName{{'%02X' % configuration_loop.index0}}{{'%02X' % loop.index0}}[0x00u],
+        {{'0x%02Xu' % event.name|length}}
+        {%- else %}
+        NULL_PTR,
+        0x00u
+        {%- endif %}
     },
     {%- endfor %}
 };

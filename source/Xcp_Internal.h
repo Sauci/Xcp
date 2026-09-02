@@ -181,6 +181,12 @@ extern "C" {
 #define XCP_DAQ_LIST_PROPERTIES_DAQ (0x01u << 0x02u)
 #define XCP_DAQ_LIST_PROPERTIES_STIM (0x01u << 0x03u)
 
+/* DAQ_EVENT_PROPERTIES, 1.1/1.6.4.1.2.7. Bits 0, 1, 4 and 5 are reserved. */
+#define XCP_DAQ_EVENT_PROPERTIES_DAQ (0x01u << 0x02u)
+#define XCP_DAQ_EVENT_PROPERTIES_STIM (0x01u << 0x03u)
+#define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_DAQ (0x01u << 0x06u)
+#define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_EVENT (0x01u << 0x07u)
+
 /**
  * @brief BIT_OFFSET value meaning "this entry is a normal element, ignore the field".
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2.
@@ -479,6 +485,14 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_DAQ_EVENT_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqGetDaqListInfo: 0xD7 precedes
+ * 0xD8 in the PID table, and the two share the same shape -- a channel/list number in, an
+ * ERR_OUT_OF_RANGE for one that does not exist, and a PROPERTIES byte built the same way.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
  * @brief GET_DAQ_LIST_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1.

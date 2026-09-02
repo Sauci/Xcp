@@ -98,7 +98,7 @@ def test_event_channels_are_generated_rather_than_left_null():
 
 def test_event_channel_references_resolve_to_the_named_daq_lists():
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3), daq(name='DAQ2', max_odt=5)),
-                                   events=(event(triggered_daq_list_ref=['DAQ2']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ2']),)))
 
     channel = handle.config.lib.Xcp[0].config.eventChannel[0]
 
@@ -109,7 +109,7 @@ def test_event_channel_references_resolve_to_the_named_daq_lists():
 
 def test_event_channel_may_reference_several_daq_lists():
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1), daq(name='DAQ2', max_odt=1)),
-                                   events=(event(triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
 
     channel = handle.config.lib.Xcp[0].config.eventChannel[0]
 
@@ -287,3 +287,12 @@ def test_generation_fails_when_write_daq_multiple_is_enabled_with_max_cto_below_
     smaller MAX_CTO cannot carry even one."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(max_cto=9, xcp_write_daq_multiple_api_enable=True))
+
+
+def test_generation_fails_when_publish_names_is_set_but_an_event_has_no_name():
+    """publish_names defaults to True (test/parameter.py, matching protocol_layer.publish_names'
+    own schema default), and event()'s own default omits "name" entirely -- see its comment --
+    so this is what actually fires script/source_cfg.c.jinja2's guard rather than the helper
+    inventing a name that would paper over a real integrator misconfiguration."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(publish_names=True, events=(event(triggered_daq_list_ref=['DAQ1']),)))
