@@ -122,6 +122,119 @@ static uint8 Xcp_DaqOdtEntryBudget(uint16 daqListNumber, uint8 odtNumber)
 }
 
 /**
+ * @brief Auto post-increments the DAQ pointer to the next entry within the current ODT.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2: "The DAQ list pointer is
+ * auto post incremented to the next ODT entry within one and the same ODT. After writing to the
+ * last ODT entry of an ODT, the value of the DAQ pointer is undefined." This module represents
+ * that undefined state as invalid (Xcp_Internal.daq_pointer.valid = FALSE) rather than wrapping
+ * into the next ODT, so the pointer never silently crosses an ODT border: the next
+ * Xcp_DaqApplyOdtEntry call fails the pointer-validity check instead of writing into the wrong ODT.
+ */
+static void Xcp_DaqPointerAdvance(void)
+{
+    if ((uint16)(Xcp_Internal.daq_pointer.odtEntryNumber + 0x01u) <
+        (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber].maxOdtEntries)
+    {
+        Xcp_Internal.daq_pointer.odtEntryNumber++;
+    }
+    else
+    {
+        Xcp_Internal.daq_pointer.valid = FALSE;
+    }
+}
+
+/**
+ * @brief Applies one ODT entry at the current DAQ pointer and advances it.
+ *
+ * @details Shared by WRITE_DAQ and WRITE_DAQ_MULTIPLE. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.4.1.2.1 says WRITE_DAQ_MULTIPLE has "the same restrictions as the WRITE_DAQ command";
+ * restating them in a second handler would make that true only on the day it was written. Sharing
+ * one implementation makes it true by construction.
+ *
+ * @return 0x00u on success, otherwise the ASAM error code to report.
+ */
+static uint8 Xcp_DaqApplyOdtEntry(uint8 bitOffset, uint8 size, uint8 addressExtension, uint32 address)
+{
+    const uint8 granularity = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    uint8 error = 0x00u;
+    Xcp_OdtEntryType *p_entry = NULL_PTR;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2
+     * The DAQ list pointer is left undefined past the last ODT entry of an ODT and the master is
+     * responsible for repositioning it. Answering ERR_OUT_OF_RANGE tells it to do exactly that:
+     * the error's prescribed action in 1.7.3.2.4 is "retry other parameter". */
+    if (Xcp_Internal.daq_pointer.valid == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((Xcp_DaqListRt(Xcp_Internal.daq_pointer.daqListNumber)->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+    {
+        error = XCP_E_ASAM_DAQ_ACTIVE;
+    }
+    /* 1.1/1.6.4.1.1.2: "WRITE_DAQ is only possible for elements in configurable DAQ lists",
+     * which are the lists numbered from MIN_DAQ upwards. */
+    else if (Xcp_Internal.daq_pointer.daqListNumber < Xcp_Ptr->general->minDaq)
+    {
+        error = XCP_E_ASAM_WRITE_PROTECTED;
+    }
+    else if ((size == 0x00u) ||
+             (size > Xcp_Ptr->general->odtEntrySizeDaq) ||
+             ((size % granularity) != 0x00u))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    /* 1.1/1.6.4.1.1.2: BIT_OFFSET is either 0x00..0x1F, naming a bit, or 0xFF, meaning the field
+     * is to be ignored. Nothing else is defined. When it names a bit, "the Size of DAQ element
+     * always has to be equal to the GRANULARITY_ODT_ENTRY_SIZE_x". */
+    else if ((bitOffset != XCP_ODT_ENTRY_BIT_OFFSET_NONE) &&
+             ((bitOffset > XCP_ODT_ENTRY_BIT_OFFSET_MAX) || (size != granularity)))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    /* Xcp_DaqOdtEntryBudget's Xcp_DaqListRt dereference is safe here: this else if is reached only
+     * once Xcp_Internal.daq_pointer.valid == FALSE (the first branch above) has been checked and
+     * found false, which SET_DAQ_PTR (Xcp_DTOCmdDaqSetDaqPtr) only ever leaves TRUE after
+     * validating daqListNumber itself -- the same gate the XCP_DAQ_LIST_MODE_RUNNING check two
+     * branches above already relies on for the identical dereference. */
+    else if ((uint16)((uint16)Xcp_OdtUsedBytes(Xcp_Internal.daq_pointer.daqListNumber,
+                                               Xcp_Internal.daq_pointer.odtNumber,
+                                               Xcp_Internal.daq_pointer.odtEntryNumber) + size) >
+             (uint16)Xcp_DaqOdtEntryBudget(Xcp_Internal.daq_pointer.daqListNumber,
+                                           Xcp_Internal.daq_pointer.odtNumber))
+    {
+        /* DD8: the entry is individually legal but the ODT it joins can no longer be carried in
+         * one DTO -- now measured against the timestamp-adjusted budget of ODT 0
+         * (Xcp_DaqOdtEntryBudget), not the raw MAX_ODT_ENTRY_SIZE_DAQ. 1.7.3.2.4 lists
+         * ERR_DAQ_CONFIG for WRITE_DAQ and this is the configuration it describes. */
+        error = XCP_E_ASAM_DAQ_CONFIG;
+    }
+    else
+    {
+        p_entry = &Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber]
+                       .odt[Xcp_Internal.daq_pointer.odtNumber]
+                       .odtEntry[Xcp_Internal.daq_pointer.odtEntryNumber];
+
+        /* No exclusive area around these four writes, unlike Xcp_DaqListClearEntries's writes
+         * to this same odtEntry array (DD5/DD14 in the design doc). That is safe, not an
+         * oversight: the DAQ_ACTIVE check a few lines above already refused this request unless
+         * the addressed list is stopped, and Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) only
+         * ever walks a list's entries while it is RUNNING. So a list this function is about to
+         * write is never being sampled, and a list being sampled is never reachable from here --
+         * the two are mutually exclusive by construction (the RUNNING flag), not by a lock. This
+         * reasoning breaks if WRITE_DAQ is ever allowed to touch a RUNNING list; do not remove
+         * the DAQ_ACTIVE check above without adding an exclusive area here. */
+        p_entry->address = (uint32 *)address;
+        p_entry->addressExtension = addressExtension;
+        p_entry->bitOffset = bitOffset;
+        p_entry->length = size;
+
+        Xcp_DaqPointerAdvance();
+    }
+
+    return error;
+}
+
+/**
  * @brief TRUE when at least one ODT entry of the list has been written.
  * @details A list with no entry has nothing to sample, so starting or selecting it would put the
  * slave into data transfer mode with no data to transfer.
@@ -247,97 +360,19 @@ uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduIn
     const uint8 bit_offset = pPduInfo->SduDataPtr[0x01u];
     const uint8 size = pPduInfo->SduDataPtr[0x02u];
     const uint8 extension = pPduInfo->SduDataPtr[0x03u];
-    const uint8 granularity = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
     uint32 address;
-    uint8 error = 0x00u;
-    Xcp_OdtEntryType *p_entry = NULL_PTR;
+    uint8 error;
 
     *responseExpected = TRUE;
 
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &address, Xcp_Ptr->general->byteOrder);
 
-    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2
-     * The DAQ list pointer is left undefined past the last ODT entry of an ODT and the master is
-     * responsible for repositioning it. Answering ERR_OUT_OF_RANGE tells it to do exactly that:
-     * the error's prescribed action in 1.7.3.2.4 is "retry other parameter". */
-    if (Xcp_Internal.daq_pointer.valid == FALSE)
-    {
-        error = XCP_E_ASAM_OUT_OF_RANGE;
-    }
-    else if ((Xcp_DaqListRt(Xcp_Internal.daq_pointer.daqListNumber)->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
-    {
-        error = XCP_E_ASAM_DAQ_ACTIVE;
-    }
-    /* 1.1/1.6.4.1.1.2: "WRITE_DAQ is only possible for elements in configurable DAQ lists",
-     * which are the lists numbered from MIN_DAQ upwards. */
-    else if (Xcp_Internal.daq_pointer.daqListNumber < Xcp_Ptr->general->minDaq)
-    {
-        error = XCP_E_ASAM_WRITE_PROTECTED;
-    }
-    else if ((size == 0x00u) ||
-             (size > Xcp_Ptr->general->odtEntrySizeDaq) ||
-             ((size % granularity) != 0x00u))
-    {
-        error = XCP_E_ASAM_OUT_OF_RANGE;
-    }
-    /* 1.1/1.6.4.1.1.2: BIT_OFFSET is either 0x00..0x1F, naming a bit, or 0xFF, meaning the field
-     * is to be ignored. Nothing else is defined. When it names a bit, "the Size of DAQ element
-     * always has to be equal to the GRANULARITY_ODT_ENTRY_SIZE_x". */
-    else if ((bit_offset != XCP_ODT_ENTRY_BIT_OFFSET_NONE) &&
-             ((bit_offset > XCP_ODT_ENTRY_BIT_OFFSET_MAX) || (size != granularity)))
-    {
-        error = XCP_E_ASAM_OUT_OF_RANGE;
-    }
-    /* Xcp_DaqOdtEntryBudget's Xcp_DaqListRt dereference is safe here: this else if is reached only
-     * once Xcp_Internal.daq_pointer.valid == FALSE (the first branch above) has been checked and
-     * found false, which SET_DAQ_PTR (Xcp_DTOCmdDaqSetDaqPtr) only ever leaves TRUE after
-     * validating daqListNumber itself -- the same gate the XCP_DAQ_LIST_MODE_RUNNING check two
-     * branches above already relies on for the identical dereference. */
-    else if ((uint16)((uint16)Xcp_OdtUsedBytes(Xcp_Internal.daq_pointer.daqListNumber,
-                                               Xcp_Internal.daq_pointer.odtNumber,
-                                               Xcp_Internal.daq_pointer.odtEntryNumber) + size) >
-             (uint16)Xcp_DaqOdtEntryBudget(Xcp_Internal.daq_pointer.daqListNumber,
-                                           Xcp_Internal.daq_pointer.odtNumber))
-    {
-        /* DD8: the entry is individually legal but the ODT it joins can no longer be carried in
-         * one DTO -- now measured against the timestamp-adjusted budget of ODT 0
-         * (Xcp_DaqOdtEntryBudget), not the raw MAX_ODT_ENTRY_SIZE_DAQ. 1.7.3.2.4 lists
-         * ERR_DAQ_CONFIG for WRITE_DAQ and this is the configuration it describes. */
-        error = XCP_E_ASAM_DAQ_CONFIG;
-    }
-    else
-    {
-        p_entry = &Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber]
-                       .odt[Xcp_Internal.daq_pointer.odtNumber]
-                       .odtEntry[Xcp_Internal.daq_pointer.odtEntryNumber];
-
-        /* No exclusive area around these four writes, unlike Xcp_DaqListClearEntries's writes
-         * to this same odtEntry array (DD5/DD14 in the design doc). That is safe, not an
-         * oversight: the DAQ_ACTIVE check a few lines above already refused this request unless
-         * the addressed list is stopped, and Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) only
-         * ever walks a list's entries while it is RUNNING. So a list this function is about to
-         * write is never being sampled, and a list being sampled is never reachable from here --
-         * the two are mutually exclusive by construction (the RUNNING flag), not by a lock. This
-         * reasoning breaks if WRITE_DAQ is ever allowed to touch a RUNNING list; do not remove
-         * the DAQ_ACTIVE check above without adding an exclusive area here. */
-        p_entry->address = (uint32 *)address;
-        p_entry->addressExtension = extension;
-        p_entry->bitOffset = bit_offset;
-        p_entry->length = size;
-
-        /* 1.1/1.6.4.1.1.2: "The DAQ list pointer is auto post incremented to the next ODT entry
-         * within one and the same ODT. After writing to the last ODT entry of an ODT, the value
-         * of the DAQ pointer is undefined." */
-        if ((uint16)(Xcp_Internal.daq_pointer.odtEntryNumber + 0x01u) <
-            (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber].maxOdtEntries)
-        {
-            Xcp_Internal.daq_pointer.odtEntryNumber++;
-        }
-        else
-        {
-            Xcp_Internal.daq_pointer.valid = FALSE;
-        }
-    }
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2. Xcp_DaqApplyOdtEntry carries the
+     * full set of restrictions this command imposes -- pointer validity, DAQ_ACTIVE, write
+     * protection, size/granularity, bit offset, ODT capacity, in that order -- and the pointer
+     * advance that follows a successful write. See its own doc comment for why it is shared with
+     * WRITE_DAQ_MULTIPLE rather than reimplemented there. */
+    error = Xcp_DaqApplyOdtEntry(bit_offset, size, extension, address);
 
     if (error == 0x00u)
     {
