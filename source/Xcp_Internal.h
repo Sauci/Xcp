@@ -460,6 +460,22 @@ uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *
 uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief maps Xcp_TimestampTypeType onto the TIMESTAMP_MODE size field (0, 1, 2 or 4).
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqGetDaqResolutionInfo which is its first
+ * caller, but declared here with external linkage because per-configuration DTO encoding needs
+ * the same enumerator-to-wire-size mapping and must call this on
+ * Xcp_Ptr->general->timestampType rather than use XCP_DAQ_TIMESTAMP_SIZE for arithmetic: that
+ * macro is the maximum across every configuration, correct for compile-time sizing and #if
+ * gating, but wrong as the wire width of one particular configuration's DTO.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 encodes the size in bits 2:0
+ * as 0, 1, 2 or 4, and marks 3 "Not allowed". Xcp_TimestampTypeType's enumerators are implicit,
+ * so FOUR_BYTE is 3 -- passing the enumerator through unmapped would transmit precisely the
+ * value the specification forbids.
+ */
+uint8 Xcp_TimestampWireSize(Xcp_TimestampTypeType type);
+
 uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);

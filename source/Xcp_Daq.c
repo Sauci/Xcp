@@ -646,12 +646,21 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     *responseExpected = TRUE;
 
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4
-     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME,
-     * BIT_STIM, TIMESTAMP and PID_OFF are unimplemented and so are reported unsupported, which
-     * is what lets SET_DAQ_LIST_MODE refuse the matching mode bits. */
+     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME, BIT_STIM
+     * and PID_OFF are unimplemented and so are reported unsupported, which is what lets
+     * SET_DAQ_LIST_MODE refuse the matching mode bits. TIMESTAMP_SUPPORTED is not in that group:
+     * it follows whether the configuration declares a clock, set just below. */
     if (Xcp_Ptr->general->prescalerSupported == TRUE)
     {
         properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;
+    }
+
+    /* TIMESTAMP_SUPPORTED (bit 4): NO_TIME_STAMP means protocol_layer.timestamp was absent from
+     * the configuration (Task 1), the same condition GET_DAQ_RESOLUTION_INFO's TIMESTAMP_MODE /
+     * TIMESTAMP_TICKS branch below tests. */
+    if (Xcp_Ptr->general->timestampType != NO_TIME_STAMP)
+    {
+        properties |= XCP_DAQ_PROPERTIES_TIMESTAMP_SUPPORTED;
     }
 
     /* OVERLOAD_MSB stays clear: indicating an overload in the MSB of the PID would cap every
@@ -688,6 +697,31 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     return E_OK;
 }
 
+/* Declared in Xcp_Internal.h, external linkage -- see the declaration there for why. */
+uint8 Xcp_TimestampWireSize(Xcp_TimestampTypeType type)
+{
+    uint8 size;
+
+    switch (type)
+    {
+        case ONE_BYTE:
+            size = 0x01u;
+            break;
+        case TWO_BYTE:
+            size = 0x02u;
+            break;
+        case FOUR_BYTE:
+            size = 0x04u;
+            break;
+        case NO_TIME_STAMP:
+        default:
+            size = 0x00u;
+            break;
+    }
+
+    return size;
+}
+
 uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     (void)pPduInfo;
@@ -716,17 +750,35 @@ uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfo
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->odtEntrySizeStim;
 
-    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
-     * "If the slave doesn't support a time stamped mode, the parameters TIMESTAMP_MODE and
-     * TIMESTAMP_TICKS are invalid" -- permitted explicitly because TIMESTAMP_SUPPORTED
-     * (DAQ_PROPERTIES bit 4, GET_DAQ_PROCESSOR_INFO) is clear. These two bytes are not a stand-in
-     * for "unimplemented"; they are the specification's own way of saying the fields carry no
-     * meaning, and must not be read as e.g. "timestamp mode 0" or "zero ticks of delay". */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+    if (Xcp_Ptr->general->timestampType == NO_TIME_STAMP)
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+         * "If the slave doesn't support a time stamped mode, the parameters TIMESTAMP_MODE and
+         * TIMESTAMP_TICKS are invalid" -- permitted explicitly because TIMESTAMP_SUPPORTED
+         * (DAQ_PROPERTIES bit 4, GET_DAQ_PROCESSOR_INFO) is clear. These two bytes are not a
+         * stand-in for "unimplemented"; they are the specification's own way of saying the
+         * fields carry no meaning, and must not be read as e.g. "timestamp mode 0" or "zero
+         * ticks of delay". */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
 
-    Xcp_CopyFromU16WithOrder(0x0000u,
-                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u],
-                             Xcp_Ptr->general->byteOrder);
+        Xcp_CopyFromU16WithOrder(0x0000u,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u],
+                                 Xcp_Ptr->general->byteOrder);
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+         * TIMESTAMP_MODE: bits 2:0 size, bit 3 TIMESTAMP_FIXED, bits 7:4 unit. TIMESTAMP_FIXED
+         * stays clear because the master switches the timestamp per DAQ list through
+         * SET_DAQ_LIST_MODE. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] =
+                (uint8)(Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType) |
+                        (uint8)((uint8)Xcp_Ptr->general->timestampUnit << 0x04u));
+
+        Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->timestampTicks,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u],
+                                 Xcp_Ptr->general->byteOrder);
+    }
 
     Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
 

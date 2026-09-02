@@ -105,3 +105,20 @@ def test_daq_key_byte_carries_the_identification_field_type_in_bits_7_6(name, ke
     handle = daq_handle(identification_field_type=name)
 
     assert info(handle)[7] == key, 'optimisation type OM_DEFAULT and address extension 0'
+
+
+def test_timestamp_supported_is_set_when_a_clock_is_configured():
+    """DAQ_PROPERTIES bit 4 (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4). Mirrors the
+    prescaler/overload set-clear pairs above: this proves the bit sets when a clock is configured,
+    the sibling below proves it clears when none is."""
+    handle = daq_handle(timestamp=timestamp())
+
+    assert (info(handle)[1] & 0x10) == 0x10
+
+
+def test_timestamp_supported_is_clear_without_a_clock():
+    """The other half of the pair above: DefaultConfig's timestamp=None means no protocol_layer
+    timestamp block, i.e. NO_TIME_STAMP (Task 1), so TIMESTAMP_SUPPORTED must stay clear."""
+    handle = daq_handle()
+
+    assert (info(handle)[1] & 0x10) == 0x00
