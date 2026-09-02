@@ -172,7 +172,7 @@ No new translation unit. SP2a's six-file split holds.
 |:--|:--|
 | `interface/Xcp_DaqTimestamp.h` | **new** — declares `Xcp_GetDaqTimestamp` |
 | `interface/Xcp.h` | includes the above under `XCP_DAQ_TIMESTAMP_SUPPORTED`; new API id for the RX-side capture is not needed |
-| `interface/Xcp_Types.h` | timestamp size/unit/ticks in `Xcp_GeneralType`; `namePtr`/`nameLength` on the event channel type |
+| `interface/Xcp_Types.h` | `namePtr`/`nameLength` on the event channel type. The timestamp fields are **already there** — see §5.4 |
 | `source/Xcp_Daq.c` | five new handlers; `WRITE_DAQ`'s per-entry logic extracted to a shared helper; `SET_DAQ_LIST_MODE` gains the `TIMESTAMP` and `PID_OFF` paths |
 | `source/Xcp_DaqRuntime.c` | the timestamp field in the first ODT of a cycle; `PID_OFF` suppressing the identification field |
 | `source/Xcp.c` | `Xcp_CanIfRxIndication` captures the clock for PID 0xDC; PID table entries |
@@ -232,6 +232,25 @@ read from the 1.0 PDF and structurally confirmed against the 1.1 OCR:
 
 `TIMESTAMP_FIXED` is reported **clear** (DD19). `TIMESTAMP_TICKS` is the configured WORD. Size 3 is
 not representable in the configuration, which offers `BYTE`, `WORD` and `DWORD` only.
+
+### 5.4 What already exists, and one trap
+
+`Xcp_Types.h` already declares `Xcp_TimestampTypeType` and `Xcp_TimestampUnitType`, and
+`Xcp_GeneralType` already carries `timestampTicks`, `timestampType` and `timestampUnit`. All three
+are emitted by `script/source_cfg.c.jinja2` as **hard-coded** values — `0x0001u`, `FOUR_BYTE` and
+`TIMESTAMP_UNIT_1MS` — each labelled `hard-coded` in its own comment. SP2b does not add these
+fields; it replaces those three literals with configured values, and adds `NO_TIME_STAMP` as the
+value when `timestamp` is absent. That is materially less work than adding them.
+
+**The trap.** `Xcp_TimestampTypeType`'s enumerators are implicit, so `FOUR_BYTE == 3`. The wire
+encoding of the `TIMESTAMP_MODE` size field is *not* the same: 0, 1, 2, **4**, with 3 explicitly
+"Not allowed". Writing `timestampType` straight into the size bits therefore emits the one value
+the specification forbids. `GET_DAQ_RESOLUTION_INFO` must map the enumerator to the wire value, and
+§10 tests each size against its encoded byte rather than against the enumerator.
+
+`Xcp_EventChannelType` already carries `consistency`, `priority`, `timeCycle`, `timeUnit`, `type`
+and `triggeredDaqListRefCount`, all emitted from the configuration — so `GET_DAQ_EVENT_INFO` needs
+no new runtime fields beyond the name.
 
 ---
 
@@ -359,8 +378,9 @@ transcription is poor. §7.1 flags the two values to confirm against the page im
   now enforces that, since it validates the harness's own configurations against the schema.
 - `script/header_cfg.h.jinja2`: `XCP_DAQ_TIMESTAMP_SUPPORTED`, and the timestamp size as a macro so
   the DTO frame layout can be reasoned about at compile time.
-- `script/source_cfg.c.jinja2`: timestamp size/unit/ticks into `Xcp_GeneralType`; the name strings
-  and their lengths into the event channel array; the three §6.3 guards.
+- `script/source_cfg.c.jinja2`: replace the three hard-coded timestamp values (§5.4) with the
+  configured ones; the name strings and their lengths into the event channel array; the three §6.3
+  guards.
 
 ---
 
