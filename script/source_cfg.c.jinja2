@@ -328,6 +328,20 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- if odt_entry_size_daq < 1 %}
 {{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
+{%- set ts = configuration.protocol_layer.timestamp %}
+{%- if ts is defined and ts %}
+    {#- The timestamp (XCP part 2 1.1/1.1.2.2, Diagram 10) shares ODT 0 with the identification
+        field and whatever entries are configured there. source/Xcp_Daq.c's Xcp_DaqOdtEntryBudget
+        and Xcp_DTOCmdDaqSetDaqListMode both compute odtEntrySizeDaq minus the timestamp's wire size
+        as an unsigned subtraction, which wraps to a huge value -- silently defeating the very
+        capacity check it feeds -- if odtEntrySizeDaq is already smaller than that wire size.
+        Refusing the configuration here is what keeps that arithmetic from ever having to prove the
+        non-negative case on its own. #}
+{%- set wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[ts.size] %}
+{%- if odt_entry_size_daq < wire_size %}
+{{ raise('MAX_DTO {} leaves {} bytes after a {}-byte {} identification field, less than the {}-byte timestamp XCP part 2 1.1/1.1.2.2 puts in ODT 0; the ODT-0 budget arithmetic in source/Xcp_Daq.c assumes odtEntrySizeDaq minus the timestamp size does not underflow'.format(configuration.protocol_layer.max_dto, odt_entry_size_daq, identification_field_size[identification_field_type], identification_field_type, wire_size)) }}
+{%- endif %}
+{%- endif %}
 {%- if counters.odt > 255 or counters.odt_entries > 255 %}
 {{ raise('odtCount {} / odtEntriesCount {} exceed the uint8 fields of Xcp_GeneralType'.format(counters.odt, counters.odt_entries)) }}
 {%- endif %}

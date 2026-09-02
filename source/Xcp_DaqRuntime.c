@@ -168,32 +168,44 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
     if ((odtNumber == 0x00u) &&
         ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u))
     {
-        /* This switch and Xcp_TimestampWireSize's (source/Xcp_Daq.c) both enumerate
-         * ONE_BYTE/TWO_BYTE/FOUR_BYTE; a change to one without the matching change to the other
-         * would write N bytes here but advance offset by a different count below, corrupting
-         * every byte sampled after the timestamp. */
-        switch (Xcp_Ptr->general->timestampType)
-        {
-            case ONE_BYTE:
-                pFrame->data[offset] = (uint8)timestamp;
-                break;
-            case TWO_BYTE:
-                Xcp_CopyFromU16WithOrder((uint16)timestamp, &pFrame->data[offset],
-                                         Xcp_Ptr->general->byteOrder);
-                break;
-            case FOUR_BYTE:
-            default:
-                Xcp_CopyFromU32WithOrder(timestamp, &pFrame->data[offset],
-                                         Xcp_Ptr->general->byteOrder);
-                break;
-        }
-
         /* Xcp_TimestampWireSize(timestampType), not XCP_DAQ_TIMESTAMP_SIZE: the macro is the
          * maximum across every configuration in the build, right for compile-time sizing and #if
          * gating, wrong as the byte count of the configuration actually running. Tasks 4 and 5
          * apply the same rule to their ODT-0 budget arithmetic (source/Xcp_Daq.c), so all three
-         * read as the same rule. */
-        offset = (uint8)(offset + Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType));
+         * read as the same rule.
+         *
+         * Computed once, into timestamp_size, and switched on directly below -- not
+         * Xcp_Ptr->general->timestampType switched on a second, independent time -- because two
+         * switches over the same enum, maintained in two files, can silently drift at whichever
+         * arm nobody is looking at (an earlier version of this switch did exactly that: its
+         * default wrote 4 bytes for FOUR_BYTE/default while Xcp_TimestampWireSize's own default
+         * returns 0 for NO_TIME_STAMP/default). One switch producing the exact value the offset
+         * advance also uses cannot disagree with itself. */
+        const uint8 timestamp_size = Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType);
+
+        switch (timestamp_size)
+        {
+            case 0x01u:
+                pFrame->data[offset] = (uint8)timestamp;
+                break;
+            case 0x02u:
+                Xcp_CopyFromU16WithOrder((uint16)timestamp, &pFrame->data[offset],
+                                         Xcp_Ptr->general->byteOrder);
+                break;
+            case 0x04u:
+                Xcp_CopyFromU32WithOrder(timestamp, &pFrame->data[offset],
+                                         Xcp_Ptr->general->byteOrder);
+                break;
+            default:
+                /* timestamp_size 0x00u: NO_TIME_STAMP, or any future timestampType this helper
+                 * does not map -- writes and advances nothing, matching Xcp_TimestampWireSize's
+                 * own 0. Unreachable today because Xcp_DTOCmdDaqSetDaqListMode already refuses to
+                 * enable TIMESTAMP without a clock (source/Xcp_Daq.c); kept so this switch, like
+                 * the helper's own, is total rather than assuming its caller's guard. */
+                break;
+        }
+
+        offset = (uint8)(offset + timestamp_size);
     }
 #else
     (void)timestamp;

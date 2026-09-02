@@ -181,12 +181,42 @@ def test_an_entry_written_at_a_non_zero_slot_is_still_sampled():
     assert frames[0][-1] == 0x7E, 'the entry at slot 1 is what got sampled, not slot 0'
 
 
-@pytest.mark.parametrize('size, width', (('BYTE', 1), ('WORD', 2), ('DWORD', 4)))
-@pytest.mark.parametrize('byte_order', ('LITTLE_ENDIAN', 'BIG_ENDIAN'))
-def test_the_timestamp_follows_the_identification_field_in_the_first_odt(size, width, byte_order):
+_timestamp_offset_identifications = (('ABSOLUTE', 1), ('RELATIVE_BYTE', 2), ('RELATIVE_WORD', 3),
+                                     ('RELATIVE_WORD_ALIGNED', 4))
+_timestamp_offset_sizes = (('BYTE', 1), ('WORD', 2), ('DWORD', 4))
+
+# Every identification_field_type x every timestamp width, but the byte-order axis is trimmed to
+# LITTLE_ENDIAN alone for the three identification widths added on top of the original ABSOLUTE
+# cases: byte order governs how the timestamp's own bytes are encoded, already proven independent
+# of the identification field's width by the ABSOLUTE cases below, so crossing it with every width
+# again would only multiply 4 x 3 x 2 = 24 cases for no additional discriminating power.
+_timestamp_offset_cases = [
+    pytest.param(ident, id_size, size, width, byte_order,
+                 id='{}-{}-{}'.format(ident, size, byte_order))
+    for ident, id_size in _timestamp_offset_identifications
+    for size, width in _timestamp_offset_sizes
+    for byte_order in (('LITTLE_ENDIAN', 'BIG_ENDIAN') if ident == 'ABSOLUTE' else ('LITTLE_ENDIAN',))
+]
+
+
+@pytest.mark.parametrize('ident, id_size, size, width, byte_order', _timestamp_offset_cases)
+def test_the_timestamp_follows_the_identification_field_in_the_first_odt(ident, id_size, size, width,
+                                                                          byte_order):
     """1.1/1.1.2.2: 'DTO Packets directly after the Identification Field might have a Timestamp
-    Field'. ABSOLUTE identification is one byte, so the timestamp starts at offset 1."""
+    Field'. Parametrised over every identification_field_type, not just the default ABSOLUTE, and
+    asserting at frame[id_size:id_size + width] rather than a hardcoded frame[1:1 + width]: an
+    implementation that stored the timestamp at a fixed offset 1 instead of genuinely reading it
+    off Xcp_DaqWriteIdentificationField's return value would only be caught here, at the three
+    wider identification fields -- ABSOLUTE's own 1-byte field makes offset 1 and "after the
+    identification field" indistinguishable.
+
+    max_dto=9: the tightest combination this matrix reaches is a 4-byte RELATIVE_WORD_ALIGNED
+    identification field plus a 4-byte DWORD timestamp plus the one configured data byte, exactly
+    9 -- the default max_dto=8 would leave RELATIVE_WORD_ALIGNED/DWORD no room for that data byte
+    and SET_DAQ_LIST_MODE would refuse to enable TIMESTAMP at all, which start_daq_list asserts
+    against."""
     handle = XcpTest(DefaultConfig(timestamp=timestamp(size=size), byte_order=byte_order,
+                                   identification_field_type=ident, max_dto=9,
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
                                    events=(event(triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
@@ -199,7 +229,7 @@ def test_the_timestamp_follows_the_identification_field_in_the_first_odt(size, w
     frame = handle.can_if_transmit.call_args[0][1].SduDataPtr
     expected = (0x89ABCDEF & ((1 << (8 * width)) - 1)).to_bytes(
             width, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order])
-    assert tuple(frame[1:1 + width]) == tuple(expected)
+    assert tuple(frame[id_size:id_size + width]) == tuple(expected)
 
 
 def test_only_the_first_odt_of_a_cycle_carries_a_timestamp():

@@ -255,6 +255,23 @@ def test_the_build_derives_daq_timestamp_macros_from_the_repository_configuratio
     assert definitions['XCP_DAQ_TIMESTAMP_SIZE'] == expected_size
 
 
+def test_generation_fails_when_the_timestamp_does_not_fit_the_odt_zero_budget():
+    """MAX_DTO 7 with a 4-byte RELATIVE_WORD_ALIGNED identification field leaves
+    odt_entry_size_daq = 3, less than the 4-byte DWORD timestamp XCP part 2 1.1/1.1.2.2 puts in
+    ODT 0 alongside the identification field. Left ungenerated, source/Xcp_Daq.c's ODT-0 budget
+    arithmetic (odtEntrySizeDaq minus the timestamp's wire size, both uint8/uint16) would underflow
+    instead: Xcp_DTOCmdDaqSetDaqListMode's capacity guard becomes a comparison against a wrapped
+    ~65535 that can never trip, and Xcp_DaqOdtEntryBudget saturates to 255, so WRITE_DAQ would
+    accept far more than the 7-byte frame buffer holds -- an out-of-bounds write once
+    Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) actually stores the timestamp there. The schema's
+    max_dto minimum of 8 keeps a real, schema-validated build from reaching this configuration, but
+    this harness deliberately bypasses the schema, the same way every other test in this file's
+    UndefinedError cluster does."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(max_dto=7, identification_field_type='RELATIVE_WORD_ALIGNED',
+                              timestamp=timestamp(size='DWORD')))
+
+
 def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
     """An empty triggered_daq_list_ref would emit a zero-length C array
     (Xcp_EventChannelDaqListRef...[0x00u]) -- a GCC extension, an ISO C constraint violation, and
