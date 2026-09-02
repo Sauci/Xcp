@@ -60,8 +60,11 @@ def test_set_daq_list_mode_stores_channel_prescaler_and_priority():
     assert rt.daqList[1].prescalerCounter == 0, 'a mode change restarts the division'
 
 
+# TIMESTAMP (0x10) used to be in this list and is not any more: it is no longer unconditionally
+# refused, only refused by daq_handle()'s no-clock fixture -- test_set_daq_list_mode_refuses_
+# timestamp_without_a_clock (below) covers exactly that, precisely and by name, so keeping a
+# same-outcome entry here would only assert the same thing twice for two different reasons.
 @pytest.mark.parametrize('mode, name', ((0x01, 'DIRECTION = STIM'),
-                                        (0x10, 'TIMESTAMP'),
                                         (0x20, 'PID_OFF'),
                                         (0x40, 'bit 6, ALTERNATING in 1.1'),
                                         (0x80, 'bit 7')))
@@ -143,6 +146,21 @@ def test_set_daq_list_mode_accepts_timestamp_when_a_clock_is_configured():
     # request is not enough on its own -- Task 5 reads this stored bit to decide whether to
     # timestamp the DTO, so the request must actually reach the runtime mode.
     assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) != 0x00
+
+
+def test_set_daq_list_mode_clears_timestamp_when_a_later_request_omits_it():
+    """The bit is fully re-specified on every request, not only ever settable: a master that turns
+    TIMESTAMP back off must see it actually cleared from the stored mode. Every other test that
+    reaches the clearing arm starts from mode 0, where clearing an already-clear bit proves
+    nothing; this one starts from the bit set, so it is the only test that would fail if that arm
+    were deleted, or its `&=` mistyped as `|=`."""
+    handle = daq_handle(timestamp=timestamp(size='WORD'))
+
+    assert set_mode(handle, mode=0x10)[0] == 0xFF
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) != 0x00
+
+    assert set_mode(handle, mode=0x00)[0] == 0xFF
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) == 0x00
 
 
 def test_set_daq_list_mode_refuses_timestamp_without_a_clock():
