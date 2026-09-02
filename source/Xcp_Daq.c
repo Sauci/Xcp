@@ -1202,24 +1202,42 @@ uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPd
 
     *responseExpected = TRUE;
 
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    /* XCP_DAQ_TIMESTAMP_SUPPORTED is ANY across the configurations compiled into this module
+     * (script/header_cfg.h.jinja2 folds it with `any`), so compiling this handler in says only
+     * that SOME configuration declares a clock. Whether the *active* one does is a separate
+     * question, and the answer is Xcp_Ptr->general->timestampType, exactly as it is for
+     * GET_DAQ_PROCESSOR_INFO's TIMESTAMP_SUPPORTED bit, GET_DAQ_RESOLUTION_INFO's
+     * TIMESTAMP_MODE / TIMESTAMP_TICKS pair and SET_DAQ_LIST_MODE's TIMESTAMP arm. Without this
+     * gate a two-configuration build would have the other three tell the master there is no
+     * clock while this one answered with a value -- and would call Xcp_GetDaqTimestamp() on
+     * behalf of a configuration that never contracted for it. ERR_CMD_UNKNOWN is what
+     * Xcp_CmdNotImplemented answers for a command this build does not have, which is what this
+     * command is for a configuration with no clock. */
+    if (Xcp_Ptr->general->timestampType == NO_TIME_STAMP)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
-    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.3 reserves byte 1 and the WORD at
-     * 2..3. Zero-filled, so their byte order is immaterial. */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.3 reserves byte 1 and the WORD
+         * at 2..3. Zero-filled, so their byte order is immaterial. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
 
-    /* 1.1/1.6.4.1.2.3 wants the value "when the GET_DAQ_CLOCK command packet has been received".
-     * Xcp_CanIfRxIndication dispatches to this handler synchronously, in the same call that
-     * received the command, so reading the clock here already is that moment -- there is no
-     * later, differently-scheduled point (Xcp_MainFunction never assembles CTO responses; see
-     * the Task 8 report) for this read to be deferred from. */
-    Xcp_CopyFromU32WithOrder(Xcp_GetDaqTimestamp(),
-                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
-                             Xcp_Ptr->general->byteOrder);
+        /* 1.1/1.6.4.1.2.3 wants the value "when the GET_DAQ_CLOCK command packet has been
+         * received". Xcp_CanIfRxIndication dispatches to this handler synchronously, in the same
+         * call that received the command, so reading the clock here already is that moment --
+         * there is no later, differently-scheduled point (Xcp_MainFunction never assembles CTO
+         * responses; see the Task 8 report) for this read to be deferred from. */
+        Xcp_CopyFromU32WithOrder(Xcp_GetDaqTimestamp(),
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
 
-    Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
 
     return E_OK;
 }
