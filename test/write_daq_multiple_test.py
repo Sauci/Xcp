@@ -87,15 +87,28 @@ def test_write_daq_multiple_writes_every_element():
     connect(handle)
     set_daq_ptr(handle, daq_list=0, odt=0, entry=0)
 
+    # Extensions are distinct, non-zero, and different from the trailing dummy (always 0x00) so
+    # that reading the wrong byte of an element -- e.g. offset 7 (dummy) instead of offset 6
+    # (address extension) -- shows up as a wrong address_extension rather than passing unnoticed.
     request = [0xC7, 0x02]
-    request += [0xFF, 0x01, 0x11, 0x22, 0x33, 0x44, 0x00, 0x00]
-    request += [0xFF, 0x01, 0x55, 0x66, 0x77, 0x88, 0x00, 0x00]
+    request += [0xFF, 0x01, 0x11, 0x22, 0x33, 0x44, 0x03, 0x00]
+    request += [0xFF, 0x01, 0x55, 0x66, 0x77, 0x88, 0x07, 0x00]
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(tuple(request)))
     handle.lib.Xcp_MainFunction()
 
     assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
-    assert read_back_entry(handle, daq_list=0, odt=0, entry=0)['address'] == 0x44332211
-    assert read_back_entry(handle, daq_list=0, odt=0, entry=1)['address'] == 0x88776655
+
+    entry0 = read_back_entry(handle, daq_list=0, odt=0, entry=0)
+    assert entry0['address'] == 0x44332211
+    assert entry0['address_extension'] == 0x03
+    assert entry0['bit_offset'] == 0xFF
+    assert entry0['size'] == 0x01
+
+    entry1 = read_back_entry(handle, daq_list=0, odt=0, entry=1)
+    assert entry1['address'] == 0x88776655
+    assert entry1['address_extension'] == 0x07
+    assert entry1['bit_offset'] == 0xFF
+    assert entry1['size'] == 0x01
 
 
 @pytest.mark.parametrize('bad', ('size_too_large', 'bad_granularity', 'odt_would_overflow'))

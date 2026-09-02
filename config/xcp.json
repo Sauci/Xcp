@@ -127,7 +127,7 @@
           "protected": false
         },
         "xcp_write_daq_multiple_api_enable": {
-          "enabled": true,
+          "enabled": false,
           "protected": false
         },
         "xcp_set_daq_list_mode_api_enable": {
@@ -251,7 +251,7 @@
         "min_st": 255,
         "cto_queue_size": 16,
         "event_queue_size": 16,
-        "max_cto": 10,
+        "max_cto": 8,
         "max_dto": 8,
         "identification_field_type": "ABSOLUTE",
         "daq_queue_size": 16,
