@@ -41,6 +41,32 @@ def configure_and_start(handle, values, daq_list=0, odt=0, size=1, byte_order='L
     exchange((0xDE, 0x01) + tuple(u16_to_array(daq_list, byte_order)))
 
 
+def response(handle, request):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2])
+
+
+def configure_one_entry(handle, daq_list=0, odt=0, size=1, address=0x1000, byte_order='LITTLE_ENDIAN'):
+    """SET_DAQ_PTR to (daq_list, odt, entry 0), then WRITE_DAQ one entry of `size` bytes. Asserts
+    both steps were accepted -- a caller relying on a configured entry must not pass because the
+    write silently failed."""
+    assert response(handle, (0xE2, 0x00) + tuple(u16_to_array(daq_list, byte_order)) +
+                    (odt, 0x00))[0] == 0xFF
+    assert response(handle, (0xE1, 0xFF, size, 0x00) +
+                    tuple(u32_to_array(address, byte_order)))[0] == 0xFF
+
+
+def start_daq_list(handle, daq_list=0, mode=0x00, channel=0, prescaler=1, priority=0,
+                   byte_order='LITTLE_ENDIAN'):
+    """SET_DAQ_LIST_MODE with `mode`, then START_STOP_DAQ_LIST(START). Asserts both steps were
+    accepted."""
+    assert response(handle, (0xE0, mode) + tuple(u16_to_array(daq_list, byte_order)) +
+                    tuple(u16_to_array(channel, byte_order)) + (prescaler, priority))[0] == 0xFF
+    assert response(handle, (0xDE, 0x01) + tuple(u16_to_array(daq_list, byte_order)))[0] == 0xFF
+
+
 def install_memory(handle, values, element_size=1, byte_order='LITTLE_ENDIAN'):
     """Each read returns the next value, so frame contents are predictable."""
     def read_slave_memory(_address, _extension, p_buffer):
@@ -153,3 +179,74 @@ def test_an_entry_written_at_a_non_zero_slot_is_still_sampled():
     frames = queued_frames(handle)
     assert len(frames) == 1, 'the ODT had exactly one written entry, so it produced one frame'
     assert frames[0][-1] == 0x7E, 'the entry at slot 1 is what got sampled, not slot 0'
+
+
+@pytest.mark.parametrize('size, width', (('BYTE', 1), ('WORD', 2), ('DWORD', 4)))
+@pytest.mark.parametrize('byte_order', ('LITTLE_ENDIAN', 'BIG_ENDIAN'))
+def test_the_timestamp_follows_the_identification_field_in_the_first_odt(size, width, byte_order):
+    """1.1/1.1.2.2: 'DTO Packets directly after the Identification Field might have a Timestamp
+    Field'. ABSOLUTE identification is one byte, so the timestamp starts at offset 1."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size=size), byte_order=byte_order,
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
+                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+    connect(handle)
+    handle.xcp_get_daq_timestamp.return_value = 0x89ABCDEF
+    configure_one_entry(handle, daq_list=0, odt=0, size=1)
+    start_daq_list(handle, daq_list=0, mode=0x10)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    frame = handle.can_if_transmit.call_args[0][1].SduDataPtr
+    expected = (0x89ABCDEF & ((1 << (8 * width)) - 1)).to_bytes(
+            width, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order])
+    assert tuple(frame[1:1 + width]) == tuple(expected)
+
+
+def test_only_the_first_odt_of_a_cycle_carries_a_timestamp():
+    """1.1/1.1.2.2 Diagram 10. A timestamp in every ODT would both waste bus bandwidth and
+    misreport the sample instant of the later ODTs."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=2, max_odt_entries=1),),
+                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+    connect(handle)
+    handle.xcp_get_daq_timestamp.return_value = 0x11223344
+    configure_one_entry(handle, daq_list=0, odt=0, size=1)
+    configure_one_entry(handle, daq_list=0, odt=1, size=1)
+    start_daq_list(handle, daq_list=0, mode=0x10)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+    frames = queued_frames(handle)
+
+    assert len(frames[0]) == 1 + 4 + 1, 'ODT 0: PID + timestamp + one byte'
+    assert len(frames[1]) == 1 + 1, 'ODT 1: PID + one byte, no timestamp'
+
+
+def test_the_clock_is_read_once_per_cycle_not_once_per_odt():
+    """A per-ODT read would give ODTs of one cycle different timestamps, contradicting the
+    'first ODT of a DAQ cycle' model, and would call into integrator code more often than needed."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=1),),
+                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+    connect(handle)
+    for odt in range(3):
+        configure_one_entry(handle, daq_list=0, odt=odt, size=1)
+    start_daq_list(handle, daq_list=0, mode=0x10)
+    handle.xcp_get_daq_timestamp.reset_mock()
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert handle.xcp_get_daq_timestamp.call_count == 1
+
+
+def test_no_timestamp_is_transmitted_when_the_mode_is_off():
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),
+                                   events=(event(triggered_daq_list_ref=['DAQ1']),)))
+    connect(handle)
+    configure_one_entry(handle, daq_list=0, odt=0, size=1)
+    start_daq_list(handle, daq_list=0, mode=0x00)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 2
+    assert handle.xcp_get_daq_timestamp.call_count == 0

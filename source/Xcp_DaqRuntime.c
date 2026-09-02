@@ -123,8 +123,11 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
  * this function's second (read) loop is already running, and checking that the resulting frame
  * is unaffected. See the Task 15 report, "Fix round 1" and "Fix round 2", for what was verified
  * and how.
+ * @note `timestamp` is sampled once per cycle by the caller (Xcp_TriggerEventChannel), not read
+ * here -- this function only places the already-sampled value into ODT 0, per 1.1/1.1.2.2.
  */
-static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListNumber, uint8 odtNumber)
+static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListNumber, uint8 odtNumber,
+                                       uint32 timestamp)
 {
     Xcp_OdtEntryType entry[XCP_MAX_DTO];
     uint8 copied = 0x00u;
@@ -155,6 +158,46 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
     SchM_Exit_Xcp_DtoQueue();
 
     offset = Xcp_DaqWriteIdentificationField(pFrame, daqListNumber, odtNumber);
+
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.1.2.2, Diagram 10: the Timestamp Field sits
+     * directly after the Identification Field, in the first ODT of the cycle only. Xcp_DaqListRt
+     * (source/Xcp_Daq.c) has file-local linkage there, so the stored mode is read directly off
+     * Xcp_Rt here instead -- the same way Xcp_TriggerEventChannel's own p_rt already does further
+     * down in this file. */
+    if ((odtNumber == 0x00u) &&
+        ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u))
+    {
+        /* This switch and Xcp_TimestampWireSize's (source/Xcp_Daq.c) both enumerate
+         * ONE_BYTE/TWO_BYTE/FOUR_BYTE; a change to one without the matching change to the other
+         * would write N bytes here but advance offset by a different count below, corrupting
+         * every byte sampled after the timestamp. */
+        switch (Xcp_Ptr->general->timestampType)
+        {
+            case ONE_BYTE:
+                pFrame->data[offset] = (uint8)timestamp;
+                break;
+            case TWO_BYTE:
+                Xcp_CopyFromU16WithOrder((uint16)timestamp, &pFrame->data[offset],
+                                         Xcp_Ptr->general->byteOrder);
+                break;
+            case FOUR_BYTE:
+            default:
+                Xcp_CopyFromU32WithOrder(timestamp, &pFrame->data[offset],
+                                         Xcp_Ptr->general->byteOrder);
+                break;
+        }
+
+        /* Xcp_TimestampWireSize(timestampType), not XCP_DAQ_TIMESTAMP_SIZE: the macro is the
+         * maximum across every configuration in the build, right for compile-time sizing and #if
+         * gating, wrong as the byte count of the configuration actually running. Tasks 4 and 5
+         * apply the same rule to their ODT-0 budget arithmetic (source/Xcp_Daq.c), so all three
+         * read as the same rule. */
+        offset = (uint8)(offset + Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType));
+    }
+#else
+    (void)timestamp;
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
     for (idx = 0x00u; idx < copied; idx++)
     {
@@ -292,14 +335,25 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
                 if (p_rt->prescalerCounter >= p_rt->prescaler)
                 {
                     uint8_least odt_idx;
+                    uint32 timestamp = 0x00000000u;
 
                     p_rt->prescalerCounter = 0x00u;
+
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+                    /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
+                     * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps
+                     * and would call integrator code once per ODT instead of once per cycle. */
+                    if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
+                    {
+                        timestamp = Xcp_GetDaqTimestamp();
+                    }
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
                     for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
                     {
                         Xcp_DtoFrameType frame;
 
-                        if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx) == E_OK)
+                        if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
                         {
                             if (Xcp_DaqQueuePush(&frame) != E_OK)
                             {
