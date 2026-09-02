@@ -438,6 +438,13 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16 = MagicMock()
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
+        # Xcp_GetDaqTimestamp reaches self.code.mocked on its own once Xcp_DaqTimestamp.h is
+        # pulled in under XCP_DAQ_TIMESTAMP_SUPPORTED -- pcpp discovers any `extern`-declared
+        # function reachable from interface/Xcp.h without help. What it does not do is invent this
+        # attribute: the loop below is a plain getattr(self, convert(func)), so a configuration
+        # that enables the timestamp without this assignment existing fails inside this
+        # constructor with AttributeError, not inside whichever test happened to ask for it.
+        self.xcp_get_daq_timestamp = MagicMock()
         self.sch_m_enter_xcp_dto_queue = MagicMock()
         self.sch_m_exit_xcp_dto_queue = MagicMock()
         self.xcp_user_cmd_function = MagicMock()

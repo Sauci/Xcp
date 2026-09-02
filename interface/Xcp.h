@@ -67,6 +67,12 @@ extern "C" {
 
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+
+#include "Xcp_DaqTimestamp.h"
+
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
+
 #if defined(CFFI_ENABLE)
 
 /**
