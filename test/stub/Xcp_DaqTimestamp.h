@@ -27,8 +27,8 @@ extern "C" {
  *
  * @note Called from two contexts: from Xcp_TriggerEventChannel, once per cycle of each running
  * timestamped DAQ list, in whatever context the integrator triggers the event from; and from
- * Xcp_CanIfRxIndication on receipt of GET_DAQ_CLOCK, which may be an interrupt. It must be
- * re-entrant and must not block.
+ * Xcp_DTOCmdDaqGetDaqClock, reached through the PID table from Xcp_CanIfRxIndication on receipt
+ * of GET_DAQ_CLOCK, which may be an interrupt. It must be re-entrant and must not block.
  *
  * @return the current counter value. Always uint32 regardless of the configured timestamp size,
  * because GET_DAQ_CLOCK transmits a DWORD whatever the DTO field width is; the DTO truncates.
