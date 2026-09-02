@@ -474,6 +474,18 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
+        # Fix round 1: MagicMock pre-configures __int__/__index__ to return 1, so a call reaching
+        # this mock through the real CFFI boundary (extern "Python+C", uint32 return) coerces
+        # successfully to 1 instead of raising -- _guarded_callback only records an exception the
+        # mock itself raises, and return-type coercion happens after mock() has already returned,
+        # outside that try/except. Left unset, a test that forgets to configure this callback would
+        # not fail loudly; it would silently bake a wrong-but-plausible-looking timestamp into a
+        # DTO. 0xFFFFFFFF rather than the more obvious 0: a free-running counter reading 0 is a
+        # plausible real sample (e.g. right after reset), so it would not stand out in a failing
+        # assertion the way this maximum-value sentinel does. Matches the precedent e150861 set for
+        # xcp_set_cal_page/xcp_get_cal_page/xcp_copy_cal_page: defaulted in the same commit that
+        # added the mock, before any real call site existed anywhere in source/*.c.
+        self.xcp_get_daq_timestamp.return_value = 0xFFFFFFFF
         def enter_dto_queue_area():
             if self.dto_queue_area_held:
                 self.dto_queue_area_violations.append(
