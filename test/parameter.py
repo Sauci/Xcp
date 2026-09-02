@@ -218,6 +218,14 @@ class DefaultConfig(dict):
                  xcp_clear_daq_list_api_enable=True,
                  xcp_set_daq_ptr_api_enable=True,
                  xcp_write_daq_api_enable=True,
+                 # Unlike every other *_api_enable default above, this one defaults to False, not
+                 # True: WRITE_DAQ_MULTIPLE's own generation guard (script/source_cfg.c.jinja2)
+                 # rejects MAX_CTO < 10, and this class's own max_cto default is 8. Defaulting this
+                 # flag to True would make DefaultConfig() itself fail to generate, breaking every
+                 # test in the suite that does not care about WRITE_DAQ_MULTIPLE at all. Tests that
+                 # exercise the command pass both xcp_write_daq_multiple_api_enable=True and a
+                 # max_cto >= 10 explicitly.
+                 xcp_write_daq_multiple_api_enable=False,
                  xcp_set_daq_list_mode_api_enable=True,
                  xcp_get_daq_list_mode_api_enable=True,
                  xcp_start_stop_daq_list_api_enable=True,
@@ -325,6 +333,8 @@ class DefaultConfig(dict):
                     "xcp_clear_daq_list_api_enable": {"enabled": xcp_clear_daq_list_api_enable, "protected": False},
                     "xcp_set_daq_ptr_api_enable": {"enabled": xcp_set_daq_ptr_api_enable, "protected": False},
                     "xcp_write_daq_api_enable": {"enabled": xcp_write_daq_api_enable, "protected": False},
+                    "xcp_write_daq_multiple_api_enable": {"enabled": xcp_write_daq_multiple_api_enable,
+                                                          "protected": False},
                     "xcp_set_daq_list_mode_api_enable": {"enabled": xcp_set_daq_list_mode_api_enable,
                                                          "protected": False},
                     "xcp_get_daq_list_mode_api_enable": {"enabled": xcp_get_daq_list_mode_api_enable,

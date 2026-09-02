@@ -449,6 +449,7 @@ uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPd
 uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqWriteDaqMultiple(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
  * @brief resets every ODT entry of one DAQ list to its power-up state.

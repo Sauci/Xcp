@@ -345,6 +345,9 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- if counters.odt > 255 or counters.odt_entries > 255 %}
 {{ raise('odtCount {} / odtEntriesCount {} exceed the uint8 fields of Xcp_GeneralType'.format(counters.odt, counters.odt_entries)) }}
 {%- endif %}
+{%- if configuration.apis.xcp_write_daq_multiple_api_enable.enabled and configuration.protocol_layer.max_cto < 10 %}
+{{ raise('WRITE_DAQ_MULTIPLE is enabled but MAX_CTO is {}; XCP part 2 1.1/1.6.4.1.2.1 requires MAX_CTO >= 10 because one element is 8 bytes after a 2-byte header'.format(configuration.protocol_layer.max_cto)) }}
+{%- endif %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
@@ -576,7 +579,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC4 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC5 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC6 */
-        (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC7 */
+        ({% if configuration.apis.xcp_write_daq_multiple_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_write_daq_multiple_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x02u, /* WRITE_DAQ_MULTIPLE 0xC7, optional */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
         ({% if configuration.apis.xcp_program_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* PROGRAM_MAX 0xC9, optional */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* PROGRAM_NEXT 0xCA, optional */

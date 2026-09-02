@@ -279,3 +279,11 @@ def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
                               events=(event(triggered_daq_list_ref=[]),)))
+
+
+def test_generation_fails_when_write_daq_multiple_is_enabled_with_max_cto_below_ten():
+    """1.6.4.1.2.1: 'If the optional command WRITE_DAQ_MULTIPLE is used, the requirement
+    MAX_CTO >= 10 has to be fulfilled.' A single element is 8 bytes after a 2-byte header, so a
+    smaller MAX_CTO cannot carry even one."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(max_cto=9, xcp_write_daq_multiple_api_enable=True))

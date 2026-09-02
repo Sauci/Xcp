@@ -388,6 +388,64 @@ uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduIn
     return E_OK;
 }
 
+/**
+ * @brief writes NoDAQ consecutive ODT entries starting at the current DAQ list pointer.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.1. Each element is 8 bytes:
+ * BIT_OFFSET, size, a DWORD address, an address extension and a mandatory alignment dummy --
+ * "The dummy byte at the end of each DAQ element must be used for alignment issues, even for the
+ * last element." Confirmed against the PDF page images (pages 96-97: the Position column runs
+ * 2, 3, 4, 8, 9 for element 1 and 10, 11, 12, 16, 17 for element 2, i.e. stride 8, and the n-th
+ * element's dummy sits at n*8+1), not the OCR text dump, which garbles this table.
+ *
+ * Xcp_DaqApplyOdtEntry is applied once per element as the loop walks them, in request order, with
+ * no rollback on failure: 1.6.4.1.2.1 says "it is not possible to detect which entry caused the
+ * error. In that case the whole configuration is invalid", so a master that gets an error must
+ * reconfigure the list regardless of how many elements this call already wrote.
+ *
+ * The "must not write over ODT borders" restriction needs no separate check here: the DAQ pointer
+ * stops at an ODT border rather than wrapping into the next ODT (Xcp_DaqPointerAdvance), so an
+ * element sequence that runs past the end of one ODT fails Xcp_DaqApplyOdtEntry's pointer-validity
+ * check on its own, the same way a second WRITE_DAQ past the border does today.
+ */
+uint8 Xcp_DTOCmdDaqWriteDaqMultiple(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 count = pPduInfo->SduDataPtr[0x01u];
+    uint8 error = 0x00u;
+    uint8_least idx;
+
+    *responseExpected = TRUE;
+
+    if (pPduInfo->SduLength < (PduLengthType)(0x02u + ((PduLengthType)count * 0x08u)))
+    {
+        error = XCP_E_ASAM_CMD_SYNTAX;
+    }
+    else
+    {
+        for (idx = 0x00u; (idx < (uint8_least)count) && (error == 0x00u); idx++)
+        {
+            const uint8 *p_element = &pPduInfo->SduDataPtr[0x02u + (idx * 0x08u)];
+            uint32 address;
+
+            Xcp_CopyToU32WithOrder(&p_element[0x02u], &address, Xcp_Ptr->general->byteOrder);
+
+            error = Xcp_DaqApplyOdtEntry(p_element[0x00u], p_element[0x01u], p_element[0x06u], address);
+        }
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint16 daq_list_number;
