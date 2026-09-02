@@ -529,6 +529,16 @@
               "identification": {
                 "type": "string",
                 "default": "/path/to/database.a2l"
+              },
+              "timestamp": {
+                "description": "Data acquisition clock reported to the master through GET_DAQ_RESOLUTION_INFO, and transmitted in the first ODT of each cycle of a DAQ list the master has put into timestamped mode. Absent means the slave does not support timestamps: TIMESTAMP_SUPPORTED is reported clear and TIMESTAMP_MODE/TIMESTAMP_TICKS are invalid, which XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 permits explicitly. The module holds no clock; these values describe the counter the integrator supplies through Xcp_GetDaqTimestamp.",
+                "type": "object",
+                "properties": {
+                  "size": {"type": "string", "enum": ["BYTE", "WORD", "DWORD"]},
+                  "unit": {"type": "string", "enum": ["TIMESTAMP_UNIT_1NS", "TIMESTAMP_UNIT_10NS", "TIMESTAMP_UNIT_100NS", "TIMESTAMP_UNIT_1US", "TIMESTAMP_UNIT_10US", "TIMESTAMP_UNIT_100US", "TIMESTAMP_UNIT_1MS", "TIMESTAMP_UNIT_10MS", "TIMESTAMP_UNIT_100MS", "TIMESTAMP_UNIT_1S"]},
+                  "ticks": {"type": "integer", "minimum": 1, "maximum": 65535}
+                },
+                "required": ["size", "unit", "ticks"]
               }
             },
             "required": [

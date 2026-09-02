@@ -153,6 +153,20 @@ def daq(name='DAQ1',
             "dtos": list(dtos) if dtos is not None else [{}]}
 
 
+timestamp_sizes = [pytest.param(v, id='TS = {}'.format(v)) for v in ('BYTE', 'WORD', 'DWORD')]
+
+# The wire encoding of the TIMESTAMP_MODE size field, XCP part 2 - Protocol Layer Specification
+# 1.1/1.6.4.1.2.5. Deliberately not Xcp_TimestampTypeType's enumerator values: that enum is
+# implicit, so FOUR_BYTE == 3, and 3 is the one size the specification marks "Not allowed".
+timestamp_wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4, None: 0}
+
+timestamp_type_name = {'BYTE': 'ONE_BYTE', 'WORD': 'TWO_BYTE', 'DWORD': 'FOUR_BYTE', None: 'NO_TIME_STAMP'}
+
+
+def timestamp(size='DWORD', unit='TIMESTAMP_UNIT_1MS', ticks=1):
+    return {"size": size, "unit": unit, "ticks": ticks}
+
+
 def event(consistency='ODT',
           priority=0,
           time_cycle=10,
@@ -253,12 +267,37 @@ class DefaultConfig(dict):
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
                  trailing_value=0,
-                 identification='/path/to/database.a2l'):
+                 identification='/path/to/database.a2l',
+                 timestamp=None):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
         self._event_queue_size = event_queue_size
         self._daq_queue_size = daq_queue_size
+        protocol_layer = {
+            "byte_order": byte_order,
+            "address_granularity": address_granularity,
+            "master_block_mode": master_block_mode,
+            "slave_block_mode": slave_block_mode,
+            "interleaved_mode": interleaved_mode,
+            "max_bs": max_bs,
+            "min_st": min_st,
+            "cto_queue_size": cto_queue_size,
+            "event_queue_size": event_queue_size,
+            "max_cto": max_cto,
+            "max_dto": max_dto,
+            "identification_field_type": identification_field_type,
+            "daq_queue_size": daq_queue_size,
+            "prescaler_supported": prescaler_supported,
+            "overload_indication": overload_indication,
+            "checksum_type": checksum_type,
+            "user_defined_checksum_function": user_defined_checksum_function,
+            "user_cmd_function": user_cmd_function,
+            "trailing_value": trailing_value,
+            'identification': identification
+        }
+        if timestamp is not None:
+            protocol_layer["timestamp"] = timestamp
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -331,28 +370,7 @@ class DefaultConfig(dict):
                         "programming": resource_protection_programming
                     }
                 },
-                "protocol_layer": {
-                    "byte_order": byte_order,
-                    "address_granularity": address_granularity,
-                    "master_block_mode": master_block_mode,
-                    "slave_block_mode": slave_block_mode,
-                    "interleaved_mode": interleaved_mode,
-                    "max_bs": max_bs,
-                    "min_st": min_st,
-                    "cto_queue_size": cto_queue_size,
-                    "event_queue_size": event_queue_size,
-                    "max_cto": max_cto,
-                    "max_dto": max_dto,
-                    "identification_field_type": identification_field_type,
-                    "daq_queue_size": daq_queue_size,
-                    "prescaler_supported": prescaler_supported,
-                    "overload_indication": overload_indication,
-                    "checksum_type": checksum_type,
-                    "user_defined_checksum_function": user_defined_checksum_function,
-                    "user_cmd_function": user_cmd_function,
-                    "trailing_value": trailing_value,
-                    'identification': identification
-                }
+                "protocol_layer": protocol_layer
             }
         ])
 

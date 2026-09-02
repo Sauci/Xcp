@@ -355,9 +355,10 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     FALSE, /* hard-coded XcpOnFlexRayEnabled */
     {% if configuration.protocol_layer.prescaler_supported | default(true) %}TRUE{% else %}FALSE{% endif %}, /* XcpPrescalerSupported */
     FALSE, /* hard-coded XcpSuppressTxSupport */
-    0x0001u, /* hard-coded XcpTimestampTicks */
-    FOUR_BYTE, /* hard-coded XcpTimestampType */
-    TIMESTAMP_UNIT_1MS, /* hard-coded XcpTimestampUnit */
+    {%- set ts = configuration.protocol_layer.timestamp %}
+    {{'0x%04Xu' % (ts.ticks if ts is defined and ts else 1)}}, /* XcpTimestampTicks */
+    {{ {'BYTE': 'ONE_BYTE', 'WORD': 'TWO_BYTE', 'DWORD': 'FOUR_BYTE'}[ts.size] if ts is defined and ts else 'NO_TIME_STAMP' }}, /* XcpTimestampType */
+    {{ ts.unit if ts is defined and ts else 'TIMESTAMP_UNIT_1MS' }}, /* XcpTimestampUnit */
     TRUE, /* hard-coded XcpVersionInfoApi */
     NULL_PTR, /* hard-coded XcpCounterRef */
     NULL_PTR, /* hard-coded XcpNvRamBlockIdRef */

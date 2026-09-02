@@ -36,6 +36,43 @@
 
 #endif /* #ifndef XCP_MAX_DTO */
 
+{%- set daq_timestamp_supported = namespace(value=false) %}
+{%- for configuration in configurations %}
+{%- if configuration.protocol_layer.timestamp is defined and configuration.protocol_layer.timestamp %}
+{%- set daq_timestamp_supported.value = true %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_DAQ_TIMESTAMP_SUPPORTED
+
+/* STD_ON when the configuration declares a data acquisition clock. Gates the declaration of
+ * Xcp_GetDaqTimestamp, so an integration without timestamps is never asked to supply a clock. One
+ * macro gates the whole module, so it is on when ANY configuration declares a timestamp block. */
+#define XCP_DAQ_TIMESTAMP_SUPPORTED ({% if daq_timestamp_supported.value %}STD_ON{% else %}STD_OFF{% endif %})
+
+#endif /* #ifndef XCP_DAQ_TIMESTAMP_SUPPORTED */
+
+{%- set daq_timestamp_size = namespace(value=0) %}
+{%- for configuration in configurations %}
+{%- set ts = configuration.protocol_layer.timestamp %}
+{%- if ts is defined and ts %}
+{%- set wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[ts.size] %}
+{%- if wire_size > daq_timestamp_size.value %}
+{%- set daq_timestamp_size.value = wire_size %}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_DAQ_TIMESTAMP_SIZE
+
+/* Timestamp field width in bytes, as transmitted; 0 when no configuration declares a timestamp,
+ * otherwise the largest configured size, so the DTO frame layout can be reasoned about at compile
+ * time across every configuration compiled into the module.
+ * Deliberately not Xcp_TimestampTypeType's enumerator: that enum is implicit, so FOUR_BYTE is 3,
+ * while the wire size is 4 and 3 is "Not allowed" (XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.4.1.2.5). */
+#define XCP_DAQ_TIMESTAMP_SIZE ({{ daq_timestamp_size.value }}u)
+
+#endif /* #ifndef XCP_DAQ_TIMESTAMP_SIZE */
+
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 

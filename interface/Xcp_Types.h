@@ -42,6 +42,22 @@ extern "C" {
 
 #endif /* #ifndef XCP_MAX_DTO */
 
+#ifndef XCP_DAQ_TIMESTAMP_SUPPORTED
+
+/* A literal rather than STD_OFF: the test harness's Preprocessor.on_directive_handle
+ * (test/conftest.py) only records a #define's value when it tokenizes as an integer literal, and
+ * handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') relies on that. Numerically identical to STD_OFF
+ * either way once the preprocessor expands it for an #if. */
+#define XCP_DAQ_TIMESTAMP_SUPPORTED (0x00u)
+
+#endif /* #ifndef XCP_DAQ_TIMESTAMP_SUPPORTED */
+
+#ifndef XCP_DAQ_TIMESTAMP_SIZE
+
+#define XCP_DAQ_TIMESTAMP_SIZE (0u)
+
+#endif /* #ifndef XCP_DAQ_TIMESTAMP_SIZE */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/

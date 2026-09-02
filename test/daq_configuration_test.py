@@ -185,6 +185,32 @@ def test_generation_fails_when_an_event_has_no_time_unit():
                                        "triggered_daq_list_ref": ["DAQ1"]},)))
 
 
+@pytest.mark.parametrize('size, expected_type, expected_wire', (('BYTE', 'ONE_BYTE', 1),
+                                                                 ('WORD', 'TWO_BYTE', 2),
+                                                                 ('DWORD', 'FOUR_BYTE', 4)))
+def test_configured_timestamp_reaches_the_generated_configuration(size, expected_type, expected_wire):
+    """The three values were hard-coded literals (FOUR_BYTE, TIMESTAMP_UNIT_1MS, 0x0001u) before
+    SP2b. XCP_DAQ_TIMESTAMP_SIZE is the wire size in bytes, deliberately not the enumerator:
+    Xcp_TimestampTypeType is implicit, so FOUR_BYTE == 3, while the wire size is 4."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size=size,
+                                                        unit='TIMESTAMP_UNIT_10US',
+                                                        ticks=250)))
+
+    assert handle.config.lib.Xcp[0].general.timestampType == getattr(handle.lib, expected_type)
+    assert handle.config.lib.Xcp[0].general.timestampUnit == handle.lib.TIMESTAMP_UNIT_10US
+    assert handle.config.lib.Xcp[0].general.timestampTicks == 250
+    assert handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') == handle.define('STD_ON')
+    assert handle.define('XCP_DAQ_TIMESTAMP_SIZE') == expected_wire
+
+
+def test_an_absent_timestamp_block_disables_timestamps():
+    handle = XcpTest(DefaultConfig())
+
+    assert handle.config.lib.Xcp[0].general.timestampType == handle.lib.NO_TIME_STAMP
+    assert handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') == handle.define('STD_OFF')
+    assert handle.define('XCP_DAQ_TIMESTAMP_SIZE') == 0
+
+
 def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
     """An empty triggered_daq_list_ref would emit a zero-length C array
     (Xcp_EventChannelDaqListRef...[0x00u]) -- a GCC extension, an ISO C constraint violation, and
