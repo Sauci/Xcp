@@ -233,13 +233,20 @@ def test_write_daq_respects_the_budget_the_timestamp_leaves_in_odt_zero():
     DD8's scenario, reported as ERR_DAQ_CONFIG (0x2A), the same code
     test_write_daq_refuses_to_overfill_an_odt asserts for the unreduced budget. This check only
     moves the threshold the DD8 comparison runs against; it does not change what the comparison
-    reports when it trips."""
+    reports when it trips.
+
+    The expected budget subtracts timestamp_wire_size['DWORD'] -- a constant this file's own
+    timestamp(size='DWORD') above names -- rather than XCP_DAQ_TIMESTAMP_SIZE. Two reasons. That
+    macro is the largest size across every configuration in the build, not this configuration's
+    own width, so it is the wrong quantity for per-configuration arithmetic in the first place.
+    And reading it here would make the test self-referential: if the macro were wrong, this
+    computes the same wrong budget as the code under test and still passes."""
     handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=8),)))
     connect(handle)
     set_daq_list_mode(handle, daq_list=0, mode=0x10)
 
-    budget = handle.lib.Xcp_Ptr.general.odtEntrySizeDaq - handle.define('XCP_DAQ_TIMESTAMP_SIZE')
+    budget = handle.lib.Xcp_Ptr.general.odtEntrySizeDaq - timestamp_wire_size['DWORD']
     written = fill_odt_zero(handle, daq_list=0, upto=budget)
     assert written == budget
 
