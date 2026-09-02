@@ -20,9 +20,15 @@ def test_xcp_init_raises_e_init_failed_if_max_cto_parameter_does_not_fit_with_ad
                                                     handle.define('XCP_E_INIT_FAILED'))
 
 
-@pytest.mark.parametrize('max_dto, address_granularity', ((1, 'WORD'),
+# 1 would also fail the modulo check below, but it also leaves zero bytes of ODT capacity under
+# the default ABSOLUTE identification field (max_dto - 1 == 0), which the generator now rejects at
+# code-generation time (source_cfg.c.jinja2's odt_entry_size_daq guard) before Xcp_Init ever runs.
+# 5 keeps this test's own point -- MAX_DTO not dividing the address granularity's element size --
+# isolated from that unrelated guard: 5 % 2 == 1 and 5 % 4 == 1, so Xcp_Init still rejects it, and
+# 5 - 1 == 4 bytes of capacity, so code generation does not. Do not simplify this back to 1.
+@pytest.mark.parametrize('max_dto, address_granularity', ((5, 'WORD'),
                                                           (3, 'WORD'),
-                                                          (1, 'DWORD'),
+                                                          (5, 'DWORD'),
                                                           (3, 'DWORD')))
 def test_xcp_init_raises_e_init_failed_if_max_dto_parameter_does_not_fit_with_address_granularity(max_dto,
                                                                                                   address_granularity):

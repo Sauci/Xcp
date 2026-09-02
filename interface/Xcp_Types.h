@@ -36,6 +36,12 @@ extern "C" {
 
 #endif /* #ifndef XCP_EVENT_USER_DATA_SIZE */
 
+#ifndef XCP_MAX_DTO
+
+#define XCP_MAX_DTO (0x08u)
+
+#endif /* #ifndef XCP_MAX_DTO */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -92,6 +98,12 @@ typedef enum
     DAQ_STATIC
 } Xcp_DaqConfigTypeType;
 
+/**
+ * @note These enumerator values are not arbitrary: XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.4.1.2.4 transmits them directly as bits 7:6 of GET_DAQ_PROCESSOR_INFO's DAQ_KEY_BYTE,
+ * so renumbering changes the wire format. An exhaustive test covers this and will fail loudly if
+ * it ever happens, but check the section above before relying on that.
+ */
 typedef enum
 {
     /**
@@ -308,6 +320,12 @@ typedef struct
     uint8 bitOffset;
 
     /**
+     * @brief address extension of the memory the ODT entry references.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2, WRITE_DAQ byte 3.
+     */
+    uint8 addressExtension;
+
+    /**
      * @brief length of the referenced memory area that is referenced by the ODT entry
      */
     uint8 length;
@@ -349,6 +367,14 @@ typedef struct
 typedef struct
 {
     const uint16 number;
+
+    /**
+     * @brief absolute ODT number of this DAQ list's first ODT.
+     * @details Assigned by the slave, not the master, and reported in the positive response to
+     * START_STOP_DAQ_LIST. The absolute ODT number of ODT i is firstPid + i.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4.
+     */
+    const uint8 firstPid;
     const Xcp_EventChannelTypeType type;
     const uint8 maxOdt;
     const uint8 maxOdtEntries;
@@ -400,9 +426,12 @@ typedef struct
     Xcp_EventChannelTypeType type;
 
     /**
-     * @brief References all DAQ lists that are trigged by this event channel.
+     * @brief References all DAQ lists that are triggered by this event channel.
+     * @details An array of pointers rather than one pointer plus a count: the configured
+     * references name arbitrary DAQ lists, which a single pointer into the DAQ list array could
+     * only express if they happened to be contiguous.
      */
-    const Xcp_DaqListType *triggeredDaqListRef;
+    const Xcp_DaqListType * const *triggeredDaqListRef;
     const uint32 triggeredDaqListRefCount;
 } Xcp_EventChannelType;
 
@@ -499,6 +528,7 @@ typedef struct
     const char *identification; /* not part of the specification... */
     const uint8 maxSegment; /* not part of the specification... */
     const uint8 pagProperties; /* not part of the specification... */
+    const boolean overloadEvent; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**
@@ -535,9 +565,89 @@ typedef struct {
     boolean freeze;
 } Xcp_SegmentRtType;
 
+/**
+ * @brief mutable state of one DAQ list.
+ * @details Everything the master changes through SET_DAQ_LIST_MODE and START_STOP_DAQ_LIST.
+ * The configured part of a DAQ list -- its ODTs, its FIRST_PID, its PDU mapping -- lives in
+ * Xcp_DaqListType and is generated const.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
+ * @note mode, eventChannelNumber, prescaler and prescalerCounter are read by
+ * Xcp_TriggerEventChannel (a task or an ISR) and written by the command handlers of
+ * source/Xcp_Daq.c (CanIf's receive context -- SET_DAQ_LIST_MODE, START_STOP_DAQ_LIST,
+ * START_STOP_SYNCH, CLEAR_DAQ_LIST), with no exclusive area on either side. This is deliberate,
+ * not an oversight: it is the mirror image of the state the DAQ transmit exclusive area (DD5 in
+ * the design doc) does protect. A trigger interleaved with one of these writes can at worst see
+ * a torn read of one field -- a skewed prescaler cycle, or a mode change that takes effect one
+ * trigger later or earlier than intended, i.e. one extra or missing frame. None of these fields
+ * is a pointer, or a length paired with a pointer the way the ODT entry array is (DD14), so no
+ * interleaving here is ever memory-unsafe. That bound is what makes this acceptable rather than
+ * a defect; before reusing the argument for a new field, confirm it still holds.
+ */
+typedef struct {
+    /**
+     * @brief event channel this DAQ list is bound to, assigned by SET_DAQ_LIST_MODE.
+     */
+    uint16 eventChannelNumber;
+
+    /**
+     * @brief current mode, in the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6.
+     * @details Stored in the layout the slave reports rather than the one it receives:
+     * SET_DAQ_LIST_MODE puts DIRECTION at bit 0, while this byte puts SELECTED there.
+     */
+    uint8 mode;
+
+    /**
+     * @brief transmission rate prescaler; 1 means no reduction.
+     */
+    uint8 prescaler;
+
+    /**
+     * @brief events counted towards the next transmission, in [0, prescaler).
+     */
+    uint8 prescalerCounter;
+
+    /**
+     * @brief DAQ list priority. Only 0 is accepted while prioritisation is unimplemented.
+     */
+    uint8 priority;
+} Xcp_DaqListRtType;
+
+/**
+ * @brief one complete DTO packet, assembled at the sampling instant.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1.
+ */
+typedef struct {
+    /**
+     * @brief Tx PDU this frame goes out on, from the DAQ list's pdu_mapping.
+     */
+    PduIdType txPduId;
+
+    /**
+     * @brief bytes used in data, identification field included.
+     */
+    uint8 length;
+
+    uint8 data[XCP_MAX_DTO];
+} Xcp_DtoFrameType;
+
+/**
+ * @brief ring of assembled DTO frames awaiting transmission.
+ * @details count rather than a gap between read and write, so a full ring and an empty one are
+ * distinguishable without wasting an element.
+ */
+typedef struct {
+    Xcp_DtoFrameType *frame;
+    uint8 depth;
+    uint8 read;
+    uint8 write;
+    uint8 count;
+} Xcp_DtoQueueType;
+
 typedef struct {
     Xcp_EventQueueType *eventQueue;
     Xcp_SegmentRtType *segment;
+    Xcp_DaqListRtType *daqList;
+    Xcp_DtoQueueType *dtoQueue;
 } Xcp_RtType;
 
 typedef struct

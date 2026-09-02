@@ -37,70 +37,59 @@ def test_connect_sets_the_resource_cal_pag_bit_according_to_enabled_apis(resourc
 
 
 @pytest.mark.parametrize('resource_daq_bit, api_enable', (
-        (0, (
-                False, False, False, False, False, False, False, False, False, False, False, False, False, False, False,
-                False,
-                False)),
-        (0, (
-                True, False, False, False, False, False, False, False, False, False, False, False, False, False, False,
-                False,
-                False)),
-        (0, (
-                True, True, False, False, False, False, False, False, False, False, False, False, False, False, False,
-                False,
-                False)),
-        (0, (
-                True, True, True, False, False, False, False, False, False, False, False, False, False, False, False,
-                False,
-                False)),
-        (0, (True, True, True, True, False, False, False, False, False, False, False, False, False, False, False, False,
-             False)),
-        (0, (True, True, True, True, True, False, False, False, False, False, False, False, False, False, False, False,
-             False)),
-        (0, (True, True, True, True, True, True, False, False, False, False, False, False, False, False, False, False,
-             False)),
-        (0, (True, True, True, True, True, True, True, False, False, False, False, False, False, False, False, False,
-             False)),
-        (0, (
-                True, True, True, True, True, True, True, True, False, False, False, False, False, False, False, False,
-                False)),
-        (0, (
-                True, True, True, True, True, True, True, True, True, False, False, False, False, False, False, False,
-                False)),
-        (0,
-         (True, True, True, True, True, True, True, True, True, True, False, False, False, False, False, False, False)),
-        (0,
-         (True, True, True, True, True, True, True, True, True, True, True, False, False, False, False, False, False)),
-        (
-                0, (True, True, True, True, True, True, True, True, True, True, True, True, False, False, False, False,
-                    False)),
-        (0, (True, True, True, True, True, True, True, True, True, True, True, True, True, False, False, False, False)),
-        (0, (True, True, True, True, True, True, True, True, True, True, True, True, True, True, False, False, False)),
-        (0, (True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, False, False)),
-        (0, (True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, False)),
-        (1, (True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, True))))
+        (1, (True, True, True, True, True, True)),
+        (0, (False, True, True, True, True, True)),
+        (0, (True, False, True, True, True, True)),
+        (0, (True, True, False, True, True, True)),
+        (0, (True, True, True, False, True, True)),
+        (0, (True, True, True, True, False, True)),
+        (0, (True, True, True, True, True, False))))
 def test_connect_sets_the_resource_daq_bit_according_to_enabled_apis(resource_daq_bit, api_enable):
+    """D14. 1.1/1.6.1.1.1 defines the bit as a property of the DAQ list group: CLEAR_DAQ_LIST,
+    SET_DAQ_PTR, WRITE_DAQ, SET_DAQ_LIST_MODE, START_STOP_DAQ_LIST and START_STOP_SYNCH are the
+    six commands an available DAQ list actually needs, so disabling any one of them individually
+    (the other five, and every optional DAQ command, left at their enabled default) clears the
+    bit. The eleven other DAQ commands are optional per 1.1 and do not gate it -- see
+    test_the_daq_resource_bit_survives_disabling_an_optional_daq_command below, which holds all
+    six of these on while disabling every optional one at once."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    xcp_clear_daq_list_api_enable=api_enable[0],
                                    xcp_set_daq_ptr_api_enable=api_enable[1],
                                    xcp_write_daq_api_enable=api_enable[2],
                                    xcp_set_daq_list_mode_api_enable=api_enable[3],
-                                   xcp_get_daq_list_mode_api_enable=api_enable[4],
-                                   xcp_start_stop_daq_list_api_enable=api_enable[5],
-                                   xcp_start_stop_synch_api_enable=api_enable[6],
-                                   xcp_get_daq_clock_api_enable=api_enable[7],
-                                   xcp_read_daq_api_enable=api_enable[8],
-                                   xcp_get_daq_processor_info_api_enable=api_enable[9],
-                                   xcp_get_daq_resolution_info_api_enable=api_enable[10],
-                                   xcp_get_daq_list_info_api_enable=api_enable[11],
-                                   xcp_get_daq_event_info_api_enable=api_enable[12],
-                                   xcp_free_daq_api_enable=api_enable[13],
-                                   xcp_alloc_daq_api_enable=api_enable[14],
-                                   xcp_alloc_odt_api_enable=api_enable[15],
-                                   xcp_alloc_odt_entry_api_enable=api_enable[16]))
+                                   xcp_start_stop_daq_list_api_enable=api_enable[4],
+                                   xcp_start_stop_synch_api_enable=api_enable[5]))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()
     assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x02)) >> 0x02) == resource_daq_bit
+
+
+def resource(handle):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return handle.can_if_transmit.call_args[0][1].SduDataPtr[1]
+
+
+def test_the_daq_resource_bit_survives_disabling_an_optional_daq_command():
+    """D14. 1.1/1.6.1.1.1 defines the bit as "DAQ lists available", a group property. Requiring
+    every optional command made an integrator's configuration switch DAQ off entirely."""
+    handle = XcpTest(DefaultConfig(xcp_get_daq_clock_api_enable=False,
+                                   xcp_read_daq_api_enable=False,
+                                   xcp_get_daq_list_info_api_enable=False,
+                                   xcp_get_daq_event_info_api_enable=False,
+                                   xcp_free_daq_api_enable=False,
+                                   xcp_alloc_daq_api_enable=False,
+                                   xcp_alloc_odt_api_enable=False,
+                                   xcp_alloc_odt_entry_api_enable=False))
+
+    assert resource(handle) & 0x04 != 0
+
+
+def test_the_daq_resource_bit_clears_without_a_mandatory_daq_command():
+    handle = XcpTest(DefaultConfig(xcp_set_daq_ptr_api_enable=False))
+
+    assert resource(handle) & 0x04 == 0
 
 
 @pytest.mark.parametrize('resource_stim_bit, daq_type', ((0, "DAQ"), (1, "STIM"), (1, "DAQ_STIM")))

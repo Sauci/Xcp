@@ -117,6 +117,118 @@ master one. `DOWNLOAD_MAX` and `SHORT_DOWNLOAD` must not appear inside a block t
 prescribes no error code for that violation, so the stack answers `ERR_SEQUENCE`, which describes it accurately and
 leaves the master able to recover.
 
+## Data acquisition
+The **DAQ** commands sample configured memory at the rate the integrator drives and transmit it to the master as
+measurement data. Unlike the **PAG** group, which is absent from a build unless a segment is declared, at least one
+DAQ list and one event channel are mandatory in the *JSON* configuration: `daqs` and `events` must each have at
+least one entry.
+
+### Declaring DAQ lists and event channels
+DAQ lists live under `daqs`:
+
+| field                    | meaning                                                                             |
+|:-------------------------|:-------------------------------------------------------------------------------------|
+| ```daqs[].name```             | the list's name, referenced by `events[].triggered_daq_list_ref`                     |
+| ```daqs[].type```             | `DAQ`, `DAQ_STIM` or `STIM`; only `DAQ` is implemented, see Limitations              |
+| ```daqs[].max_odt```          | the list's number of ODTs (static configuration only, see Limitations)               |
+| ```daqs[].max_odt_entries```  | the number of entries in each of the list's ODTs                                     |
+| ```daqs[].pdu_mapping```      | the lower-layer PDU that carries this list's traffic — a Tx PDU for `DAQ`, an Rx PDU for `DAQ_STIM`/`STIM` |
+| ```daqs[].dtos[].pid```       | checked against the derived `FIRST_PID`, not what assigns it — see below             |
+
+`dtos[].pid` does not assign a DAQ list's `FIRST_PID`. XCP part 2 §1.6.4.1.1.4 requires that "for every ODT
+there's a unique absolute ODT number" and makes that numbering the slave's to assign, not the configuration's: the
+generator derives each list's `FIRST_PID` as the running sum of the preceding lists' `max_odt`, and fails generation
+if a configured `pid` contradicts the derived value. The field exists so a configuration can pin down and verify the
+numbering it expects to get, not to set it.
+
+Event channels live under `events`:
+
+| field                                | meaning                                                                           |
+|:--------------------------------------|:------------------------------------------------------------------------------------|
+| ```events[].consistency```            | `DAQ`, `EVENT` or `ODT` consistency; reported to the master by `GET_DAQ_EVENT_INFO`, not implemented in this phase, see Limitations |
+| ```events[].priority```               | the channel's own priority; carried through configuration but not consulted by any command implemented in this phase — not to be confused with a DAQ list's priority, set through `SET_DAQ_LIST_MODE` and limited to 0, see Limitations |
+| ```events[].time_cycle```             | the sampling period this channel promises; 0 means "not cyclic"                    |
+| ```events[].time_unit```              | the unit of `time_cycle`, one of the `TIMESTAMP_UNIT_*` values                     |
+| ```events[].type```                   | `DAQ` or `DAQ_STIM`; only the `DAQ` direction is implemented                        |
+| ```events[].triggered_daq_list_ref``` | the `daqs[].name` values this channel triggers                                     |
+
+`time_cycle` and `time_unit` describe the raster this channel promises — the one a `GET_DAQ_EVENT_INFO` command
+would report to the master (that command is not implemented in this phase, see Limitations). The module does not
+enforce the promise itself: it keeps no clock of its own, so honouring it is entirely the integrator's
+responsibility, exercised by calling `Xcp_TriggerEventChannel` at the declared rate — see *Triggering event
+channels* below.
+
+Four `protocol_layer` keys configure the DAQ processor as a whole:
+
+| key                            | default | effect                                                                                                                                                                  |
+|:--------------------------------|:--------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ```identification_field_type``` | `ABSOLUTE` | `ABSOLUTE`, `RELATIVE_BYTE`, `RELATIVE_WORD` or `RELATIVE_WORD_ALIGNED`; sizes the DTO identification field at 1, 2, 3 or 4 bytes and therefore sets `MAX_ODT_ENTRY_SIZE_DAQ` to `MAX_DTO` minus that many bytes |
+| ```daq_queue_size```            | 16      | how many sampled DTO frames may wait for transmission at once. `Xcp_TriggerEventChannel` fills the ring; the transmission chain drains one frame per `CanIf` confirmation, so this sizes the burst the slave can absorb when sampling briefly outruns the bus. One slot is a whole `Xcp_DtoFrameType`, so the ring costs `daq_queue_size * (MAX_DTO + 4)` bytes of RAM at worst — `MAX_DTO` of payload after a `PduIdType` and a length byte, padded to the alignment of `PduIdType` (`uint16` here, so +4, or +3 when `MAX_DTO` is odd). At the defaults, 16 * (8 + 4) = 192 bytes per configuration. A frame sampled while the ring is full is dropped and reported per `overload_indication` |
+| ```prescaler_supported```       | `true`  | sets `PRESCALER_SUPPORTED` in `DAQ_PROPERTIES`; `false` makes `SET_DAQ_LIST_MODE` refuse a prescaler above 1                                                          |
+| ```overload_indication```       | `EVENT` | how a full DTO ring is reported: `EVENT` transmits `EV_DAQ_OVERLOAD` (at most once per trigger, regardless of how many frames it dropped); `NONE` drops silently and reports no overload capability |
+
+### Triggering event channels
+The module holds no clock and never triggers an event channel on its own. Call
+
+```c
+void Xcp_TriggerEventChannel(uint16 eventChannelNumber);
+```
+
+from whatever context the event actually occurs in — a periodic task, an interrupt, an end-of-conversion. XCP part
+2 §1.6.4.1.1.3 calls an event channel "the generic signal source that effectively determines the data transmission
+timing", and only the integrator knows what that source is. Call it at the rate the channel's `time_cycle` and
+`time_unit` declare, because that is the raster the slave promises the master.
+
+This is **not** an AUTOSAR service. The API surface `SWS_Xcp` R4.3.1 defines is `Xcp_Init`, `Xcp_GetVersionInfo`,
+`Xcp_SetTransmissionMode`, the three `Xcp_<Lo>` callbacks and `Xcp_MainFunction` — nothing in it triggers a DAQ
+event channel, so an integrator will not find one there. `Xcp_TriggerEventChannel` is a vendor extension of this
+module, in the same sense as the *JSON* configuration itself and the module's other integrator-facing extension
+headers (`Xcp_Paging.h`, `Xcp_SeedKey.h`, and the rest under `test/stub/`).
+
+### The exclusive area
+`SchM_Xcp.h` declares `SchM_Enter_Xcp_DtoQueue()` and `SchM_Exit_Xcp_DtoQueue()`. An integrator replaces the stub
+with the SchM the RTE generates. The area protects three things: the DTO ring indices, `Xcp_Internal.ongoing_transmit_type`
+(the transmit arbitration state), and the event queue's read/write indices.
+
+The event queue needs the same protection as the DTO ring because it has the same shape of hazard: two producers —
+`Xcp_MainFunction`'s `EV_STORE_CAL` push and `Xcp_TriggerEventChannel`'s `EV_DAQ_OVERLOAD` push — and one consumer
+reached from the CAN transmit confirmation, all three reachable from different contexts. Guard the event queue's
+accesses under the same area as the DTO ring, not only the ring's.
+
+The area must suspend anything that can call into this module — typically the CAN transmit interrupt — and that
+includes `Xcp_CanIfTxConfirmation` itself: the confirmation updates `ongoing_transmit_type` outside the area before
+`Xcp_StartNextTransmission` reads it under one, so the area must exclude the confirmation's own execution context
+specifically, not only concurrent callers of the module's other entry points. A primitive that does not — a
+spinlock shared with a confirmation handled on another core, for instance — breaks this design's assumption. The
+module never holds the area across a call to `CanIf_Transmit`.
+
+### Calling Xcp_MainFunction
+Call `Xcp_MainFunction` cyclically, as SWS_Xcp_00824 requires. Its rate bounds how quickly the stack recovers after
+the CAN interface refuses a transmission. It does **not** affect the DAQ measurement raster, which you set through
+`Xcp_TriggerEventChannel`, and it does not affect throughput: a sampled burst is started by the trigger and carried
+to completion by transmit confirmations.
+
+### Where this implementation resolves an ambiguous specification
+- `WRITE_DAQ`'s element size (request byte 2) is read in **bytes**. §1.6.4.1.1.2 annotates the field `[AG]`,
+  implying address-granularity units, while §1.6.4.1.2.5 states the rules that bound it — a multiple of
+  `GRANULARITY_ODT_ENTRY_SIZE_DAQ`, no larger than `MAX_ODT_ENTRY_SIZE_DAQ` — in bytes. Read as AG units the two
+  sections contradict each other: `MAX_ODT_ENTRY_SIZE_DAQ` would be in AG units in one and bytes in the other. This
+  implementation reads bytes throughout, which makes the two sections consistent with each other and makes
+  `MAX_ODT_ENTRY_SIZE_DAQ` directly comparable with the DTO capacity an ODT actually has to fit inside; `WRITE_DAQ`
+  requires the size to be a multiple of the address granularity and bounds it by `MAX_ODT_ENTRY_SIZE_DAQ`, both in
+  bytes.
+- `BIT_OFFSET` is validated and stored but does not change what is sampled: for a list with `DIRECTION = DAQ`, the
+  master is the one that applies `BIT_MASK` to what it receives.
+- `WRITE_DAQ` against an invalid DAQ pointer answers `ERR_OUT_OF_RANGE`; §1.6.4.1.1.2 leaves the pointer undefined
+  in that state and prescribes no code for it.
+- `SET_DAQ_LIST_MODE` answers `ERR_MODE_NOT_VALID` for every mode bit this phase does not implement (`ALTERNATING`,
+  `DIRECTION`, `TIMESTAMP`, `PID_OFF`), and `ERR_OUT_OF_RANGE` for a priority above 0, which §1.6.4.1.1.3 names
+  explicitly as the required response from a slave without DAQ list prioritisation.
+- `START_STOP_SYNCH(start selected)` with no list currently selected answers `ERR_DAQ_CONFIG`, per §1.6.4.1.1.5.
+- `CLEAR_DAQ_LIST` is accepted while the addressed list is running, per §1.6.4.2.1.1, which requires the command to
+  stop a running transmission rather than refuse because one is active; the error matrix row was corrected to
+  match.
+
 ## FREEZE mode
 `SET_SEGMENT_MODE` can mark a segment for freezing, which the specification describes as selecting that segment to be
 stored into non-volatile memory on the next `STORE_CAL_REQ`. The stack records the flag per segment and exposes it
@@ -138,8 +250,31 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
 - `SHORT_DOWNLOAD` can transfer no data at all when `MAX_CTO` is 8, as it is for XCP on CAN, because the command's
   own header fills the whole frame. The specification notes this. The stack still accepts the command, and rejects any
   element count above `(MAX_CTO - 8) / AG` with `ERR_OUT_OF_RANGE`.
+- There are no timestamps: `TIMESTAMP_SUPPORTED` is clear in `DAQ_PROPERTIES`, and `SET_DAQ_LIST_MODE` refuses the
+  `TIMESTAMP` mode bit with `ERR_MODE_NOT_VALID`.
+- No `PID_OFF`, no `ALTERNATING`, no STIM direction, and no DAQ list prioritisation: a priority above 0 is refused
+  with `ERR_OUT_OF_RANGE`, which §1.6.4.1.1.3 requires of a slave that does not support it.
+- DAQ list configuration is static only. `FREE_DAQ` and the three `ALLOC_*` commands (`ALLOC_DAQ`, `ALLOC_ODT`,
+  `ALLOC_ODT_ENTRY`) answer `ERR_CMD_UNKNOWN`.
+- `WRITE_DAQ_MULTIPLE`, `READ_DAQ`, `GET_DAQ_CLOCK`, `GET_DAQ_LIST_INFO` and `GET_DAQ_EVENT_INFO` are not
+  implemented.
+- At most one DTO frame is in flight at a time: `Xcp_StartNextTransmission` arbitrates a single transmit slot
+  across command responses, event packets and DAQ frames alike, and starts the next one only once the current one
+  is confirmed. This is mandatory rather than a simplification, not merely a design choice this implementation
+  happens to make: the AUTOSAR CAN Interface specification (SWS_CANIF_00068) has `CanIf` *overwrite* an
+  already-buffered instance of the same L-PDU when `Can_Write` returns `CAN_BUSY`, so handing `CanIf` a second
+  frame for a PDU before the first is confirmed would destroy the first silently — no error, no confirmation, one
+  measurement sample simply missing.
+- The test suite that exercises the exclusive area (see *The exclusive area* above) is single-threaded. It models
+  the area as a real lock — detecting imbalance, mismatched nesting, and a lock left held at teardown — so a
+  one-sided guard or a missing exit is caught directly. What it cannot do is observe a genuine race: the
+  concurrency design is justified by reasoning about which contexts touch which state, and enforced by that lock
+  model, not by a test that exercises true preemption. A port to a target where the guarded contexts run on
+  different cores is relying on that reasoning, not on a demonstrated absence of races.
 ---
 # TODO
-- Protect variables used in both synchronous and asynchronous APIs.
+- Protect the rest of the module's shared state used by both synchronous and asynchronous APIs. The DTO ring, the
+  transmit arbitration state (`Xcp_Internal.ongoing_transmit_type`) and the event queue are now covered by the
+  exclusive area described under *Data acquisition*; everything else the module holds across contexts is not.
 - Use pre-processor to enable/disable optional APIs.
 - Implement sub-command `SET_DAQ_LIST_CAN_IDENTIFIER` for CTO `TRANSPORT_LAYER_CMD`.

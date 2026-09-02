@@ -48,6 +48,7 @@ extern "C" {
 
 #define XCP_EVENT_STORE_CAL (0x03u)
 
+#define XCP_PID_CMD_WRITE_DAQ_MULTIPLE (0xC7u)
 #define XCP_PID_CMD_PROGRAM_VERIFY (0xC8u)
 #define XCP_PID_CMD_PROGRAM_MAX (0xC9u)
 #define XCP_PID_CMD_PROGRAM_NEXT (0xCAu)
@@ -123,6 +124,62 @@ extern "C" {
 #define XCP_SESSION_STATUS_MASK_STORE_CAL_REQ (0x01u)
 #define XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ (0x01u << 0x02u)
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)
+#define XCP_SESSION_STATUS_MASK_DAQ_RUNNING (0x01u << 0x06u)
+
+/* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3. */
+#define XCP_DAQ_LIST_MODE_REQ_DIRECTION (0x01u << 0x00u)
+#define XCP_DAQ_LIST_MODE_REQ_TIMESTAMP (0x01u << 0x04u)
+#define XCP_DAQ_LIST_MODE_REQ_PID_OFF (0x01u << 0x05u)
+
+/**
+ * @brief every mode bit this implementation does not honour.
+ * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. Everything else is
+ * refused: DIRECTION selects STIM, TIMESTAMP and PID_OFF are unimplemented, and 1.1 places
+ * ALTERNATING somewhere in bits 6..7. Refusing the whole class is conformant whichever bit
+ * ALTERNATING turns out to occupy.
+ */
+#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
+    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_TIMESTAMP | XCP_DAQ_LIST_MODE_REQ_PID_OFF | \
+     (0x01u << 0x06u) | (0x01u << 0x07u)) /* bits 6-7 reserved: 1.1 places ALTERNATING somewhere in them */
+
+/* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */
+#define XCP_DAQ_LIST_MODE_SELECTED (0x01u << 0x00u)
+#define XCP_DAQ_LIST_MODE_DIRECTION (0x01u << 0x01u)
+#define XCP_DAQ_LIST_MODE_TIMESTAMP (0x01u << 0x04u)
+#define XCP_DAQ_LIST_MODE_PID_OFF (0x01u << 0x05u)
+#define XCP_DAQ_LIST_MODE_RUNNING (0x01u << 0x06u)
+#define XCP_DAQ_LIST_MODE_RESUME (0x01u << 0x07u)
+
+/* START_STOP_DAQ_LIST and START_STOP_SYNCH mode parameters, 1.1/1.6.4.1.1.4 and .5. */
+#define XCP_DAQ_START_STOP_MODE_STOP (0x00u)
+#define XCP_DAQ_START_STOP_MODE_START (0x01u)
+#define XCP_DAQ_START_STOP_MODE_SELECT (0x02u)
+#define XCP_DAQ_SYNCH_MODE_STOP_ALL (0x00u)
+#define XCP_DAQ_SYNCH_MODE_START_SELECTED (0x01u)
+#define XCP_DAQ_SYNCH_MODE_STOP_SELECTED (0x02u)
+
+/* DAQ_PROPERTIES, 1.1/1.6.4.1.2.4. */
+#define XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE (0x01u << 0x00u)
+#define XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED (0x01u << 0x01u)
+#define XCP_DAQ_PROPERTIES_RESUME_SUPPORTED (0x01u << 0x02u)
+#define XCP_DAQ_PROPERTIES_BIT_STIM_SUPPORTED (0x01u << 0x03u)
+#define XCP_DAQ_PROPERTIES_TIMESTAMP_SUPPORTED (0x01u << 0x04u)
+#define XCP_DAQ_PROPERTIES_PID_OFF_SUPPORTED (0x01u << 0x05u)
+#define XCP_DAQ_PROPERTIES_OVERLOAD_MSB (0x01u << 0x06u)
+#define XCP_DAQ_PROPERTIES_OVERLOAD_EVENT (0x01u << 0x07u)
+
+/**
+ * @brief BIT_OFFSET value meaning "this entry is a normal element, ignore the field".
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2.
+ */
+#define XCP_ODT_ENTRY_BIT_OFFSET_NONE (0xFFu)
+
+/**
+ * @brief highest BIT_OFFSET that designates a single bit.
+ */
+#define XCP_ODT_ENTRY_BIT_OFFSET_MAX (0x1Fu)
+
+#define XCP_EVENT_DAQ_OVERLOAD (0x06u)
 
 #define XCP_INTERNAL_ERR_CMD_SYNCH (0x00000001u << 0x01u)
 #define XCP_INTERNAL_ERR_CMD_BUSY (0x00000001u << 0x02u)
@@ -182,7 +239,8 @@ typedef struct {
     enum {
         ONGOING_TRANSMIT_TYPE_NONE,
         ONGOING_TRANSMIT_TYPE_CTO,
-        ONGOING_TRANSMIT_TYPE_EVENT
+        ONGOING_TRANSMIT_TYPE_EVENT,
+        ONGOING_TRANSMIT_TYPE_DAQ
     } ongoing_transmit_type;
     struct {
         /**
@@ -224,6 +282,18 @@ typedef struct {
         uint8 requested_elements;
         uint8 frame_elements;
     } block_transfer;
+
+    /**
+     * @brief target of the next WRITE_DAQ, set by SET_DAQ_PTR.
+     * @details valid goes FALSE past the last ODT entry of an ODT, where 1.1/1.6.4.1.1.2 leaves
+     * the pointer undefined and makes correct repositioning the master's responsibility.
+     */
+    struct {
+        uint16 daqListNumber;
+        uint8 odtNumber;
+        uint8 odtEntryNumber;
+        boolean valid;
+    } daq_pointer;
     uint8 internal_buffer[0x08u];
 } Xcp_InternalType;
 
@@ -268,6 +338,14 @@ LOCAL_INLINE void Xcp_ReportError(uint8 instanceId, uint8 apiId, uint8 errorId)
 extern Xcp_InternalType Xcp_Internal;
 extern const Xcp_Type *Xcp_Ptr;
 
+/**
+ * @brief Defined in Xcp.c. Only interface/Xcp.h's CFFI_ENABLE block declared this before now, so
+ * Xcp.c (which defines it) was the only translation unit that could reference it; a second one
+ * -- Xcp_DaqRuntime.c's Xcp_TriggerEventChannel -- now does too and needs it declared here, same
+ * as Xcp_Ptr immediately above.
+ */
+extern Xcp_StateType Xcp_State;
+
 /*------------------------------------------------------------------------------------------------*/
 /* global function declarations.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -298,6 +376,45 @@ uint8 Xcp_GetProtectionStatus(void);
 void Xcp_SetProtectionStatus(void);
 void Xcp_ClearProtectionStatus(void);
 
+/**
+ * @brief Hands CanIf the next packet awaiting transmission, if the module is idle.
+ * @details Safe from any context and at any time; a call arriving while another is inside
+ * CanIf_Transmit records the wish and returns, and the outer call carries it out before
+ * returning. Callers therefore never need to know whether a transmission is already running.
+ * @note Reads Xcp_Internal.ongoing_transmit_type under the exclusive area, but
+ * Xcp_CanIfTxConfirmation updates that field outside one before calling here. Correct only if
+ * SchM_Enter_Xcp_DtoQueue excludes the confirmation's own execution context, not merely other
+ * callers of this function -- see test/stub/SchM_Xcp.h.
+ */
+void Xcp_StartNextTransmission(void);
+
+/**
+ * @brief Hands back the PduIdType and PduInfoType of the frame at the head of the DTO ring.
+ * @retval E_NOT_OK the ring is empty; *pTxPduId and *ppPduInfo are not written.
+ * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive
+ * area (Xcp_TransmitOneFrame's selection, Xcp.c). *ppPduInfo points at storage the ring itself
+ * owns, valid only until the corresponding Xcp_DaqQueuePop.
+ */
+Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo);
+
+/**
+ * @brief Releases the frame at the head of the DTO ring after its transmission is confirmed.
+ * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive
+ * area (Xcp_CanIfTxConfirmation, Xcp.c). A no-op on an empty ring.
+ */
+void Xcp_DaqQueuePop(void);
+
+/**
+ * @brief Appends one packet to an event queue.
+ * @retval E_NOT_OK the queue was full; nothing was written.
+ * @details Defined in Xcp.c, static there until now; given external linkage, the same move SP1
+ * made for the block-transfer helpers, because Xcp_TriggerEventChannel (Xcp_DaqRuntime.c) needs
+ * it too, to raise EV_DAQ_OVERLOAD. Tolerates pUserData == NULL_PTR when userDataSize == 0x00u:
+ * the definition's copy loop is bounded by userDataSize and never runs when it is zero, so
+ * pUserData is not dereferenced in that case.
+ */
+Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize);
+
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);
 
@@ -326,6 +443,24 @@ uint8 Xcp_DTOCmdPagGetSegmentMode(boolean *responseExpected, const PduInfoType *
 uint8 Xcp_DTOCmdPagGetSegmentInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief resets every ODT entry of one DAQ list to its power-up state.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqClearDaqList which is its main caller, but
+ * declared here with external linkage because Xcp_Init (Xcp.c) calls it too, for every
+ * configured DAQ list, so a re-initialised module never inherits a previous session's DAQ
+ * configuration left in the generated (mutable, module-level static) ODT entry arrays.
+ */
+void Xcp_DaqListClearEntries(uint16 daqListNumber);
+uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);

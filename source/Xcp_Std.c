@@ -1115,28 +1115,18 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
         resource |= 0x01u;
     }
 
-    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.1
-     * DAQ lists supported
-     * 0 = DAQ lists not available
-     * 1 = DAQ lists available
-     * The DAQ commands (GET_DAQ_PROCESSOR_INFO, GET_DAQ_LIST_INFO, ...) are available. */
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.1
+     * "0 = DAQ lists not available / 1 = DAQ lists available". The bit describes the group, and
+     * the specification's own note names commands by example. Requiring every optional command
+     * made disabling one -- GET_DAQ_CLOCK, say -- report that the slave cannot do DAQ at all.
+     * These six are what an available DAQ list actually needs: clear it, point at it, fill it,
+     * set its mode, and start or stop it, individually or synchronously. */
     if (((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_CLEAR_DAQ_LIST] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
         ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_DAQ_PTR] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
         ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_WRITE_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
         ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_SET_DAQ_LIST_MODE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_LIST_MODE] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
         ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_DAQ_LIST] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_SYNCH] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_CLOCK] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_READ_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_PROCESSOR_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_RESOLUTION_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_LIST_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_GET_DAQ_EVENT_INFO] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_FREE_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_DAQ] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_ODT] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u) &&
-        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_ALLOC_ODT_ENTRY] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u))
+        ((Xcp_Ptr->general->ctoInfo[XCP_PID_CMD_START_STOP_SYNCH] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u))
     {
         resource |= (0x01u << 0x02u);
     }

@@ -104,8 +104,8 @@ runtime.
 
 ### 2.4 Data acquisition and stimulation (§1.4.4, §1.6.4)
 
-All seventeen commands — `CLEAR_DAQ_LIST` (0xE3) through `ALLOC_ODT_ENTRY` (0xD3) — are
-**stubs**: seventeen identical handler bodies of the form
+All seventeen commands defined in 1.0 — `CLEAR_DAQ_LIST` (0xE3) through `ALLOC_ODT_ENTRY`
+(0xD3) — are **stubs**: seventeen identical handler bodies of the form
 
 ```c
 (void)pPduInfo;
@@ -263,13 +263,28 @@ external value.
 
 ### SP2 — Data acquisition (DAQ)
 
-The seventeen DAQ commands, static and dynamic list configuration, ODT-to-DTO
-transmission, event-channel scheduling in `Xcp_MainFunction`, the identification field
-variants of §1.1.2.1 and the timestamp field of §1.1.2.2.
+The eighteen DAQ commands of 1.1 — the seventeen of 1.0 plus `WRITE_DAQ_MULTIPLE` (`0xC7`)
+— static and dynamic list configuration, ODT-to-DTO transmission, event-channel scheduling
+in `Xcp_MainFunction`, the identification field variants of §1.1.2.1 and the timestamp field
+of §1.1.2.2.
 
-Depends on SP1 only for the source layout. The largest and riskiest sub-project; it should
-be decomposed again into its own phases when its design is written — configuration model,
-then command surface, then runtime.
+Depends on SP1 only for the source layout. The largest and riskiest sub-project, decomposed
+into three phases, each of which leaves a slave that works rather than a layer that does
+not:
+
+- **SP2a** — static DAQ measurement end to end: the mandatory basic and static commands, the
+  two discovery commands, the configuration model, all four identification field types, and
+  the sampling and transmission runtime. Design: `2026-09-01-xcp-daq-design.md`.
+- **SP2b** — the remaining optional commands (`WRITE_DAQ_MULTIPLE`, `READ_DAQ`,
+  `GET_DAQ_CLOCK`, `GET_DAQ_LIST_INFO`, `GET_DAQ_EVENT_INFO`), the timestamp field, `PID_OFF`,
+  `ALTERNATING`, DAQ list prioritisation, and multiple outstanding DTO frames.
+- **SP2c** — dynamic DAQ list configuration (§1.6.4.3) and the `DAQ_CONFIG_TYPE` = dynamic
+  branch.
+
+An earlier revision of this section proposed decomposing by layer — configuration model,
+then command surface, then runtime. That was rejected when the design was written: no layer
+is independently shippable, since configured lists that never transmit have no value to a
+master.
 
 ### SP3 — Synchronous data stimulation (STIM)
 
@@ -305,7 +320,13 @@ can be pulled forward if one of them blocks an integration.
 - Transport layers other than CAN. Part 3 defines SxI, Ethernet and FlexRay; `xcp.json`
   reserves flags for them but nothing else in the module anticipates them.
 - The XCP master role.
-- XCP versions later than 1.0. Note that command codes in the DAQ range were reassigned in
-  1.1 — the current `0xD3 = ALLOC_ODT_ENTRY … 0xD6 = FREE_DAQ` mapping is correct for 1.0
-  and must not be "corrected" against a later revision.
+- XCP versions later than 1.1. **Corrected 2026-09-01:** this entry previously read "later
+  than 1.0" and claimed that command codes in the DAQ range were reassigned in 1.1. Both
+  specifications were compared directly and the codes are identical — `0xD3` `ALLOC_ODT_ENTRY`
+  through `0xE3` `CLEAR_DAQ_LIST` hold in both. What 1.1 changes in this range is
+  categorisation, plus one addition:
+  `GET_DAQ_LIST_MODE` (`0xDF`) becomes optional, `FREE_DAQ` and the three `ALLOC_*` commands
+  become mandatory *for dynamic configuration*, and `WRITE_DAQ_MULTIPLE` (`0xC7`) is new. The
+  section numbering of §1.6.4, however, does shift wholesale; see §0 of
+  `2026-09-01-xcp-daq-design.md`.
 - ASAM MCD 2MC / A2L description file generation (Part 2 §2).

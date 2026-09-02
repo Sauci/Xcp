@@ -86,13 +86,9 @@ static void Xcp_EventQueueInit(Xcp_EventQueueType *pEventQueue);
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-#define Xcp_START_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
-
-static Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize);
-
-#define Xcp_STOP_SEC_CODE_FAST
-#include "Xcp_MemMap.h"
+/* Xcp_EventQueuePush has external linkage now (Xcp_Internal.h declares it, included above), so
+ * unlike its neighbours below it gets no local forward declaration here -- the header already
+ * provides one, and a second, static one would conflict with it. */
 
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -106,6 +102,14 @@ static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *
 #include "Xcp_MemMap.h"
 
 static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static void Xcp_TransmitOneFrame(void);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -324,7 +328,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xC4 */
     Xcp_CmdNotImplemented, /* 0xC5 */
     Xcp_CmdNotImplemented, /* 0xC6 */
-    Xcp_CmdNotImplemented, /* 0xC7 */
+    Xcp_CmdNotImplemented, /* WRITE_DAQ_MULTIPLE 0xC7, new in 1.1; named but deliberately unimplemented until SP2b */
     Xcp_CmdNotImplemented, /* 0xC8 */
     Xcp_CmdNotImplemented, /* 0xC9 */
     Xcp_CmdNotImplemented, /* 0xCA */
@@ -342,17 +346,17 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xD6, optional */
     Xcp_CmdNotImplemented, /* 0xD7, optional */
     Xcp_CmdNotImplemented, /* 0xD8, optional */
-    Xcp_CmdNotImplemented, /* 0xD9, optional */
-    Xcp_CmdNotImplemented, /* 0xDA, optional */
+    Xcp_DTOCmdDaqGetDaqResolutionInfo, /* GET_DAQ_RESOLUTION_INFO 0xD9, optional */
+    Xcp_DTOCmdDaqGetDaqProcessorInfo, /* GET_DAQ_PROCESSOR_INFO 0xDA, optional */
     Xcp_CmdNotImplemented, /* 0xDB, optional */
     Xcp_CmdNotImplemented, /* 0xDC, optional */
-    Xcp_CmdNotImplemented, /* 0xDD */
-    Xcp_CmdNotImplemented, /* 0xDE */
-    Xcp_CmdNotImplemented, /* 0xDF */
-    Xcp_CmdNotImplemented, /* 0xE0 */
-    Xcp_CmdNotImplemented, /* 0xE1 */
-    Xcp_CmdNotImplemented, /* 0xE2 */
-    Xcp_CmdNotImplemented, /* 0xE3 */
+    Xcp_DTOCmdDaqStartStopSynch, /* START_STOP_SYNCH 0xDD */
+    Xcp_DTOCmdDaqStartStopDaqList, /* START_STOP_DAQ_LIST 0xDE */
+    Xcp_DTOCmdDaqGetDaqListMode, /* GET_DAQ_LIST_MODE 0xDF, optional in 1.1 */
+    Xcp_DTOCmdDaqSetDaqListMode, /* SET_DAQ_LIST_MODE 0xE0 */
+    Xcp_DTOCmdDaqWriteDaq, /* WRITE_DAQ 0xE1 */
+    Xcp_DTOCmdDaqSetDaqPtr, /* SET_DAQ_PTR 0xE2 */
+    Xcp_DTOCmdDaqClearDaqList, /* CLEAR_DAQ_LIST 0xE3 */
 #if (XCP_PAGING_SUPPORTED == STD_ON)
     Xcp_DTOCmdPagCopyCalPage, /* COPY_CAL_PAGE 0xE4, optional */
 #else
@@ -621,7 +625,7 @@ static const uint8 Xcp_PIDToCmdGroupTable[0x100u] = {
     XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0xC4 */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0xC5 */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0xC6 */
-    XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* 0xC7 */
+    XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE, /* WRITE_DAQ_MULTIPLE 0xC7, new in 1.1; named but deliberately unimplemented until SP2b */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM, /* PROGRAM_VERIFY 0xC8, optional */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM, /* PROGRAM_MAX 0xC9, optional */
     XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM, /* PROGRAM_NEXT 0xCA, optional */
@@ -886,7 +890,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     0x00000000u, /* 0xC4 */
     0x00000000u, /* 0xC5 */
     0x00000000u, /* 0xC6 */
-    0x00000000u, /* 0xC7 */
+    0x00000000u, /* WRITE_DAQ_MULTIPLE 0xC7, new in 1.1; named but deliberately unimplemented until SP2b */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC | XCP_INTERNAL_ERR_VERIFY, /* PROGRAM_VERIFY 0xC8, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* PROGRAM_MAX 0xC9, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_NEXT 0xCA, optional */
@@ -910,11 +914,11 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX, /* GET_DAQ_CLOCK 0xDC, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_MODE_NOT_VALID | XCP_INTERNAL_ERR_DAQ_CONFIG, /* START_STOP_SYNCH 0xDD */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_MODE_NOT_VALID | XCP_INTERNAL_ERR_DAQ_CONFIG, /* START_STOP_DAQ_LIST 0xDE */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_DAQ_LIST_MODE 0xDF */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_DAQ_LIST_MODE 0xDF */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_MODE_NOT_VALID, /* SET_DAQ_LIST_MODE 0xE0 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_DAQ_CONFIG, /* WRITE_DAQ 0xE1 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_DAQ_PTR 0xE2 */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* CLEAR_DAQ_LIST 0xE3 */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* CLEAR_DAQ_LIST 0xE3 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_PAGE_NOT_VALID | XCP_INTERNAL_ERR_SEGMENT_NOT_VALID, /* COPY_CAL_PAGE 0xE4, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_SEGMENT_NOT_VALID, /* GET_SEGMENT_MODE 0xE5, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_MODE_NOT_VALID | XCP_INTERNAL_ERR_SEGMENT_NOT_VALID, /* SET_SEGMENT_MODE 0xE6, optional */
@@ -987,6 +991,22 @@ void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer) = {
 #include "Xcp_MemMap.h"
 
 const Xcp_Type *Xcp_Ptr = NULL_PTR;
+
+#define Xcp_STOP_SEC_VAR_FAST_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_VAR_FAST_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+/**
+ * @brief TRUE while a call to Xcp_StartNextTransmission is inside CanIf_Transmit.
+ */
+static boolean Xcp_TransmitInProgress = FALSE;
+
+/**
+ * @brief TRUE when a call arrived while another was in progress and found work to do.
+ */
+static boolean Xcp_TransmitRestartWanted = FALSE;
 
 #define Xcp_STOP_SEC_VAR_FAST_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -1105,6 +1125,26 @@ void Xcp_Init(const Xcp_Type *pConfig)
             for (idx = 0x00000000u; idx < Xcp_Ptr->general->maxSegment; idx ++) {
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[idx].freeze = FALSE;
             }
+            for (idx = 0x00u; idx < Xcp_Ptr->general->daqCount; idx++)
+            {
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].eventChannelNumber = 0x0000u;
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode = 0x00u;
+                /* 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." */
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescaler = 0x01u;
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescalerCounter = 0x00u;
+                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].priority = 0x00u;
+                /* The generated ODT entry arrays are module-level mutable statics with no
+                 * initialisation of their own; reset them here too, or a re-initialised module
+                 * inherits a previous session's DAQ configuration. See
+                 * Xcp_DaqListClearEntries's own doc comment (Xcp_Daq.c). */
+                Xcp_DaqListClearEntries((uint16)idx);
+            }
+
+            Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->read = 0x00u;
+            Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->write = 0x00u;
+            Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->count = 0x00u;
+
+            Xcp_Internal.daq_pointer.valid = FALSE;
             for (idx = 0x00000000u; idx < (sizeof(Xcp_Internal.seed.buffer) / sizeof(Xcp_Internal.seed.buffer[0x00u])); idx ++) {
                 Xcp_Internal.seed.buffer[idx] = 0x00u;
             }
@@ -1185,8 +1225,6 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     uint8 store_calibration_status;
-    uint8 event_packet_id;
-    uint8 event_code;
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
      * The STORE_CAL_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
@@ -1195,9 +1233,21 @@ void Xcp_MainFunction(void)
     {
         if (Xcp_StoreCalibrationDataToNonVolatileMemory(&store_calibration_status) == E_OK)
         {
+            Std_ReturnType push_result;
+
             Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_STORE_CAL_REQ;
 
-            if (Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, &store_calibration_status, 0x00000001u) == E_OK)
+            /* Fix round 2: this push and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are now two
+             * producers into the same event queue, reachable from different contexts, while
+             * Xcp_TransmitOneFrame reads read/write under this area to select what to send next.
+             * Only the push itself goes inside -- Xcp_StoreCalibrationDataToNonVolatileMemory
+             * above and Xcp_ReportError below are both external calls and must not extend the
+             * section. */
+            SchM_Enter_Xcp_DtoQueue();
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, &store_calibration_status, 0x00000001u);
+            SchM_Exit_Xcp_DtoQueue();
+
+            if (push_result == E_OK)
             {
                 Xcp_Internal.event.successful_transmission_pending = TRUE;
             }
@@ -1211,21 +1261,10 @@ void Xcp_MainFunction(void)
         }
     }
 
-    if (Xcp_Internal.ongoing_transmit_type == ONGOING_TRANSMIT_TYPE_NONE) {
-        /* We prioritize the transmission of the CTO response first, then the asynchronous events. */
-        if (Xcp_Internal.cto_response.successful_transmission_pending == TRUE) {
-            if (CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Internal.cto_response.pdu_info) == E_OK) {
-                Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_CTO;
-            }
-        } else if (Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, &event_packet_id, &event_code) == E_OK) {
-            Xcp_Internal.event.pdu_info.SduDataPtr[0x00u] = event_packet_id;
-            Xcp_Internal.event.pdu_info.SduDataPtr[0x01u] = event_code;
-
-            if (CanIf_Transmit(Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id, &Xcp_Internal.event.pdu_info) == E_OK) {
-                Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_EVENT;
-            }
-        }
-    }
+    /* SWS_Xcp_00824 has the BSW scheduler call this cyclically. Nothing here depends on how
+     * often: the trigger and the transmit confirmation drive transmission between them, and
+     * this call is what resumes the chain after CanIf has refused a frame. */
+    Xcp_StartNextTransmission();
 }
 
 /** @} */
@@ -1451,14 +1490,40 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
                 if (result == E_OK)
                 {
+                    /* Fix round 2: only the pop and the flag it gates go inside -- same reasoning
+                     * as the push in Xcp_MainFunction above; no external call sits in this branch
+                     * to keep out. */
+                    SchM_Enter_Xcp_DtoQueue();
                     if (Xcp_EventQueuePop(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue) == E_OK) {
                         Xcp_Internal.event.successful_transmission_pending = FALSE;
                     }
+                    SchM_Exit_Xcp_DtoQueue();
+                }
+
+                break;
+            }
+            case ONGOING_TRANSMIT_TYPE_DAQ:
+            {
+                Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_NONE;
+
+                if (result == E_OK)
+                {
+                    /* The frame stayed in the ring while CanIf owned it, because CanIf_Transmit
+                     * is asynchronous and the buffer it was handed must outlive the call. */
+                    SchM_Enter_Xcp_DtoQueue();
+                    Xcp_DaqQueuePop();
+                    SchM_Exit_Xcp_DtoQueue();
                 }
 
                 break;
             }
         }
+
+        /* D16: the confirmation used to clear a flag and return, so every multi-frame exchange
+         * advanced one frame per Xcp_MainFunction call. Continuing the chain here paces it by
+         * CAN bandwidth instead. The CTO branch has already refilled the response buffer for a
+         * block transfer, so the frame this picks up is the one that branch just prepared. */
+        Xcp_StartNextTransmission();
     } else {
         Xcp_ReportError(0x00u, XCP_CAN_IF_TX_CONFIRMATION_API_ID, XCP_E_UNINIT);
     }
@@ -1568,7 +1633,7 @@ static void Xcp_EventQueueInit(Xcp_EventQueueType *pEventQueue) {
     }
 }
 
-static Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize)
+Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetID, uint8 eventCode, const uint8 *pUserData, uint32 userDataSize)
 {
     Std_ReturnType result;
     uint32_least idx;
@@ -1622,6 +1687,115 @@ static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue) {
     }
 
     return result;
+}
+
+/**
+ * @brief Chooses one packet and hands it to CanIf.
+ * @details The choice happens under the exclusive area; CanIf_Transmit is called outside it,
+ * because holding the area across a lower-layer call would make the section unbounded, and
+ * because a CanIf that confirms synchronously would otherwise re-enter the area.
+ */
+static void Xcp_TransmitOneFrame(void)
+{
+    PduIdType pdu_id = 0x0000u;
+    PduInfoType *p_pdu_info = NULL_PTR;
+    boolean transmit = FALSE;
+    uint8 event_packet_id;
+    uint8 event_code;
+
+    SchM_Enter_Xcp_DtoQueue();
+
+    if (Xcp_Internal.ongoing_transmit_type == ONGOING_TRANSMIT_TYPE_NONE)
+    {
+        /* The command response goes first: the master's time-out is running against it, and
+         * measurement traffic must never delay it. */
+        if (Xcp_Internal.cto_response.successful_transmission_pending == TRUE)
+        {
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_CTO;
+            pdu_id = Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id;
+            p_pdu_info = &Xcp_Internal.cto_response.pdu_info;
+            transmit = TRUE;
+        }
+        else if (Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                   &event_packet_id,
+                                   &event_code) == E_OK)
+        {
+            Xcp_Internal.event.pdu_info.SduDataPtr[0x00u] = event_packet_id;
+            Xcp_Internal.event.pdu_info.SduDataPtr[0x01u] = event_code;
+
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_EVENT;
+            pdu_id = Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id;
+            p_pdu_info = &Xcp_Internal.event.pdu_info;
+            transmit = TRUE;
+        }
+        else if (Xcp_DaqQueuePeek(&pdu_id, &p_pdu_info) == E_OK)
+        {
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_DAQ;
+            transmit = TRUE;
+        }
+        else
+        {
+            /* Nothing to send. */
+        }
+    }
+
+    SchM_Exit_Xcp_DtoQueue();
+
+    if (transmit == TRUE)
+    {
+        if (CanIf_Transmit(pdu_id, p_pdu_info) != E_OK)
+        {
+            /* No confirmation is coming for a refused frame, so release the slot; the next
+             * Xcp_MainFunction retries. */
+            SchM_Enter_Xcp_DtoQueue();
+            Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_NONE;
+            SchM_Exit_Xcp_DtoQueue();
+        }
+    }
+}
+
+void Xcp_StartNextTransmission(void)
+{
+    boolean run;
+
+    SchM_Enter_Xcp_DtoQueue();
+
+    if (Xcp_TransmitInProgress == TRUE)
+    {
+        /* Reached from Xcp_CanIfTxConfirmation on a CanIf that confirms inside CanIf_Transmit.
+         * Re-entering CanIf_Transmit for the same PduId is forbidden by SWS_CANIF_00005, so
+         * leave the work to the call already running. */
+        Xcp_TransmitRestartWanted = TRUE;
+        run = FALSE;
+    }
+    else
+    {
+        Xcp_TransmitInProgress = TRUE;
+        run = TRUE;
+    }
+
+    SchM_Exit_Xcp_DtoQueue();
+
+    while (run == TRUE)
+    {
+        Xcp_TransmitOneFrame();
+
+        SchM_Enter_Xcp_DtoQueue();
+
+        if (Xcp_TransmitRestartWanted == TRUE)
+        {
+            Xcp_TransmitRestartWanted = FALSE;
+        }
+        else
+        {
+            /* Clearing the guard and testing for a pending restart must happen together: a
+             * confirmation landing between the two would set a flag nobody would ever read. */
+            Xcp_TransmitInProgress = FALSE;
+            run = FALSE;
+        }
+
+        SchM_Exit_Xcp_DtoQueue();
+    }
 }
 
 void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo)

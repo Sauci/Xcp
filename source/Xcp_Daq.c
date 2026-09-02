@@ -9,6 +9,149 @@
 
 #include "Xcp_Internal.h"
 
+#include "Xcp_Rt.h"
+
+/*------------------------------------------------------------------------------------------------*/
+/* local function definitions (static).                                                           */
+/*------------------------------------------------------------------------------------------------*/
+
+static boolean Xcp_DaqListIsValid(uint16 daqListNumber)
+{
+    return (boolean)((daqListNumber < Xcp_Ptr->general->daqCount) ? TRUE : FALSE);
+}
+
+static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
+{
+    return &Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber];
+}
+
+/**
+ * @brief resets every ODT entry of one DAQ list to its power-up state.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1: "For a configurable DAQ
+ * list, all ODT entries will be reset to address=0, extension=0 and size=0 (if valid :
+ * bit_offset = 0xFF)." Bounded by daqListNumber's own maxOdt/maxOdtEntries, not any other list's,
+ * so clearing one list never touches another's entries.
+ * @note Despite living beside this file's other file-local helpers, this one has external
+ * linkage and a declaration in Xcp_Internal.h: Xcp_Init (source/Xcp.c) calls it too. The
+ * generated ODT entry arrays are module-level mutable statics (script/source_cfg.c.jinja2 emits
+ * them `static`), and nothing used to reset them on (re-)initialisation -- so a re-initialised
+ * module, and, in the test harness, a test sharing a compiled configuration with an earlier one,
+ * would silently inherit a previous session's DAQ configuration.
+ * @note DD14: Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) copies one ODT's entries out from under
+ * this same exclusive area before reading memory through them, because CLEAR_DAQ_LIST may run in
+ * CanIf's receive context while the sampler walks the same array from a task or an interrupt --
+ * including the sampler's own interrupt preempting a clear already in progress at task level, the
+ * direction a lock taken only on the read side cannot help with. The inner loop below is wrapped
+ * per ODT, not once for the whole nest, so each critical section is bounded by maxOdtEntries field
+ * writes rather than maxOdt * maxOdtEntries: neither Xcp_Init (source/Xcp.c) nor
+ * Xcp_DTOCmdDaqClearDaqList, this function's only callers, hold the area themselves, so nesting
+ * across ODTs is not a concern either way.
+ */
+void Xcp_DaqListClearEntries(uint16 daqListNumber)
+{
+    uint8_least odt_idx;
+    uint8_least entry_idx;
+
+    for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
+    {
+        SchM_Enter_Xcp_DtoQueue();
+
+        for (entry_idx = 0x00u;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx++)
+        {
+            Xcp_OdtEntryType *p_entry =
+                    &Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].odtEntry[entry_idx];
+
+            p_entry->address = NULL_PTR;
+            p_entry->addressExtension = 0x00u;
+            p_entry->length = 0x00u;
+            p_entry->bitOffset = XCP_ODT_ENTRY_BIT_OFFSET_NONE;
+        }
+
+        SchM_Exit_Xcp_DtoQueue();
+    }
+}
+
+/**
+ * @brief bytes already claimed by the written entries of one ODT.
+ * @details An ODT becomes one DTO frame, so the entries it holds have to fit in what the frame
+ * leaves after the identification field. Entries not yet written have length 0 and contribute
+ * nothing.
+ */
+static uint8 Xcp_OdtUsedBytes(uint16 daqListNumber, uint8 odtNumber, uint8 excludedEntry)
+{
+    const Xcp_OdtType *p_odt = &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber];
+    uint8 used = 0x00u;
+    uint8_least idx;
+
+    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries; idx++)
+    {
+        if (idx != (uint8_least)excludedEntry)
+        {
+            used = (uint8)(used + p_odt->odtEntry[idx].length);
+        }
+    }
+
+    return used;
+}
+
+/**
+ * @brief TRUE when at least one ODT entry of the list has been written.
+ * @details A list with no entry has nothing to sample, so starting or selecting it would put the
+ * slave into data transfer mode with no data to transfer.
+ */
+static boolean Xcp_DaqListIsConfigured(uint16 daqListNumber)
+{
+    boolean result = FALSE;
+    uint8_least odt_idx;
+    uint8_least entry_idx;
+
+    for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
+    {
+        for (entry_idx = 0x00u;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx++)
+        {
+            if (Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].odtEntry[entry_idx].length != 0x00u)
+            {
+                result = TRUE;
+            }
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief Recomputes the DAQ_RUNNING bit of the session status.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.3: the bit means "at least one
+ * DAQ list has been started and is in data transfer mode", so it is a property of every list
+ * together and is recomputed whenever one of them starts or stops.
+ */
+static void Xcp_DaqSessionStatusUpdate(void)
+{
+    uint16 idx;
+    boolean running = FALSE;
+
+    for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+    {
+        if ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+        {
+            running = TRUE;
+        }
+    }
+
+    if (running == TRUE)
+    {
+        Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_DAQ_RUNNING;
+    }
+    else
+    {
+        Xcp_Internal.session_status &= (uint8)(~XCP_SESSION_STATUS_MASK_DAQ_RUNNING);
+    }
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -18,6 +161,574 @@ uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInf
     (void)pPduInfo;
 
     *responseExpected = TRUE;
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 odt_number = pPduInfo->SduDataPtr[0x04u];
+    const uint8 odt_entry_number = pPduInfo->SduDataPtr[0x05u];
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.1
+     * "If the specified list is not available, ERR_OUT_OF_RANGE will be returned." ODT_NUMBER and
+     * ODT_ENTRY_NUMBER are relative to that list, so both are bounded by its own configuration. */
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((Xcp_DaqListRt(daq_list_number)->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+    {
+        error = XCP_E_ASAM_DAQ_ACTIVE;
+    }
+    else if (odt_number >= Xcp_Ptr->config->daqList[daq_list_number].maxOdt)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if (odt_entry_number >= Xcp_Ptr->config->daqList[daq_list_number].maxOdtEntries)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else
+    {
+        Xcp_Internal.daq_pointer.daqListNumber = daq_list_number;
+        Xcp_Internal.daq_pointer.odtNumber = odt_number;
+        Xcp_Internal.daq_pointer.odtEntryNumber = odt_entry_number;
+        Xcp_Internal.daq_pointer.valid = TRUE;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 bit_offset = pPduInfo->SduDataPtr[0x01u];
+    const uint8 size = pPduInfo->SduDataPtr[0x02u];
+    const uint8 extension = pPduInfo->SduDataPtr[0x03u];
+    const uint8 granularity = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    uint32 address;
+    uint8 error = 0x00u;
+    Xcp_OdtEntryType *p_entry = NULL_PTR;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &address, Xcp_Ptr->general->byteOrder);
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2
+     * The DAQ list pointer is left undefined past the last ODT entry of an ODT and the master is
+     * responsible for repositioning it. Answering ERR_OUT_OF_RANGE tells it to do exactly that:
+     * the error's prescribed action in 1.7.3.2.4 is "retry other parameter". */
+    if (Xcp_Internal.daq_pointer.valid == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((Xcp_DaqListRt(Xcp_Internal.daq_pointer.daqListNumber)->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+    {
+        error = XCP_E_ASAM_DAQ_ACTIVE;
+    }
+    /* 1.1/1.6.4.1.1.2: "WRITE_DAQ is only possible for elements in configurable DAQ lists",
+     * which are the lists numbered from MIN_DAQ upwards. */
+    else if (Xcp_Internal.daq_pointer.daqListNumber < Xcp_Ptr->general->minDaq)
+    {
+        error = XCP_E_ASAM_WRITE_PROTECTED;
+    }
+    else if ((size == 0x00u) ||
+             (size > Xcp_Ptr->general->odtEntrySizeDaq) ||
+             ((size % granularity) != 0x00u))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    /* 1.1/1.6.4.1.1.2: BIT_OFFSET is either 0x00..0x1F, naming a bit, or 0xFF, meaning the field
+     * is to be ignored. Nothing else is defined. When it names a bit, "the Size of DAQ element
+     * always has to be equal to the GRANULARITY_ODT_ENTRY_SIZE_x". */
+    else if ((bit_offset != XCP_ODT_ENTRY_BIT_OFFSET_NONE) &&
+             ((bit_offset > XCP_ODT_ENTRY_BIT_OFFSET_MAX) || (size != granularity)))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((uint16)((uint16)Xcp_OdtUsedBytes(Xcp_Internal.daq_pointer.daqListNumber,
+                                               Xcp_Internal.daq_pointer.odtNumber,
+                                               Xcp_Internal.daq_pointer.odtEntryNumber) + size) >
+             (uint16)Xcp_Ptr->general->odtEntrySizeDaq)
+    {
+        /* DD8: the entry is individually legal but the ODT it joins can no longer be carried in
+         * one DTO. 1.7.3.2.4 lists ERR_DAQ_CONFIG for WRITE_DAQ and this is the configuration it
+         * describes. */
+        error = XCP_E_ASAM_DAQ_CONFIG;
+    }
+    else
+    {
+        p_entry = &Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber]
+                       .odt[Xcp_Internal.daq_pointer.odtNumber]
+                       .odtEntry[Xcp_Internal.daq_pointer.odtEntryNumber];
+
+        /* No exclusive area around these four writes, unlike Xcp_DaqListClearEntries's writes
+         * to this same odtEntry array (DD5/DD14 in the design doc). That is safe, not an
+         * oversight: the DAQ_ACTIVE check a few lines above already refused this request unless
+         * the addressed list is stopped, and Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) only
+         * ever walks a list's entries while it is RUNNING. So a list this function is about to
+         * write is never being sampled, and a list being sampled is never reachable from here --
+         * the two are mutually exclusive by construction (the RUNNING flag), not by a lock. This
+         * reasoning breaks if WRITE_DAQ is ever allowed to touch a RUNNING list; do not remove
+         * the DAQ_ACTIVE check above without adding an exclusive area here. */
+        p_entry->address = (uint32 *)address;
+        p_entry->addressExtension = extension;
+        p_entry->bitOffset = bit_offset;
+        p_entry->length = size;
+
+        /* 1.1/1.6.4.1.1.2: "The DAQ list pointer is auto post incremented to the next ODT entry
+         * within one and the same ODT. After writing to the last ODT entry of an ODT, the value
+         * of the DAQ pointer is undefined." */
+        if ((uint16)(Xcp_Internal.daq_pointer.odtEntryNumber + 0x01u) <
+            (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber].maxOdtEntries)
+        {
+            Xcp_Internal.daq_pointer.odtEntryNumber++;
+        }
+        else
+        {
+            Xcp_Internal.daq_pointer.valid = FALSE;
+        }
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1
+         * "For a configurable DAQ list, all ODT entries will be reset to address=0, extension=0
+         * and size=0 (if valid : bit_offset = 0xFF)." */
+        Xcp_DaqListClearEntries(daq_list_number);
+
+        /* "For PREDEFINED and configurable DAQ lists, the running Data Transmission on this list
+         * will be stopped and all DAQ list states are reset." The command is therefore legal
+         * while the list runs -- see defect D10 against the error matrix. */
+        Xcp_DaqListRt(daq_list_number)->mode = 0x00u;
+        Xcp_DaqListRt(daq_list_number)->eventChannelNumber = 0x0000u;
+        Xcp_DaqListRt(daq_list_number)->prescaler = 0x01u;
+        Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+        Xcp_DaqListRt(daq_list_number)->priority = 0x00u;
+
+        /* The mode reset above may have just stopped the only list that was running, so
+         * DAQ_RUNNING (1.1/1.6.1.1.3) needs recomputing across every list, not just this one. */
+        Xcp_DaqSessionStatusUpdate();
+
+        /* The pointer names an entry this command has just reset, so it no longer names
+         * anything meaningful. */
+        if ((Xcp_Internal.daq_pointer.valid == TRUE) &&
+            (Xcp_Internal.daq_pointer.daqListNumber == daq_list_number))
+        {
+            Xcp_Internal.daq_pointer.valid = FALSE;
+        }
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 prescaler = pPduInfo->SduDataPtr[0x06u];
+    const uint8 priority = pPduInfo->SduDataPtr[0x07u];
+    uint16 daq_list_number;
+    uint16 event_channel_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x04u], &event_channel_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((Xcp_DaqListRt(daq_list_number)->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u)
+    {
+        error = XCP_E_ASAM_DAQ_ACTIVE;
+    }
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
+     * DIRECTION selects stimulation, TIMESTAMP a timestamped mode and PID_OFF a DTO without an
+     * identification field; 1.1 adds ALTERNATING. None is implemented, and 1.7.3.2.4 lists
+     * ERR_MODE_NOT_VALID for this command, which is precisely what an unsupported mode is. */
+    else if ((mode & XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED) != 0x00u)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if (event_channel_number >= Xcp_Ptr->general->maxEventChannel)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((prescaler == 0x00u) ||
+             ((prescaler > 0x01u) && (Xcp_Ptr->general->prescalerSupported == FALSE)))
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    /* 1.1/1.6.4.1.1.3 names the code for this one outright: "If the ECU doesn't support the
+     * prioritization of DAQ lists, a DAQ list priority > 0 is not allowed and will be indicated
+     * by returning ERR_OUT_OF_RANGE." */
+    else if (priority != 0x00u)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else
+    {
+        Xcp_DaqListRt(daq_list_number)->eventChannelNumber = event_channel_number;
+        Xcp_DaqListRt(daq_list_number)->prescaler = prescaler;
+        Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+        Xcp_DaqListRt(daq_list_number)->priority = priority;
+
+        /* The stored mode uses the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6, which is not the
+         * layout this request arrives in. Nothing this phase accepts sets a flag, so there is
+         * nothing to translate -- but do not be tempted to assign `mode` here when TIMESTAMP or
+         * DIRECTION become supported: they sit at different bits in the two bytes. */
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.6
+         * Xcp_DaqListRtType stores the mode in exactly this layout, so it needs no translation
+         * on the way out. The request of 1.6.4.1.1.3 uses a different one. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_DaqListRt(daq_list_number)->mode;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u; /* reserved */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u; /* reserved */
+
+        Xcp_CopyFromU16WithOrder(Xcp_DaqListRt(daq_list_number)->eventChannelNumber,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_DaqListRt(daq_list_number)->prescaler;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = Xcp_DaqListRt(daq_list_number)->priority;
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if (mode > XCP_DAQ_START_STOP_MODE_SELECT)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if ((mode != XCP_DAQ_START_STOP_MODE_STOP) &&
+             (Xcp_DaqListIsConfigured(daq_list_number) == FALSE))
+    {
+        error = XCP_E_ASAM_DAQ_CONFIG;
+    }
+    else
+    {
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4 */
+        if (mode == XCP_DAQ_START_STOP_MODE_START)
+        {
+            /* Reset the counter before setting RUNNING: once RUNNING is visible, a trigger
+             * preempting between the two writes must never sample against a stale counter
+             * left over from a previous run. */
+            Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
+        }
+        else if (mode == XCP_DAQ_START_STOP_MODE_SELECT)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_SELECTED;
+        }
+        else
+        {
+            Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_RUNNING);
+        }
+
+        Xcp_DaqSessionStatusUpdate();
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        /* 1.1/1.6.4.1.1.4: FIRST_PID may be ignored by a master using a relative identification
+         * field type, but the response format does not change, so it is always sent. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] =
+                Xcp_Ptr->config->daqList[daq_list_number].firstPid;
+
+        Xcp_FinalizeResPacket(0x02u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    uint8 error = 0x00u;
+    uint16 idx;
+    boolean any_selected = FALSE;
+
+    *responseExpected = TRUE;
+
+    for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+    {
+        if ((Xcp_DaqListRt(idx)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u)
+        {
+            any_selected = TRUE;
+        }
+    }
+
+    if (mode > XCP_DAQ_SYNCH_MODE_STOP_SELECTED)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    else if ((mode == XCP_DAQ_SYNCH_MODE_START_SELECTED) && (any_selected == FALSE))
+    {
+        /* Starting the selected lists when none is selected starts nothing, which is a DAQ
+         * configuration the master did not intend. 1.7.3.2.4 lists ERR_DAQ_CONFIG here. */
+        error = XCP_E_ASAM_DAQ_CONFIG;
+    }
+    else
+    {
+        for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+        {
+            const boolean selected =
+                    (boolean)(((Xcp_DaqListRt(idx)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u)
+                              ? TRUE : FALSE);
+
+            /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.5 */
+            if (mode == XCP_DAQ_SYNCH_MODE_STOP_ALL)
+            {
+                Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_RUNNING);
+            }
+            else if (selected == TRUE)
+            {
+                if (mode == XCP_DAQ_SYNCH_MODE_START_SELECTED)
+                {
+                    /* Reset the counter before setting RUNNING -- see the identical ordering
+                     * argument in Xcp_DTOCmdDaqStartStopDaqList above. */
+                    Xcp_DaqListRt(idx)->prescalerCounter = 0x00u;
+                    Xcp_DaqListRt(idx)->mode |= XCP_DAQ_LIST_MODE_RUNNING;
+                }
+                else
+                {
+                    Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_RUNNING);
+                }
+            }
+            else
+            {
+                /* Not selected, and the mode applies only to selected lists. */
+            }
+
+            /* "The slave device software has to reset the mode SELECTED of a DAQ list after
+             * successful execution of a START_STOP_SYNCH." All three modes are an execution. */
+            Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_SELECTED);
+        }
+
+        Xcp_DaqSessionStatusUpdate();
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint8 properties = 0x00u;
+    uint8 key_byte;
+
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4
+     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME,
+     * BIT_STIM, TIMESTAMP and PID_OFF are unimplemented and so are reported unsupported, which
+     * is what lets SET_DAQ_LIST_MODE refuse the matching mode bits. */
+    if (Xcp_Ptr->general->prescalerSupported == TRUE)
+    {
+        properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;
+    }
+
+    /* OVERLOAD_MSB stays clear: indicating an overload in the MSB of the PID would cap every
+     * ODT number below 0x7C whether or not an overload ever happened. */
+    if (Xcp_Ptr->general->overloadEvent == TRUE)
+    {
+        properties |= XCP_DAQ_PROPERTIES_OVERLOAD_EVENT;
+    }
+
+    /* DAQ_KEY_BYTE: identification field type in bits 7:6, address extension type in bits 5:4,
+     * optimisation type in bits 3:0. The address extension may differ within one ODT (0b00) and
+     * the optimisation type is OM_DEFAULT (0b0000), so only the field type contributes.
+     * This shift is only correct because Xcp_IdentificationFieldTypeType enumerates ABSOLUTE=0,
+     * RELATIVE_BYTE=1, RELATIVE_WORD=2, RELATIVE_WORD_ALIGNED=3 (interface/Xcp_Types.h), which
+     * matches the bit pattern this section of the specification assigns. Do not renumber that
+     * enum without updating this shift. */
+    key_byte = (uint8)((uint8)Xcp_Ptr->general->identificationFieldType << 0x06u);
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = properties;
+
+    Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->daqCount,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u],
+                             Xcp_Ptr->general->byteOrder);
+    Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->maxEventChannel,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                             Xcp_Ptr->general->byteOrder);
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->minDaq;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = key_byte;
+
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+     * The granularity is what an ODT entry's size must be a multiple of and what its address
+     * must be aligned to, which is exactly the address granularity's element size (1, 2 or 4) --
+     * one of the {1,2,4,8} this section allows. WRITE_DAQ (Task 7) checks a new entry's size
+     * against this same Xcp_ElementSizeForAddressGranularity() result, so the two commands agree
+     * on what counts as a legal entry size by construction. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] =
+            Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+
+    /* MAX_ODT_ENTRY_SIZE_DAQ is the same derived value (MAX_DTO minus the identification field
+     * size, Task 1) that WRITE_DAQ refuses entries larger than
+     * (source/Xcp_Daq.c:Xcp_DTOCmdDaqWriteDaq, "size > Xcp_Ptr->general->odtEntrySizeDaq"). A
+     * master that trusts what this command reports can never have WRITE_DAQ refuse it. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->odtEntrySizeDaq;
+
+    /* Data stimulation arrives in SP3; until then a STIM granularity of 0 says so, and there is
+     * no WRITE_DAQ-equivalent for STIM yet to disagree with it. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->odtEntrySizeStim;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+     * "If the slave doesn't support a time stamped mode, the parameters TIMESTAMP_MODE and
+     * TIMESTAMP_TICKS are invalid" -- permitted explicitly because TIMESTAMP_SUPPORTED
+     * (DAQ_PROPERTIES bit 4, GET_DAQ_PROCESSOR_INFO) is clear. These two bytes are not a stand-in
+     * for "unimplemented"; they are the specification's own way of saying the fields carry no
+     * meaning, and must not be read as e.g. "timestamp mode 0" or "zero ticks of delay". */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+
+    Xcp_CopyFromU16WithOrder(0x0000u,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u],
+                             Xcp_Ptr->general->byteOrder);
+
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
 
     return E_OK;
 }

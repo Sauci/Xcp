@@ -25,6 +25,42 @@ trailing_values = [pytest.param(v, id='trailing value = {:02X}h'.format(v)) for 
 cto_queue_sizes = [pytest.param(v, id='CTO_QUEUE_SIZE = {:02}d'.format(v)) for v in (0, 1, 255)]
 max_bss = [pytest.param(v, id='MAX_BS = {:02}d'.format(v)) for v in (0, 1, 255)]
 min_sts = [pytest.param(v, id='MIN_ST = {:02}d'.format(v)) for v in (0, 1, 255)]
+max_dtos = [pytest.param(v, id='MAX_DTO = {:03}d'.format(v)) for v in (8, 16, 64)]
+identification_field_types = [pytest.param(v, id='ident = {}'.format(v))
+                              for v in ('ABSOLUTE', 'RELATIVE_BYTE', 'RELATIVE_WORD',
+                                        'RELATIVE_WORD_ALIGNED')]
+
+identification_field_size = {'ABSOLUTE': 1,
+                             'RELATIVE_BYTE': 2,
+                             'RELATIVE_WORD': 3,
+                             'RELATIVE_WORD_ALIGNED': 4}
+
+
+def expected_identification_field(ident, first_pid, relative_odt, daq_list_number, byte_order,
+                                  fill=0):
+    """The bytes a DTO must start with, per XCP part 2 1.1/1.1.2.1."""
+    if ident == 'ABSOLUTE':
+        return (first_pid + relative_odt,)
+    if ident == 'RELATIVE_BYTE':
+        return (relative_odt, daq_list_number & 0xFF)
+    if ident == 'RELATIVE_WORD':
+        return (relative_odt,) + tuple(u16_to_array(daq_list_number, byte_order))
+    return (relative_odt, fill) + tuple(u16_to_array(daq_list_number, byte_order))
+
+
+def plan_odt_entries(capacity, element_size, wanted):
+    """Entry sizes that fit one ODT: each a multiple of the granularity, summing within
+    capacity. Returns fewer than `wanted` when the capacity cannot hold that many."""
+    sizes = []
+    remaining = capacity - (capacity % element_size)
+    while len(sizes) < wanted and remaining >= element_size:
+        size = element_size if (len(sizes) + 1) < wanted else min(remaining, element_size * 2)
+        size = size - (size % element_size)
+        if size == 0 or size > remaining:
+            break
+        sizes.append(size)
+        remaining -= size
+    return sizes
 
 
 def element_size_from_address_granularity(address_granularity):
@@ -98,13 +134,38 @@ def segment(name='CAL_SEG',
             "address_mappings": list(address_mappings) if address_mappings is not None else []}
 
 
-class DAQ(object):
-    def __init__(self, name, type, max_odt, max_odt_entries, dtos):
-        self._name = name
-        self._type = type
-        self._max_odt = max_odt
-        self._max_odt_entries = max_odt_entries
-        self._dtos = dtos
+def daq(name='DAQ1',
+        type='DAQ',
+        max_odt=1,
+        max_odt_entries=1,
+        pdu_mapping='XCP_PDU_ID_TRANSMIT',
+        dtos=None):
+    # No "pid" here when the caller does not pass dtos: FIRST_PID is derived and assigned by the
+    # slave (XCP part 2 1.1/1.6.4.1.1.4), so a caller with no opinion on it should not assert one.
+    # The generator's `dto.pid | default(0)` fallback keeps Xcp_DtoConfig buildable, and leaving
+    # "pid" undefined keeps source_cfg.c.jinja2's FIRST_PID validation from firing on a value this
+    # helper made up rather than one the caller actually configured.
+    return {"name": name,
+            "type": type,
+            "max_odt": max_odt,
+            "max_odt_entries": max_odt_entries,
+            "pdu_mapping": pdu_mapping,
+            "dtos": list(dtos) if dtos is not None else [{}]}
+
+
+def event(consistency='ODT',
+          priority=0,
+          time_cycle=10,
+          time_unit='TIMESTAMP_UNIT_1MS',
+          type='DAQ',
+          triggered_daq_list_ref=None):
+    return {"consistency": consistency,
+            "priority": priority,
+            "time_cycle": time_cycle,
+            "time_unit": time_unit,
+            "type": type,
+            "triggered_daq_list_ref": list(triggered_daq_list_ref)
+            if triggered_daq_list_ref is not None else ['DAQ1']}
 
 
 class DefaultConfig(dict):
@@ -112,6 +173,7 @@ class DefaultConfig(dict):
                  channel_rx_pdu_ref=0x0001,
                  channel_tx_pdu_ref=0x0002,
                  default_daq_dto_pdu_mapping=0x0003,
+                 events=None,
                  daqs=({
                      "name": "DAQ1",
                      "type": "DAQ",
@@ -183,6 +245,10 @@ class DefaultConfig(dict):
                  event_queue_size=16,
                  max_cto=8,
                  max_dto=8,
+                 identification_field_type='ABSOLUTE',
+                 daq_queue_size=16,
+                 prescaler_supported=True,
+                 overload_indication='EVENT',
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
@@ -192,6 +258,7 @@ class DefaultConfig(dict):
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
         self._event_queue_size = event_queue_size
+        self._daq_queue_size = daq_queue_size
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -201,17 +268,7 @@ class DefaultConfig(dict):
                 "daqs": list(daqs),
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
-                "events": [
-                    {
-                        "consistency": "ODT",
-                        "priority": 0,
-                        "time_cycle": 10,
-                        "time_unit": "TIMESTAMP_UNIT_1MS",
-                        "triggered_daq_list_ref": [
-                            "DAQ1"
-                        ]
-                    }
-                ],
+                "events": list(events) if events is not None else [event()],
                 "apis": {
                     "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
                     "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},
@@ -286,6 +343,10 @@ class DefaultConfig(dict):
                     "event_queue_size": event_queue_size,
                     "max_cto": max_cto,
                     "max_dto": max_dto,
+                    "identification_field_type": identification_field_type,
+                    "daq_queue_size": daq_queue_size,
+                    "prescaler_supported": prescaler_supported,
+                    "overload_indication": overload_indication,
                     "checksum_type": checksum_type,
                     "user_defined_checksum_function": user_defined_checksum_function,
                     "user_cmd_function": user_cmd_function,
@@ -318,6 +379,10 @@ class DefaultConfig(dict):
     @property
     def event_queue_size(self):
         return self._event_queue_size
+
+    @property
+    def daq_queue_size(self):
+        return self._daq_queue_size
 
 
 if __name__ == '__main__':

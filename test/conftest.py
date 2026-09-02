@@ -104,22 +104,43 @@ class Preprocessor(Pp):
         super(Preprocessor, self).__init__()
         self.defines = dict()
 
+    @staticmethod
+    def _token_to_int(token_value):
+        value = token_value.rstrip('UuLl')
+        try:
+            return int(value, 10)
+        except ValueError:
+            return int(value, 16)
+
     def on_directive_handle(self, directive, tokens, if_pass_thru, preceding_tokens):
         if directive.value == 'define':
             name = [t.value for t in tokens if t.type == 'CPP_ID']
             value = [t.value for t in tokens if t.type in 'CPP_INTEGER']
             if len(name) and len(value):
-                name = name[0]
-                value = value[0].rstrip('UuLl')
-                try:
-                    value = int(value, 10)
-                except ValueError:
-                    try:
-                        value = int(value, 16)
-                    except ValueError as e:
-                        raise e
-                self.defines[name] = value
+                self.defines[name[0]] = self._token_to_int(value[0])
         return super(Preprocessor, self).on_directive_handle(directive, tokens, if_pass_thru, preceding_tokens)
+
+    def resolve_effective_defines(self):
+        """pcpp calls on_directive_handle for every #define its scanner walks past while it
+        determines nesting -- including one sitting in a false #ifndef/#if branch -- and does not
+        tell the hook whether that branch was actually taken (`if_pass_thru` is a different, and
+        for our purposes unrelated, pcpp concept). So a header guarded as
+        `#ifndef X / #define X (fallback) / #endif`, where X was already defined to something else
+        via a compile definition, leaves self.defines holding the unused fallback rather than the
+        value actually in effect. self.macros is pcpp's own macro table, updated only for branches
+        it actually took, so once parsing has finished it is authoritative for any name still
+        defined; call this after parse()/write() to correct self.defines from it.
+        """
+        for name in list(self.defines):
+            macro = self.macros.get(name)
+            if macro is None:
+                continue
+            value = [t.value for t in macro.value if t.type in 'CPP_INTEGER']
+            if value:
+                try:
+                    self.defines[name] = self._token_to_int(value[0])
+                except ValueError:
+                    pass
 
 
 class MockGen(FFI):
@@ -161,6 +182,7 @@ class MockGen(FFI):
                 handle = StringIO()
                 pre_processor.write(handle)
                 expanded = handle.getvalue()
+                pre_processor.resolve_effective_defines()
                 func_decl = FunctionDecl(expanded)
                 # Built once: the original code constructed CFFIHeader twice per module, once to
                 # store and once to feed cdef.
@@ -235,12 +257,23 @@ class _GeneratedSources(object):
 
 class XcpTest(object):
     _code_gen_cache = dict()
+    # Every live instance, so the _dto_queue_area_balance autouse fixture below can sweep
+    # dto_queue_area_violations after each test without each test remembering to check it itself.
+    _instances = list()
 
     def __init__(self,
                  config,
                  initialize=True,
                  rx_buffer_size=0x0FFF):
         self.available_rx_buffer = rx_buffer_size
+        # DD14/fix round 1: SchM_Enter_Xcp_DtoQueue and SchM_Exit_Xcp_DtoQueue below are given
+        # side effects that model the exclusive area as a single boolean, so nesting,
+        # ordering and imbalance are all observable instead of only being counted. dto_queue_area_held
+        # is readable directly by a test that wants to confirm a read happens outside the area;
+        # dto_queue_area_violations is swept by the autouse fixture below.
+        self.dto_queue_area_held = False
+        self.dto_queue_area_violations = list()
+        XcpTest._instances.append(self)
         # Owns every buffer handed to the C module, so none is freed while C still points at it.
         self._pdu_info_keepalive = list()
         self.can_if_tx_data = list()
@@ -278,6 +311,12 @@ class XcpTest(object):
         # header's own definition. A later -D wins, so appending the derived value corrects it.
         paging_define = ('XCP_PAGING_SUPPORTED={}'.format(
                 'STD_ON' if any(c.get('segments') for c in config['configurations']) else 'STD_OFF'),)
+        # XCP_MAX_DTO sizes the DTO frame buffers in Xcp_Types.h, which every module includes, so
+        # all three compiled modules must agree on it or the ring in the runtime module and the
+        # code that indexes it disagree on the element stride. Same reasoning as paging_define
+        # above: the generated Xcp_Cfg.h is not visible to the module under test.
+        max_dto_define = ('XCP_MAX_DTO=0x{:02X}'.format(
+                max(c['protocol_layer']['max_dto'] for c in config['configurations'])),)
         # The module under test is only coupled to a configuration through the generated
         # runtime it links against, so key both on a digest of that generated source rather
         # than on the whole configuration. Configurations producing identical runtime source
@@ -287,14 +326,20 @@ class XcpTest(object):
         # parametrisation; keying by hand on event_queue_size would silently break the first
         # time the runtime template gained another dependency. paging_define is discriminated by
         # the same digest, because it is a function of the segment count and the generated runtime
-        # sizes Xcp_SegmentRt00 by that same count.
-        rt_key = hashlib.sha1(code_gen.source_rt.encode('utf-8')).hexdigest()[0:8]
+        # sizes Xcp_SegmentRt00 by that same count. max_dto_define has no such relationship to
+        # source_rt -- nothing in the runtime template reads protocol_layer.max_dto -- so two
+        # configurations that differ only by max_dto would otherwise hash identically here and
+        # MockGen's `if self.name in sys.modules` cache hit would silently keep serving whichever
+        # one compiled first, including its baked-in XCP_MAX_DTO. Folding max_dto_define into the
+        # digest directly keeps it, rather than incidental correlation, responsible for the key.
+        rt_key = hashlib.sha1((code_gen.source_rt + max_dto_define[0]).encode('utf-8')).hexdigest()[0:8]
         self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
                           define_macros=tuple(self.compile_definitions) +
                                         ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
-                                        paging_define,
+                                        paging_define +
+                                        max_dto_define,
                           include_dirs=tuple(self.include_directories + [self.build_directory]),
                           compile_flags=_asan_flags(),
                           link_flags=_asan_flags(),
@@ -307,7 +352,8 @@ class XcpTest(object):
                                             ('XCP_PDU_ID_CTO_TX=0x{:04X}'.format(config.channel_tx_pdu),) +
                                             ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),) +
-                                            paging_define,
+                                            paging_define +
+                                            max_dto_define,
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               compile_flags=_asan_flags(),
                               link_flags=_asan_flags(),
@@ -324,7 +370,8 @@ class XcpTest(object):
                             header,
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
-                                          paging_define,
+                                          paging_define +
+                                          max_dto_define,
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),
@@ -347,6 +394,8 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16 = MagicMock()
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
+        self.sch_m_enter_xcp_dto_queue = MagicMock()
+        self.sch_m_exit_xcp_dto_queue = MagicMock()
         self.xcp_user_cmd_function = MagicMock()
         self.config.ffi.def_extern('Xcp_UserCmdFunction')(self.xcp_user_cmd_function)
         self.xcp_user_cmd_function.return_value = self.define('E_OK')
@@ -371,6 +420,20 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
+        def enter_dto_queue_area():
+            if self.dto_queue_area_held:
+                self.dto_queue_area_violations.append(
+                        'SchM_Enter_Xcp_DtoQueue called while already held (nested or double enter)')
+            self.dto_queue_area_held = True
+
+        def exit_dto_queue_area():
+            if not self.dto_queue_area_held:
+                self.dto_queue_area_violations.append(
+                        'SchM_Exit_Xcp_DtoQueue called while not held (exit without a matching enter)')
+            self.dto_queue_area_held = False
+
+        self.sch_m_enter_xcp_dto_queue.side_effect = enter_dto_queue_area
+        self.sch_m_exit_xcp_dto_queue.side_effect = exit_dto_queue_area
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
@@ -436,3 +499,38 @@ class XcpTest(object):
     @property
     def include_directories(self):
         return os.getenv('include_directories').split(';')
+
+
+@pytest.fixture(autouse=True)
+def _dto_queue_area_balance():
+    """Fix round 1, finding A: every test in the suite gets this for free, because it is autouse
+    and every XcpTest registers itself. SchM_Enter/Exit_Xcp_DtoQueue's side effects (XcpTest.__init__
+    above) model the exclusive area as a boolean, so a violation here means a real nesting,
+    ordering, or enter/exit imbalance was exercised by the test that just ran -- not merely that
+    the mocks were called an unexpected number of times. Fix round 2 adds the other half: a test
+    that leaves the area HELD at teardown (an Enter with no matching Exit -- a leaked lock, which
+    in a real integration means interrupts stay masked) is caught too, not just a double-enter or
+    an exit-without-enter.
+
+    Raising this from inside SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue's own side effect would
+    not work: those run as CFFI `extern "Python+C"` callbacks, and a callback that raises has the
+    exception printed to stderr and swallowed at the C/Python boundary, not propagated to the test
+    that is still executing C code several frames up. Recording violations without raising, then
+    asserting here after control has returned to pure Python, sidesteps that entirely.
+    """
+    XcpTest._instances = list()
+
+    yield
+
+    violations = [(instance, violation)
+                  for instance in XcpTest._instances
+                  for violation in instance.dto_queue_area_violations]
+    leaked = [instance for instance in XcpTest._instances if instance.dto_queue_area_held]
+    XcpTest._instances = list()
+
+    assert violations == [], \
+        'SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue nesting or imbalance: {}'.format(
+                [v for _, v in violations])
+    assert leaked == [], \
+        'SchM_Enter_Xcp_DtoQueue left the area held at teardown -- a leaked lock -- in {} instance(s)'.format(
+                len(leaked))

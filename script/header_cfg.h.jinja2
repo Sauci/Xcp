@@ -22,6 +22,20 @@
 
 #endif /* #ifndef XCP_PAGING_SUPPORTED */
 
+{%- set max_dto = namespace(value=0) %}
+{%- for configuration in configurations %}
+{%- if configuration.protocol_layer.max_dto > max_dto.value %}
+{%- set max_dto.value = configuration.protocol_layer.max_dto %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_MAX_DTO
+
+/* One macro sizes the DTO frame buffers for the whole module, so it takes the largest MAX_DTO
+ * any configuration declares. */
+#define XCP_MAX_DTO ({{'0x%02Xu' % max_dto.value}})
+
+#endif /* #ifndef XCP_MAX_DTO */
+
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 

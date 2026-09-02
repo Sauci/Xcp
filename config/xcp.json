@@ -26,7 +26,7 @@
           "pdu_mapping": "XCP_PDU_ID_TRANSMIT",
           "dtos": [
             {
-              "pid": 1
+              "pid": 3
             }
           ]
         }
@@ -55,6 +55,7 @@
           "priority": 0,
           "time_cycle": 10,
           "time_unit": "TIMESTAMP_UNIT_1MS",
+          "type": "DAQ",
           "triggered_daq_list_ref": [
             "DAQ1"
           ]
@@ -248,6 +249,10 @@
         "event_queue_size": 16,
         "max_cto": 8,
         "max_dto": 8,
+        "identification_field_type": "ABSOLUTE",
+        "daq_queue_size": 16,
+        "prescaler_supported": true,
+        "overload_indication": "EVENT",
         "checksum_type": "XCP_CRC_16",
         "user_defined_checksum_function": null,
         "user_cmd_function": null,

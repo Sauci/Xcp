@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
+
 import pytest
 
 from .parameter import *
@@ -2624,3 +2626,65 @@ def test_asam_error_codes_match_the_specification(name, code):
     """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1"""
     handle = XcpTest(DefaultConfig())
     assert handle.define(name) == code
+
+
+def test_clear_daq_list_error_matrix_row_does_not_declare_err_daq_active():
+    """D10. XCP part 2 - Protocol Layer Specification 1.1/1.7.3.2.4 lists ERR_CMD_BUSY,
+    ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE, ERR_ACCESS_DENIED and ERR_ACCESS_LOCKED
+    for CLEAR_DAQ_LIST -- not ERR_DAQ_ACTIVE. 1.6.4.2.1.1 requires the command to stop a running
+    transmission rather than refuse while one runs, which the ERR_DAQ_ACTIVE bit that used to sit
+    in the 0xE3 row of Xcp_CTOErrorMatrix contradicted.
+
+    This deliberately does not repeat clear_daq_list_test.py's
+    test_clear_daq_list_stops_a_running_list_rather_than_refusing (D10 as well): the generic
+    pre-check in Xcp_CanIfRxIndication only ever reads the CMD_BUSY, CMD_SYNTAX and PGM_ACTIVE
+    bits out of a Xcp_CTOErrorMatrix row, never DAQ_ACTIVE, so that behavioural test passed
+    identically whether or not the 0xE3 row carried ERR_DAQ_ACTIVE -- it pins the command's
+    behaviour, which this change does not alter, not the matrix declaration D10 actually
+    corrects. Xcp_CTOErrorMatrix is `static`, so this CFFI harness has no runtime handle onto it
+    (interface/Xcp.h, the only header its cdef is built from, never mentions it); reading the
+    declaration back out of source/Xcp.c is the honest way to pin the row itself."""
+    handle = XcpTest(DefaultConfig())
+
+    xcp_c = next(path for path in handle.sources if os.path.basename(path) == 'Xcp.c')
+    with open(xcp_c) as fp:
+        matrix = fp.read().split('Xcp_CTOErrorMatrix[0x100u] = {', 1)[1]
+    row = next(line for line in matrix.splitlines() if 'CLEAR_DAQ_LIST 0xE3' in line)
+
+    assert 'XCP_INTERNAL_ERR_DAQ_ACTIVE' not in row
+    for flag in ('XCP_INTERNAL_ERR_CMD_BUSY',
+                'XCP_INTERNAL_ERR_PGM_ACTIVE',
+                'XCP_INTERNAL_ERR_CMD_SYNTAX',
+                'XCP_INTERNAL_ERR_OUT_OF_RANGE',
+                'XCP_INTERNAL_ERR_ACCESS_DENIED',
+                'XCP_INTERNAL_ERR_ACCESS_LOCKED'):
+        assert flag in row
+
+
+def test_write_daq_multiple_has_a_named_packet_identifier():
+    """D11. WRITE_DAQ_MULTIPLE is new in 1.1 at 0xC7 and arrives in SP2b; until then the PID is
+    named so nothing else claims it, and it still answers ERR_CMD_UNKNOWN because
+    Xcp_PIDTable[0xC7] is deliberately left at Xcp_CmdNotImplemented.
+
+    XCP_PID_CMD_WRITE_DAQ_MULTIPLE lives in source/Xcp_Internal.h, which interface/Xcp.h (the
+    only header this CFFI harness's cdef is built from) does not include, so
+    handle.define('XCP_PID_CMD_WRITE_DAQ_MULTIPLE') cannot resolve it -- there is no runtime
+    handle onto a bare #define at all, the same reason the matrix test above reads source text
+    instead of going through handle.lib. Reading the declaration back out of
+    source/Xcp_Internal.h is the honest way to pin it, and it is also the only part of this test
+    that actually exercises D11: Xcp_PIDTable[0xC7] answering ERR_CMD_UNKNOWN below was already
+    true before D11 and stays true after it -- D11 only adds the name."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+
+    xcp_c = next(path for path in handle.sources if os.path.basename(path) == 'Xcp.c')
+    xcp_internal_h = os.path.join(os.path.dirname(xcp_c), 'Xcp_Internal.h')
+    with open(xcp_internal_h) as fp:
+        assert '#define XCP_PID_CMD_WRITE_DAQ_MULTIPLE (0xC7u)' in fp.read()
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xC7, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)

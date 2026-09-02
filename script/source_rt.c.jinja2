@@ -28,6 +28,29 @@ static Xcp_SegmentRtType Xcp_SegmentRt{{'%02X' % loop.index0}}[{{'0x%02Xu' % ((c
 
 #define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
+
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static Xcp_DaqListRtType Xcp_DaqListRt{{'%02X' % loop.index0}}[{{'0x%02Xu' % configuration.daqs|length}}];
+
+/* XCP_MAX_DTO reaches this module as a compile definition, so a mismatch between it and the
+ * value this runtime was generated for would silently change the stride of the array below.
+ * A negative array size turns that into a compile error instead. */
+typedef char Xcp_DtoFrameStrideCheck{{'%02X' % loop.index0}}[(XCP_MAX_DTO == {{'0x%02Xu' % configuration.protocol_layer.max_dto}}) ? 1 : -1];
+
+static Xcp_DtoFrameType Xcp_DtoFrame{{'%02X' % loop.index0}}[{{'0x%02Xu' % (configuration.protocol_layer.daq_queue_size | default(16))}}];
+
+static Xcp_DtoQueueType Xcp_DtoQueue{{'%02X' % loop.index0}} = {
+    &Xcp_DtoFrame{{'%02X' % loop.index0}}[0x00u],
+    {{'0x%02Xu' % (configuration.protocol_layer.daq_queue_size | default(16))}},
+    0x00u,
+    0x00u,
+    0x00u
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
 {%- endfor %}
 
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
@@ -37,7 +60,9 @@ Xcp_RtType Xcp_Rt[{{'0x%02Xu' % configurations|length}}] = {
 {%- for configuration in configurations %}
     {
         &Xcp_EventQueue{{'%02X' % loop.index0}},
-        &Xcp_SegmentRt{{'%02X' % loop.index0}}[0x00u]
+        &Xcp_SegmentRt{{'%02X' % loop.index0}}[0x00u],
+        &Xcp_DaqListRt{{'%02X' % loop.index0}}[0x00u],
+        &Xcp_DtoQueue{{'%02X' % loop.index0}}
     },
 {%- endfor %}
 };

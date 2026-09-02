@@ -49,9 +49,34 @@ if [ -d "$merged" ]; then
         [ -d "$d" ] && cp "$d"/*.gcno "$merged/" 2>/dev/null && break
     done
 
-    for f in Xcp.c Xcp_Std.c Xcp_Cal.c Xcp_Pag.c Xcp_Daq.c; do
-        [ -f "$merged/${f%.c}.gcno" ] && (cd "$merged" && gcov "$f") && cp "$merged/$f.gcov" .
-    done
+    # One entry per translation unit in the Xcp target, written by CMake's file(GENERATE) from
+    # $<TARGET_PROPERTY:Xcp,SOURCES>. Adding a source to add_library is enough; nothing here needs
+    # touching. A missing or empty file means the generate step changed or failed, and silently
+    # reporting no coverage would look exactly like a green run, so refuse instead.
+    if [ ! -s xcp_sources.txt ]; then
+        echo 'test.sh: xcp_sources.txt is missing or empty; cannot determine what to report coverage on' >&2
+        exit 1
+    fi
+
+    # Consumed by the Codecov upload in .github/workflows/test.yml, so that it does not enumerate
+    # the same set a third time.
+    : > coverage_files.txt
+
+    while read -r source; do
+        [ -n "$source" ] || continue
+        f=$(basename "$source")
+        [ -f "$merged/${f%.c}.gcno" ] && (cd "$merged" && gcov "$f")
+
+        if [ -f "$merged/$f.gcov" ]; then
+            cp "$merged/$f.gcov" . && echo "./build/$f.gcov" >> coverage_files.txt
+        else
+            # Not fatal, and not new: Xcp_Pag.c has never produced a report here -- gcov rejects its
+            # profile with "stamp mismatch with notes file", the multi-compile hazard documented in
+            # test/conftest.py. Saying so out loud keeps the gap visible; the list this loop writes
+            # is otherwise a short list that looks complete.
+            echo "test.sh: no coverage report for $f, so it is absent from the upload" >&2
+        fi
+    done < xcp_sources.txt
 fi
 
 exit $result
