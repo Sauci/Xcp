@@ -8,8 +8,8 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
-def daq_list_info(handle, daq_list_number=0):
-    request = (0xD8, 0x00) + tuple(u16_to_array(daq_list_number, 'LITTLE_ENDIAN'))
+def daq_list_info(handle, daq_list_number=0, byte_order='LITTLE_ENDIAN'):
+    request = (0xD8, 0x00) + tuple(u16_to_array(daq_list_number, byte_order))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
     handle.lib.Xcp_MainFunction()
     return handle.can_if_transmit.call_args[0][1].SduDataPtr
@@ -19,7 +19,18 @@ def test_get_daq_list_info_reports_the_configured_shape():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1: MAX_ODT and MAX_ODT_ENTRIES echo
     this list's own configuration. Configured distinct from each other and both non-default --
     Task 10's review caught a test that would have passed with two response fields transposed,
-    because every value in it was zero."""
+    because every value in it was zero.
+
+    FIXED_EVENT (bytes 4:6) is checked here too, and is load-bearing under this default
+    LITTLE_ENDIAN, MAX_DTO=8 configuration: connect(), called immediately before daq_list_info(),
+    leaves MAX_DTO's own WORD in that exact buffer region (Xcp_CTOCmdStdConnect, source/Xcp_Std.c,
+    "Xcp_CopyFromU16WithOrder(Xcp_Ptr->general->maxDto, &SduDataPtr[0x04u], ...)") -- byte 4 = 0x08
+    (MAX_DTO's low byte under little endian), byte 5 = 0x00. A deleted or mis-offset
+    Xcp_CopyFromU16WithOrder call in Xcp_DTOCmdDaqGetDaqListInfo would leave that 0x08 at byte 4
+    rather than the expected 0x00, so this assertion is not a check against an already-zero
+    buffer. Byte 5's own leftover here is coincidentally already zero (MAX_DTO=8 has no high
+    byte); see test_fixed_event_is_zeroed_regardless_of_byte_order below for the counterpart that
+    makes byte 5 load-bearing too."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=7),)))
     connect(handle)
 
@@ -28,6 +39,24 @@ def test_get_daq_list_info_reports_the_configured_shape():
     assert frame[0] == 0xFF
     assert frame[2] == 3, 'MAX_ODT'
     assert frame[3] == 7, 'MAX_ODT_ENTRIES'
+    assert tuple(frame[4:6]) == (0, 0), 'FIXED_EVENT'
+
+
+def test_fixed_event_is_zeroed_regardless_of_byte_order():
+    """The load-bearing counterpart to FIXED_EVENT's check above. Xcp_CopyFromU16WithOrder
+    (source/Xcp.c) places MAX_DTO's low byte at buffer offset 5 under BIG_ENDIAN instead of
+    offset 4, so connect()'s leftover there (Xcp_CTOCmdStdConnect) becomes MAX_DTO's low byte --
+    0x08 under this test's default MAX_DTO=8, nonzero -- while offset 4 becomes MAX_DTO's high
+    byte, 0x00. A deleted or mis-offset Xcp_CopyFromU16WithOrder call in
+    Xcp_DTOCmdDaqGetDaqListInfo would leave that 0x08 at byte 5 rather than the expected 0x00, so
+    this variant is the one that actually proves FIXED_EVENT's own write reaches byte 5, the half
+    the default LITTLE_ENDIAN test above cannot distinguish."""
+    handle = XcpTest(DefaultConfig(byte_order='BIG_ENDIAN', daqs=(daq(name='DAQ1'),)))
+    connect(handle)
+
+    frame = daq_list_info(handle, byte_order='BIG_ENDIAN')
+
+    assert tuple(frame[4:6]) == (0, 0), 'FIXED_EVENT'
 
 
 def test_daq_list_properties_report_a_configurable_list_on_a_movable_event():
