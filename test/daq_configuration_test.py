@@ -174,9 +174,13 @@ def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
 
 
 def test_generation_fails_when_an_event_channel_references_an_unknown_daq_list():
+    """name='EVT1': without it, this configuration would also trip the newer publish_names guard
+    (script/source_cfg.c.jinja2 checks the DAQ-list reference before the name), so this test would
+    keep passing -- for the wrong reason -- even if the reference-validity guard it names were
+    reordered after the name guard or deleted outright."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
-                              events=(event(triggered_daq_list_ref=['NOPE']),)))
+                              events=(event(name='EVT1', triggered_daq_list_ref=['NOPE']),)))
 
 
 def test_generation_fails_when_an_event_has_no_time_unit():
@@ -275,10 +279,15 @@ def test_generation_fails_when_the_timestamp_does_not_fit_the_odt_zero_budget():
 def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
     """An empty triggered_daq_list_ref would emit a zero-length C array
     (Xcp_EventChannelDaqListRef...[0x00u]) -- a GCC extension, an ISO C constraint violation, and
-    rejected by MISRA and several embedded toolchains. The schema has no minItems to catch it."""
+    rejected by MISRA and several embedded toolchains. The schema has no minItems to catch it.
+
+    name='EVT1': without it, this configuration would also trip the newer publish_names guard,
+    which source_cfg.c.jinja2 currently checks after the empty-ref guard -- so this test would
+    keep passing, for the wrong reason, if that ordering were ever reversed or the empty-ref
+    guard itself were deleted."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
-                              events=(event(triggered_daq_list_ref=[]),)))
+                              events=(event(name='EVT1', triggered_daq_list_ref=[]),)))
 
 
 def test_generation_fails_when_write_daq_multiple_is_enabled_with_max_cto_below_ten():

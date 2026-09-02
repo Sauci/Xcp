@@ -48,9 +48,10 @@
                   "default": "ODT"
                 },
                 "name": {
-                  "description": "ASCII name of this event channel, published through GET_DAQ_EVENT_INFO (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7) when protocol_layer.publish_names is true. No NUL terminator is transmitted, so this must be printable ASCII.",
+                  "description": "ASCII name of this event channel, published through GET_DAQ_EVENT_INFO (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7) when protocol_layer.publish_names is true. No NUL terminator is transmitted, so this must be printable ASCII. Excludes '\"' and '\\\\': script/source_cfg.c.jinja2 interpolates this value raw into a generated C string literal, and either character there would break generation or inject into it. Bounded to 255 characters: EVENT_CHANNEL_NAME_LENGTH on the wire (and Xcp_EventChannelType::nameLength) is a uint8.",
                   "type": "string",
-                  "pattern": "^[\\x20-\\x7E]+$"
+                  "pattern": "^[\\x20-\\x21\\x23-\\x5B\\x5D-\\x7E]+$",
+                  "maxLength": 255
                 },
                 "priority": {
                   "description": "Priority of the event channel",

@@ -28,25 +28,76 @@ def read_through_to_real_memory(handle):
 
 def test_get_daq_event_info_reports_the_configured_channel():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7. All six response fields are
-    configured pairwise distinct and non-zero -- MAX_DAQ_LIST=1, DAQ_EVENT_PROPERTIES=4 (DAQ bit
-    only: type and consistency both default), EVENT_CHANNEL_NAME_LENGTH=8, TIME_CYCLE=10,
-    TIME_UNIT=6, PRIORITY=7 -- so no two of them could be transposed and still pass. Task 10
-    shipped a test that would have passed with two request fields transposed because every value
-    was zero; Task 12 shipped a response field with no assertion at all."""
-    handle = XcpTest(DefaultConfig(events=(event(name='EVT_10MS', priority=7, time_cycle=10,
-                                                 time_unit='TIMESTAMP_UNIT_1MS',
+    configured pairwise distinct, non-zero, AND away from event()'s own defaults
+    (consistency='ODT', time_cycle=10, time_unit='TIMESTAMP_UNIT_1MS', triggered_daq_list_ref=
+    ['DAQ1']) -- pairwise distinctness alone catches a transposition, but a hardcoded handler
+    (source/Xcp_Daq.c's SduDataPtr[0x02u..0x06u] assignments replaced by the literals
+    0x04u, 0x01u, 0x0Au, 0x06u) would still pass a test that only moves priority away from its
+    default, since every other field would then equal the default the helper already supplies.
+    Task 10 shipped a test that would have passed with two request fields transposed because
+    every value was zero; Task 12 shipped a response field with no assertion at all.
+
+    Two channels, and channel 1 (not 0) is the one requested: nothing in a single-channel test
+    distinguishes eventChannel[event_channel_number] from a hardcoded eventChannel[0]. Channel 0
+    is configured with different values throughout, so indexing the wrong channel fails loudly
+    rather than coincidentally matching.
+
+    consistency='EVENT' here also exercises Xcp_EventConsistencyBits' only non-trivial branch
+    (DAQ_EVENT_PROPERTIES' CONSISTENCY_EVENT bit, 0x80) -- the bit position that most needed a
+    real check, since the bit table came from reading the spec's page image directly (the OCR
+    text mangles it) rather than from anything the brief stated as a literal."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1), daq(name='DAQ2', max_odt=1)),
+                                   events=(event(name='EVT_OTHER', priority=1, time_cycle=1,
+                                                triggered_daq_list_ref=['DAQ1']),
+                                           event(name='EVT_100MS', consistency='EVENT', priority=50,
+                                                time_cycle=100, time_unit='TIMESTAMP_UNIT_10MS',
+                                                triggered_daq_list_ref=['DAQ1', 'DAQ2']))))
+    connect(handle)
+
+    frame = daq_event_info(handle, event_channel_number=1)
+
+    assert frame[0] == 0xFF
+    assert frame[1] == 0x84, 'DAQ_EVENT_PROPERTIES -- DAQ bit (type=DAQ) | CONSISTENCY_EVENT bit'
+    assert frame[2] == 2, 'MAX_DAQ_LIST -- the length of triggered_daq_list_ref'
+    assert frame[3] == len('EVT_100MS'), 'EVENT_CHANNEL_NAME_LENGTH'
+    assert frame[4] == 100, 'TIME_CYCLE'
+    assert frame[5] == handle.lib.TIMESTAMP_UNIT_10MS
+    assert frame[6] == 50, 'PRIORITY'
+
+
+def test_get_daq_event_info_honours_byte_order_when_decoding_the_channel_number():
+    """The EVENT_CHANNEL_NUMBER decode (Xcp_CopyToU16WithOrder, source/Xcp_Daq.c) is otherwise
+    transposition-immune in this file's other tests: channel 0 is 0x0000 under either byte order,
+    and an out-of-range request like 9 reads as 0x0009 or 0x0900 either way -- still out of range
+    regardless of whether byte order was even applied. Requesting channel 1 of a two-channel
+    config under BIG_ENDIAN is the case that actually depends on correct decoding: swapped,
+    channel 1 (wire bytes 0x00, 0x01) would read as 0x0100 = 256, which IS out of range for two
+    channels, so a byte-order bug here answers ERR_OUT_OF_RANGE instead of channel 1's real data."""
+    handle = XcpTest(DefaultConfig(byte_order='BIG_ENDIAN',
+                                   daqs=(daq(name='DAQ1'), daq(name='DAQ2')),
+                                   events=(event(name='EVT0', priority=1, triggered_daq_list_ref=['DAQ1']),
+                                           event(name='EVT1', priority=42, triggered_daq_list_ref=['DAQ2']))))
+    connect(handle)
+
+    frame = daq_event_info(handle, event_channel_number=1, byte_order='BIG_ENDIAN')
+
+    assert frame[0] == 0xFF, 'a byte-order decoding bug would misread channel 1 as out of range'
+    assert frame[6] == 42, "PRIORITY -- proves this is channel 1's data, not channel 0's"
+
+
+def test_daq_event_properties_stim_bit_stays_clear_for_a_daq_stim_channel():
+    """DAQ_EVENT_PROPERTIES' STIM bit (0x08) stays clear even for a DAQ_STIM channel, the same
+    policy Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES applies for the identical reason
+    (get_daq_list_info_test.py, test_daq_list_properties_daq_bit_follows_the_configured_type):
+    data stimulation arrives in SP3. Nothing pinned this in this file until now -- the DAQ bit
+    (0x04, set because DAQ_STIM is DAQ-capable) was the only properties bit any test here observed."""
+    handle = XcpTest(DefaultConfig(events=(event(name='EVT', type='DAQ_STIM',
                                                  triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
 
     frame = daq_event_info(handle)
 
-    assert frame[0] == 0xFF
-    assert frame[1] == 0x04, 'DAQ_EVENT_PROPERTIES -- DAQ bit only, type and consistency default'
-    assert frame[2] == 1, 'MAX_DAQ_LIST -- the length of triggered_daq_list_ref'
-    assert frame[3] == len('EVT_10MS'), 'EVENT_CHANNEL_NAME_LENGTH'
-    assert frame[4] == 10, 'TIME_CYCLE'
-    assert frame[5] == handle.lib.TIMESTAMP_UNIT_1MS
-    assert frame[6] == 7, 'PRIORITY'
+    assert frame[1] == 0x04, 'DAQ_EVENT_PROPERTIES -- DAQ set, STIM (0x08) stays clear until SP3'
 
 
 def test_the_event_channel_name_is_uploadable_from_the_mta_it_sets():

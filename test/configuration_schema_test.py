@@ -86,3 +86,12 @@ def test_a_dto_pid_above_the_odt_ceiling_is_still_rejected(schema):
     """Dropping "pid" from the required list must not have made the field unchecked when present."""
     with pytest.raises(jsonschema.ValidationError):
         validate(DefaultConfig(daqs=(daq(dtos=[{'pid': 252}]),)), schema)
+
+
+def test_an_event_name_containing_a_quote_is_rejected(schema):
+    """script/source_cfg.c.jinja2 interpolates events[].name raw into a generated C string
+    literal (static const uint8 ...[] = "{{event.name}}";). A '"' in the name would close that
+    literal early -- breaking generation at best, injecting arbitrary text into the generated
+    source at worst -- so the schema has to refuse it before generation ever sees it."""
+    with pytest.raises(jsonschema.ValidationError):
+        validate(DefaultConfig(events=(event(name='EVT"10MS', triggered_daq_list_ref=['DAQ1']),)), schema)
