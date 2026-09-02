@@ -42,6 +42,49 @@ option(XCP_PAGING_SUPPORTED
     "enables/disables the calibration page switching commands. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why."
     ${XCP_PAGING_SUPPORTED_DERIVED})
 
+# XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE need exactly the same treatment as XCP_PAGING_SUPPORTED above,
+# for a sharper reason: Xcp_Types.h's own fallback for these two macros (0x00u/0u, added so the test
+# harness's handle.define() has literal text to key off) is included by the generated Xcp_Cfg.h
+# *before* that file's own conditional block for them (Xcp_Types.h at its line 4, the block at its
+# line 24), so the fallback always wins there regardless of what the configuration says -- and
+# source/*.c never includes Xcp_Cfg.h at all, the same gap paging had. Left undefined, or left to
+# that fallback, a configuration that declares protocol_layer.timestamp would silently build with
+# XCP_DAQ_TIMESTAMP_SUPPORTED == STD_OFF, gating Xcp_GetDaqTimestamp's declaration off entirely.
+execute_process(
+    COMMAND ${PYTHON_EXECUTABLE} -c
+        "import json,sys;c=json.load(open(sys.argv[1]));print('ON' if any(x['protocol_layer'].get('timestamp') for x in c['configurations']) else 'OFF')"
+        ${XCP_CONFIG_FILEPATH}
+    OUTPUT_VARIABLE XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE XCP_DAQ_TIMESTAMP_SUPPORTED_RESULT)
+
+if(NOT XCP_DAQ_TIMESTAMP_SUPPORTED_RESULT EQUAL 0)
+    message(FATAL_ERROR "could not derive XCP_DAQ_TIMESTAMP_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
+endif()
+
+option(XCP_DAQ_TIMESTAMP_SUPPORTED
+    "enables/disables the data acquisition clock. Defaults to whether XCP_CONFIG_FILEPATH declares a protocol_layer.timestamp block; override only if you know why."
+    ${XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED})
+
+# Not boolean, so option() (a BOOL cache variable) does not fit; a plain CACHE STRING is the closest
+# equivalent, matching XCP_PYTEST_ARGS below. XCP_TimestampTypeType's enumerator, not the wire size,
+# is what would be handy to compute this from, but that enum is implicit and deliberately not what
+# this counts (see script/header_cfg.h.jinja2 and script/source_cfg.c.jinja2).
+execute_process(
+    COMMAND ${PYTHON_EXECUTABLE} -c
+        "import json,sys;c=json.load(open(sys.argv[1]));s={'BYTE':1,'WORD':2,'DWORD':4};print(max([s[x['protocol_layer']['timestamp']['size']] for x in c['configurations'] if x['protocol_layer'].get('timestamp')], default=0))"
+        ${XCP_CONFIG_FILEPATH}
+    OUTPUT_VARIABLE XCP_DAQ_TIMESTAMP_SIZE_DERIVED
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE XCP_DAQ_TIMESTAMP_SIZE_RESULT)
+
+if(NOT XCP_DAQ_TIMESTAMP_SIZE_RESULT EQUAL 0)
+    message(FATAL_ERROR "could not derive XCP_DAQ_TIMESTAMP_SIZE from ${XCP_CONFIG_FILEPATH}")
+endif()
+
+set(XCP_DAQ_TIMESTAMP_SIZE ${XCP_DAQ_TIMESTAMP_SIZE_DERIVED} CACHE STRING
+    "timestamp field width in bytes, as transmitted. Defaults to the largest size any configuration in XCP_CONFIG_FILEPATH declares; override only if you know why.")
+
 if (${ENABLE_DOC_GEN})
     find_package(Doxygen REQUIRED dot)
 
@@ -79,7 +122,9 @@ target_compile_definitions(Xcp
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
     PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>
-    PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>
+    PUBLIC XCP_DAQ_TIMESTAMP_SUPPORTED=$<IF:$<BOOL:${XCP_DAQ_TIMESTAMP_SUPPORTED}>,STD_ON,STD_OFF>
+    PUBLIC XCP_DAQ_TIMESTAMP_SIZE=${XCP_DAQ_TIMESTAMP_SIZE})
 
 target_include_directories(Xcp
     PUBLIC interface

@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import json
+import os
+
 import pytest
 
 from jinja2.exceptions import UndefinedError
@@ -209,6 +212,47 @@ def test_an_absent_timestamp_block_disables_timestamps():
     assert handle.config.lib.Xcp[0].general.timestampType == handle.lib.NO_TIME_STAMP
     assert handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') == handle.define('STD_OFF')
     assert handle.define('XCP_DAQ_TIMESTAMP_SIZE') == 0
+
+
+def test_the_build_derives_daq_timestamp_macros_from_the_repository_configuration():
+    """The two tests above only prove the harness's own per-test override reaches
+    Xcp_GeneralConfig00 -- test/conftest.py injects XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE as compile
+    definitions computed straight from each test's own configuration dict, bypassing the generated
+    Xcp_Cfg.h entirely (handle.define() reads that injected value, not anything CMake derived).
+    A real, non-test build never gets that injection: generated Xcp_Cfg.h includes Xcp_Types.h
+    (whose fallback exists only so handle.define() has literal text to key off) before its own
+    conditional block for these two macros, so that block's #define is unreachable there, and
+    source/*.c does not include Xcp_Cfg.h at all. Without CMakeLists.txt deriving and injecting
+    the same two macros the way it already does for XCP_PAGING_SUPPORTED, an integrator configuring
+    protocol_layer.timestamp would silently get a module built with XCP_DAQ_TIMESTAMP_SUPPORTED
+    permanently STD_OFF -- Task 2 gates Xcp_GetDaqTimestamp's declaration on exactly that macro.
+
+    This test reads what CMake actually computed for the Xcp target's own COMPILE_DEFINITIONS
+    (threaded through as the --compile_definitions pytest option, itself
+    $<TARGET_PROPERTY:Xcp,COMPILE_DEFINITIONS>) straight from os.environ, never touching an XcpTest
+    instance or its per-test override, and recomputes the expected values independently, straight
+    from config/xcp.json on disk -- the file the CMakeLists.txt derivation itself reads -- rather
+    than hard-coding today's STD_OFF/0 as a literal, so this stays correct if that file ever grows
+    a timestamp block. Deleting the two new target_compile_definitions entries in CMakeLists.txt,
+    or reverting to a fixed default there, fails this test with a KeyError or a mismatch; it cannot
+    pass by coincidence the way it could if it re-read the harness's own injected value instead."""
+    repository_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                          'config', 'xcp.json')
+    with open(repository_config_path) as fp:
+        repository_config = json.load(fp)
+
+    wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}
+    expected_supported = 'STD_ON' if any(c['protocol_layer'].get('timestamp')
+                                         for c in repository_config['configurations']) else 'STD_OFF'
+    expected_size = str(max((wire_size[c['protocol_layer']['timestamp']['size']]
+                             for c in repository_config['configurations']
+                             if c['protocol_layer'].get('timestamp')),
+                            default=0))
+
+    definitions = dict(item.split('=', 1) for item in os.environ['compile_definitions'].split(';') if '=' in item)
+
+    assert definitions['XCP_DAQ_TIMESTAMP_SUPPORTED'] == expected_supported
+    assert definitions['XCP_DAQ_TIMESTAMP_SIZE'] == expected_size
 
 
 def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
