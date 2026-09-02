@@ -882,3 +882,34 @@ uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfo
     return E_OK;
 }
 
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+
+uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.3 reserves byte 1 and the WORD at
+     * 2..3. Zero-filled, so their byte order is immaterial. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+
+    /* Xcp_Internal.daq_clock_capture was written exactly once, synchronously, by
+     * Xcp_CanIfRxIndication (source/Xcp.c) immediately before it dispatched to this function --
+     * not re-read here, so this handler cannot itself become a second, later reader of the
+     * clock for the same request. */
+    Xcp_CopyFromU32WithOrder(Xcp_Internal.daq_clock_capture,
+                             &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                             Xcp_Ptr->general->byteOrder);
+
+    Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
+

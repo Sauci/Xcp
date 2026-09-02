@@ -1,0 +1,40 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from .parameter import *
+from .conftest import XcpTest
+from .download_test import connect
+
+
+def test_get_daq_clock_returns_the_value_captured_at_reception():
+    """1.1/1.6.4.1.2.3: the response 'contains the current value of the data acquisition clock,
+    when the GET_DAQ_CLOCK command packet has been received'. Xcp_CanIfRxIndication dispatches
+    Xcp_DTOCmdDaqGetDaqClock synchronously, in the same call that receives the command (see the
+    Task 8 report's trace -- Xcp_MainFunction never assembles CTO responses, it only transmits
+    what Xcp_CanIfRxIndication already built), so the handler reads the clock through
+    Xcp_Internal.daq_clock_capture rather than calling Xcp_GetDaqTimestamp() itself. That keeps
+    the clock read pinned to exactly one call site for this command, so a future change cannot
+    silently grow a second, later read of it. The mock returns a different value on each call
+    precisely so that call is distinguishable: a second call landing anywhere in this path would
+    surface as the wrong value below."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp()))
+    connect(handle)
+    handle.xcp_get_daq_timestamp.side_effect = (v for v in (0x11111111, 0x22222222, 0x33333333))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xDC,)))
+    handle.lib.Xcp_MainFunction()
+
+    frame = handle.can_if_transmit.call_args[0][1].SduDataPtr
+    assert frame[0] == 0xFF
+    assert tuple(frame[1:4]) == (0x00, 0x00, 0x00), 'three reserved bytes'
+    assert payload_to_array(bytearray(frame[4:8]), 1, 4, 'LITTLE_ENDIAN')[0] == 0x11111111
+
+
+def test_get_daq_clock_is_unknown_without_a_configured_clock():
+    handle = XcpTest(DefaultConfig())
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xDC,)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_CMD_UNKNOWN'))

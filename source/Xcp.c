@@ -349,7 +349,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_DTOCmdDaqGetDaqResolutionInfo, /* GET_DAQ_RESOLUTION_INFO 0xD9, optional */
     Xcp_DTOCmdDaqGetDaqProcessorInfo, /* GET_DAQ_PROCESSOR_INFO 0xDA, optional */
     Xcp_CmdNotImplemented, /* 0xDB, optional */
-    Xcp_CmdNotImplemented, /* 0xDC, optional */
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+    Xcp_DTOCmdDaqGetDaqClock, /* GET_DAQ_CLOCK 0xDC, optional */
+#else
+    Xcp_CmdNotImplemented, /* GET_DAQ_CLOCK 0xDC, optional */
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
     Xcp_DTOCmdDaqStartStopSynch, /* START_STOP_SYNCH 0xDD */
     Xcp_DTOCmdDaqStartStopDaqList, /* START_STOP_DAQ_LIST 0xDE */
     Xcp_DTOCmdDaqGetDaqListMode, /* GET_DAQ_LIST_MODE 0xDF, optional in 1.1 */
@@ -1375,6 +1379,20 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                             if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
                                                 ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))
                                             {
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+                                                /* 1.1/1.6.4.1.2.3 wants the clock value "when the GET_DAQ_CLOCK command packet has been
+                                                 * received". Xcp_DTOCmdDaqGetDaqClock is dispatched synchronously two lines below, from
+                                                 * this same call to this same function -- Xcp_MainFunction never assembles CTO
+                                                 * responses, it only transmits what is already built here (see the Task 8 report's
+                                                 * trace). The value is still taken through this field rather than read live inside the
+                                                 * handler, so Xcp_GetDaqTimestamp() keeps exactly one call site for this command, and
+                                                 * the capture sits behind every busy/syntax/pgm_active/access-locked gate above, so a
+                                                 * rejected GET_DAQ_CLOCK never touches it. */
+                                                if (pid == XCP_PID_CMD_GET_DAQ_CLOCK)
+                                                {
+                                                    Xcp_Internal.daq_clock_capture = Xcp_GetDaqTimestamp();
+                                                }
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
                                                 result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
 
                                                 Xcp_Internal.last_pid = pid;
