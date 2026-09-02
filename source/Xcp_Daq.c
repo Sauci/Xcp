@@ -97,6 +97,31 @@ static uint8 Xcp_OdtUsedBytes(uint16 daqListNumber, uint8 odtNumber, uint8 exclu
 }
 
 /**
+ * @brief bytes one ODT's entries may occupy, after setting aside the timestamp's share of ODT 0.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.1.2.2, Diagram 10: the timestamp rides
+ * in the first ODT of a cycle only, so it costs ODT 0 of a timestamped list
+ * Xcp_TimestampWireSize(timestampType) bytes and costs every other ODT nothing. Reducing the
+ * budget for every ODT would be a silent capacity regression for ODT 1..n.
+ * @note Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType), not XCP_DAQ_TIMESTAMP_SIZE: the
+ * macro is the maximum across every configuration, right for compile-time sizing and #if gating,
+ * wrong as the byte cost of the configuration actually running. Xcp_DTOCmdDaqSetDaqListMode
+ * (below) applies the same rule when TIMESTAMP is enabled, so the two checks stay visibly the
+ * same rule.
+ */
+static uint8 Xcp_DaqOdtEntryBudget(uint16 daqListNumber, uint8 odtNumber)
+{
+    uint8 budget = Xcp_Ptr->general->odtEntrySizeDaq;
+
+    if ((odtNumber == 0x00u) &&
+        ((Xcp_DaqListRt(daqListNumber)->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u))
+    {
+        budget = (uint8)(budget - Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType));
+    }
+
+    return budget;
+}
+
+/**
  * @brief TRUE when at least one ODT entry of the list has been written.
  * @details A list with no entry has nothing to sample, so starting or selecting it would put the
  * slave into data transfer mode with no data to transfer.
@@ -263,14 +288,21 @@ uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduIn
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }
+    /* Xcp_DaqOdtEntryBudget's Xcp_DaqListRt dereference is safe here: this else if is reached only
+     * once Xcp_Internal.daq_pointer.valid == FALSE (the first branch above) has been checked and
+     * found false, which SET_DAQ_PTR (Xcp_DTOCmdDaqSetDaqPtr) only ever leaves TRUE after
+     * validating daqListNumber itself -- the same gate the XCP_DAQ_LIST_MODE_RUNNING check two
+     * branches above already relies on for the identical dereference. */
     else if ((uint16)((uint16)Xcp_OdtUsedBytes(Xcp_Internal.daq_pointer.daqListNumber,
                                                Xcp_Internal.daq_pointer.odtNumber,
                                                Xcp_Internal.daq_pointer.odtEntryNumber) + size) >
-             (uint16)Xcp_Ptr->general->odtEntrySizeDaq)
+             (uint16)Xcp_DaqOdtEntryBudget(Xcp_Internal.daq_pointer.daqListNumber,
+                                           Xcp_Internal.daq_pointer.odtNumber))
     {
         /* DD8: the entry is individually legal but the ODT it joins can no longer be carried in
-         * one DTO. 1.7.3.2.4 lists ERR_DAQ_CONFIG for WRITE_DAQ and this is the configuration it
-         * describes. */
+         * one DTO -- now measured against the timestamp-adjusted budget of ODT 0
+         * (Xcp_DaqOdtEntryBudget), not the raw MAX_ODT_ENTRY_SIZE_DAQ. 1.7.3.2.4 lists
+         * ERR_DAQ_CONFIG for WRITE_DAQ and this is the configuration it describes. */
         error = XCP_E_ASAM_DAQ_CONFIG;
     }
     else
