@@ -746,10 +746,10 @@ uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *
  * @brief maps the configured consistency level onto DAQ_EVENT_PROPERTIES' CONSISTENCY_DAQ and
  * CONSISTENCY_EVENT bits.
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7: 00 is consistency on ODT
- * level (the default -- neither bit set) and 10 is CONSISTENCY_EVENT (event channel level). 01,
- * CONSISTENCY_DAQ (DAQ list level), has no case here: Xcp_EventChannelConsistencyType
- * (interface/Xcp_Types.h) only distinguishes ODT from EVENT, so DAQ-list-level consistency is
- * not a configuration this module can express yet.
+ * level (the default -- neither bit set), 01 is CONSISTENCY_DAQ (DAQ list level) and 10 is
+ * CONSISTENCY_EVENT (event channel level). All three are configurable -- config/xcp.schema.json
+ * has always permitted "DAQ", and DAQ_LIST is the enumerator it maps to (see the note above
+ * Xcp_EventChannelConsistencyType in interface/Xcp_Types.h).
  */
 static uint8 Xcp_EventConsistencyBits(Xcp_EventChannelConsistencyType consistency)
 {
@@ -759,6 +759,9 @@ static uint8 Xcp_EventConsistencyBits(Xcp_EventChannelConsistencyType consistenc
     {
         case EVENT:
             bits = XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_EVENT;
+            break;
+        case DAQ_LIST:
+            bits = XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_DAQ;
             break;
         case ODT:
         default:
@@ -774,8 +777,8 @@ static uint8 Xcp_EventConsistencyBits(Xcp_EventChannelConsistencyType consistenc
  * @details Defined immediately before Xcp_DTOCmdDaqGetDaqListInfo, its neighbour in the PID
  * table (0xD7 before 0xD8) and its closest sibling in shape: both take a channel/list number,
  * answer ERR_OUT_OF_RANGE for one that does not exist, and build a PROPERTIES byte the same way.
- * @note MAX_DAQ_LIST reports the *configured* triggeredDaqListRefCount -- "the maximum number of
- * DAQ lists in this event channel". That is a different question from the *runtime* binding
+ * @note MAX_DAQ_LIST reports the *configured* length of triggeredDaqListRef -- "the maximum number
+ * of DAQ lists in this event channel". That is a different question from the *runtime* binding
  * SET_DAQ_LIST_MODE writes to Xcp_Rt[...].daqList[...].eventChannelNumber (DD23, see
  * Xcp_DTOCmdDaqGetDaqListInfo's own EVENT_FIXED comment below), which is which list is bound
  * right now, and until this task triggeredDaqListRef had no runtime role at all.
@@ -810,7 +813,13 @@ uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType 
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = properties;
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = (uint8)p_channel->triggeredDaqListRefCount;
+        /* maxDaqList, not (uint8)triggeredDaqListRefCount: the two are generated from the same
+         * expression, but maxDaqList is the uint8 field whose doxygen quotes 1.6.4.1.2.7's own
+         * definition of MAX_DAQ_LIST, while triggeredDaqListRefCount is a uint32 that a cast here
+         * would silently truncate -- 256 references would report 0, telling the master the
+         * channel handles no lists at all. The count that cannot be represented now fails
+         * generation instead (script/source_cfg.c.jinja2), so the two agree by construction. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = p_channel->maxDaqList;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_channel->nameLength;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = p_channel->timeCycle;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = (uint8)p_channel->timeUnit;

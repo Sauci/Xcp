@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import pytest
+
+from jinja2.exceptions import UndefinedError
+
 from .parameter import *
 from .conftest import XcpTest
 from .download_test import connect, set_mta
@@ -156,6 +160,69 @@ def test_no_name_is_published_when_publish_names_is_false():
     handle.lib.Xcp_MainFunction()
 
     assert addresses_read == [0xDEADBEEF]
+
+
+@pytest.mark.parametrize('consistency, expected', (('ODT', 0x00),
+                                                   ('DAQ', 0x40),
+                                                   ('EVENT', 0x80)))
+def test_consistency_reaches_the_right_daq_event_properties_bits(consistency, expected):
+    """1.6.4.1.2.7 encodes consistency in DAQ_EVENT_PROPERTIES bits 7:6 -- 00 ODT, 01
+    CONSISTENCY_DAQ, 10 CONSISTENCY_EVENT. config/xcp.schema.json has always permitted all three,
+    but "DAQ" reached the generator as a bare identifier and resolved to
+    Xcp_EventChannelTypeType::DAQ, a different enumeration whose DAQ is 0x00u -- numerically this
+    enumeration's ODT. So a channel configured for DAQ-list consistency compiled, ran, and
+    reported ODT consistency, and bit 6 was set by nothing anywhere in the module. All three
+    values are swept here rather than only the newly-mapped one, so the mapping is pinned as a
+    whole and ODT stays distinguishable from a DAQ that silently collapsed onto it."""
+    handle = XcpTest(DefaultConfig(events=(event(name='EVT', consistency=consistency,
+                                                 triggered_daq_list_ref=['DAQ1']),)))
+    connect(handle)
+
+    frame = daq_event_info(handle)
+
+    assert frame[1] == (0x04 | expected), 'DAQ bit (type=DAQ) plus the consistency bits'
+
+
+def test_the_event_channel_consistency_enumerators_keep_their_numeric_values():
+    """Xcp_EventChannelConsistencyType is transmitted only indirectly, through
+    Xcp_EventConsistencyBits, so nothing above pins the enumerators themselves -- but their values
+    are ABI for any integrator holding an already-compiled Xcp_Cfg.o. The commented-out //DAQ sat
+    between ODT and EVENT, so the obvious way to enable DAQ-list consistency was to uncomment it,
+    which silently renumbers EVENT from 1 to 2. DAQ_LIST is appended with an explicit value
+    instead, and this test is what refuses the tempting edit.
+
+    Xcp_EventChannelTypeType::DAQ is asserted alongside because it is the collision that made the
+    bug possible: a bare DAQ in this position is 0x00u, indistinguishable from ODT."""
+    handle = XcpTest(DefaultConfig())
+
+    assert handle.lib.ODT == 0x00
+    assert handle.lib.EVENT == 0x01, 'inserting an enumerator before this one is an ABI break'
+    assert handle.lib.DAQ_LIST == 0x02
+    assert handle.lib.DAQ == 0x00, 'Xcp_EventChannelTypeType::DAQ, which a bare "DAQ" resolves to'
+
+
+def test_max_daq_list_reports_the_full_reference_count_at_the_byte_boundary():
+    """MAX_DAQ_LIST is one byte (1.6.4.1.2.7), and 255 references is the most it can carry. The
+    value used to be read as (uint8)triggeredDaqListRefCount, a uint32, so this boundary was the
+    last count before a silent truncation -- 256 rendered as 0x00000100u and reported 0, telling
+    the master the channel handles no lists at all. It is now read from maxDaqList, the uint8 field
+    the type declares for it, and the count that will not fit fails generation (below) rather than
+    wrapping."""
+    handle = XcpTest(DefaultConfig(events=(event(name='EVT', triggered_daq_list_ref=['DAQ1'] * 255),)))
+    connect(handle)
+
+    frame = daq_event_info(handle)
+
+    assert frame[2] == 255
+    assert handle.lib.Xcp_Ptr.config.eventChannel[0].maxDaqList == 255
+
+
+def test_generation_fails_when_an_event_channel_references_more_lists_than_one_byte_can_report():
+    """The guard that makes reading the uint8 maxDaqList safe: a count that field cannot hold is
+    refused at generation, beside the existing odtCount / odtEntriesCount guard, rather than
+    emitted as a literal the compiler truncates."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(events=(event(name='EVT', triggered_daq_list_ref=['DAQ1'] * 256),)))
 
 
 def test_get_daq_event_info_answers_out_of_range_for_an_unknown_channel():

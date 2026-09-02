@@ -231,6 +231,18 @@ typedef enum
     TIMESTAMP_UNIT_1US = 0x03u
 } Xcp_TimestampUnitType;
 
+/**
+ * @note DAQ_LIST is appended with an explicit value rather than spelled DAQ and placed between
+ * ODT and EVENT, where the specification's own ordering would put it. Two reasons, both binding
+ * on anyone editing this enumeration. Inserting an enumerator here renumbers EVENT from 1 to 2,
+ * which is an ABI break for any integrator holding an already-compiled Xcp_Cfg.o. And DAQ is
+ * already an enumerator of Xcp_EventChannelTypeType above, so a member named DAQ here would not
+ * be a redefinition -- both are plain C enumerators in the same scope, so the second declaration
+ * is what would fail to compile, and the configuration generator emitting a bare `DAQ` would
+ * resolve to whichever came first. It resolved to Xcp_EventChannelTypeType::DAQ == 0x00u, i.e.
+ * silently to ODT, for as long as this member was commented out. script/source_cfg.c.jinja2 maps
+ * the configuration's "DAQ" onto DAQ_LIST rather than emitting the configured string verbatim.
+ */
 typedef enum
 {
     /**
@@ -239,14 +251,14 @@ typedef enum
     ODT = 0x00u,
 
     /**
-     * @brief consistency on DAQ list level
-     */
-    //DAQ,
-
-    /**
      * @brief consistency on event channel level
      */
-    EVENT
+    EVENT = 0x01u,
+
+    /**
+     * @brief consistency on DAQ list level
+     */
+    DAQ_LIST = 0x02u
 } Xcp_EventChannelConsistencyType;
 
 /**

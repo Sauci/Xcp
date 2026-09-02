@@ -1,4 +1,11 @@
 #include "Xcp_Cfg.h"
+{#- The configuration's consistency string is NOT emitted verbatim. "DAQ" would resolve to
+    Xcp_EventChannelTypeType::DAQ -- a different enumeration entirely, whose DAQ is 0x00u, the
+    same value as this enumeration's ODT -- so a channel configured for DAQ-list consistency
+    reported ODT consistency and never set DAQ_EVENT_PROPERTIES bit 6. See the note above
+    Xcp_EventChannelConsistencyType in interface/Xcp_Types.h for why the enumerator it maps to is
+    named DAQ_LIST and appended rather than spelled DAQ and inserted. #}
+{%- set event_channel_consistency = {'ODT': 'ODT', 'EVENT': 'EVENT', 'DAQ': 'DAQ_LIST'} %}
 {% for configuration in configurations %}
 #ifndef {{configuration.communication.channel_rx_pdu_ref}}
 #warning {{configuration.communication.channel_rx_pdu_ref}} not defined, assigning 0x0001u as default value. This definition should be passed trough the build system ({{configuration.communication.channel_rx_pdu_ref}}=0xXXXX).
@@ -276,6 +283,9 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
         {%- if configuration.protocol_layer.publish_names | default(true) and event.name is not defined %}
 {{ raise('event channel {} has no name but publish_names is enabled; set a name or set publish_names to false'.format(event_index)) }}
         {%- endif %}
+        {%- if (event.consistency | default('ODT')) not in event_channel_consistency %}
+{{ raise('event channel {} has consistency "{}", which maps to no Xcp_EventChannelConsistencyType enumerator; the schema permits {}'.format(event_index, event.consistency, event_channel_consistency.keys()|list|sort)) }}
+        {%- endif %}
 
 static const Xcp_DaqListType * const Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % event_index}}[{{'0x%02Xu' % event.triggered_daq_list_ref|length}}] = {
         {%- for name in event.triggered_daq_list_ref %}
@@ -291,7 +301,7 @@ static const uint8 Xcp_EventChannelName{{'%02X' % configuration_loop.index0}}{{'
 static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % configuration.events|length}}] = {
     {%- for event in configuration.events %}
     {
-        {{event.consistency | default('ODT')}}, /* XcpEventChannelConsistency */
+        {{event_channel_consistency[event.consistency | default('ODT')]}}, /* XcpEventChannelConsistency */
         {{'0x%02Xu' % event.triggered_daq_list_ref|length}}, /* XcpEventChannelMaxDaqList */
         {{'0x%04Xu' % loop.index0}}, /* XcpEventChannelNumber */
         {{'0x%02Xu' % event.priority}}, /* XcpEventChannelPriority */
@@ -359,6 +369,11 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- if counters.odt > 255 or counters.odt_entries > 255 %}
 {{ raise('odtCount {} / odtEntriesCount {} exceed the uint8 fields of Xcp_GeneralType'.format(counters.odt, counters.odt_entries)) }}
 {%- endif %}
+{%- for event in configuration.events %}
+{%- if event.triggered_daq_list_ref|length > 255 %}
+{{ raise('event channel {} references {} DAQ lists, which exceeds the uint8 maxDaqList field of Xcp_EventChannelType; GET_DAQ_EVENT_INFO transmits MAX_DAQ_LIST as one byte (XCP part 2 1.1/1.6.4.1.2.7), so a larger count cannot be reported and would be emitted here as a truncated literal'.format(loop.index0, event.triggered_daq_list_ref|length)) }}
+{%- endif %}
+{%- endfor %}
 {%- if configuration.apis.xcp_write_daq_multiple_api_enable.enabled and configuration.protocol_layer.max_cto < 10 %}
 {{ raise('WRITE_DAQ_MULTIPLE is enabled but MAX_CTO is {}; XCP part 2 1.1/1.6.4.1.2.1 requires MAX_CTO >= 10 because one element is 8 bytes after a 2-byte header'.format(configuration.protocol_layer.max_cto)) }}
 {%- endif %}
