@@ -446,6 +446,62 @@ uint8 Xcp_DTOCmdDaqWriteDaqMultiple(boolean *responseExpected, const PduInfoType
     return E_OK;
 }
 
+/**
+ * @brief reads back the ODT entry currently named by the DAQ pointer, then advances it.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.2. Takes no request
+ * parameters beyond the command byte itself -- the entry is selected entirely through
+ * Xcp_Internal.daq_pointer, the same state WRITE_DAQ, WRITE_DAQ_MULTIPLE and SET_DAQ_PTR share.
+ */
+uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint8 error = 0x00u;
+
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2: the DAQ list pointer is left
+     * undefined past the last ODT entry of an ODT and the master is responsible for
+     * repositioning it. ERR_OUT_OF_RANGE's prescribed action in 1.7.3.2.4 is "retry other
+     * parameter" (SP2a DD10) -- reposition with SET_DAQ_PTR. There is no
+     * Xcp_DaqPointerIsValid()-style predicate in this file (Task 9); every call site, this one
+     * included, reads Xcp_Internal.daq_pointer.valid directly, e.g. Xcp_DaqApplyOdtEntry above. */
+    if (Xcp_Internal.daq_pointer.valid == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+
+    if (error == 0x00u)
+    {
+        const Xcp_OdtEntryType *p_entry =
+                &Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber]
+                         .odt[Xcp_Internal.daq_pointer.odtNumber]
+                         .odtEntry[Xcp_Internal.daq_pointer.odtEntryNumber];
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = p_entry->bitOffset;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = p_entry->length;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_entry->addressExtension;
+        Xcp_CopyFromU32WithOrder((uint32)p_entry->address,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+
+        /* 1.1/1.6.4.1.2.2: "The DAQ list pointer is auto post incremented within one and the
+         * same ODT (See WRITE_DAQ)." Same helper, same advance, same stop (not wrap) at the ODT
+         * border as WRITE_DAQ and WRITE_DAQ_MULTIPLE -- see Xcp_DaqPointerAdvance's own doc
+         * comment above. */
+        Xcp_DaqPointerAdvance();
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     uint16 daq_list_number;

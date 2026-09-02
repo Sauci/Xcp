@@ -452,6 +452,14 @@ uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduIn
 uint8 Xcp_DTOCmdDaqWriteDaqMultiple(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief READ_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.2.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqWriteDaq and
+ * Xcp_DTOCmdDaqWriteDaqMultiple: all three read or write through the same DAQ pointer state
+ * (Xcp_Internal.daq_pointer) and share its auto-post-increment (Xcp_DaqPointerAdvance).
+ */
+uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief resets every ODT entry of one DAQ list to its power-up state.
  * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqClearDaqList which is its main caller, but
  * declared here with external linkage because Xcp_Init (Xcp.c) calls it too, for every
