@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.8.0)
+# 3.19 for string(JSON), which replaces the execute_process+python configuration reads below.
+# The Docker image gets it from PyPI (requirements.txt) because alpine 3.10's apk pins 3.14.5.
+cmake_minimum_required(VERSION 3.19)
 
 project(Xcp VERSION 0.1.0 LANGUAGES C)
 
@@ -16,24 +18,64 @@ set(XCP_PYTEST_ARGS "" CACHE STRING "extra arguments forwarded to pytest (e.g. -
 
 find_package(PythonInterp 3.6 REQUIRED)
 
+# All three configuration-derived values below come from one parse of XCP_CONFIG_FILEPATH.
+# string(JSON ... GET/LENGTH) reports a missing key through ERROR_VARIABLE rather than failing the
+# configure step -- an unchecked GET on an absent key is a hard configure error, unlike the
+# dict.get() the Python this replaces used -- so a configuration without "segments" or
+# "protocol_layer.timestamp" has to be, and is, treated as its OFF/0 default explicitly below. The
+# wire-size mapping stays a literal BYTE/WORD/DWORD -> 1/2/4, not anything derived from
+# Xcp_TimestampTypeType: that enum is implicit, and its FOUR_BYTE enumerator is 3, the size the
+# specification marks "Not allowed" (see script/header_cfg.h.jinja2 and script/source_cfg.c.jinja2).
+file(READ ${XCP_CONFIG_FILEPATH} XCP_CONFIG_JSON)
+
+string(JSON XCP_CONFIG_N_CONFIGURATIONS LENGTH ${XCP_CONFIG_JSON} configurations)
+
+set(XCP_PAGING_SUPPORTED_DERIVED OFF)
+set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED OFF)
+set(XCP_DAQ_TIMESTAMP_SIZE_DERIVED 0)
+
+if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
+    math(EXPR XCP_CONFIG_LAST_INDEX "${XCP_CONFIG_N_CONFIGURATIONS} - 1")
+
+    foreach(XCP_CONFIG_INDEX RANGE ${XCP_CONFIG_LAST_INDEX})
+        string(JSON XCP_CFG_SEGMENTS_LENGTH ERROR_VARIABLE XCP_CFG_SEGMENTS_ERROR
+            LENGTH ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} segments)
+        if(NOT XCP_CFG_SEGMENTS_ERROR)
+            if(XCP_CFG_SEGMENTS_LENGTH GREATER 0)
+                set(XCP_PAGING_SUPPORTED_DERIVED ON)
+            endif()
+        endif()
+
+        string(JSON XCP_CFG_TIMESTAMP_SIZE ERROR_VARIABLE XCP_CFG_TIMESTAMP_ERROR
+            GET ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} protocol_layer timestamp size)
+        if(NOT XCP_CFG_TIMESTAMP_ERROR)
+            set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED ON)
+
+            if(XCP_CFG_TIMESTAMP_SIZE STREQUAL "BYTE")
+                set(XCP_CFG_TIMESTAMP_WIRE_SIZE 1)
+            elseif(XCP_CFG_TIMESTAMP_SIZE STREQUAL "WORD")
+                set(XCP_CFG_TIMESTAMP_WIRE_SIZE 2)
+            elseif(XCP_CFG_TIMESTAMP_SIZE STREQUAL "DWORD")
+                set(XCP_CFG_TIMESTAMP_WIRE_SIZE 4)
+            else()
+                message(FATAL_ERROR
+                    "configurations[${XCP_CONFIG_INDEX}].protocol_layer.timestamp.size '${XCP_CFG_TIMESTAMP_SIZE}' in ${XCP_CONFIG_FILEPATH} is not one of BYTE, WORD, DWORD")
+            endif()
+
+            if(XCP_CFG_TIMESTAMP_WIRE_SIZE GREATER XCP_DAQ_TIMESTAMP_SIZE_DERIVED)
+                set(XCP_DAQ_TIMESTAMP_SIZE_DERIVED ${XCP_CFG_TIMESTAMP_WIRE_SIZE})
+            endif()
+        endif()
+    endforeach()
+endif()
+
 # Whether the PAG commands are compiled in follows from whether the configuration declares a
 # segment, which is the rule the generated Xcp_Cfg.h states and the README documents. Deriving it
 # here rather than defaulting it means the default build of a configuration that declares one
 # actually answers those commands: a fixed default of STD_OFF silently compiled all eight out and
 # answered ERR_CMD_UNKNOWN, since nothing on the library's include path pulls in Xcp_Cfg.h to
 # supply the value instead.
-execute_process(
-    COMMAND ${PYTHON_EXECUTABLE} -c
-        "import json,sys;c=json.load(open(sys.argv[1]));print('ON' if any(x.get('segments') for x in c['configurations']) else 'OFF')"
-        ${XCP_CONFIG_FILEPATH}
-    OUTPUT_VARIABLE XCP_PAGING_SUPPORTED_DERIVED
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE XCP_PAGING_SUPPORTED_RESULT)
-
-if(NOT XCP_PAGING_SUPPORTED_RESULT EQUAL 0)
-    message(FATAL_ERROR "could not derive XCP_PAGING_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
-endif()
-
+#
 # An option, like every other switch here, so that -DXCP_PAGING_SUPPORTED=ON does what a reader
 # of the others would expect. The AUTOSAR STD_ON/STD_OFF spelling is applied where the definition
 # reaches the compiler, as it is for ENABLE_DET. Not FORCE: an explicit -D has to survive the
@@ -50,38 +92,12 @@ option(XCP_PAGING_SUPPORTED
 # source/*.c never includes Xcp_Cfg.h at all, the same gap paging had. Left undefined, or left to
 # that fallback, a configuration that declares protocol_layer.timestamp would silently build with
 # XCP_DAQ_TIMESTAMP_SUPPORTED == STD_OFF, gating Xcp_GetDaqTimestamp's declaration off entirely.
-execute_process(
-    COMMAND ${PYTHON_EXECUTABLE} -c
-        "import json,sys;c=json.load(open(sys.argv[1]));print('ON' if any(x['protocol_layer'].get('timestamp') for x in c['configurations']) else 'OFF')"
-        ${XCP_CONFIG_FILEPATH}
-    OUTPUT_VARIABLE XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE XCP_DAQ_TIMESTAMP_SUPPORTED_RESULT)
-
-if(NOT XCP_DAQ_TIMESTAMP_SUPPORTED_RESULT EQUAL 0)
-    message(FATAL_ERROR "could not derive XCP_DAQ_TIMESTAMP_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
-endif()
-
 option(XCP_DAQ_TIMESTAMP_SUPPORTED
     "enables/disables the data acquisition clock. Defaults to whether XCP_CONFIG_FILEPATH declares a protocol_layer.timestamp block; override only if you know why."
     ${XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED})
 
 # Not boolean, so option() (a BOOL cache variable) does not fit; a plain CACHE STRING is the closest
-# equivalent, matching XCP_PYTEST_ARGS below. XCP_TimestampTypeType's enumerator, not the wire size,
-# is what would be handy to compute this from, but that enum is implicit and deliberately not what
-# this counts (see script/header_cfg.h.jinja2 and script/source_cfg.c.jinja2).
-execute_process(
-    COMMAND ${PYTHON_EXECUTABLE} -c
-        "import json,sys;c=json.load(open(sys.argv[1]));s={'BYTE':1,'WORD':2,'DWORD':4};print(max([s[x['protocol_layer']['timestamp']['size']] for x in c['configurations'] if x['protocol_layer'].get('timestamp')], default=0))"
-        ${XCP_CONFIG_FILEPATH}
-    OUTPUT_VARIABLE XCP_DAQ_TIMESTAMP_SIZE_DERIVED
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE XCP_DAQ_TIMESTAMP_SIZE_RESULT)
-
-if(NOT XCP_DAQ_TIMESTAMP_SIZE_RESULT EQUAL 0)
-    message(FATAL_ERROR "could not derive XCP_DAQ_TIMESTAMP_SIZE from ${XCP_CONFIG_FILEPATH}")
-endif()
-
+# equivalent, matching XCP_PYTEST_ARGS below.
 set(XCP_DAQ_TIMESTAMP_SIZE ${XCP_DAQ_TIMESTAMP_SIZE_DERIVED} CACHE STRING
     "timestamp field width in bytes, as transmitted. Defaults to the largest size any configuration in XCP_CONFIG_FILEPATH declares; override only if you know why.")
 
