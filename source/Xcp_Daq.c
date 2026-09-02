@@ -898,11 +898,12 @@ uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPd
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
 
-    /* Xcp_Internal.daq_clock_capture was written exactly once, synchronously, by
-     * Xcp_CanIfRxIndication (source/Xcp.c) immediately before it dispatched to this function --
-     * not re-read here, so this handler cannot itself become a second, later reader of the
-     * clock for the same request. */
-    Xcp_CopyFromU32WithOrder(Xcp_Internal.daq_clock_capture,
+    /* 1.1/1.6.4.1.2.3 wants the value "when the GET_DAQ_CLOCK command packet has been received".
+     * Xcp_CanIfRxIndication dispatches to this handler synchronously, in the same call that
+     * received the command, so reading the clock here already is that moment -- there is no
+     * later, differently-scheduled point (Xcp_MainFunction never assembles CTO responses; see
+     * the Task 8 report) for this read to be deferred from. */
+    Xcp_CopyFromU32WithOrder(Xcp_GetDaqTimestamp(),
                              &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
                              Xcp_Ptr->general->byteOrder);
 

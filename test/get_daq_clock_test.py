@@ -9,20 +9,20 @@ from .download_test import connect
 def test_get_daq_clock_returns_the_value_captured_at_reception():
     """1.1/1.6.4.1.2.3: the response 'contains the current value of the data acquisition clock,
     when the GET_DAQ_CLOCK command packet has been received'. Xcp_CanIfRxIndication dispatches
-    Xcp_DTOCmdDaqGetDaqClock synchronously, in the same call that receives the command (see the
-    Task 8 report's trace -- Xcp_MainFunction never assembles CTO responses, it only transmits
-    what Xcp_CanIfRxIndication already built), so the handler reads the clock through
-    Xcp_Internal.daq_clock_capture rather than calling Xcp_GetDaqTimestamp() itself. That keeps
-    the clock read pinned to exactly one call site for this command, so a future change cannot
-    silently grow a second, later read of it. The mock returns a different value on each call
-    precisely so that call is distinguishable: a second call landing anywhere in this path would
-    surface as the wrong value below."""
+    Xcp_DTOCmdDaqGetDaqClock synchronously, in the same call that receives the command, so that
+    handler's own Xcp_GetDaqTimestamp() call already happens at reception -- there is no later,
+    differently-scheduled point this could be deferred to (Xcp_MainFunction never assembles CTO
+    responses; see the Task 8 report). What the wire value alone cannot prove is that the clock was
+    read only once: a second, redundant read whose result is discarded would leave the same bytes
+    on the wire and be invisible below, so call_count is asserted directly instead."""
     handle = XcpTest(DefaultConfig(timestamp=timestamp()))
     connect(handle)
     handle.xcp_get_daq_timestamp.side_effect = (v for v in (0x11111111, 0x22222222, 0x33333333))
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xDC,)))
     handle.lib.Xcp_MainFunction()
+
+    assert handle.xcp_get_daq_timestamp.call_count == 1
 
     frame = handle.can_if_transmit.call_args[0][1].SduDataPtr
     assert frame[0] == 0xFF

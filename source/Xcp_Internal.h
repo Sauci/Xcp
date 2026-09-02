@@ -298,18 +298,6 @@ typedef struct {
         uint8 odtEntryNumber;
         boolean valid;
     } daq_pointer;
-
-    /**
-     * @brief the data acquisition clock value captured when a GET_DAQ_CLOCK request was accepted.
-     * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.3 requires the value "when
-     * the GET_DAQ_CLOCK command packet has been received", not whatever value happens to be
-     * current at some later point. Written exactly once, synchronously, by
-     * Xcp_CanIfRxIndication immediately before it dispatches to Xcp_DTOCmdDaqGetDaqClock
-     * (source/Xcp.c); read exactly once by that same handler (source/Xcp_Daq.c). See the Task 8
-     * report for the full trace of why the existing CTO busy flag is sufficient protection and no
-     * exclusive area guards this field.
-     */
-    uint32 daq_clock_capture;
     uint8 internal_buffer[0x08u];
 } Xcp_InternalType;
 
@@ -496,11 +484,10 @@ uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfo
 
 /**
  * @brief GET_DAQ_CLOCK, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.3.
- * @details Defined in Xcp_Daq.c, guarded there by XCP_DAQ_TIMESTAMP_SUPPORTED, like the field it
- * reads (Xcp_Internal.daq_clock_capture) and the capture call site in Xcp_CanIfRxIndication
- * (source/Xcp.c). Declared unconditionally here -- the same convention the
- * XCP_PAGING_SUPPORTED-guarded Xcp_DTOCmdPag* handlers above already use -- because nothing
- * references this declaration when the feature is off: the PID table falls back to
+ * @details Defined in Xcp_Daq.c, guarded there by XCP_DAQ_TIMESTAMP_SUPPORTED, same as the
+ * Xcp_GetDaqTimestamp() call it makes directly. Declared unconditionally here -- the same
+ * convention the XCP_PAGING_SUPPORTED-guarded Xcp_DTOCmdPag* handlers above already use -- because
+ * nothing references this declaration when the feature is off: the PID table falls back to
  * Xcp_CmdNotImplemented in that build instead.
  */
 uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo);
