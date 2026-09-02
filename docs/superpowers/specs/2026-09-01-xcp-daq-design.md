@@ -833,8 +833,8 @@ The chain of DD3 is what makes an aperiodic main function survivable, so
 `daq_transmission_test.py` drives it the way the integration does: trigger a burst without
 calling `Xcp_MainFunction` at all, feed confirmations, and assert every frame goes out.
 Exclusive-area balance is asserted from the held-state model in `test/conftest.py`
-(`_dto_queue_area_balance`, backed by each mock's side effect at :424-436 and the teardown leak
-check at :528) — `test/stub/SchM_Xcp.h` only `extern`-declares the two functions and counts
+(`_callback_invariants`, backed by each mock's side effect at :434-447 and the teardown leak
+check at :560) — `test/stub/SchM_Xcp.h` only `extern`-declares the two functions and counts
 nothing itself.
 
 Existing files that change: `asam_error_matrix_test.py` gains rows for the nine commands and
