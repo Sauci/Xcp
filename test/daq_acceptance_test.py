@@ -80,8 +80,8 @@ class DaqSession(object):
             self.exchange((0xE1, 0xFF, size, 0x00) +
                           tuple(u32_to_array(address, self.byte_order)))
 
-    def start(self, daq_list, channel=0):
-        self.exchange((0xE0, 0x00) + tuple(u16_to_array(daq_list, self.byte_order)) +
+    def start(self, daq_list, channel=0, mode=0x00):
+        self.exchange((0xE0, mode) + tuple(u16_to_array(daq_list, self.byte_order)) +
                       tuple(u16_to_array(channel, self.byte_order)) + (0x01, 0x00))
         return self.exchange((0xDE, 0x01) + tuple(u16_to_array(daq_list, self.byte_order)))
 
@@ -101,35 +101,92 @@ class DaqSession(object):
         return frames
 
 
-@pytest.mark.parametrize('ag', address_granularities)
-@pytest.mark.parametrize('ident', identification_field_types)
-@pytest.mark.parametrize('byte_order', byte_orders)
-@pytest.mark.parametrize('max_dto', max_dtos)
-def test_every_dto_byte_lands_where_the_specification_puts_it(ag, ident, byte_order, max_dto):
-    """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1: identification field, then data.
+def _raw(params):
+    """Unwraps a list of `pytest.param(v, id=...)` entries -- the form every axis in parameter.py
+    is defined in -- into their plain values, so a combined parametrisation can iterate exactly
+    the values each axis already defines there instead of keeping a second, driftable copy of the
+    same list here."""
+    return [p.values[0] for p in params]
+
+
+# The base sweep: MAX_DTO x byte order x identification field type x address granularity, with no
+# timestamp. Unchanged from before the timestamp dimension was added below -- ts_size is always 0
+# here, so `capacity` reduces to exactly the expression this sweep used when it was the only one.
+_full_layout_cases = [
+    pytest.param(ag, ident, byte_order, max_dto, None,
+                 id='MAX_DTO = {:03}d-byte_order = {}-ident = {}-AG = {}-TS = NONE'.format(
+                         max_dto, byte_order, ident, ag))
+    for max_dto in _raw(max_dtos)
+    for byte_order in _raw(byte_orders)
+    for ident in _raw(identification_field_types)
+    for ag in _raw(address_granularities)
+]
+
+# One representative combination of address granularity, byte order and MAX_DTO, applied to every
+# identification field type in turn, swept across every timestamp size. Deliberately away from
+# DefaultConfig's own defaults (AG = BYTE, byte_order = LITTLE_ENDIAN, MAX_DTO = 8): a hardcoded
+# granularity, byte order or offset could otherwise satisfy these assertions by coincidence.
+# MAX_DTO = 16 at WORD granularity leaves every identification field width room for a DWORD
+# timestamp plus the same three-entry shape the base sweep above plans, so a mis-advanced payload
+# offset is caught here exactly as it would be there.
+_TIMESTAMPED_AG = 'WORD'
+_TIMESTAMPED_BYTE_ORDER = 'BIG_ENDIAN'
+_TIMESTAMPED_MAX_DTO = 16
+_TIMESTAMPED_CLOCK_VALUE = 0x89ABCDEF
+
+_bounded_timestamp_cases = [
+    pytest.param(_TIMESTAMPED_AG, ident, _TIMESTAMPED_BYTE_ORDER, _TIMESTAMPED_MAX_DTO, size,
+                 id='ident = {}-TS = {}'.format(ident, size))
+    for ident in _raw(identification_field_types)
+    for size in ('BYTE', 'WORD', 'DWORD')
+]
+
+
+@pytest.mark.parametrize('ag, ident, byte_order, max_dto, timestamp_size',
+                         _full_layout_cases + _bounded_timestamp_cases)
+def test_every_dto_byte_lands_where_the_specification_puts_it(ag, ident, byte_order, max_dto,
+                                                               timestamp_size):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1: identification field, then
+    timestamp (when configured), then data.
 
     Two DAQ lists so the absolute DAQ list number in the relative identification field types is
-    non-zero, and three ODTs so absolute ODT numbering is exercised past FIRST_PID."""
+    non-zero, and three ODTs so absolute ODT numbering is exercised past FIRST_PID.
+
+    The timestamp sizes are swept against one representative combination per identification field
+    type rather than against the full cross product of MAX_DTO, byte order and address
+    granularity. The full product would multiply this file's already-dominant share of the suite
+    fourfold, for coverage that is redundant: the timestamp is written by one switch on
+    timestampType through the same Xcp_CopyFrom*WithOrder helpers every other multi-byte field
+    uses, so its interaction with byte order is exercised once per size and its interaction with
+    the identification field -- the only axis whose offset it actually depends on -- is exercised
+    for every type. A suite nobody runs locally has worse coverage than a bounded one that is run.
+    """
     element_size = element_size_from_address_granularity(ag)
-    capacity = max_dto - identification_field_size[ident]
+    ts_size = timestamp_wire_size[timestamp_size]
+    capacity = max_dto - identification_field_size[ident] - ts_size
     sizes = plan_odt_entries(capacity, element_size, wanted=3)
 
     if not sizes:
         pytest.skip('{} leaves no room for a {}-byte element'.format(ident, element_size))
 
+    timestamp_config = timestamp(size=timestamp_size) if timestamp_size is not None else None
     handle = XcpTest(DefaultConfig(address_granularity=ag,
                                    identification_field_type=ident,
                                    byte_order=byte_order,
                                    max_dto=max_dto,
+                                   timestamp=timestamp_config,
                                    daqs=(daq(name='DAQ1', max_odt=2, max_odt_entries=4),
                                          daq(name='DAQ2', max_odt=3, max_odt_entries=4))))
     connect(handle)
+
+    if timestamp_size is not None:
+        handle.xcp_get_daq_timestamp.return_value = _TIMESTAMPED_CLOCK_VALUE
 
     session = DaqSession(handle, byte_order)
     session.install_memory(element_size)
     for odt in range(3):
         session.write_odt(daq_list=1, odt=odt, sizes=sizes, element_size=element_size)
-    first_pid = session.start(daq_list=1)[1]
+    first_pid = session.start(daq_list=1, mode=0x10 if timestamp_size is not None else 0x00)[1]
 
     assert first_pid == 2, 'DAQ2 follows DAQ1, which owns two ODTs'
 
@@ -139,11 +196,21 @@ def test_every_dto_byte_lands_where_the_specification_puts_it(ag, ident, byte_or
 
     for odt, (pdu_id, frame) in enumerate(frames):
         header = expected_identification_field(ident, first_pid, odt, 1, byte_order)
+        # 1.1/1.1.2.2 Diagram 10: the timestamp rides in the first ODT of the cycle only.
+        odt_ts_size = ts_size if odt == 0 else 0
 
         assert tuple(frame[0:len(header)]) == header, 'ODT {} identification field'.format(odt)
-        assert len(frame) == len(header) + sum(sizes), 'ODT {} length'.format(odt)
 
-        offset = len(header)
+        if odt_ts_size:
+            expected_ts = (_TIMESTAMPED_CLOCK_VALUE & ((1 << (8 * odt_ts_size)) - 1)).to_bytes(
+                    odt_ts_size, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[byte_order])
+            assert tuple(frame[len(header):len(header) + odt_ts_size]) == tuple(expected_ts), \
+                'ODT {} timestamp'.format(odt)
+
+        payload_offset = len(header) + odt_ts_size
+        assert len(frame) == payload_offset + sum(sizes), 'ODT {} length'.format(odt)
+
+        offset = payload_offset
         for address in expected_addresses(odt, sizes, element_size):
             expected = value_for_address(address, element_size)
             assert bytes(frame[offset:offset + element_size]) == expected, \
