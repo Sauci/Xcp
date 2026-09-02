@@ -1,8 +1,10 @@
 # XCP Part 2 — Conformance Roadmap
 
-**Date:** 2026-08-29
-**Baseline:** branch `develop`, commit `b21724c` (2024-06-27)
-**Reference:** *XCP -Part 2- Protocol Layer Specification -1.0*, ASAM e.V., 2003-04-08 (`docs/external/`)
+**Date:** 2026-08-29, revised 2026-09-02 after SP1 and SP2a
+**Baseline:** branch `develop`, commit `50a0a0f` (2026-09-02)
+**Reference:** *XCP -Part 2- Protocol Layer Specification -1.1*, ASAM e.V. (`docs/external/`).
+Version 1.0 is kept alongside it: the two renumber §1.6.4 wholesale, so a citation is only
+unambiguous once it names its version.
 
 This document is a map, not an implementation spec. It records where the module stands
 against the ASAM specification, what remains, and how the remaining work decomposes into
@@ -16,12 +18,12 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 
 | Concern | Where |
 |:--|:--|
-| Protocol logic | `source/Xcp.c` — 3876 lines, single translation unit |
+| Protocol logic | six translation units, 5139 lines: `Xcp.c` (2084, dispatch and shared machinery), `Xcp_Std.c` (1203), `Xcp_Cal.c` (301), `Xcp_Pag.c` (470), `Xcp_Daq.c` (735), `Xcp_DaqRuntime.c` (346) |
 | Public API | `interface/Xcp.h`, `Xcp_Types.h`, `Xcp_Errors.h`, `XcpOnCan_Cbk.h` |
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 55 tests, 13 skipped |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12455 passing, 30 skipped |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -53,8 +55,11 @@ specification, including the ones not yet implemented.
 ## 2. Coverage against Part 2
 
 Legend: **done** — implemented and tested · **partial** — reachable but incomplete or
-incorrect · **stub** — dispatches to a handler that returns a positive response without
-doing anything · **absent** — no handler; the PID dispatches to `Xcp_DTODaqPacket`.
+incorrect · **absent** — no handler; the PID dispatches to `Xcp_CmdNotImplemented`, which
+answers `ERR_CMD_UNKNOWN` as §1.4 requires.
+
+The **stub** status of the original revision is gone: it described handlers that returned a
+positive response without doing anything, which was defect D2, fixed in SP1.
 
 ### 2.1 Standard commands (§1.4.1, §1.6.1)
 
@@ -70,7 +75,7 @@ doing anything · **absent** — no handler; the PID dispatches to `Xcp_DTODaqPa
 | 0xF8 | GET_SEED | done |
 | 0xF7 | UNLOCK | done |
 | 0xF6 | SET_MTA | done |
-| 0xF5 | UPLOAD | partial — see defect D1 |
+| 0xF5 | UPLOAD | done — D1 fixed in SP1 |
 | 0xF4 | SHORT_UPLOAD | done |
 | 0xF3 | BUILD_CHECKSUM | done |
 | 0xF2 | TRANSPORT_LAYER_CMD | partial — `GET_SLAVE_ID` only; `SET_DAQ_LIST_CAN_ID` absent |
@@ -80,55 +85,71 @@ doing anything · **absent** — no handler; the PID dispatches to `Xcp_DTODaqPa
 
 | PID | Command | Optional | Status |
 |:--|:--|:--|:--|
-| 0xF0 | DOWNLOAD | no | partial — validates the element count, then the success branch is empty; also gated on the wrong block-mode flag, see D8 |
-| 0xEF | DOWNLOAD_NEXT | yes | stub |
-| 0xEE | DOWNLOAD_MAX | yes | absent |
-| 0xED | SHORT_DOWNLOAD | yes | absent |
-| 0xEC | MODIFY_BITS | yes | absent |
+| 0xF0 | DOWNLOAD | no | done — completed in SP1, block transfer included; D8 fixed |
+| 0xEF | DOWNLOAD_NEXT | yes | done |
+| 0xEE | DOWNLOAD_MAX | yes | done |
+| 0xED | SHORT_DOWNLOAD | yes | done |
+| 0xEC | MODIFY_BITS | yes | done |
+
+All five landed in SP1 (#1).
 
 ### 2.3 Page switching commands (§1.4.3, §1.6.3)
 
 | PID | Command | Optional | Status |
 |:--|:--|:--|:--|
-| 0xEB | SET_CAL_PAGE | no | absent |
-| 0xEA | GET_CAL_PAGE | no | absent |
-| 0xE9 | GET_PAG_PROCESSOR_INFO | yes | absent |
-| 0xE8 | GET_SEGMENT_INFO | yes | absent |
-| 0xE7 | GET_PAGE_INFO | yes | absent |
-| 0xE6 | SET_SEGMENT_MODE | yes | absent |
-| 0xE5 | GET_SEGMENT_MODE | yes | absent |
-| 0xE4 | COPY_CAL_PAGE | yes | absent |
+| 0xEB | SET_CAL_PAGE | no | done |
+| 0xEA | GET_CAL_PAGE | no | done |
+| 0xE9 | GET_PAG_PROCESSOR_INFO | yes | done |
+| 0xE8 | GET_SEGMENT_INFO | yes | done |
+| 0xE7 | GET_PAGE_INFO | yes | done |
+| 0xE6 | SET_SEGMENT_MODE | yes | done |
+| 0xE5 | GET_SEGMENT_MODE | yes | done |
+| 0xE4 | COPY_CAL_PAGE | yes | done |
 
-No segment or page model exists anywhere in the configuration, the generator, or the
-runtime.
+All eight landed in SP1 (#1), together with the segment and page configuration model that
+did not exist when this document was first written. The whole group is compiled out when
+`XCP_PAGING_SUPPORTED` is `STD_OFF`, which the build derives from whether the configuration
+declares a segment; the PIDs then dispatch to `Xcp_CmdNotImplemented`.
 
 ### 2.4 Data acquisition and stimulation (§1.4.4, §1.6.4)
 
-All seventeen commands defined in 1.0 — `CLEAR_DAQ_LIST` (0xE3) through `ALLOC_ODT_ENTRY`
-(0xD3) — are **stubs**: seventeen identical handler bodies of the form
+| PID | Command | Optional | Status |
+|:--|:--|:--|:--|
+| 0xE3 | CLEAR_DAQ_LIST | no | done |
+| 0xE2 | SET_DAQ_PTR | no | done |
+| 0xE1 | WRITE_DAQ | no | done |
+| 0xE0 | SET_DAQ_LIST_MODE | no | done — every unimplemented mode bit answers `ERR_MODE_NOT_VALID`; a priority above 0 answers `ERR_OUT_OF_RANGE` per §1.6.4.1.1.3 |
+| 0xDF | GET_DAQ_LIST_MODE | yes in 1.1 | done |
+| 0xDE | START_STOP_DAQ_LIST | no | done |
+| 0xDD | START_STOP_SYNCH | no | done |
+| 0xDC | GET_DAQ_CLOCK | yes | absent — SP2b |
+| 0xDB | READ_DAQ | yes | absent — SP2b |
+| 0xDA | GET_DAQ_PROCESSOR_INFO | yes | done |
+| 0xD9 | GET_DAQ_RESOLUTION_INFO | yes | done |
+| 0xD8 | GET_DAQ_LIST_INFO | yes | absent — SP2b |
+| 0xD7 | GET_DAQ_EVENT_INFO | yes | absent — SP2b |
+| 0xD6 | FREE_DAQ | yes | absent — SP2c |
+| 0xD5 | ALLOC_DAQ | yes | absent — SP2c |
+| 0xD4 | ALLOC_ODT | yes | absent — SP2c |
+| 0xD3 | ALLOC_ODT_ENTRY | yes | absent — SP2c |
+| 0xC7 | WRITE_DAQ_MULTIPLE | yes | absent — SP2b. New in 1.1; named in `Xcp_PIDTable` so the gap is visible |
 
-```c
-(void)pPduInfo;
-*responseExpected = TRUE;
-return E_OK;
-```
+Nine of the eighteen are implemented. The DAQ *runtime* exists: `Xcp_DaqRuntime.c` samples
+every running list bound to an event channel, builds the identification field, and queues
+complete frames on a ring drained by the transmission chain. All four identification field
+types of §1.1.2.1 are supported.
 
-The slave therefore answers each with whatever the response buffer last contained.
+**Event channels are not scheduled by the module.** `Xcp_TriggerEventChannel` is a vendor
+extension the integrator calls from whatever context the event actually occurs in; the
+module holds no clock and never triggers a channel on its own. This is a decision, not a
+gap — see DD1–DD3 of `2026-09-01-xcp-daq-design.md`. `SWS_Xcp` R4.3.1 defines no service for
+triggering a DAQ event, and ECUC_Xcp_00014 states the module does not require its main
+function period, so a module-driven raster could not have been built on anything the
+configuration is allowed to know.
 
-The DAQ *runtime* is absent in its entirety:
-
-- `Xcp_CanIfTriggerTransmit` returns `E_OK` without populating the PDU.
-- `Xcp_CanIfRxIndication` carries `/* TODO: handle DTOs common code here... */` where STIM
-  reception belongs.
-- `Xcp_MainFunction` has no event-channel processing.
-- No timestamp support (§1.1.2.2), and no identification field variants beyond the
-  hard-coded `ABSOLUTE` (§1.1.2.1).
-
-The configuration model is further along than the runtime: `xcp.json` already declares DAQ
-lists, ODT counts, events and PDU mappings, and the generator emits `Xcp_DaqListType` /
-`Xcp_OdtType` / `Xcp_OdtEntryType` arrays. Two values are hard-coded in the template and
-will need to become configurable: `DAQ_STATIC` for `daqConfigType`, and `0x07` for
-`odtEntryMaxSize`.
+Still absent from the runtime: the timestamp field (§1.1.2.2), `PID_OFF` and `ALTERNATING`,
+DAQ list prioritisation, more than one outstanding DTO frame, and STIM reception in
+`Xcp_CanIfRxIndication`, which remains SP3.
 
 ### 2.5 Non-volatile memory programming (§1.4.5, §1.6.5)
 
@@ -141,8 +162,8 @@ All eleven commands — `PROGRAM_START` (0xD2) through `PROGRAM_VERIFY` (0xC8) �
 | Time-out values t1…t7 | §1.7.2 | **not a slave concern.** §1.7.2 assigns the timers entirely to the master, which reads t1…t6 from the A2L file. The slave implements nothing here |
 | `EV_CMD_PENDING` | §1.7.2.4.2 | absent. This is the slave's only obligation under §1.7.2 — the one way it can ask the master to restart time-out detection |
 | Interleaved communication model | §1.7.2.3 | absent. Requires the slave to accept request *k+1* before answering *k*; `cto_queue_size` and `interleaved_mode` exist in `xcp.json` but nothing reads them |
-| RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | `XCP_CONNECTION_STATE_RESUME` is declared but never entered. **Depends on DAQ** — the RESUME flag is a `SET_DAQ_LIST_MODE` bit marking a list as part of a resume configuration, `RESUME_SUPPORTED` lives in `DAQ_PROPERTIES`, and the mechanism rests on `STORE_DAQ_REQ` persistence. It cannot be built before SP2 |
-| Event codes (EV_*) | §1.2 | only `EV_STORE_CAL` (0x03). Absent: `EV_RESUME_MODE`, `EV_CLEAR_DAQ`, `EV_STORE_DAQ`, `EV_CMD_PENDING`, `EV_DAQ_OVERLOAD`, `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
+| RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | `XCP_CONNECTION_STATE_RESUME` is declared but never entered. The DAQ list infrastructure it needs now exists (SP2a), but `SET_DAQ_LIST_MODE` rejects the RESUME bit with `ERR_MODE_NOT_VALID` and `STORE_DAQ_REQ` persistence is unbuilt. Scheduled into SP5 |
+| Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x01), the latter added in SP2a and configurable through `overload_indication`. Absent: `EV_RESUME_MODE`, `EV_CLEAR_DAQ`, `EV_STORE_DAQ`, `EV_CMD_PENDING`, `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
 | Extended error payloads | §1.1.3.3 | absent — see defect D6 |
 
@@ -156,9 +177,16 @@ into SP1; it belongs with D6.
 
 ## 3. Known defects in existing code
 
+**Status as of 2026-09-02:** D1, D2, D3, D4, D5 and D8 were fixed in SP1; D7 fell out of the
+same dispatch rework. D6 and D9 remain open — D9 is scheduled into SP5, D6 travels with the
+per-segment checksum reconciliation noted at the end of §2.6. The entries below are kept as
+written, each with its outcome, because the reasoning is what makes the fix reviewable.
+
 These are live in the current baseline, independent of any new feature work.
 
 **D1 — `Xcp_DataTransferInitialize` inverts its range check.** At `source/Xcp.c:3717`:
+
+> **Fixed in SP1.** `Xcp_DataTransferInitialize` now compares against what fits, in `source/Xcp.c`.
 
 ```c
 if ((Xcp_Ptr->general->maxCto - 0x02u) > (uint16)((numberOfDataElements * elementSize) + alignment))
@@ -184,6 +212,8 @@ commands. With the default `config/xcp.json`, a master sending `COPY_CAL_PAGE`,
 `GET_SEGMENT_INFO` or `MODIFY_BITS` receives a positive response assembled from stale
 buffer contents rather than `ERR_CMD_UNKNOWN`.
 
+> **Fixed in SP1.** Every unimplemented PID dispatches to `Xcp_CmdNotImplemented`, which answers `ERR_CMD_UNKNOWN`.
+
 **D3 — `Xcp_Errors.h` is missing six error codes** required by the CAL and PAG error
 matrices: `ERR_WRITE_PROTECTED` (0x23), `ERR_ACCESS_DENIED` (0x24), `ERR_PAGE_NOT_VALID`
 (0x26), `ERR_MODE_NOT_VALID` (0x27), `ERR_SEGMENT_NOT_VALID` (0x28) and
@@ -191,12 +221,19 @@ matrices: `ERR_WRITE_PROTECTED` (0x23), `ERR_ACCESS_DENIED` (0x24), `ERR_PAGE_NO
 `source/Xcp.c` and are already used in `Xcp_CTOErrorMatrix`, so only the wire-value
 definitions are missing.
 
+> **Fixed in SP1.** `Xcp_Errors.h` carries all nineteen ASAM codes, including `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE`, new in 1.1.
+
 **D4 — dead and duplicated helpers.** `Xcp_BlockTransferWriteSlaveMemory` and
 `Xcp_DataTransferActive` have no callers. `Xcp_DataTransferActive` is a byte-for-byte
 duplicate of `Xcp_BlockTransferIsActive`.
 
+> **Fixed in SP1.** `Xcp_DataTransferActive` is deleted. `Xcp_BlockTransferWriteSlaveMemory` is
+> still there and is no longer dead: SP1's `DOWNLOAD` block transfer is its caller.
+
 **D5 — `source/Xcp.c` is a single 3876-line translation unit.** Full Part 2 conformance
 would plausibly triple that in one file.
+
+> **Fixed in SP1.** Six translation units; see the table in §1.
 
 **D6 — `BUILD_CHECKSUM` omits its extended error payload.** §1.6.1.2.9 defines a specific
 negative-response layout — byte 0 `0xFE`, byte 1 the error code, bytes 2,3 reserved, bytes
@@ -206,6 +243,8 @@ limit. There is also no configuration field for the maximum block size; the AML 
 as `MAX_BLOCK_SIZE` inside a per-segment `CHECKSUM` block (§2.1). Fixing this needs the same
 extended-error mechanism that `DOWNLOAD_NEXT` requires for its `ERR_SEQUENCE` payload
 (§1.6.2.2.1), which SP1 introduces — so this is cheapest to fix immediately after SP1.
+
+> **Open.** Belongs with the per-segment checksum reconciliation described at the end of §2.6.
 
 (The checksum *type* mapping is correct: `Xcp_ChecksumType` is a zero-based internal enum,
 but `Xcp_DTOCmdStdBuildChecksum` translates it explicitly to the ASAM wire values 0x01..0x09
@@ -218,6 +257,8 @@ and 0xFF at `source/Xcp.c:2639` before transmitting.)
 (`source/Xcp.c:3716`) both test `slaveBlockModeSupported`, while the module's own
 `GET_COMM_MODE_INFO` handler correctly reports `MAX_BS` and `MIN_ST` under
 `masterBlockModeSupported` (`source/Xcp.c:3145`). The module contradicts what it advertises.
+
+> **Fixed in SP1.**
 
 Latent only because `config/xcp.json` enables both flags. A configuration with
 `master_block_mode: false, slave_block_mode: true` would accept multi-packet `DOWNLOAD`
@@ -234,6 +275,8 @@ reset it to 0 on `CLEAR_DAQ_REQ`. `Xcp_CTOCmdStdGetStatus` returns the constant 
 `test/get_status_test.py` is the marker left for it — note its name misstates the byte
 offsets. Because persistence is defined in terms of DAQ list storage, this belongs with SP2.
 
+> **Open.** Scheduled into SP5.
+
 **D7 — `Xcp_PIDTable` misroutes the entire command space above 0xE3.** §1.1.5.1 fixes the
 master-to-slave identifier space at `0xC0..0xFF` for commands and `0x00..0xBF` for STIM ODT
 numbers; DAQ identifiers only ever travel slave-to-master (§1.1.5.2). Yet roughly thirty
@@ -241,13 +284,18 @@ entries in the command half of the table point at `Xcp_DTODaqPacket`. Combined w
 hard-coded enable bits of D2, this is what makes unimplemented commands answer positively.
 SP1 removes `Xcp_DTODaqPacket` from the table entirely.
 
+> **Fixed.** Resolved by the same dispatch rework as D2; the table now routes 0xC0–0xFF correctly.
+
 ---
 
 ## 4. Decomposition
 
 Ordered. Each sub-project is independently shippable and leaves the suite green.
 
-### SP1 — Calibration and page switching (CAL + PAG)
+**Progress:** SP1 is complete (#1). SP2a is complete (#2), with follow-ups in #3 and #4.
+SP2b is next.
+
+### SP1 — Calibration and page switching (CAL + PAG) — **complete**
 
 Completes `DOWNLOAD`, implements the four optional CAL commands and all eight PAG commands,
 introduces the segment/page configuration model, and fixes D1–D4. Opens with the source
@@ -264,20 +312,30 @@ external value.
 ### SP2 — Data acquisition (DAQ)
 
 The eighteen DAQ commands of 1.1 — the seventeen of 1.0 plus `WRITE_DAQ_MULTIPLE` (`0xC7`)
-— static and dynamic list configuration, ODT-to-DTO transmission, event-channel scheduling
-in `Xcp_MainFunction`, the identification field variants of §1.1.2.1 and the timestamp field
-of §1.1.2.2.
+— static and dynamic list configuration, ODT-to-DTO transmission, event-channel triggering,
+the identification field variants of §1.1.2.1 and the timestamp field of §1.1.2.2.
+
+This paragraph originally placed event-channel scheduling "in `Xcp_MainFunction`". SP2a
+rejected that: the module holds no clock and the integrator calls `Xcp_TriggerEventChannel`
+from the context the event occurs in. See §2.4 and DD1–DD3 of the DAQ design.
 
 Depends on SP1 only for the source layout. The largest and riskiest sub-project, decomposed
 into three phases, each of which leaves a slave that works rather than a layer that does
 not:
 
-- **SP2a** — static DAQ measurement end to end: the mandatory basic and static commands, the
-  two discovery commands, the configuration model, all four identification field types, and
-  the sampling and transmission runtime. Design: `2026-09-01-xcp-daq-design.md`.
-- **SP2b** — the remaining optional commands (`WRITE_DAQ_MULTIPLE`, `READ_DAQ`,
+- **SP2a** — **complete.** Static DAQ measurement end to end: the mandatory basic and static
+  commands, the two discovery commands, the configuration model, all four identification
+  field types, and the sampling and transmission runtime. Design:
+  `2026-09-01-xcp-daq-design.md`.
+- **SP2b** — **next.** The remaining optional commands (`WRITE_DAQ_MULTIPLE`, `READ_DAQ`,
   `GET_DAQ_CLOCK`, `GET_DAQ_LIST_INFO`, `GET_DAQ_EVENT_INFO`), the timestamp field, `PID_OFF`,
   `ALTERNATING`, DAQ list prioritisation, and multiple outstanding DTO frames.
+
+  Those last two are not of a kind with the rest. Five new command handlers extend a dispatch
+  surface that already works; prioritisation and multiple outstanding frames change the
+  transmission chain SP2a built — the one guarded by the `SchM` exclusive area and shaped by
+  D16. Scope them deliberately, and consider splitting them out, rather than treating the
+  bullet as one homogeneous list.
 - **SP2c** — dynamic DAQ list configuration (§1.6.4.3) and the `DAQ_CONFIG_TYPE` = dynamic
   branch.
 
