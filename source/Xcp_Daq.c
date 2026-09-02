@@ -727,6 +727,76 @@ uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *
     return E_OK;
 }
 
+/**
+ * @brief GET_DAQ_LIST_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1.
+ * @details Unlike its neighbours in the PID table (0xD9 GET_DAQ_RESOLUTION_INFO, 0xDA
+ * GET_DAQ_PROCESSOR_INFO, 0xDB READ_DAQ, all 1.6.4.1.2.x), this command's own section sits in a
+ * different subtree -- 1.6.4 is renumbered wholesale between 1.0 and 1.1, so nothing here carries
+ * a 1.0-era citation forward.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    /* 1.1/1.6.4.2.2.1: "If the specified list is not available, ERR_OUT_OF_RANGE will be
+     * returned." Unlike the DAQ pointer (Task 9, no predicate of its own), the DAQ list has a
+     * real one -- Xcp_DaqListIsValid, used the same way GET_DAQ_LIST_MODE and CLEAR_DAQ_LIST use
+     * it above. */
+    if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+
+    if (error == 0x00u)
+    {
+        uint8 properties = 0x00u;
+
+        /* DAQ_LIST_PROPERTIES:
+         * PREDEFINED stays clear -- the master configures this list's ODT entries through
+         * WRITE_DAQ rather than them being fixed at build time.
+         * EVENT_FIXED stays clear (DD23): Xcp_TriggerEventChannel (Xcp_DaqRuntime.c) samples a
+         * list by the event-channel binding SET_DAQ_LIST_MODE wrote at runtime
+         * (Xcp_Rt[...].daqList[...].eventChannelNumber), not by this list's configured
+         * triggeredDaqListRef -- so the master can genuinely move a list between event channels,
+         * which is exactly what EVENT_FIXED = 0 means. FIXED_EVENT below is therefore don't-care
+         * and zero-filled.
+         * STIM stays clear even for a DAQ_STIM list: data stimulation arrives in SP3, matching
+         * the STIM granularity of 0 that Xcp_DTOCmdDaqGetDaqResolutionInfo (this file) already
+         * reports for the same reason. */
+        if ((Xcp_Ptr->config->daqList[daq_list_number].type == DAQ) ||
+            (Xcp_Ptr->config->daqList[daq_list_number].type == DAQ_STIM))
+        {
+            properties |= XCP_DAQ_LIST_PROPERTIES_DAQ;
+        }
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = properties;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->config->daqList[daq_list_number].maxOdt;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] =
+                Xcp_Ptr->config->daqList[daq_list_number].maxOdtEntries;
+
+        /* FIXED_EVENT: don't-care per EVENT_FIXED above. Zero-filled through the same
+         * byte-order-aware helper every other multi-byte field in this file uses, for
+         * consistency, even though the all-zero result is order-independent. */
+        Xcp_CopyFromU16WithOrder(0x0000u,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x06u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 mode = pPduInfo->SduDataPtr[0x01u];

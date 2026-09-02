@@ -172,6 +172,15 @@ extern "C" {
 #define XCP_DAQ_PROPERTIES_OVERLOAD_MSB (0x01u << 0x06u)
 #define XCP_DAQ_PROPERTIES_OVERLOAD_EVENT (0x01u << 0x07u)
 
+/* DAQ_LIST_PROPERTIES, 1.1/1.6.4.2.2.1. Note the section number: unlike the GET_DAQ_* commands
+ * around GET_DAQ_LIST_INFO in the PID table (0xD9, 0xDA, 0xDB -- all 1.6.4.1.2.x), this one lives
+ * in a different subtree. 1.6.4 is renumbered wholesale between 1.0 and 1.1, so this citation
+ * does not carry over from a 1.0-era comment, and neither would a 1.0 one carry over here. */
+#define XCP_DAQ_LIST_PROPERTIES_PREDEFINED (0x01u << 0x00u)
+#define XCP_DAQ_LIST_PROPERTIES_EVENT_FIXED (0x01u << 0x01u)
+#define XCP_DAQ_LIST_PROPERTIES_DAQ (0x01u << 0x02u)
+#define XCP_DAQ_LIST_PROPERTIES_STIM (0x01u << 0x03u)
+
 /**
  * @brief BIT_OFFSET value meaning "this entry is a normal element, ignore the field".
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2.
@@ -470,6 +479,16 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_DAQ_LIST_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqGetDaqListMode: both take a DAQ_LIST_NUMBER
+ * and answer ERR_OUT_OF_RANGE for one Xcp_DaqListIsValid rejects. Unlike its neighbours in the
+ * PID table, this command's own section sits in a different subtree -- 1.6.4 is renumbered
+ * wholesale between 1.0 and 1.1, so no 1.6.4 citation carries over between them either way.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
 uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
