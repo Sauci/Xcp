@@ -26,28 +26,48 @@ result=$?
 merged=gcov_merged
 rm -rf "$merged"
 
+# The seed matters, and not only as a starting value. gcov-tool merge emits .gcda profiles and no
+# notes, so the .gcno files copied in afterwards come from this same directory, and a .gcda only
+# pairs with the .gcno of the compile that produced it. Seeding from whichever directory sorts
+# first is therefore a coin toss: XCP_PAGING_SUPPORTED is derived per test configuration, so most
+# modules compile Xcp_Pag.c away to nothing and leave a 16-byte .gcno recording no functions. That
+# is what kept Xcp_Pag.c out of the coverage report entirely. Seed from a module that instrumented
+# the most translation units instead, so the notes describe every file the merged profile covers.
+seed=
+seed_profiles=-1
+
 for d in _cffi_xcp_*/usr/project/source; do
     [ -d "$d" ] || continue
-    if [ ! -d "$merged" ]; then
-        cp -r "$d" "$merged" || exit 1
-    else
-        # Failing quietly here would leave $merged holding the first module's profile, which then
-        # gets reported as though it were the union -- the exact defect this merge exists to fix.
-        if ! gcov-tool merge "$merged" "$d" -o "$merged.tmp"; then
-            echo "test.sh: gcov-tool merge failed for $d; coverage would be one module's, not the union" >&2
-            exit 1
-        fi
-        rm -rf "$merged" && mv "$merged.tmp" "$merged" || exit 1
+    profiles=$(ls "$d"/*.gcda 2>/dev/null | wc -l)
+    if [ "$profiles" -gt "$seed_profiles" ]; then
+        seed_profiles=$profiles
+        seed=$d
     fi
 done
 
-# gcov-tool merge emits only the .gcda profiles, so pair them with the notes from any one of the
-# merged directories: every module compiles the same sources with the same flags, so the notes
-# are interchangeable and gcov accepts the pairing.
+if [ -z "$seed" ]; then
+    echo 'test.sh: no profile directories found, so no coverage can be reported' >&2
+    exit 1
+fi
+
+cp -r "$seed" "$merged" || exit 1
+
+for d in _cffi_xcp_*/usr/project/source; do
+    [ -d "$d" ] || continue
+    [ "$d" = "$seed" ] && continue
+    # Failing quietly here would leave $merged holding the seed module's profile, which then
+    # gets reported as though it were the union -- the exact defect this merge exists to fix.
+    if ! gcov-tool merge "$merged" "$d" -o "$merged.tmp"; then
+        echo "test.sh: gcov-tool merge failed for $d; coverage would be one module's, not the union" >&2
+        exit 1
+    fi
+    rm -rf "$merged" && mv "$merged.tmp" "$merged" || exit 1
+done
+
+# gcov-tool merge emits only the .gcda profiles, so restore the notes from the seed -- the one
+# directory whose stamps the merged profiles carry.
 if [ -d "$merged" ]; then
-    for d in _cffi_xcp_*/usr/project/source; do
-        [ -d "$d" ] && cp "$d"/*.gcno "$merged/" 2>/dev/null && break
-    done
+    cp "$seed"/*.gcno "$merged/" 2>/dev/null || true
 
     # One entry per translation unit in the Xcp target, written by CMake's file(GENERATE) from
     # $<TARGET_PROPERTY:Xcp,SOURCES>. Adding a source to add_library is enough; nothing here needs
