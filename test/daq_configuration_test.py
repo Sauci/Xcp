@@ -6,10 +6,13 @@ import os
 
 import pytest
 
+from io import StringIO
+
+from bsw_code_gen import BSWCodeGen
 from jinja2.exceptions import UndefinedError
 
 from .parameter import *
-from .conftest import XcpTest
+from .conftest import Preprocessor, XcpTest
 
 
 identification_field_cases = [
@@ -218,18 +221,82 @@ def test_an_absent_timestamp_block_disables_timestamps():
     assert handle.define('XCP_DAQ_TIMESTAMP_SIZE') == 0
 
 
+def _preprocess_against_the_generated_header(config, probe_body):
+    """Writes the Xcp_Cfg.h `config` generates into the build directory and preprocesses
+    `probe_body` against it with NO compile definitions at all -- the position an integrator is in
+    when they compile a translation unit that includes the generated header without replicating
+    this project's target_compile_definitions. Returns the expanded text, whitespace-normalised."""
+    probe_header = 'Xcp_Cfg_ordering_probe.h'
+    build_directory = os.environ['build_directory']
+    with open(os.path.join(build_directory, probe_header), 'w') as fp:
+        fp.write(BSWCodeGen(config, os.environ['script_directory']).header_cfg)
+
+    pre_processor = Preprocessor()
+    for include_directory in os.environ['include_directories'].split(';') + [build_directory]:
+        pre_processor.add_path(include_directory)
+    pre_processor.parse('#include "{}"\n{}'.format(probe_header, probe_body))
+    handle = StringIO()
+    pre_processor.write(handle)
+    return ' '.join(handle.getvalue().split())
+
+
+ORDERING_PROBE = """
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+PROBE_TIMESTAMP_IS_ON
+#else
+PROBE_TIMESTAMP_IS_OFF
+#endif
+PROBE_TIMESTAMP_WIDTH XCP_DAQ_TIMESTAMP_SIZE
+PROBE_MAX_DTO XCP_MAX_DTO
+"""
+
+
+def test_the_generated_header_is_authoritative_for_the_macros_it_derives():
+    """interface/Xcp_Types.h carries `#ifndef X / #define X <fallback> / #endif` for XCP_MAX_DTO,
+    XCP_DAQ_TIMESTAMP_SUPPORTED and XCP_DAQ_TIMESTAMP_SIZE, so that the harness's handle.define()
+    has literal #define text to key off. The generated Xcp_Cfg.h used to include Xcp_Types.h before
+    its own conditional blocks for the same three names, which meant those fallbacks always won and
+    every one of the generated blocks was unreachable -- both halves were added by the same task
+    and cancelled each other out. A configuration declaring a DWORD timestamp generated a header
+    saying XCP_DAQ_TIMESTAMP_SUPPORTED (STD_OFF) and XCP_DAQ_TIMESTAMP_SIZE (0u), while its
+    Xcp_Cfg.c set timestampType = FOUR_BYTE regardless.
+
+    Preprocessed with no compile definitions whatsoever, deliberately: what this pins is that the
+    header stands on its own, not that CMakeLists.txt threads the right -D through (its sibling
+    below covers that, and it is a separate obligation -- source/*.c never includes Xcp_Cfg.h, so
+    the -D is still what reaches the library sources)."""
+    expanded = _preprocess_against_the_generated_header(
+            DefaultConfig(timestamp=timestamp(size='DWORD'), max_dto=64), ORDERING_PROBE)
+
+    assert 'PROBE_TIMESTAMP_IS_ON' in expanded
+    assert 'PROBE_TIMESTAMP_WIDTH (4u)' in expanded
+    assert 'PROBE_MAX_DTO (0x40u)' in expanded
+
+
+def test_the_generated_header_still_reports_no_clock_when_none_is_configured():
+    """The other direction of the test above: making the blocks reachable must not make them
+    unconditional."""
+    expanded = _preprocess_against_the_generated_header(DefaultConfig(), ORDERING_PROBE)
+
+    assert 'PROBE_TIMESTAMP_IS_OFF' in expanded
+    assert 'PROBE_TIMESTAMP_WIDTH (0u)' in expanded
+
+
 def test_the_build_derives_daq_timestamp_macros_from_the_repository_configuration():
     """The two tests above only prove the harness's own per-test override reaches
     Xcp_GeneralConfig00 -- test/conftest.py injects XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE as compile
     definitions computed straight from each test's own configuration dict, bypassing the generated
     Xcp_Cfg.h entirely (handle.define() reads that injected value, not anything CMake derived).
-    A real, non-test build never gets that injection: generated Xcp_Cfg.h includes Xcp_Types.h
-    (whose fallback exists only so handle.define() has literal text to key off) before its own
-    conditional block for these two macros, so that block's #define is unreachable there, and
-    source/*.c does not include Xcp_Cfg.h at all. Without CMakeLists.txt deriving and injecting
-    the same two macros the way it already does for XCP_PAGING_SUPPORTED, an integrator configuring
-    protocol_layer.timestamp would silently get a module built with XCP_DAQ_TIMESTAMP_SUPPORTED
-    permanently STD_OFF -- Task 2 gates Xcp_GetDaqTimestamp's declaration on exactly that macro.
+    A real, non-test build never gets that injection, and the generated Xcp_Cfg.h cannot stand in
+    for it: source/*.c includes Xcp.h and never Xcp_Cfg.h, so what that header defines does not
+    reach the library sources at all. (It does now define these two correctly for whoever *does*
+    include it -- script/header_cfg.h.jinja2 defines every derived macro ahead of its first
+    #include, so Xcp_Types.h's fallback, which exists only so handle.define() has literal text to
+    key off, no longer pre-empts it. That is a separate hole, closed separately.) Without
+    CMakeLists.txt deriving and injecting the same two macros the way it already does for
+    XCP_PAGING_SUPPORTED, an integrator configuring protocol_layer.timestamp would silently get a
+    module built with XCP_DAQ_TIMESTAMP_SUPPORTED permanently STD_OFF -- Task 2 gates
+    Xcp_GetDaqTimestamp's declaration on exactly that macro.
 
     This test reads what CMake actually computed for the Xcp target's own COMPILE_DEFINITIONS
     (threaded through as the --compile_definitions pytest option, itself

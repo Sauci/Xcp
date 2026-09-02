@@ -1,14 +1,22 @@
 #ifndef XCP_CFG_H
 #define XCP_CFG_H
 
-#include "Xcp_Types.h"
+{#- Every macro this file derives from the configuration is defined BEFORE the first #include,
+    and that ordering is load-bearing rather than stylistic. interface/Xcp_Types.h carries an
+    `#ifndef X / #define X <fallback> / #endif` for XCP_MAX_DTO, XCP_DAQ_TIMESTAMP_SUPPORTED and
+    XCP_DAQ_TIMESTAMP_SIZE (it needs literal #define text for the test harness's handle.define()
+    to key off, see the comments there). Including it first therefore satisfied every #ifndef
+    below and made all four blocks unreachable: the fallbacks and the blocks were added by the
+    same task and cancelled each other out, so a configuration declaring protocol_layer.timestamp
+    generated a header that still said XCP_DAQ_TIMESTAMP_SUPPORTED == STD_OFF. Defining first and
+    including second inverts that -- the fallbacks now only apply to a translation unit that
+    reaches Xcp_Types.h without this file, which is what they are for.
 
-#include "Xcp_Checksum.h"
-
-#ifndef XCP_USER_CMD_H
-#include "Xcp_UserCmd.h"
-#endif /* #ifndef XCP_USER_CMD_H */
-
+    This makes the generated header authoritative for whoever includes it. It does not reach
+    source/*.c, which includes Xcp.h and never Xcp_Cfg.h; those translation units take these
+    macros from the build system, which is why CMakeLists.txt derives them into
+    target_compile_definitions and why the README documents them for integrators building the
+    sources with something else. #}
 {%- set paging = namespace(supported=false) %}
 {%- for configuration in configurations %}
 {%- if (configuration.segments | default([]))|length > 0 %}
@@ -46,7 +54,9 @@
 
 /* STD_ON when the configuration declares a data acquisition clock. Gates the declaration of
  * Xcp_GetDaqTimestamp, so an integration without timestamps is never asked to supply a clock. One
- * macro gates the whole module, so it is on when ANY configuration declares a timestamp block. */
+ * macro gates the whole module, so it is on when ANY configuration declares a timestamp block --
+ * which is why a command that needs a clock must still check the *active* configuration's
+ * Xcp_Ptr->general->timestampType, as GET_DAQ_CLOCK and its three siblings all do. */
 #define XCP_DAQ_TIMESTAMP_SUPPORTED ({% if daq_timestamp_supported.value %}STD_ON{% else %}STD_OFF{% endif %})
 
 #endif /* #ifndef XCP_DAQ_TIMESTAMP_SUPPORTED */
@@ -65,13 +75,23 @@
 
 /* Timestamp field width in bytes, as transmitted; 0 when no configuration declares a timestamp,
  * otherwise the largest configured size, so the DTO frame layout can be reasoned about at compile
- * time across every configuration compiled into the module.
+ * time across every configuration compiled into the module. Being the largest, it is not the
+ * active configuration's own width -- arithmetic on one list's timestamp uses
+ * Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType) instead.
  * Deliberately not Xcp_TimestampTypeType's enumerator: that enum is implicit, so FOUR_BYTE is 3,
  * while the wire size is 4 and 3 is "Not allowed" (XCP part 2 - Protocol Layer Specification
  * 1.1/1.6.4.1.2.5). */
 #define XCP_DAQ_TIMESTAMP_SIZE ({{ daq_timestamp_size.value }}u)
 
 #endif /* #ifndef XCP_DAQ_TIMESTAMP_SIZE */
+
+#include "Xcp_Types.h"
+
+#include "Xcp_Checksum.h"
+
+#ifndef XCP_USER_CMD_H
+#include "Xcp_UserCmd.h"
+#endif /* #ifndef XCP_USER_CMD_H */
 
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"

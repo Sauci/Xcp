@@ -85,13 +85,17 @@ option(XCP_PAGING_SUPPORTED
     ${XCP_PAGING_SUPPORTED_DERIVED})
 
 # XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE need exactly the same treatment as XCP_PAGING_SUPPORTED above,
-# for a sharper reason: Xcp_Types.h's own fallback for these two macros (0x00u/0u, added so the test
-# harness's handle.define() has literal text to key off) is included by the generated Xcp_Cfg.h
-# *before* that file's own conditional block for them (Xcp_Types.h at its line 4, the block at its
-# line 24), so the fallback always wins there regardless of what the configuration says -- and
-# source/*.c never includes Xcp_Cfg.h at all, the same gap paging had. Left undefined, or left to
-# that fallback, a configuration that declares protocol_layer.timestamp would silently build with
-# XCP_DAQ_TIMESTAMP_SUPPORTED == STD_OFF, gating Xcp_GetDaqTimestamp's declaration off entirely.
+# and for the same reason: source/*.c includes Xcp.h, never the generated Xcp_Cfg.h, so nothing on
+# the library's include path supplies these two. The generated header does define them from the
+# configuration -- script/header_cfg.h.jinja2 now defines every derived macro before its first
+# #include, so Xcp_Types.h's own fallbacks (0x00u/0u, present so the test harness's
+# handle.define() has literal text to key off) no longer pre-empt them there -- but that only
+# reaches a translation unit that includes Xcp_Cfg.h, which the library sources do not. Left
+# undefined, or left to that fallback, a configuration declaring protocol_layer.timestamp would
+# silently build with XCP_DAQ_TIMESTAMP_SUPPORTED == STD_OFF, gating Xcp_GetDaqTimestamp's
+# declaration off entirely while Xcp_Cfg.c still set timestampType from the configuration. The
+# README's "Building the sources outside this CMake project" states the same obligation for a
+# build system that is not this one.
 option(XCP_DAQ_TIMESTAMP_SUPPORTED
     "enables/disables the data acquisition clock. Defaults to whether XCP_CONFIG_FILEPATH declares a protocol_layer.timestamp block; override only if you know why."
     ${XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED})

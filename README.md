@@ -17,8 +17,27 @@ The following definitions might be set by the user, depending on the needs.
 | ```MISRA_C_VERSION```         | ```1998```/```2004```/```2012``` | ```2012```                 | specifies which version of **MISRA** should be used when performing static code analysis (only used if ```ENABLE_PC_LINT``` is set)                                              |
 | ```XCP_SUPPRESS_TX_SUPPORT``` | ```ON / OFF```                   | ```ON```                   | enables/disables transmission functionality of the XCP module                                                                                                                    | 
 | ```XCP_PAGING_SUPPORTED```    | ```ON```/```OFF```               | derived                    | enables/disables the **PAG** command group. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a segment. An explicit ```-D``` overrides it and survives reconfiguring. Configure from a clean build directory after upgrading: a cache entry written before this became an option holds ```STD_OFF```, which now reads as ON |
+| ```XCP_DAQ_TIMESTAMP_SUPPORTED``` | ```ON```/```OFF```           | derived                    | enables/disables the data acquisition clock: the DAQ timestamp field, the `GET_DAQ_CLOCK` command, and `interface/Xcp.h`'s inclusion of `Xcp_DaqTimestamp.h`. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a ```protocol_layer.timestamp``` block. See *Building the sources outside this CMake project* below — this one is **not** optional there |
+| ```XCP_DAQ_TIMESTAMP_SIZE```  | ```0```/```1```/```2```/```4```  | derived                    | the DAQ timestamp field's width in bytes, as transmitted. Normally left alone: the default is the largest ```protocol_layer.timestamp.size``` any configuration in ```XCP_CONFIG_FILEPATH``` declares (```BYTE```/```WORD```/```DWORD``` → 1/2/4), or 0 when none does. See *Building the sources outside this CMake project* below |
 
 To use this feature, simply add ```-D<definition>=<value>``` when configuring the build with CMake.
+
+## Building the sources outside this CMake project
+`source/*.c` includes `Xcp.h`, never the generated `Xcp_Cfg.h`. The generated header defines
+`XCP_PAGING_SUPPORTED`, `XCP_MAX_DTO`, `XCP_DAQ_TIMESTAMP_SUPPORTED` and `XCP_DAQ_TIMESTAMP_SIZE` from the
+configuration and is authoritative for any translation unit that includes it, but it never reaches the library
+sources. This project's `CMakeLists.txt` closes that gap by deriving the same four values from
+`XCP_CONFIG_FILEPATH` and putting them on the compiler command line; a build system that compiles `source/*.c`
+itself has to do the same.
+
+`interface/Xcp_Types.h` carries a fallback for three of them, so a translation unit that names none of them still
+compiles — but the fallback is *off* (`XCP_DAQ_TIMESTAMP_SUPPORTED` `STD_OFF`, `XCP_DAQ_TIMESTAMP_SIZE` 0), and
+nothing detects the disagreement that follows. The generated `Xcp_Cfg.c` sets `timestampType` from the
+configuration regardless, so a slave built this way **reports** `TIMESTAMP_SUPPORTED`, reports a valid
+`TIMESTAMP_MODE` and `TIMESTAMP_TICKS`, and accepts `SET_DAQ_LIST_MODE` with the `TIMESTAMP` bit — while the code
+that writes the timestamp into the DTO and answers `GET_DAQ_CLOCK` has been compiled out. The master then
+correlates every sample against timestamps that never reach the wire. Define both macros wherever you compile
+`source/*.c`, with the values the table above describes.
 
 # Module configuration
 A large part of this module consists of auto-generated code. It takes a *JSON* file as input (the path of this file is
