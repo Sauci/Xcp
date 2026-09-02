@@ -294,9 +294,15 @@ typedef struct
     const void *com_m_channel_ref;
 } Xcp_CommunicationChannelType;
 
+/**
+ * @brief this container collects data transfer object specific parameters for the DAQ list.
+ * @note ECUC_Xcp_00066 (XcpDtoPid) has no member here on purpose. The PID a DAQ list transmits is
+ * FIRST_PID + ODT number, and FIRST_PID is assigned by the slave, not configured (XCP part 2 -
+ * Protocol Layer Specification 1.1/1.6.4.1.1.4); it lives in Xcp_DaqListType::firstPid, derived at
+ * generation time. A configured PID would be a second, unread copy of a value the slave owns.
+ */
 typedef struct
 {
-    const uint8 id;
     const union
     {
         Xcp_RxPduType rxPdu;

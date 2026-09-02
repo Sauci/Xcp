@@ -149,15 +149,12 @@
                     "type": "object",
                     "properties": {
                       "pid": {
-                        "description": "Packet identifier (PID) of the DTO that identifies the ODT the content of the DTO (see ECUC_Xcp_00066)",
+                        "description": "Packet identifier (PID) of the DTO that identifies the ODT the content of the DTO (see ECUC_Xcp_00066). Optional, and permitted only on the first DTO of a list. FIRST_PID is assigned by the slave rather than configured (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4), so this module derives it from the ODT counts of the preceding DAQ lists and does not read a configured value. Where it is set, generation fails if it contradicts the derived value -- setting it asserts the derived numbering rather than choosing it. On any later DTO it is rejected outright, because AUTOSAR maps ODTs to DTOs by reference (ECUC_Xcp_00056) rather than by position and that reference is not configurable here, leaving no PID to check it against.",
                         "type": "integer",
                         "minimum": 0,
                         "maximum": 251
                       }
-                    },
-                    "required": [
-                      "pid"
-                    ]
+                    }
                   },
                   "minItems": 1
                 }

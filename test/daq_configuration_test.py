@@ -134,6 +134,27 @@ def test_generation_fails_when_a_configured_pid_contradicts_the_derived_first_pi
                                     daq(name='DAQ2', max_odt=5, dtos=[{"pid": 1}]))))
 
 
+def test_generation_fails_when_a_pid_is_configured_on_a_dto_that_is_not_the_first():
+    """A PID on a later DTO has nothing to be checked against, and the generated code never reads
+    one, so accepting it would let an integrator believe they had set something. AUTOSAR maps ODTs
+    to DTOs by reference (ECUC_Xcp_00056, XcpOdt2DtoMapping) rather than by position, and that
+    reference is not configurable here, so there is no second FIRST_PID to derive.
+
+    match= cannot narrow this: every guard in source_cfg.c.jinja2 aborts by referencing the
+    undefined name `raise`, so they all surface the same "'raise' is undefined" message (see the
+    comment above the first guard in that template). What makes this test discriminating is the
+    companion below: DTO 0's pid is the derived value, so the sibling FIRST_PID guard cannot fire,
+    and the same configuration generates cleanly once the second pid is removed."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, dtos=[{"pid": 0}, {"pid": 1}]),)))
+
+
+def test_generation_accepts_a_second_dto_that_configures_no_pid():
+    """The rejection above is about the "pid" key, not about having more than one DTO: a list may
+    still carry several, they just cannot each claim a PID."""
+    XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, dtos=[{"pid": 0}, {}]),)))
+
+
 def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
     """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1 caps a DAQ PID at 0xFB, so the total
     ODT count across every DAQ list must not exceed 0xFC (252).

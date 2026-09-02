@@ -2,6 +2,7 @@ import hashlib
 import os
 import sys
 import random
+import traceback
 
 import pytest
 from bsw_code_gen import BSWCodeGen
@@ -257,8 +258,9 @@ class _GeneratedSources(object):
 
 class XcpTest(object):
     _code_gen_cache = dict()
-    # Every live instance, so the _dto_queue_area_balance autouse fixture below can sweep
-    # dto_queue_area_violations after each test without each test remembering to check it itself.
+    # Every live instance, so the _callback_invariants autouse fixture below can sweep
+    # dto_queue_area_violations and callback_exceptions after each test, without each test
+    # remembering to check them itself.
     _instances = list()
 
     def __init__(self,
@@ -273,6 +275,12 @@ class XcpTest(object):
         # dto_queue_area_violations is swept by the autouse fixture below.
         self.dto_queue_area_held = False
         self.dto_queue_area_violations = list()
+        # CFFI swallows any exception raised inside an `extern "Python+C"` callback: it prints the
+        # traceback to stderr and returns 0 to the C caller. E_OK is 0x00u, so a raising mock
+        # reports SUCCESS to the module under test and a test can pass on an assertion that never
+        # ran. Every callback is wrapped by _guarded_callback below so the exception lands here and
+        # the _callback_invariants autouse fixture fails the test once control is back in Python.
+        self.callback_exceptions = list()
         XcpTest._instances.append(self)
         # Owns every buffer handed to the C module, so none is freed while C still points at it.
         self._pdu_info_keepalive = list()
@@ -397,13 +405,16 @@ class XcpTest(object):
         self.sch_m_enter_xcp_dto_queue = MagicMock()
         self.sch_m_exit_xcp_dto_queue = MagicMock()
         self.xcp_user_cmd_function = MagicMock()
-        self.config.ffi.def_extern('Xcp_UserCmdFunction')(self.xcp_user_cmd_function)
+        self.config.ffi.def_extern('Xcp_UserCmdFunction')(
+                self._guarded_callback('Xcp_UserCmdFunction', self.xcp_user_cmd_function))
         self.xcp_user_cmd_function.return_value = self.define('E_OK')
         self.xcp_user_defined_checksum_function = MagicMock()
-        self.config.ffi.def_extern('Xcp_UserDefinedChecksumFunction')(self.xcp_user_defined_checksum_function)
+        self.config.ffi.def_extern('Xcp_UserDefinedChecksumFunction')(
+                self._guarded_callback('Xcp_UserDefinedChecksumFunction',
+                                       self.xcp_user_defined_checksum_function))
         self.xcp_user_defined_checksum_function.return_value = 0
         for func in self.code.mocked:
-            self.ffi.def_extern(func)(getattr(self, convert(func)))
+            self.ffi.def_extern(func)(self._guarded_callback(func, getattr(self, convert(func))))
         self.can_if_transmit.return_value = self.define('E_OK')
         self.det_report_error.return_value = self.define('E_OK')
         self.det_report_runtime_error.return_value = self.define('E_OK')
@@ -438,6 +449,24 @@ class XcpTest(object):
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
             self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
+
+    def _guarded_callback(self, name, mock):
+        """Wraps a mock so an exception it raises is recorded rather than only printed.
+
+        The exception is re-raised so CFFI's own handling is unchanged -- it still prints the
+        traceback and returns 0 to C, exactly as before -- and the mock itself is still the object
+        the test asserts `call_args` and `call_count` on. All this adds is a record the
+        _callback_invariants fixture can fail on, which is the difference between a test that
+        passes because the code is right and one that passes because its assertion never ran.
+        """
+        def call(*args):
+            try:
+                return mock(*args)
+            except BaseException:
+                self.callback_exceptions.append((name, traceback.format_exc()))
+                raise
+
+        return call
 
     def get_pdu_info(self, payload, null_payload=False, overridden_size=None, meta_data=None):
         if isinstance(payload, str):
@@ -502,21 +531,24 @@ class XcpTest(object):
 
 
 @pytest.fixture(autouse=True)
-def _dto_queue_area_balance():
-    """Fix round 1, finding A: every test in the suite gets this for free, because it is autouse
-    and every XcpTest registers itself. SchM_Enter/Exit_Xcp_DtoQueue's side effects (XcpTest.__init__
-    above) model the exclusive area as a boolean, so a violation here means a real nesting,
-    ordering, or enter/exit imbalance was exercised by the test that just ran -- not merely that
-    the mocks were called an unexpected number of times. Fix round 2 adds the other half: a test
-    that leaves the area HELD at teardown (an Enter with no matching Exit -- a leaked lock, which
-    in a real integration means interrupts stay masked) is caught too, not just a double-enter or
-    an exit-without-enter.
+def _callback_invariants():
+    """Checks, after every test, the two things the C/Python boundary cannot report on its own: an
+    exception raised inside a CFFI callback, and an imbalance in the DTO-queue exclusive area.
 
-    Raising this from inside SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue's own side effect would
-    not work: those run as CFFI `extern "Python+C"` callbacks, and a callback that raises has the
-    exception printed to stderr and swallowed at the C/Python boundary, not propagated to the test
-    that is still executing C code several frames up. Recording violations without raising, then
-    asserting here after control has returned to pure Python, sidesteps that entirely.
+    Both exist for one reason. A callback registered with `extern "Python+C"` that raises has its
+    traceback printed to stderr and swallowed at the boundary; the C caller is handed 0, which is
+    E_OK. So neither an assertion inside a mock nor a raise from the SchM_Enter/Exit side effects
+    can fail the test that is still executing C code several frames up. Recording both without
+    raising, then asserting here once control is back in pure Python, sidesteps that entirely.
+
+    SchM_Enter/Exit_Xcp_DtoQueue's side effects (XcpTest.__init__ above) model the exclusive area as
+    a boolean, so a violation means a real nesting, ordering, or enter/exit imbalance was exercised
+    by the test that just ran -- not merely that the mocks were called an unexpected number of
+    times. A test that leaves the area HELD at teardown is caught too: an Enter with no matching
+    Exit is a leaked lock, which in a real integration means interrupts stay masked.
+
+    Every test gets all of this for free -- the fixture is autouse and every XcpTest registers
+    itself in XcpTest._instances.
     """
     XcpTest._instances = list()
 
@@ -526,7 +558,15 @@ def _dto_queue_area_balance():
                   for instance in XcpTest._instances
                   for violation in instance.dto_queue_area_violations]
     leaked = [instance for instance in XcpTest._instances if instance.dto_queue_area_held]
+    raised = [entry
+              for instance in XcpTest._instances
+              for entry in instance.callback_exceptions]
     XcpTest._instances = list()
+
+    assert raised == [], \
+        'an exception was raised inside a CFFI callback, where it would otherwise be swallowed and '\
+        'reported to the module under test as E_OK:\n{}'.format(
+                '\n'.join('{}:\n{}'.format(name, tb) for name, tb in raised))
 
     assert violations == [], \
         'SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue nesting or imbalance: {}'.format(
