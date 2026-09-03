@@ -6,6 +6,33 @@
     Xcp_EventChannelConsistencyType in interface/Xcp_Types.h for why the enumerator it maps to is
     named DAQ_LIST and appended rather than spelled DAQ and inserted. #}
 {%- set event_channel_consistency = {'ODT': 'ODT', 'EVENT': 'EVENT', 'DAQ': 'DAQ_LIST'} %}
+{#- The DAQ_STATIC/DAQ_DYNAMIC coherence guards. They sit here, ahead of every emission block,
+    because they are about whether the configuration says one thing or two contradictory ones --
+    there is no point half-generating a file from a configuration that cannot mean anything. The
+    two range guards this feature adds are not here: daq_count's uint8 ceiling lives beside the
+    identical ceiling on triggered_daq_list_ref near Xcp_GeneralConfig, because both protect the
+    same field of the same response byte from the two configuration models.
+
+    `raise(...)` is not a registered Jinja global here or at any other call site in this file --
+    see the comment above the FIRST_PID guard further down for what that means, and why these
+    messages are written for whoever is reading this template rather than for the caller. #}
+{%- for configuration in configurations %}
+    {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+    {%- for name in ['xcp_free_daq_api_enable', 'xcp_alloc_daq_api_enable', 'xcp_alloc_odt_api_enable', 'xcp_alloc_odt_entry_api_enable'] %}
+        {%- if configuration.apis[name].enabled and not daq_dynamic %}
+{{ raise('{} is enabled but daq_config_type is STATIC; FREE_DAQ, ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY exist to build DAQ lists at runtime (XCP part 2 1.1/1.6.4.3.1), and a static configuration generates its lists from `daqs` instead, leaving the four commands nothing to act on'.format(name)) }}
+        {%- endif %}
+        {%- if daq_dynamic and not configuration.apis[name].enabled %}
+{{ raise('{} is disabled but daq_config_type is DYNAMIC; that is a dynamic configuration with no way to allocate, because the pool generated below starts empty and these four commands are the only thing that fills it (XCP part 2 1.1/1.6.4.3.1)'.format(name)) }}
+        {%- endif %}
+    {%- endfor %}
+    {%- if daq_dynamic and (configuration.daqs | default([]) | length) > 0 %}
+{{ raise('daq_config_type is DYNAMIC but {} DAQ list(s) are declared under `daqs`; a dynamic configuration declares the pool the master allocates out of, not the lists themselves, so these would be generated nowhere and silently ignored'.format(configuration.daqs|length)) }}
+    {%- endif %}
+    {%- if not daq_dynamic and configuration.daq_dynamic is defined %}
+{{ raise('a `daq_dynamic` pool is configured but daq_config_type is STATIC; nothing would ever allocate out of that pool, so its dimensions would silently go nowhere -- set daq_config_type to DYNAMIC, or remove the block') }}
+    {%- endif %}
+{%- endfor %}
 {% for configuration in configurations %}
 #ifndef {{configuration.communication.channel_rx_pdu_ref}}
 #warning {{configuration.communication.channel_rx_pdu_ref}} not defined, assigning 0x0001u as default value. This definition should be passed trough the build system ({{configuration.communication.channel_rx_pdu_ref}}=0xXXXX).
@@ -20,7 +47,7 @@
 {% set default_pdu_mapping = namespace(value=3) %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
-    {%- for daq in configuration.daqs %}
+    {%- for daq in configuration.daqs | default([]) %}
         {%- if daq.pdu_mapping is string %}
 #ifndef {{daq.pdu_mapping}}
 #warning {{daq.pdu_mapping}} not defined, assigning {{'0x%04Xu' % default_pdu_mapping.value}} as default value. This definition should be passed trough the build system ({{daq.pdu_mapping}}=0xXXXX).
@@ -29,10 +56,45 @@
             {%- set default_pdu_mapping.value = default_pdu_mapping.value + 1 %}
         {%- endif %}
     {%- endfor %}
+    {#- The one pdu_mapping every list in a dynamic pool transmits on, given the same fallback
+        treatment as a static list's: the name is a build-system definition either way. #}
+    {%- if configuration.daq_dynamic is defined and configuration.daq_dynamic.pdu_mapping is string %}
+#ifndef {{configuration.daq_dynamic.pdu_mapping}}
+#warning {{configuration.daq_dynamic.pdu_mapping}} not defined, assigning {{'0x%04Xu' % default_pdu_mapping.value}} as default value. This definition should be passed trough the build system ({{configuration.daq_dynamic.pdu_mapping}}=0xXXXX).
+#define {{configuration.daq_dynamic.pdu_mapping}} ({{'0x%04Xu' % default_pdu_mapping.value}})
+#endif /* #ifndef {{configuration.daq_dynamic.pdu_mapping}} */
+        {%- set default_pdu_mapping.value = default_pdu_mapping.value + 1 %}
+    {%- endif %}
 {%- endfor %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
-    {%- for daq in configuration.daqs %}
+    {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+    {#- The dynamic pool's ODT entries, as ONE flat array sliced by the ODT array below rather than
+        one array per (list, ODT) the way the static branch emits them. AUTOSAR's dynamic capacity
+        model is rectangular -- daq_count x odt_count x odt_entries_count, ECUC_Xcp_00012/54/59 --
+        so every slice is the same width and its offset is arithmetic, whereas the static branch
+        has a differently shaped list to name at every level.
+
+        Emitted one element per line rather than in the static branch's field-per-line form: the
+        rectangle is reserved in full, so a default pool is already 512 entries, and the verbose
+        form would be several thousand lines of identical zeroes. The field order is the one the
+        static branch spells out immediately below. #}
+    {%- if daq_dynamic %}
+        {%- set pool = configuration.daq_dynamic %}
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+/* {XcpOdtEntryAddress, XcpOdtEntryBitOffset, XcpOdtEntryAddressExtension, XcpOdtEntryLength, XcpOdtEntryNumber} */
+static Xcp_OdtEntryType Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % (pool.daq_count * pool.odt_count * pool.odt_entries_count)}}] = {
+        {%- for entry_index in range(pool.daq_count * pool.odt_count * pool.odt_entries_count) %}
+    {NULL_PTR, 0x00u, 0x00u, 0x00u, {{'0x%02Xu' % (entry_index % pool.odt_entries_count)}}},
+        {%- endfor %}
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+    {% endif %}
+    {%- for daq in configuration.daqs | default([]) %}
         {%- set daq_loop = loop %}
         {%- for i in range(daq.max_odt) %}
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
@@ -65,7 +127,36 @@ static Xcp_OdtEntryType Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}
     {%- set identification_field_size = {'ABSOLUTE': 1, 'RELATIVE_BYTE': 2, 'RELATIVE_WORD': 3, 'RELATIVE_WORD_ALIGNED': 4} %}
     {%- set identification_field_type = configuration.protocol_layer.identification_field_type | default('ABSOLUTE') %}
     {%- set odt_entry_size_daq = configuration.protocol_layer.max_dto - identification_field_size[identification_field_type] %}
-    {%- for daq in configuration.daqs %}
+    {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+    {#- The dynamic pool's ODTs: one flat array, list i owning [i*odt_count, (i+1)*odt_count), each
+        ODT wired to its own slice of the entry pool above.
+
+        Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED rather than the static branch's
+        Xcp_START_SEC_CONST_UNSPECIFIED, and likewise for the DAQ lists further down: ALLOC_ODT and
+        ALLOC_ODT_ENTRY write odtNumber and entryCount at runtime (XCP part 2 1.1/1.6.4.3.1). The
+        section is what places these arrays, not the `const` keyword they already lack -- see the
+        note above Xcp_DaqListType in interface/Xcp_Types.h -- so leaving them here would put them
+        in flash and make every allocation a write to read-only memory.
+
+        odtNumber and entryCount start at zero, not at their index and the entry cap: an ODT the
+        master has not allocated holds nothing, and entryCount is exactly what ALLOC_ODT_ENTRY
+        raises. odtEntryMaxSize is a build-time property of MAX_DTO, so it is seeded here. #}
+    {%- if daq_dynamic %}
+        {%- set pool = configuration.daq_dynamic %}
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+/* {XcpOdtEntryMaxSize, XcpOdtNumber, entryCount, XcpOdt2DtoMapping, reference to XcpOdtEntry} */
+static Xcp_OdtType Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % (pool.daq_count * pool.odt_count)}}] = {
+        {%- for odt_index in range(pool.daq_count * pool.odt_count) %}
+    {{ '{' }}{{'0x%02Xu' % odt_entry_size_daq}}, 0x00u, 0x00u, NULL_PTR, &Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % (odt_index * pool.odt_entries_count)}}]},
+        {%- endfor %}
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+    {% endif %}
+    {%- for daq in configuration.daqs | default([]) %}
         {%- set daq_loop = loop %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -112,7 +203,29 @@ static const Xcp_TxPduType Xcp_CommunicationChannelTxPduConfig{{'%02X' % loop.in
 {% endfor %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
-    {%- for daq in configuration.daqs %}
+    {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+    {#- One DTO for the whole dynamic pool, not one per list. The master chooses which lists it
+        allocates, never which PDU they leave on: a dynamic configuration names a single
+        pdu_mapping, so every list in the pool shares this element and Xcp_DaqListTxPduIsExclusive
+        (source/Xcp_Daq.c) correctly sees them all as sharing one transmit PDU. It stays in the
+        const section: nothing writes a DTO, only the descriptors that point at it. #}
+    {%- if daq_dynamic %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}[0x01u] = {
+    {
+        {
+            {{configuration.daq_dynamic.pdu_mapping}}, /* XcpDto2PduMapping */
+            NULL_PTR
+        }
+    },
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+    {% endif %}
+    {%- for daq in configuration.daqs | default([]) %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
@@ -136,9 +249,10 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {#- FIRST_PID is derived, not configured: absolute ODT numbers must be contiguous and unique
         across every DAQ list, so first_pids[i] is the running sum of the preceding lists' max_odt
         (XCP part 2 1.1/1.6.4.1.1.4). #}
+    {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
     {%- set first_pids = [] %}
     {%- set pid = namespace(next=0) %}
-    {%- for daq in configuration.daqs %}
+    {%- for daq in configuration.daqs | default([]) %}
     {%- if first_pids.append(pid.next) %}{% endif %}
     {%- set pid.next = pid.next + daq.max_odt %}
     {%- endfor %}
@@ -149,10 +263,14 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
         generation stops. The string passed to raise(...) never reaches that exception, though, so
         read it as documentation for whoever is looking at this template, not as output the caller
         will ever see. #}
-    {%- if pid.next > 252 %}
+    {#- STATIC only. A dynamic configuration gets no generation-time PID guard (DD31): its ODTs
+        exist only once ALLOC_ODT has run, so the total that would have to be checked is not known
+        until runtime, and the pool's rectangle is an upper bound the master need never reach.
+        ALLOC_ODT enforces the same 0xFB ceiling itself, against what is actually allocated. #}
+    {%- if (not daq_dynamic) and pid.next > 252 %}
 {{ raise('{} ODTs across {} DAQ lists exceed the 0xFB PID ceiling of XCP part 2 1.1/1.1.4.1'.format(pid.next, configuration.daqs|length)) }}
     {%- endif %}
-    {%- for daq in configuration.daqs %}
+    {%- for daq in configuration.daqs | default([]) %}
         {%- set daq_index = loop.index0 %}
         {#- A pure STIM list is refused rather than generated. source/Xcp_Daq.c's
             Xcp_DTOCmdDaqGetDaqListInfo would answer DAQ_LIST_PROPERTIES with both type bits clear
@@ -179,6 +297,36 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
         {%- endif %}
         {%- endfor %}
     {%- endfor %}
+{%- if daq_dynamic %}
+    {%- set pool = configuration.daq_dynamic %}
+#define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+/* The DAQ list pool. Every descriptor starts empty and ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY
+ * fill it in place (XCP part 2 1.1/1.6.4.3.1), which is why this array is in a writable section
+ * and why number, FIRST_PID and MAX_ODT are zero rather than derived: a list nobody has allocated
+ * owns no ODTs, so it fails the bounds checks that already exist without any new check being
+ * added for it. MAX_ODT_ENTRIES is the rectangle's width, the cap the allocator may never exceed.
+ * FIRST_PID is assigned at allocation time, not here, because it is a prefix sum over the ODT
+ * counts the master chooses. */
+static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % pool.daq_count}}] = {
+    {%- for i in range(pool.daq_count) %}
+    {
+        0x0000u, /* XcpDaqListNumber, assigned by ALLOC_DAQ */
+        0x00u, /* FIRST_PID, assigned by ALLOC_ODT */
+        DAQ, /* XcpDaqListType */
+        0x00u, /* XcpMaxOdt, raised by ALLOC_ODT */
+        {{'0x%02Xu' % pool.odt_entries_count}}, /* XcpMaxOdtEntries */
+        &Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}[0x00u], /* reference to XcpDto */
+        0x00000001u, /* not part of the specification... */
+        &Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % (i * pool.odt_count)}}] /* reference to XcpOdt */
+    },
+    {%- endfor %}
+};
+
+#define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{%- else %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
@@ -199,6 +347,7 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
+{%- endif %}
 {% endfor %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -272,8 +421,9 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 {%- endfor %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
+    {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
     {%- set daq_index_by_name = {} %}
-    {%- for daq in configuration.daqs %}
+    {%- for daq in configuration.daqs | default([]) %}
         {%- if daq_index_by_name.update({daq.name: loop.index0}) %}{% endif %}
     {%- endfor %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
@@ -281,13 +431,22 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 
     {%- for event in configuration.events %}
         {%- set event_index = loop.index0 %}
+        {#- Under DAQ_DYNAMIC every channel references the whole pool. Any list the master
+            allocates may be bound to any channel by SET_DAQ_LIST_MODE -- there is no configured
+            binding to narrow it -- so the pool size is the honest answer, and it is what
+            GET_DAQ_EVENT_INFO then reports as MAX_DAQ_LIST. maxDaqList and triggeredDaqListRefCount
+            come from this one expression in both models, which is the property
+            Xcp_DTOCmdDaqGetDaqEventInfo's own comment relies on when it reads the uint8 field
+            rather than casting the uint32 one. It is also what makes daq_count's uint8 ceiling a
+            real constraint rather than a theoretical one. #}
+        {%- set daq_list_ref_count = configuration.daq_dynamic.daq_count if daq_dynamic else event.triggered_daq_list_ref | length %}
         {%- if event.time_unit is not defined %}
 {{ raise('event channel {} has no time_unit configured'.format(event_index)) }}
         {%- endif %}
-        {%- if event.triggered_daq_list_ref | length == 0 %}
+        {%- if (not daq_dynamic) and event.triggered_daq_list_ref | length == 0 %}
 {{ raise('event channel {} has an empty triggered_daq_list_ref; a zero-length C array is not portable'.format(event_index)) }}
         {%- endif %}
-        {%- for name in event.triggered_daq_list_ref %}
+        {%- for name in event.triggered_daq_list_ref | default([]) %}
         {%- if name not in daq_index_by_name %}
 {{ raise('event channel {} references DAQ list "{}", which no configuration declares'.format(event_index, name)) }}
         {%- endif %}
@@ -299,10 +458,16 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 {{ raise('event channel {} has consistency "{}", which maps to no Xcp_EventChannelConsistencyType enumerator; the schema permits {}'.format(event_index, event.consistency, event_channel_consistency.keys()|list|sort)) }}
         {%- endif %}
 
-static const Xcp_DaqListType * const Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % event_index}}[{{'0x%02Xu' % event.triggered_daq_list_ref|length}}] = {
-        {%- for name in event.triggered_daq_list_ref %}
+static const Xcp_DaqListType * const Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % event_index}}[{{'0x%02Xu' % daq_list_ref_count}}] = {
+        {%- if daq_dynamic %}
+            {%- for i in range(daq_list_ref_count) %}
+    &Xcp_DaqListConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % i}}],
+            {%- endfor %}
+        {%- else %}
+            {%- for name in event.triggered_daq_list_ref %}
     &Xcp_DaqListConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % daq_index_by_name[name]}}],
-        {%- endfor %}
+            {%- endfor %}
+        {%- endif %}
 };
         {%- if configuration.protocol_layer.publish_names | default(true) and event.name is defined %}
 
@@ -312,16 +477,17 @@ static const uint8 Xcp_EventChannelName{{'%02X' % configuration_loop.index0}}{{'
 
 static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration_loop.index0}}[{{'0x%02Xu' % configuration.events|length}}] = {
     {%- for event in configuration.events %}
+    {%- set daq_list_ref_count = configuration.daq_dynamic.daq_count if daq_dynamic else event.triggered_daq_list_ref | length %}
     {
         {{event_channel_consistency[event.consistency | default('ODT')]}}, /* XcpEventChannelConsistency */
-        {{'0x%02Xu' % event.triggered_daq_list_ref|length}}, /* XcpEventChannelMaxDaqList */
+        {{'0x%02Xu' % daq_list_ref_count}}, /* XcpEventChannelMaxDaqList */
         {{'0x%04Xu' % loop.index0}}, /* XcpEventChannelNumber */
         {{'0x%02Xu' % event.priority}}, /* XcpEventChannelPriority */
         {{'0x%02Xu' % event.time_cycle}}, /* XcpEventChannelTimeCycle */
         {{event.time_unit}}, /* XcpEventChannelTimeUnit */
         {{event.type}}, /* XcpEventChannelType */
         &Xcp_EventChannelDaqListRef{{'%02X' % configuration_loop.index0}}{{'%02X' % loop.index0}}[0x00u],
-        {{'0x%08Xu' % event.triggered_daq_list_ref|length}},
+        {{'0x%08Xu' % daq_list_ref_count}},
         {%- if configuration.protocol_layer.publish_names | default(true) and event.name is defined %}
         &Xcp_EventChannelName{{'%02X' % configuration_loop.index0}}{{'%02X' % loop.index0}}[0x00u],
         {{'0x%02Xu' % event.name|length}}
@@ -337,13 +503,23 @@ static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration
 #include "Xcp_MemMap.h"
 {%- endfor %}
 {% for configuration in configurations %}
+{%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
 static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
     &Xcp_CommunicationChannelConfig[{{'0x%02Xu' % loop.index0}}], /* reference to XcpCommunicationChannel */
     &Xcp_DaqListConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpDaqList */
-    {{'%04Xu' % configuration.daqs | length}},
+    {#- daqListCount is the length of the array above, not the number of lists the master has
+        allocated, so under DAQ_DYNAMIC it is the whole pool.
+
+        '0x%04Xu', not the '%04Xu' this line carried before. Without the prefix the literal has a
+        leading zero, which makes it OCTAL: 0001u and 0002u happened to be the same value in octal
+        as in hex, which is why one and two DAQ lists never showed it, but 0008u is not a valid
+        octal constant at all and 0010u is octal 8 -- a build that silently reported half its DAQ
+        lists. A 255-list dynamic pool emitted 00FFu and failed to compile, which is what found
+        it. Every other value in this template already carries the prefix. #}
+    {{'0x%04Xu' % (configuration.daq_dynamic.daq_count if daq_dynamic else configuration.daqs | length)}},
     &Xcp_EventChannelConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpEventChannel */
     NULL_PTR, /* reference to XcpPdu */
     &Xcp_SegmentConfig{{'%02X' % loop.index0}}[0x00u] /* reference to XcpSegment */
@@ -356,11 +532,7 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- set identification_field_size = {'ABSOLUTE': 1, 'RELATIVE_BYTE': 2, 'RELATIVE_WORD': 3, 'RELATIVE_WORD_ALIGNED': 4} %}
 {%- set identification_field_type = configuration.protocol_layer.identification_field_type | default('ABSOLUTE') %}
 {%- set odt_entry_size_daq = configuration.protocol_layer.max_dto - identification_field_size[identification_field_type] %}
-{%- set counters = namespace(odt=0, odt_entries=0) %}
-{%- for daq in configuration.daqs %}
-{%- set counters.odt = counters.odt + daq.max_odt %}
-{%- set counters.odt_entries = counters.odt_entries + (daq.max_odt * daq.max_odt_entries) %}
-{%- endfor %}
+{%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
 {%- if odt_entry_size_daq < 1 %}
 {{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
@@ -378,16 +550,19 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {{ raise('MAX_DTO {} leaves {} bytes after a {}-byte {} identification field, less than the {}-byte timestamp XCP part 2 1.1/1.1.2.2 puts in ODT 0; the ODT-0 budget arithmetic in source/Xcp_Daq.c assumes odtEntrySizeDaq minus the timestamp size does not underflow'.format(configuration.protocol_layer.max_dto, odt_entry_size_daq, identification_field_size[identification_field_type], identification_field_type, wire_size)) }}
 {%- endif %}
 {%- endif %}
-{#- counters.odt is deliberately absent from this guard. It is the same sum as pid.next above, and
-    the PID-ceiling guard there refuses anything over 252 -- so by the time rendering reaches this
-    point counters.odt cannot exceed 252, and a `counters.odt > 255` condition here could never
-    fire. Reordering the two would only move which guard reports the same configuration; the
-    252 ceiling subsumes the 255 one outright, so XcpOdtCount's uint8 field is protected there
-    rather than here. Its two neighbours below have no such stricter guard upstream and are the
-    only live halves. #}
-{%- if counters.odt_entries > 255 %}
-{{ raise('odtEntriesCount {} exceeds the uint8 XcpOdtEntriesCount field of Xcp_GeneralType'.format(counters.odt_entries)) }}
-{%- endif %}
+{#- There is no aggregate odtEntriesCount guard here any more, and there never was a live
+    odtCount one. Both guarded a uint8 field of Xcp_GeneralType against a sum this template used
+    to emit into it -- the total ODTs across every DAQ list, and the grand total of entries. Those
+    sums are not what AUTOSAR means by XcpOdtCount (ECUC_Xcp_00054, the ODTs *of a DAQ list*) or
+    XcpOdtEntriesCount (ECUC_Xcp_00059, the entries *into an ODT*), and it defines both only for
+    DAQ_DYNAMIC, so a static configuration now emits 0x00u into each and there is nothing left to
+    truncate. Keeping the guard would have gone on refusing a perfectly ordinary static
+    configuration -- three lists of a hundred entries -- to protect a field that is always zero.
+
+    Under DAQ_DYNAMIC the two fields do carry a real value, and both fit their uint8 field by
+    construction: config/xcp.schema.json caps odt_count at 252 and odt_entries_count at 255.
+    daq_count is the one dimension whose schema range (0..65535) is wider than the field that
+    reports it, which is what the guard immediately below exists for. #}
 {#- odtEntrySizeDaq is emitted below as '0x%02Xu', into the uint8 XcpOdtEntrySizeDaq field, but it
     is derived from max_dto, whose schema maximum is 65535. Without this guard max_dto 1000 emitted
     0x3E7u -- 231 after truncation -- so GET_DAQ_RESOLUTION_INFO reported MAX_ODT_ENTRY_SIZE_DAQ 231
@@ -396,8 +571,15 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- if odt_entry_size_daq > 255 %}
 {{ raise('MAX_DTO {} leaves {} bytes after a {}-byte {} identification field, which exceeds the uint8 XcpOdtEntrySizeDaq field of Xcp_GeneralType; MAX_ODT_ENTRY_SIZE_DAQ is one byte in the GET_DAQ_RESOLUTION_INFO response (XCP part 2 1.1/1.6.4.1.2.5), so a larger value cannot be reported and would be emitted here as a truncated literal'.format(configuration.protocol_layer.max_dto, odt_entry_size_daq, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
+{#- The same uint8 maxDaqList ceiling, from the two configuration models. A static configuration
+    reports the length of each channel's configured triggered_daq_list_ref; a dynamic one has no
+    configured binding to report, so every channel names the whole pool and MAX_DAQ_LIST is
+    daq_count -- see the comment beside Xcp_EventChannelDaqListRef above. #}
+{%- if daq_dynamic and configuration.daq_dynamic.daq_count > 255 %}
+{{ raise('daq_count {} exceeds the uint8 maxDaqList field of Xcp_EventChannelType; GET_DAQ_EVENT_INFO transmits MAX_DAQ_LIST as one byte (XCP part 2 1.1/1.6.4.1.2.7), and a DAQ_DYNAMIC configuration reports daq_count there because any allocated list may bind to any event channel'.format(configuration.daq_dynamic.daq_count)) }}
+{%- endif %}
 {%- for event in configuration.events %}
-{%- if event.triggered_daq_list_ref|length > 255 %}
+{%- if (not daq_dynamic) and event.triggered_daq_list_ref|length > 255 %}
 {{ raise('event channel {} references {} DAQ lists, which exceeds the uint8 maxDaqList field of Xcp_EventChannelType; GET_DAQ_EVENT_INFO transmits MAX_DAQ_LIST as one byte (XCP part 2 1.1/1.6.4.1.2.7), so a larger count cannot be reported and would be emitted here as a truncated literal'.format(loop.index0, event.triggered_daq_list_ref|length)) }}
 {%- endif %}
 {%- endfor %}
@@ -408,8 +590,8 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 #include "Xcp_MemMap.h"
 
 static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
-    DAQ_STATIC, /* XcpDaqConfigType; dynamic configuration arrives in SP2c */
-    {{'0x%04Xu' % configuration.daqs|length}}, /* XcpDaqCount */
+    {% if daq_dynamic %}DAQ_DYNAMIC{% else %}DAQ_STATIC{% endif %}, /* XcpDaqConfigType */
+    {{'0x%04Xu' % (configuration.daq_dynamic.daq_count if daq_dynamic else configuration.daqs|length)}}, /* XcpDaqCount */
     TRUE, /* hard-coded XcpDevErrorDetect */
     FALSE, /* hard-coded XcpFlashProgrammingEnabled */
     {{identification_field_type}}, /* XcpIdentificationFieldType */
@@ -418,8 +600,14 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%04Xu' % configuration.protocol_layer.max_dto}}, /* XcpMaxDto */
     {{'0x%04Xu' % configuration.events|length}}, /* XcpMaxEventChannel */
     0x00u, /* XcpMinDaq; no DAQ list is PREDEFINED */
-    {{'0x%02Xu' % counters.odt}}, /* XcpOdtCount */
-    {{'0x%02Xu' % counters.odt_entries}}, /* XcpOdtEntriesCount */
+    {#- ECUC_Xcp_00054 and ECUC_Xcp_00059, defined by AUTOSAR only for DAQ_DYNAMIC: the ODTs of a
+        DAQ list, and the entries into an ODT. A static configuration's per-list caps live on each
+        Xcp_DaqListType instead, so there is nothing for these two to say and they stay at zero.
+        This template used to emit the aggregate sums here -- the total ODTs across every list, and
+        the grand total of entries -- which is neither field's meaning; no .c file read either one,
+        so correcting them changes no behaviour. #}
+    {{'0x%02Xu' % (configuration.daq_dynamic.odt_count if daq_dynamic else 0)}}, /* XcpOdtCount */
+    {{'0x%02Xu' % (configuration.daq_dynamic.odt_entries_count if daq_dynamic else 0)}}, /* XcpOdtEntriesCount */
     {{'0x%02Xu' % odt_entry_size_daq}}, /* XcpOdtEntrySizeDaq */
     0x00u, /* XcpOdtEntrySizeStim; STIM arrives in SP3 */
     TRUE, /* hard-coded XcpOnCanEnabled */

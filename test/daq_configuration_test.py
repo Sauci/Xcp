@@ -49,12 +49,34 @@ def test_prescaler_support_comes_from_the_configuration():
     assert XcpTest(DefaultConfig(prescaler_supported=False)).config.lib.Xcp[0].general.prescalerSupported == 0
 
 
-def test_odt_counts_are_summed_over_every_daq_list():
-    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=9),
-                                         daq(name='DAQ2', max_odt=5, max_odt_entries=10))))
+def test_a_dynamic_configuration_reports_its_pool_through_the_autosar_parameters():
+    """DD26. XcpDaqCount (ECUC_Xcp_00012) is the number of allocatable lists, XcpOdtCount
+    (ECUC_Xcp_00054) the ODTs of a DAQ list, XcpOdtEntriesCount (ECUC_Xcp_00059) the entries into
+    an ODT. All three are defined only for DAQ_DYNAMIC."""
+    handle = XcpTest(dynamic_config(daq_count=4, odt_count=8, odt_entries_count=16))
+    general = handle.config.lib.Xcp[0].general
 
-    assert handle.config.lib.Xcp[0].general.odtCount == 3 + 5
-    assert handle.config.lib.Xcp[0].general.odtEntriesCount == (3 * 9) + (5 * 10)
+    # handle.lib, not handle.define: DAQ_DYNAMIC and DAQ_STATIC are Xcp_DaqConfigTypeType
+    # enumerators (interface/Xcp_Types.h), not preprocessor names, and handle.define only ever
+    # sees literal `#define`s -- see test.conftest.Preprocessor.on_directive_handle.
+    assert general.daqConfigType == handle.lib.DAQ_DYNAMIC
+    assert general.daqCount == 4
+    assert general.odtCount == 8
+    assert general.odtEntriesCount == 16
+
+
+def test_a_static_configuration_leaves_the_dynamic_only_parameters_at_zero():
+    """AUTOSAR defines XcpOdtCount and XcpOdtEntriesCount only for DAQ_DYNAMIC. The generator
+    previously emitted aggregate sums here -- the total ODTs across all lists, and the grand total
+    of entries -- which is neither field's meaning. No .c file read either one, so this corrects a
+    latent wrong value rather than changing behaviour."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=9),)))
+    general = handle.config.lib.Xcp[0].general
+
+    assert general.daqConfigType == handle.lib.DAQ_STATIC
+    assert general.daqCount == 1
+    assert general.odtCount == 0
+    assert general.odtEntriesCount == 0
 
 
 def test_min_daq_is_zero_because_no_daq_list_is_predefined():
@@ -172,6 +194,120 @@ def test_each_odt_carries_its_own_entry_count_seeded_from_the_list_cap():
     assert daq_list.maxOdtEntries == 9
     for odt in range(3):
         assert daq_list.odt[odt].entryCount == 9
+
+
+def test_a_dynamic_pool_is_reserved_empty_and_sliced_per_list_and_per_odt():
+    """DD26. The rectangle -- daq_count x odt_count x odt_entries_count -- is reserved in full at
+    build time and handed out by the allocator, so every descriptor starts empty while the slices
+    ALLOC_ODT and ALLOC_ODT_ENTRY will fill are already wired: list i owns the ODTs
+    [i*odt_count, (i+1)*odt_count) of one flat array, and ODT k owns the entries
+    [k*odt_entries_count, (k+1)*odt_entries_count) of another.
+
+    maxOdt is 0, not odt_count: an unallocated list must fail the bounds checks that already
+    exist, which is what lets SP2d add none of its own (see the plan's global constraints).
+    maxOdtEntries is the rectangle's width because that is the per-list cap the allocator may
+    never exceed, and nothing raises it at runtime."""
+    handle = XcpTest(dynamic_config(daq_count=3, odt_count=2, odt_entries_count=4))
+    config = handle.config.lib.Xcp[0].config
+    first_odt = config.daqList[0].odt
+    first_entry = config.daqList[0].odt[0].odtEntry
+
+    assert config.daqListCount == 3
+    for i in range(3):
+        daq_list = config.daqList[i]
+        assert daq_list.number == 0
+        assert daq_list.firstPid == 0
+        assert daq_list.maxOdt == 0
+        assert daq_list.maxOdtEntries == 4
+        assert daq_list.type == handle.lib.DAQ
+        assert daq_list.odt == first_odt + (i * 2)
+        for j in range(2):
+            odt = daq_list.odt[j]
+            assert odt.odtNumber == 0
+            assert odt.entryCount == 0
+            # max_dto 8 less the 1-byte ABSOLUTE identification field, DefaultConfig's own defaults.
+            assert odt.odtEntryMaxSize == 7
+            assert odt.odtEntry == first_entry + ((((i * 2) + j) * 4))
+
+
+def test_a_dynamic_pool_shares_one_dto_across_every_list_in_it():
+    """Every list in the pool transmits on the one pdu_mapping the daq_dynamic block names -- the
+    master picks which lists it allocates, not which PDU they leave on -- so one Xcp_DtoType
+    serves them all. dtoCount stays 1 rather than 0 because Xcp_Std.c guards its read of dto[0]
+    with `dtoCount > 0` and Xcp_DaqRuntime.c reads dto[0] to address the frame."""
+    handle = XcpTest(dynamic_config(daq_count=3))
+    config = handle.config.lib.Xcp[0].config
+
+    for i in range(3):
+        assert config.daqList[i].dtoCount == 1
+        assert config.daqList[i].dto == config.daqList[0].dto
+
+
+def _generated_source(config):
+    """The Xcp_Cfg.c `config` generates, as text. Which MemMap section a declaration sits in is
+    invisible to the compiled harness -- Xcp_MemMap.h expands to nothing here -- so the generated
+    source is the only place it can be observed."""
+    return BSWCodeGen(config, os.environ['script_directory']).source_cfg
+
+
+def _generated_runtime(config):
+    """The Xcp_Rt.c `config` generates, as text."""
+    return BSWCodeGen(config, os.environ['script_directory']).source_rt
+
+
+def _memmap_section_of(source, declaration):
+    """The Xcp_START_SEC_... section `declaration` is emitted inside, or None if it is absent."""
+    section = None
+    for line in source.splitlines():
+        if line.startswith('#define Xcp_START_SEC_'):
+            section = line.split()[1]
+        elif declaration in line:
+            return section
+    return None
+
+
+def test_a_dynamic_pool_is_emitted_into_a_writable_memmap_section():
+    """ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY write the Xcp_DaqListType and Xcp_OdtType arrays
+    at runtime, so under DAQ_DYNAMIC they cannot sit in Xcp_START_SEC_CONST_UNSPECIFIED -- that is
+    the section that puts them in flash on a target, and the `const` keyword the arrays lack is
+    not what places them (see the note above Xcp_DaqListType in interface/Xcp_Types.h)."""
+    source = _generated_source(dynamic_config())
+
+    assert _memmap_section_of(source, 'static Xcp_DaqListType Xcp_DaqListConfig00[') == \
+        'Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED'
+    assert _memmap_section_of(source, 'static Xcp_OdtType Xcp_OdtConfig00[') == \
+        'Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED'
+
+
+@pytest.mark.parametrize('config, expected', (
+    pytest.param(lambda: dynamic_config(daq_count=7), 'Xcp_DaqListRt00[0x07u];', id='DYNAMIC pool of 7'),
+    pytest.param(lambda: DefaultConfig(daqs=(daq(name='DAQ1'), daq(name='DAQ2'))),
+                 'Xcp_DaqListRt00[0x02u];', id='STATIC, two lists'),
+))
+def test_the_runtime_daq_list_array_is_sized_for_every_list_the_configuration_can_present(config,
+                                                                                          expected):
+    """Xcp_Init and Xcp_TriggerEventChannel both index Xcp_Rt[...].daqList by daqCount
+    (source/Xcp.c, source/Xcp_DaqRuntime.c), which under DAQ_DYNAMIC is the pool size and not the
+    number of lists declared under `daqs` -- of which a dynamic configuration has none. An array
+    sized from `daqs` is therefore written past its end by Xcp_Init before the master has
+    allocated anything.
+
+    Asserted against the generated text rather than through a running module because the array is
+    a file-scope static: nothing in the harness can reach it to bound-check it, and the
+    out-of-bounds write it would take to expose the bug is silent unless the suite is run under
+    XCP_ASAN=1, which it is not by default (test/conftest.py's _asan_flags)."""
+    assert expected in _generated_runtime(config())
+
+
+def test_a_static_configuration_keeps_its_descriptors_in_the_const_section():
+    """The other half of the test above: nothing writes a STATIC configuration's descriptors, so
+    they must stay in flash exactly as they are today."""
+    source = _generated_source(DefaultConfig())
+
+    assert _memmap_section_of(source, 'static Xcp_DaqListType Xcp_DaqListConfig00[') == \
+        'Xcp_START_SEC_CONST_UNSPECIFIED'
+    assert _memmap_section_of(source, 'static Xcp_OdtType Xcp_OdtConfig00Daq00[') == \
+        'Xcp_START_SEC_CONST_UNSPECIFIED'
 
 
 def test_event_channels_are_generated_rather_than_left_null():
@@ -508,3 +644,83 @@ def test_generation_fails_when_publish_names_is_set_but_an_event_has_no_name():
     inventing a name that would paper over a real integrator misconfiguration."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(publish_names=True, events=(event(triggered_daq_list_ref=['DAQ1']),)))
+
+
+@pytest.mark.parametrize('config, why', (
+    pytest.param(lambda: dynamic_config(daq_count=256, odt_count=1, odt_entries_count=1),
+                 'daq_count above the uint8 MAX_DAQ_LIST field',
+                 id='daq_count = 256'),
+    pytest.param(lambda: DefaultConfig(xcp_free_daq_api_enable=True),
+                 'FREE_DAQ enabled under a STATIC configuration',
+                 id='FREE_DAQ under STATIC'),
+    pytest.param(lambda: DefaultConfig(daq_config_type='DYNAMIC',
+                                       xcp_free_daq_api_enable=True,
+                                       xcp_alloc_daq_api_enable=False,
+                                       xcp_alloc_odt_api_enable=True,
+                                       xcp_alloc_odt_entry_api_enable=True),
+                 'ALLOC_DAQ disabled under DYNAMIC',
+                 id='ALLOC_DAQ disabled under DYNAMIC'),
+))
+def test_generation_refuses_incoherent_dynamic_configurations(config, why):
+    """The guard messages are documentation, not output: raise() is not a registered Jinja global
+    in bsw_code_gen, so referencing it aborts rendering with UndefinedError and the string never
+    reaches the caller. These assert that generation fails, never that a message matches -- the
+    same reasoning as the cluster of guard tests above, whose comment explains why UndefinedError
+    is still worth naming instead of a bare Exception.
+
+    The first row goes through dynamic_config so that daq_count is the *only* thing wrong with it:
+    built from a bare DefaultConfig it would trip the ALLOC-APIs-disabled guard as well, and pass
+    for a reason that has nothing to do with the ceiling it is named after. The other two rows are
+    the opposite case -- what is wrong with them is which API flags are set, so they have to set
+    those flags themselves rather than let the helper supply a coherent set."""
+    with pytest.raises(UndefinedError):
+        XcpTest(config())
+
+
+def test_generation_accepts_the_largest_dynamic_pool_the_uint8_max_daq_list_field_can_hold():
+    """The boundary above, from the accepting side: 255 lists are representable in the uint8
+    MAX_DAQ_LIST byte GET_DAQ_EVENT_INFO transmits, so the guard is `> 255` and not `>= 255`."""
+    handle = XcpTest(dynamic_config(daq_count=255, odt_count=1, odt_entries_count=1))
+
+    assert handle.config.lib.Xcp[0].general.daqCount == 255
+    assert handle.config.lib.Xcp[0].config.daqListCount == 255
+    assert handle.config.lib.Xcp[0].config.eventChannel[0].maxDaqList == 255
+
+
+@pytest.mark.parametrize('count', (8, 16))
+def test_the_daq_list_count_is_emitted_as_a_hexadecimal_literal(count):
+    """script/source_cfg.c.jinja2 emitted daqListCount as '%04Xu' -- with no 0x -- which makes a
+    leading-zero literal OCTAL. One and two DAQ lists are the same number in octal as in hex, and
+    no configuration in the suite had ever declared more, so nothing showed it: 8 is not a valid
+    octal constant at all (the build fails), and 16 emits 0010u, which is octal 8 -- a module that
+    silently reports half its DAQ lists to the GET_DAQ_ID scan in source/Xcp_Std.c, the one place
+    that reads this field. A 255-list dynamic pool emitted 00FFu and would not compile, which is
+    what found it; both counts here are pinned because the two failure modes are different."""
+    handle = XcpTest(DefaultConfig(daqs=tuple(daq(name='DAQ{}'.format(i)) for i in range(count)),
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ0']),)))
+
+    assert handle.config.lib.Xcp[0].config.daqListCount == count
+
+
+def test_generation_refuses_daq_lists_declared_alongside_a_dynamic_pool():
+    """A DAQ_DYNAMIC configuration declares no lists -- the master allocates them out of the pool
+    -- so a `daqs` entry is an integrator saying two incompatible things at once. Silently
+    ignoring it would leave them believing they had configured a list that will never exist."""
+    config = dynamic_config()
+    config['configurations'][0]['daqs'] = [daq(name='DAQ1')]
+
+    with pytest.raises(UndefinedError):
+        XcpTest(config)
+
+
+def test_generation_refuses_a_dynamic_pool_declared_under_a_static_configuration():
+    """The mirror of the test above. A `daq_dynamic` block under DAQ_STATIC configures a pool
+    nothing will ever allocate from, and its dimensions would silently go nowhere."""
+    config = DefaultConfig()
+    config['configurations'][0]['daq_dynamic'] = {"daq_count": 4,
+                                                  "odt_count": 8,
+                                                  "odt_entries_count": 16,
+                                                  "pdu_mapping": "XCP_PDU_ID_TRANSMIT"}
+
+    with pytest.raises(UndefinedError):
+        XcpTest(config)
