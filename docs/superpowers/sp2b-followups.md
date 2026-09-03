@@ -4,20 +4,30 @@ Carried out of SP2b's execution ledger before that scratch workspace was deleted
 review triaged these and recommended they land as a hygiene branch rather than gate SP2b's merge.
 Nothing here is a correctness defect in shipped behaviour.
 
-## Open defect — coverage reporting for `Xcp_Daq.c`
+## Closed before merge — coverage reporting for `Xcp_Daq.c`
 
-`test.sh` reports **0.00% of 422 lines** for `source/Xcp_Daq.c`, with `Xcp_Daq.gcda:stamp mismatch
-with notes file`. Every other translation unit reports real coverage. This is the same failure
-[#4](https://github.com/Sauci/Xcp/pull/4) fixed for `Xcp_Pag.c`, now hitting the file SP2b changed
-most, so Codecov will show the branch's principal file as untested.
+`test.sh` reported `source/Xcp_Daq.c` at 0.00% of 422 lines with `Xcp_Daq.gcda:stamp mismatch with
+notes file`. Fixed on this branch; recorded here because the mechanism generalises.
 
-The obvious explanation is wrong and was checked: `Xcp_Daq.c`, `Xcp_Cal.c` and `Xcp_Pag.c` all
-produce 36 distinct `.gcno` checksums across 40 sampled module directories, yet only `Xcp_Daq.c`
-fails — so per-module compile variation is not what distinguishes it. #4's fix seeds the merge from
-the module with the most `.gcda` profiles and takes the notes from that same seed, which should keep
-the pair stamp-consistent. Why that holds for two files and not the third is undiagnosed.
+[#4](https://github.com/Sauci/Xcp/pull/4) merged gcov profiles by choosing **one seed** module — the
+directory with the most `.gcda` files — and pairing every file's merged profile with that seed's
+notes. That is correct only while each source compiles **identically** in every module. SP2b broke
+the assumption: `XCP_DAQ_TIMESTAMP_SUPPORTED` gates `Xcp_DTOCmdDaqGetDaqClock` in or out, so
+`Xcp_Daq.c` compiles two different function sets (`.gcno` of 33044 and 33844 bytes), and gcov cannot
+merge profiles from structurally different compilations. `gcov-tool merge` replaced the seed's
+profile with the other variant's, whose stamp then mismatched the seed's notes.
 
-A reporting defect, not a behavioural one: the suite passes 12556 tests.
+`Xcp_DaqRuntime.c` has the same two-variant property (8180 / 9488) and was reporting correctly only
+by luck of which variant the seed happened to hold.
+
+The merge is now **per source file**: group modules by that file's `.gcno` content, merge the largest
+group, pair with that group's notes. With a single variant the largest group is every module, so #4's
+behaviour is preserved rather than replaced.
+
+**Residual, by design and documented in the code:** reported coverage is the union across the largest
+variant group, not across all variants — `Xcp_Daq.c` and `Xcp_DaqRuntime.c` report the 24-module
+timestamp-enabled variant, and the other 12 modules' coverage of the disabled variant is real but not
+folded in. gcov offers no way to combine them. An honest 92.42% beats a silent 0.00%.
 
 ## Test hygiene
 
