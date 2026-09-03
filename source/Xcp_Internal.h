@@ -255,6 +255,22 @@ typedef enum {
     XCP_CONNECTION_STATE_RESUME
 } Xcp_ConnectionState;
 
+/**
+ * @brief where a dynamic DAQ list configuration sequence has got to.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1 enumerates six ERR_SEQUENCE
+ * cases, which reduce to these four states and the transition table in Xcp_Daq.c. The initial
+ * value is XCP_DAQ_ALLOC_FREE: §1.6.4.3.1.1 requires the master to send FREE_DAQ first, but that
+ * is a requirement on the master and the slave's enumerated refusals do not include an ALLOC_DAQ
+ * with no preceding command -- nothing is allocated at that point, so accepting it is defined.
+ * @note explicitly 0, since it may live in a cleared memory section.
+ */
+typedef enum {
+    XCP_DAQ_ALLOC_FREE = 0x00u,
+    XCP_DAQ_ALLOC_DAQ,
+    XCP_DAQ_ALLOC_ODT,
+    XCP_DAQ_ALLOC_ODT_ENTRY
+} Xcp_DaqAllocStateType;
+
 typedef struct {
     uint8 connect_mode;
     Xcp_ConnectionState connection_status;
@@ -325,6 +341,15 @@ typedef struct {
         uint8 odtEntryNumber;
         boolean valid;
     } daq_pointer;
+
+    Xcp_DaqAllocStateType daq_alloc_state;
+
+    /**
+     * @brief DAQ lists currently available to the master.
+     * @details Equals Xcp_Ptr->general->daqCount under a STATIC configuration and is raised from
+     * zero by ALLOC_DAQ under a DYNAMIC one, so Xcp_DaqListIsValid serves both models unchanged.
+     */
+    uint16 allocated_daq_count;
     uint8 internal_buffer[0x08u];
 } Xcp_InternalType;
 

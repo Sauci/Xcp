@@ -17,7 +17,7 @@
 
 static boolean Xcp_DaqListIsValid(uint16 daqListNumber)
 {
-    return (boolean)((daqListNumber < Xcp_Ptr->general->daqCount) ? TRUE : FALSE);
+    return (boolean)((daqListNumber < Xcp_Internal.allocated_daq_count) ? TRUE : FALSE);
 }
 
 static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)

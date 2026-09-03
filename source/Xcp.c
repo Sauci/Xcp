@@ -1107,6 +1107,10 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.connect_mode = XCP_CONNECT_MODE_NORMAL;
             Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
             Xcp_Internal.session_status = 0x00u;
+            Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
+            Xcp_Internal.allocated_daq_count =
+                    (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC) ? 0x0000u
+                                                                     : Xcp_Ptr->general->daqCount;
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
             Xcp_Internal.last_pid = 0x00u;
