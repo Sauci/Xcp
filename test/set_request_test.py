@@ -3,6 +3,7 @@
 
 from .parameter import *
 from .conftest import XcpTest
+from .download_test import connect
 
 
 def test_set_request_activates_the_callback_function_call_until_finished():
@@ -124,3 +125,75 @@ def test_set_request_sets_all_remaining_bytes_to_trailing_value(trailing_value, 
     handle.lib.Xcp_MainFunction()
     remaining_zeros = tuple(trailing_value for _ in range(max_cto - 0x08))
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0x08:max_cto]) == remaining_zeros
+
+
+def exchange(handle, request, tx_pdu_ref=0x0001, length=8):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(tx_pdu_ref, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
+@pytest.mark.parametrize('mode, name', ((0b00000100, 'STORE_DAQ_REQ'),
+                                        (0b00001000, 'CLEAR_DAQ_REQ')))
+def test_set_request_refuses_the_non_volatile_daq_modes_it_cannot_fulfil(mode, name):
+    """XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3: "If the slave device does not
+    support the requested mode, an ERR_OUT_OF_RANGE will be returned."
+
+    STORE_DAQ_REQ saves the selected DAQ lists to non-volatile memory and CLEAR_DAQ_REQ clears
+    what is stored there. This module keeps no non-volatile DAQ configuration -- consistent with
+    GET_DAQ_PROCESSOR_INFO, which reports RESUME unsupported -- so both are refused rather than
+    accepted and quietly dropped. STORE_CAL_REQ is unaffected; it is implemented end to end."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    assert exchange(handle, (0xF9, mode, 0x00, 0x00))[0:2] == (0xFE, 0x22)
+
+
+def test_a_refused_store_daq_request_leaves_the_rest_of_the_command_set_usable():
+    """Regression, defect D9. SET_REQUEST used to accept STORE_DAQ_REQ and OR it into
+    Xcp_Internal.session_status. No code fulfils that request, so nothing ever cleared the bit --
+    and Xcp_CanIfRxIndication refuses every command carrying ERR_PGM_ACTIVE, 42 of them, for as
+    long as one of the three request bits is set. A single conformant SET_REQUEST therefore
+    disabled most of the command set until the next CONNECT.
+
+    The assertion is that the following command *succeeds*: a permanent, silent refusal was the
+    whole defect, so asserting merely that SET_REQUEST failed would not catch its return. This
+    holds for any correct implementation -- refusing the mode, or accepting and fulfilling it."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, daqs=(daq(name='DAQ1'),)))
+    connect(handle)
+
+    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00), tx_pdu_ref=0x0002)
+
+    # GET_DAQ_LIST_MODE (0xDF) carries ERR_PGM_ACTIVE in Xcp_CTOErrorMatrix.
+    assert exchange(handle, (0xDF, 0x00, 0x00, 0x00), tx_pdu_ref=0x0002)[0] == 0xFF
+
+
+def test_set_request_stores_calibration_even_when_the_session_configuration_id_is_not_zero():
+    """The session configuration id in bytes 2,3 belongs to STORE_DAQ_REQ, not to STORE_CAL_REQ.
+    A check on it used to sit in this handler, but it ran after the success branch had been
+    entered: it set the local result and then finalized a positive response anyway, so it never
+    reached the master and only read as validation. It is gone; a calibration store is decided by
+    the mode byte alone."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+
+    def store_calibration_data_to_non_volatile_memory(p_success):
+        p_success[0] = handle.define('E_OK')
+        return handle.define('E_OK')
+
+    handle.xcp_store_calibration_data_to_non_volatile_memory.side_effect = \
+        store_calibration_data_to_non_volatile_memory
+
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, 0b00000001, 0xAB, 0xCD)))
+    handle.lib.Xcp_MainFunction()
+
+    # Read the response before the confirmation: confirming chains the queued EV_STORE_CAL onto the
+    # same in-flight slot, so the last CanIf_Transmit call would be the event, not the response.
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.xcp_store_calibration_data_to_non_volatile_memory.called

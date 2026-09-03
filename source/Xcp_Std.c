@@ -921,33 +921,46 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
 
 uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
-    uint8 mode;
-    uint16 session_configuration_id;
-
     Std_ReturnType result = E_OK;
 
     *responseExpected = TRUE;
 
-    if ((pPduInfo->SduDataPtr[0x01u] & 0b11110010u) != 0x00u)
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3, mode byte:
+     *
+     *   bit    7   6   5   4   3              2              1   0
+     *          x   x   x   x   CLEAR_DAQ_REQ  STORE_DAQ_REQ  x   STORE_CAL_REQ
+     *
+     * Only STORE_CAL_REQ is implemented: Xcp_MainFunction fulfils it through the integrator's
+     * store-calibration callback, then clears the bit and raises EV_STORE_CAL. STORE_DAQ_REQ and
+     * CLEAR_DAQ_REQ both act on a non-volatile DAQ list configuration this module does not keep,
+     * so they are refused under this same section's "If the slave device does not support the
+     * requested mode, an ERR_OUT_OF_RANGE will be returned". That agrees with what the module
+     * already advertises: GET_DAQ_PROCESSOR_INFO reports RESUME unsupported, and non-volatile DAQ
+     * storage exists to serve RESUME.
+     *
+     * Accepting them instead is not merely inaccurate, it is a session-wide denial of service.
+     * Nothing clears a request bit that no code fulfils, and Xcp_CanIfRxIndication refuses every
+     * command carrying ERR_PGM_ACTIVE -- 42 of them -- for as long as one is set, so a single
+     * conformant SET_REQUEST would disable most of the command set until the next CONNECT.
+     * Defect D9 in docs/superpowers/specs/2026-08-29-xcp-part2-roadmap.md tracks the non-volatile
+     * storage work that would let these two modes be accepted rather than refused.
+     *
+     * These bit positions coincide with the GET_STATUS session status bits of 1.0/1.6.1.1.3,
+     * which is what makes the assignment below sound; both bit tables were read to confirm it. */
+    if ((pPduInfo->SduDataPtr[0x01u] & (uint8)(~XCP_SESSION_STATUS_MASK_STORE_CAL_REQ)) != 0x00u)
     {
         result = XCP_E_ASAM_OUT_OF_RANGE;
-    }
-    else
-    {
-        mode = pPduInfo->SduDataPtr[0x01u];
     }
 
     if (result == E_OK)
     {
-        Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &session_configuration_id, Xcp_Ptr->general->byteOrder);
-
-        /* TODO: this is most likely not the correct way to handle the session id, this must be implemented... */
-        if (session_configuration_id != 0x00u)
-        {
-            result = XCP_E_ASAM_OUT_OF_RANGE;
-        }
-
-        Xcp_Internal.session_status |= mode;
+        /* The session configuration id in bytes 2,3 belongs to STORE_DAQ_REQ: 1.0/1.6.1.2.3 has the
+         * slave store it in non-volatile memory alongside the DAQ lists, and CLEAR_DAQ_REQ reset it
+         * to 0. With both modes refused above, there is nowhere to store it and nothing to validate
+         * it against, so it is ignored rather than examined. The check that stood here rejected a
+         * non-zero id, but did so after this branch had already been entered: it set `result` and
+         * then finalized a positive response regardless, so it never reached the master. */
+        Xcp_Internal.session_status |= pPduInfo->SduDataPtr[0x01u];
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
@@ -1060,8 +1073,16 @@ uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduI
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.session_status;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_GetProtectionStatus();
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = 0xABu; /* TODO: implement me... */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0xCDu; /* TODO: implement me... */
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5: session configuration id.
+     * 1.6.1.2.3 has it set by a prior SET_REQUEST carrying STORE_DAQ_REQ, held in non-volatile
+     * memory alongside the stored DAQ lists and reset to 0 by CLEAR_DAQ_REQ, so that a master can
+     * check that automatically started (RESUME) DAQ lists carry the configuration it expects.
+     * SET_REQUEST refuses STORE_DAQ_REQ and GET_DAQ_PROCESSOR_INFO reports RESUME unsupported, so
+     * no configuration is ever stored and 0 -- the value the specification itself resets the id to
+     * -- is the truthful answer here, not a placeholder. This reported 0xABCD until defect D9 was
+     * closed; see the roadmap for the non-volatile storage work that would give it a real value. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
 
     Xcp_FinalizeResPacket(0x06u, &Xcp_Internal.cto_response.pdu_info);
 
