@@ -388,7 +388,11 @@ void Xcp_DaqFreeAll(void)
      * disagreed, leave a list with a non-zero maxOdt standing while this function reported having
      * freed everything. Under STATIC the two bounds are equal by construction (Xcp_Init), and
      * under DYNAMIC every list above the allocated count already holds a zeroed descriptor, so
-     * the wider bound costs a few no-op writes and can never do less than the narrower one. */
+     * the wider bound costs a few no-op writes and can never do less than the narrower one.
+     *
+     * Do not narrow this to allocated_daq_count. The no-op writes are what it looks like it
+     * buys, and they are not the point: the point is that the sampler's bound and this function's
+     * bound are the same number, so no list the sampler can reach is outside what this releases. */
     for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
     {
         Xcp_DaqListReset(daq_idx);

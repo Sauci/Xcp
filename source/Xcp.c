@@ -1133,20 +1133,27 @@ void Xcp_Init(const Xcp_Type *pConfig)
             for (idx = 0x00000000u; idx < Xcp_Ptr->general->maxSegment; idx ++) {
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[idx].freeze = FALSE;
             }
-            for (idx = 0x00u; idx < Xcp_Ptr->general->daqCount; idx++)
-            {
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].eventChannelNumber = 0x0000u;
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode = 0x00u;
-                /* 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." */
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescaler = 0x01u;
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescalerCounter = 0x00u;
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].priority = 0x00u;
-                /* The generated ODT entry arrays are module-level mutable statics with no
-                 * initialisation of their own; reset them here too, or a re-initialised module
-                 * inherits a previous session's DAQ configuration. See
-                 * Xcp_DaqListClearEntries's own doc comment (Xcp_Daq.c). */
-                Xcp_DaqListClearEntries((uint16)idx);
-            }
+            /* Initialisation establishes exactly the invariant FREE_DAQ does, so it runs the same
+             * unwind rather than a second, slightly different copy of it: every DAQ list stopped,
+             * every ODT entry cleared, the prescaler back to 1 (1.1/1.6.4.1.1.3), and -- under
+             * DYNAMIC -- the descriptor's own maxOdt, firstPid and per-ODT entryCount back to
+             * zero.
+             *
+             * That last part is why this is a call and not the open-coded loop it replaces. The
+             * generated DAQ list descriptor and ODT entry arrays are module-level mutable statics
+             * with no initialisation of their own, and under DYNAMIC maxOdt/firstPid/entryCount
+             * ARE the allocation. The loop that used to stand here reset Xcp_DaqListRt and called
+             * Xcp_DaqListClearEntries, but left those three untouched -- so a re-initialised
+             * module set allocated_daq_count to 0 and daq_alloc_state to FREE, reporting nothing
+             * allocated, while the descriptor still described the previous session's lists. The
+             * two halves of the allocation state disagreed, and the clear itself missed the
+             * entries of any list whose maxOdt it had not reset, since Xcp_DaqListClearEntries is
+             * bounded by exactly the counts that were being left behind.
+             *
+             * Ordering: allocated_daq_count is assigned above, before this call. Xcp_DaqFreeAll
+             * lowers it to zero only under DYNAMIC, which is what that assignment already says
+             * there, and leaves the STATIC value (daqCount) alone. */
+            Xcp_DaqFreeAll();
 
             Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->read = 0x00u;
             Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->write = 0x00u;

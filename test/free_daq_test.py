@@ -39,38 +39,6 @@ def queued_frames(handle):
     return frames
 
 
-def reset_descriptor(handle):
-    """Returns the generated DAQ list descriptor to its unallocated state.
-
-    Xcp_Init resets Xcp_Internal (including allocated_daq_count and daq_alloc_state) and every
-    Xcp_DaqListRt, and it clears the ODT entries -- but it never resets the descriptor's own
-    maxOdt, firstPid or per-ODT entryCount. Under DYNAMIC those three ARE the allocation, so a
-    re-initialised module reports nothing allocated while the descriptor still describes the
-    previous session's lists. See the Task 4 report: this is Task 2's carried note ("Xcp_Init
-    never clears the pool's ODT entries") one level up, and it is left as a finding rather than
-    fixed here.
-
-    It has to be compensated for in the tests because the generated descriptor arrays are
-    module-level statics shared by every XcpTest that compiles the same configuration
-    (test/conftest.py caches by configuration id), so without this a test inherits whatever
-    allocation the previous test planted -- which, since allocate_directly accumulates the way
-    ALLOC_ODT does, walks maxOdt past the pool's generated ODT array and reads out of bounds."""
-    for daq_idx in range(handle.lib.Xcp_Ptr.general.daqCount):
-        descriptor = handle.lib.Xcp_Ptr.config.daqList[daq_idx]
-        descriptor.maxOdt = 0
-        descriptor.firstPid = 0
-
-        for odt_idx in range(handle.lib.Xcp_Ptr.general.odtCount):
-            descriptor.odt[odt_idx].entryCount = 0
-
-            for entry_idx in range(handle.lib.Xcp_Ptr.general.odtEntriesCount):
-                entry = descriptor.odt[odt_idx].odtEntry[entry_idx]
-                entry.address = handle.ffi.NULL
-                entry.addressExtension = 0x00
-                entry.length = 0x00
-                entry.bitOffset = 0xFF
-
-
 def allocate_directly(handle, daq_list_count=1, odt_count=1, entry_count=1, address=0x1000):
     """What ALLOC_ODT, ALLOC_ODT_ENTRY and WRITE_DAQ will leave behind, written into the descriptor
     from the test instead of driven through the protocol.
@@ -86,6 +54,14 @@ def allocate_directly(handle, daq_list_count=1, odt_count=1, entry_count=1, addr
 
     maxOdt is raised rather than assigned, because DD28 makes repeated ALLOC_ODT accumulate; a
     caller that allocates twice therefore models two ALLOC_ODT requests, not one.
+
+    Nothing resets the descriptor before this runs, and nothing needs to: the generated descriptor
+    arrays are module-level statics shared by every XcpTest compiling the same configuration
+    (test/conftest.py caches by configuration id), but Xcp_Init -- which XcpTest runs on
+    construction -- calls Xcp_DaqFreeAll, so each test starts from a genuinely unallocated pool.
+    test_initialisation_releases_an_allocation_left_by_a_previous_session pins that directly; if it
+    ever regresses, the accumulation below walks past the pool's generated ODT array rather than
+    failing cleanly, so that test failing first is not a coincidence worth ignoring.
 
     One thing this cannot reach: Xcp_Internal.allocated_daq_count, which ALLOC_DAQ raises.
     Xcp_Internal is declared in source/Xcp_Internal.h, which interface/Xcp.h does not include, so
@@ -137,7 +113,6 @@ def test_free_daq_answers_a_positive_response():
     (Xcp_CTOErrorMatrix gives it CMD_BUSY, PGM_ACTIVE, CMD_UNKNOWN and CMD_SYNTAX); the handler
     itself never refuses."""
     handle = dynamic_handle(daq_count=2, odt_count=2, odt_entries_count=2)
-    reset_descriptor(handle)
 
     assert exchange(handle, (0xD6,))[0:1] == (0xFF,)
 
@@ -149,7 +124,6 @@ def test_free_daq_releases_every_allocation():
     them: an ODT count returned to zero while the entries it described are still populated would
     leave a reallocated list holding the previous allocation's addresses."""
     handle = dynamic_handle(daq_count=2, odt_count=2, odt_entries_count=2)
-    reset_descriptor(handle)
     allocate_directly(handle, daq_list_count=2, odt_count=2, entry_count=2)
 
     assert handle.lib.Xcp_Ptr.config.daqList[1].firstPid == 2, 'the setup itself did not allocate'
@@ -180,7 +154,6 @@ def test_free_daq_stops_a_running_daq_rather_than_refusing_it():
     ERR_DAQ_ACTIVE is absent, so refusing a running slave is not authorised. FREE_DAQ therefore
     stops every running list and clears DAQ_RUNNING."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=1)
-    reset_descriptor(handle)
     allocate_directly(handle)
     start_through_start_stop_synch(handle)
 
@@ -200,7 +173,6 @@ def test_free_daq_clears_the_runtime_state_not_only_the_descriptor():
     Xcp_TriggerEventChannel elapses a cycle on `prescalerCounter >= prescaler`, so a zero
     prescaler would mean every trigger elapses rather than none."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=1)
-    reset_descriptor(handle)
     allocate_directly(handle)
 
     rt(handle).daqList[0].mode = 0x10  # XCP_DAQ_LIST_MODE_TIMESTAMP
@@ -221,7 +193,6 @@ def test_a_configured_running_list_samples_when_free_daq_does_not_run():
     after FREE_DAQ proves nothing, because a setup that never sampled in the first place would
     satisfy the same assertion."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=1)
-    reset_descriptor(handle)
     allocate_directly(handle)
     start_through_start_stop_synch(handle)
     handle.xcp_read_slave_memory_u8.reset_mock()
@@ -245,7 +216,6 @@ def test_a_trigger_after_free_daq_samples_nothing_and_queues_no_frame():
     test_a_configured_running_list_samples_when_free_daq_does_not_run has just shown does sample
     without it."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=1)
-    reset_descriptor(handle)
     allocate_directly(handle)
     start_through_start_stop_synch(handle)
 
@@ -287,7 +257,6 @@ def test_a_trigger_preempting_free_daq_at_any_area_release_samples_nothing(relea
     unwind has released -- the DD14 failure class -- so the assertion is on the memory reads
     themselves, not just on the ring."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=2)
-    reset_descriptor(handle)
     allocate_directly(handle, odt_count=1, entry_count=2)
     start_through_start_stop_synch(handle)
 
@@ -323,7 +292,6 @@ def test_free_daq_holds_the_exclusive_area_exactly_once_per_odt_and_once_per_lis
     unwind without extending the sweep would leave an interleaving point untested, which is the
     one thing a sweep parametrised by a literal cannot notice by itself."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=2)
-    reset_descriptor(handle)
     allocate_directly(handle, odt_count=1, entry_count=2)
     enter_count_before = handle.sch_m_enter_xcp_dto_queue.call_count
 
@@ -346,12 +314,49 @@ def test_free_daq_takes_the_exclusive_area_around_the_descriptor_writes():
     once per ODT -- does not execute at all, so the single entry counted below can only be the one
     around the descriptor-count writes."""
     handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=1)
-    reset_descriptor(handle)
     enter_count_before = handle.sch_m_enter_xcp_dto_queue.call_count
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xD6,)))
 
     assert handle.sch_m_enter_xcp_dto_queue.call_count - enter_count_before == 1
+
+
+def test_initialisation_releases_an_allocation_left_by_a_previous_session():
+    """Xcp_Init must establish the same invariant FREE_DAQ does, so it runs the same unwind.
+
+    It used to reset Xcp_Internal and every Xcp_DaqListRt and clear the ODT entries, but left the
+    descriptor's own maxOdt, firstPid and per-ODT entryCount standing -- and under DYNAMIC those
+    three ARE the allocation. A re-initialised module therefore set allocated_daq_count to 0 and
+    daq_alloc_state to FREE, reporting nothing allocated, while the descriptor still described the
+    previous session's lists: the two halves of the allocation state disagreed. The clear missed
+    the entries too, because Xcp_DaqListClearEntries is bounded by exactly the counts being left
+    behind -- which is Task 2's carried note ("Xcp_Init never clears the pool's ODT entries") seen
+    from one level up.
+
+    The generated descriptor arrays are module-level mutable statics with no initialisation of
+    their own, so this is the only thing standing between one session's allocation and the next
+    one's."""
+    handle = dynamic_handle(daq_count=2, odt_count=2, odt_entries_count=2)
+    allocate_directly(handle, daq_list_count=2, odt_count=2, entry_count=2)
+
+    assert handle.lib.Xcp_Ptr.config.daqList[1].firstPid == 2, 'the setup itself did not allocate'
+
+    handle.lib.Xcp_Init(handle.ffi.cast('const Xcp_Type *', handle.config.lib.Xcp))
+
+    for daq_idx in range(2):
+        descriptor = handle.lib.Xcp_Ptr.config.daqList[daq_idx]
+
+        assert descriptor.maxOdt == 0
+        assert descriptor.firstPid == 0
+
+        for odt_idx in range(2):
+            assert descriptor.odt[odt_idx].entryCount == 0
+
+            for entry_idx in range(2):
+                entry = descriptor.odt[odt_idx].odtEntry[entry_idx]
+
+                assert entry.address == handle.ffi.NULL
+                assert entry.length == 0
 
 
 def test_disconnect_frees_the_allocation_so_the_next_session_does_not_inherit_it():
@@ -368,7 +373,6 @@ def test_disconnect_frees_the_allocation_so_the_next_session_does_not_inherit_it
     for, and ODT 1 -- the first session's -- is back to being unallocated and empty. Without it,
     maxOdt would read three and ODT 1 would still carry the first session's entry."""
     handle = dynamic_handle(daq_count=2, odt_count=4, odt_entries_count=2)
-    reset_descriptor(handle)
     allocate_directly(handle, odt_count=2, address=0x1000)
 
     assert exchange(handle, (0xFE,))[0] == 0xFF  # DISCONNECT
@@ -384,29 +388,35 @@ def test_disconnect_frees_the_allocation_so_the_next_session_does_not_inherit_it
     assert descriptor.odt[1].odtEntry[0].length == 0
 
 
-def test_disconnect_stops_and_clears_the_daq_lists_of_a_static_configuration_too():
-    """1.0/2.3 again, for the model that has no allocation to release. A STATIC build cannot enable
-    FREE_DAQ at all -- script/source_cfg.c.jinja2 refuses a configuration that does -- so DISCONNECT
-    is the only route by which Xcp_DaqFreeAll runs there, and what it has to deliver is the rest of
-    the sentence: the DAQ lists stop and their entries are reset, so a master's next CONNECT does
-    not inherit the previous session's measurement."""
+def test_disconnect_leaves_a_static_configurations_daq_entries_alone():
+    """The counterpart of the test above, and the boundary on it: the DISCONNECT unwind is gated on
+    DAQ_DYNAMIC, so a STATIC build's configured DAQ entries survive a disconnect untouched.
+
+    A STATIC configuration has no allocation to leak -- its lists are generated, not allocated --
+    so the gap the DYNAMIC gate closes does not exist here, and clearing a master's written entries
+    on disconnect would be a behaviour change to the static model that SP2d is required not to make
+    (DD25). Pinned rather than left implicit, because Xcp_DaqFreeAll is one unguarded call away
+    from doing it.
+
+    Whether XCP part 1 - Overview 2.3 nevertheless requires a disconnecting slave to reset its DAQ
+    lists in both models is a separate question, deliberately not settled here: that document is
+    not in docs/external/, so the claim cannot be checked against a source. It is recorded as a
+    follow-up in the Task 4 report rather than implemented against an unverifiable citation."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),)))
     connect(handle)
 
     exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))  # SET_DAQ_PTR list 0, odt 0, entry 0
     exchange(handle, (0xE1, 0xFF, 0x01, 0x00, 0x00, 0x10, 0x00, 0x00))  # WRITE_DAQ address 0x1000
-    exchange(handle, (0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))  # SET_DAQ_LIST_MODE
-    assert exchange(handle, (0xDE, 0x01, 0x00, 0x00))[0] == 0xFF  # START_STOP_DAQ_LIST start
-    assert exchange(handle, (0xFD,))[1] & 0x40 == 0x40  # GET_STATUS: DAQ_RUNNING set
 
     assert exchange(handle, (0xFE,))[0] == 0xFF  # DISCONNECT
 
     connect(handle)
 
-    assert exchange(handle, (0xFD,))[1] & 0x40 == 0x00
-    assert rt(handle).daqList[0].mode == 0x00
-    assert handle.lib.Xcp_Ptr.config.daqList[0].odt[0].odtEntry[0].address == handle.ffi.NULL
-    assert handle.lib.Xcp_Ptr.config.daqList[0].odt[0].odtEntry[0].length == 0
-    # The allocation is not touched: a static list's ODTs are generated, not allocated, so
-    # CLEAR_DAQ_LIST on list 0 must still be answered rather than refused as out of range.
+    entry = handle.lib.Xcp_Ptr.config.daqList[0].odt[0].odtEntry[0]
+
+    assert entry.address != handle.ffi.NULL, 'DISCONNECT cleared a static build\'s ODT entry'
+    assert int(handle.ffi.cast('uint32_t', entry.address)) == 0x1000
+    assert entry.length == 1
+    # The list is still there to be cleared, as it was before: a static list's ODTs are generated,
+    # not allocated, so CLEAR_DAQ_LIST on list 0 is answered rather than refused as out of range.
     assert exchange(handle, (0xE3, 0x00, 0x00, 0x00))[0] == 0xFF

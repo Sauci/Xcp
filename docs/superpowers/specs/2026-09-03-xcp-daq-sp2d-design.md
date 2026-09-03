@@ -326,10 +326,12 @@ Bytes 2,3 are `DAQ_LIST_NUMBER`; byte 4 is `ODT_NUMBER`, relative within the lis
 
 - `source/Xcp_Daq.c` — the four new handlers, the state machine, the prefix-sum recomputation.
 - `source/Xcp_Internal.h` — the allocation state enum, `allocatedDaqCount`.
-- `source/Xcp.c` — reset of the allocation state in `Xcp_Init`, and the `FREE_DAQ` PID table entry.
-- `source/Xcp_Std.c` — DISCONNECT calls the same unwind `FREE_DAQ` does (`Xcp_DaqFreeAll`), so a
-  master that allocates and disconnects without freeing does not leave its allocation for the next
-  one to accumulate onto (XCP part 1 — Overview 1.0/2.3).
+- `source/Xcp.c` — the `FREE_DAQ` PID table entry, and `Xcp_Init` calling the same unwind
+  `FREE_DAQ` does (`Xcp_DaqFreeAll`) in place of its open-coded per-list reset loop, so
+  initialisation establishes the same invariant rather than a slightly different one.
+- `source/Xcp_Std.c` — DISCONNECT calls that unwind too, **under `DAQ_DYNAMIC` only**, so a master
+  that allocates and disconnects without freeing does not leave its allocation for the next one to
+  accumulate onto. A STATIC build has no allocation to leak and is left exactly as it is (DD25).
 - `interface/Xcp_Types.h` — `const` dropped from the descriptor members the allocator writes,
   and `uint8 entryCount` added to `Xcp_OdtType` (DD27, DD34).
 - `script/source_cfg.c.jinja2`, `script/header_cfg.h.jinja2` — §8.
@@ -443,12 +445,12 @@ area as one boolean and cannot distinguish a forbidden preemption from a double-
 Suppressing those violations to let such a test pass would disable, for that test, the very
 invariant the suite relies on everywhere else. So it is not written.
 
-**One gap this exposed, not closed by SP2d so far:** `Xcp_Init` resets `Xcp_Internal` and every
-`Xcp_DaqListRt`, and clears the ODT entries, but never resets the descriptor's own `maxOdt`,
-`firstPid` or per-ODT `entryCount` — which under DYNAMIC *are* the allocation. A re-initialised
-module therefore reports nothing allocated while the descriptor still describes the previous
-session's lists. `Xcp_DaqFreeAll` is exactly the operation `Xcp_Init` is missing; see the Task 4
-report.
+**One gap this exposed, since closed:** `Xcp_Init` reset `Xcp_Internal` and every `Xcp_DaqListRt`
+and cleared the ODT entries, but never reset the descriptor's own `maxOdt`, `firstPid` or per-ODT
+`entryCount` — which under DYNAMIC *are* the allocation. A re-initialised module therefore reported
+nothing allocated while the descriptor still described the previous session's lists, and its clear
+missed the entries too, being bounded by exactly the counts left behind. `Xcp_Init` now calls
+`Xcp_DaqFreeAll`, which is precisely the operation it was missing.
 
 Generator guards are tested by asserting generation fails, not by matching the message.
 

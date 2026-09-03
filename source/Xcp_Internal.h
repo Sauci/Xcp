@@ -524,22 +524,23 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
 /**
  * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
  * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
- * (1.1/1.6.4.3.1.1), but declared here with external linkage because Xcp_CTOCmdStdDisconnect
- * (Xcp_Std.c) calls it too -- the same arrangement, and for the same kind of reason, as
- * Xcp_DaqListClearEntries just above.
+ * (1.1/1.6.4.3.1.1), but declared here with external linkage because two other places need the
+ * same unwind -- the same arrangement, and for the same kind of reason, as Xcp_DaqListClearEntries
+ * just above. The three callers are:
  *
- * XCP part 1 - Overview 1.0/2.3: in DISCONNECTED state "the session status, all DAQ lists and the
- * protection status bits are reset". Nothing did that: Xcp_CTOCmdStdDisconnect reset only
- * connection_status, CONNECT reset nothing, and Xcp_Init was the module's only session-state
- * reset path. Under a DYNAMIC configuration that is not merely untidy. The allocation state
- * machine's initial state is XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no preceding FREE_DAQ
- * (DD28), and repeated ALLOC_DAQ accumulates, so a master that allocated and then disconnected
- * without sending FREE_DAQ left the allocation standing -- and the next master's ALLOC_DAQ added
- * to it, handing that master more lists than it asked for, carrying the previous session's ODT
- * entries.
- * @note DISCONNECT calls this in a STATIC build too, where it frees nothing (there is no dynamic
- * allocation to release) but still stops every list and clears every ODT entry, which is what
- * 1.0/2.3 asks for and what the master's next CONNECT is entitled to assume.
+ * - Xcp_DTOCmdDaqFreeDaq (Xcp_Daq.c), for which this is the whole command;
+ * - Xcp_Init (Xcp.c), which has to establish the same invariant at start-up, and whose
+ *   open-coded loop used to leave the descriptor's maxOdt, firstPid and per-ODT entryCount
+ *   standing -- so a re-initialised DYNAMIC module reported nothing allocated while the
+ *   descriptor still described the previous session's lists;
+ * - Xcp_CTOCmdStdDisconnect (Xcp_Std.c), under DYNAMIC only. The allocation state machine starts
+ *   in XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no preceding FREE_DAQ (DD28), and repeats
+ *   accumulate, so an allocation a master leaves standing at DISCONNECT is one the next master's
+ *   ALLOC_DAQ adds to -- handing it more lists than it asked for, carrying the previous session's
+ *   ODT entries.
+ * @note the DISCONNECT caller is gated on DAQ_DYNAMIC. A STATIC configuration has no allocation
+ * to release, and clearing its generated DAQ entries on disconnect would be a behaviour change to
+ * the static model that SP2d is required not to make (DD25).
  */
 void Xcp_DaqFreeAll(void);
 
