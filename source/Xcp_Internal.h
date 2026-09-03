@@ -126,8 +126,16 @@ extern "C" {
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)
 #define XCP_SESSION_STATUS_MASK_DAQ_RUNNING (0x01u << 0x06u)
 
-/* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3. */
-#define XCP_DAQ_LIST_MODE_REQ_DIRECTION (0x01u << 0x00u)
+/* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
+ * Read off the specification's own bit table, which is identical in 1.0 and 1.1 except that 1.1
+ * fills bit 0, which 1.0 left don't-care:
+ *
+ *   bit    7   6   5        4          3   2   1          0
+ *   1.0    x   x   PID_OFF  TIMESTAMP  x   x   DIRECTION  x
+ *   1.1    x   x   PID_OFF  TIMESTAMP  x   x   DIRECTION  ALTERNATING
+ */
+#define XCP_DAQ_LIST_MODE_REQ_ALTERNATING (0x01u << 0x00u)
+#define XCP_DAQ_LIST_MODE_REQ_DIRECTION (0x01u << 0x01u)
 #define XCP_DAQ_LIST_MODE_REQ_TIMESTAMP (0x01u << 0x04u)
 #define XCP_DAQ_LIST_MODE_REQ_PID_OFF (0x01u << 0x05u)
 
@@ -139,12 +147,16 @@ extern "C" {
  * this mask either, for the same reason: Xcp_DTOCmdDaqSetDaqListMode decides it itself, depending
  * on whether the identification field type is absolute and the targeted DAQ list has exactly one
  * ODT (1.1/1.1.2.1). What remains here is refused unconditionally: DIRECTION selects STIM, out of
- * scope until SP3; and 1.1 places ALTERNATING somewhere in bits 6..7 -- refusing the whole class
- * is conformant whichever bit it turns out to occupy.
+ * scope until SP3, and ALTERNATING pairs a DAQ list with a display event channel declared only in
+ * the A2L file (DAQ_ALTERNATING_SUPPORTED), which this module does not emit -- and which 1.1
+ * forbids combining with TIMESTAMP in any case.
+ *
+ * Bits 2, 3, 6 and 7 are don't-care in both versions and are tolerated. An earlier revision of
+ * this mask refused 6 and 7 believing ALTERNATING lived there; it does not, and refusing bits the
+ * specification marks don't-care is over-strict.
  */
 #define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
-    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | \
-     (0x01u << 0x06u) | (0x01u << 0x07u)) /* bits 6-7 reserved: 1.1 places ALTERNATING somewhere in them */
+    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_ALTERNATING)
 
 /* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */
 #define XCP_DAQ_LIST_MODE_SELECTED (0x01u << 0x00u)
