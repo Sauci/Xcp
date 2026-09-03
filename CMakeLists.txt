@@ -57,6 +57,17 @@ if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
         if(NOT XCP_CFG_TIMESTAMP_ERROR)
             set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED ON)
 
+            # This branch, and so the BYTE/WORD/DWORD -> 1/2/4 mapping inside it, is unexercised by
+            # the test suite as shipped: XCP_CFG_TIMESTAMP_ERROR is set for every element of
+            # config/xcp.json's own "configurations", which declares no protocol_layer.timestamp
+            # block, so XCP_CFG_TIMESTAMP_ERROR is always truthy here and this body never runs --
+            # confirmed by changing WORD's 2 to 3, which the suite does not catch. It is still
+            # needed: an integrator who adds a protocol_layer.timestamp block to their own
+            # -DXCP_CONFIG_FILEPATH (or grows one into config/xcp.json) exercises it for real, and
+            # its result reaches the actual build through XCP_DAQ_TIMESTAMP_SIZE's
+            # target_compile_definitions below. Kept, not deleted; see also
+            # script/header_cfg.h.jinja2's copy of this same mapping, unexercised the same way for
+            # the same reason.
             if(XCP_CFG_TIMESTAMP_SIZE STREQUAL "BYTE")
                 set(XCP_CFG_TIMESTAMP_WIRE_SIZE 1)
             elseif(XCP_CFG_TIMESTAMP_SIZE STREQUAL "WORD")

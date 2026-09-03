@@ -65,6 +65,22 @@
 {%- for configuration in configurations %}
 {%- set ts = configuration.protocol_layer.timestamp %}
 {%- if ts is defined and ts %}
+{#- Only the DWORD entry below is independently confirmed correct. daq_configuration_test.py's
+    test_the_generated_header_is_authoritative_for_the_macros_it_derives preprocesses this
+    generated header alone, with no compile definitions, and is the only test that reads what this
+    block emits rather than what pre-empts it: every other test's handle.define() reads the
+    *effective* XCP_DAQ_TIMESTAMP_SIZE after test/conftest.py's own -D override (computed from
+    parameter.py's timestamp_wire_size, not from this dict), because conftest.py passes that -D to
+    every module it compiles, including the one built from this header, and it always wins the
+    #ifndef race below. Changing this dict's BYTE or WORD entry would not fail any test today.
+
+    Nor does the one build where this header's #define is NOT pre-empted help for BYTE/WORD:
+    generated/CMakeLists.txt's Xcp_Cfg library target compiles Xcp_Cfg.c against Xcp_Cfg.h with no
+    matching -D, but this whole branch is unreachable there anyway while config/xcp.json declares
+    no protocol_layer.timestamp -- the same reason CMakeLists.txt's own copy of this mapping is
+    unexercised (see the comment there). Extending the probe test above to BYTE and WORD, or giving
+    a configuration in XCP_CONFIG_FILEPATH a timestamp block, would exercise what changing those two
+    entries cannot today. #}
 {%- set wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[ts.size] %}
 {%- if wire_size > daq_timestamp_size.value %}
 {%- set daq_timestamp_size.value = wire_size %}

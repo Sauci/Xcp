@@ -1305,6 +1305,15 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                 for (daq_idx = 0x00u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
                 {
                     /* Then, we check if the received PDU ID is one which has been configured for a DAQ stimulation. */
+                    /* SP3, read this before adding a stimulation handler here. SWS_Xcp_00813 makes
+                     * Xcp_<Lo>RxIndication "Reentrant for different PduIds. Non reentrant for the
+                     * same PduId." Every CTO arrives on channel_rx_pdu_ref->id, so CanIf itself
+                     * prevents a CTO from racing another CTO -- which is why nothing below guards
+                     * Xcp_Internal.cto_response, last_pid or the protection-status clear. A DAQ_STIM
+                     * PDU is a DIFFERENT PduId and may therefore preempt a CTO mid-dispatch. This
+                     * branch is safe only because it sets a local flag and touches no shared state.
+                     * A handler that writes the response buffer, the DAQ pointer, the runtime mode
+                     * bits or the DTO ring makes that race real. */
                     if ((Xcp_Ptr->config->daqList[daq_idx].type == STIM) ||
                         (Xcp_Ptr->config->daqList[daq_idx].type == DAQ_STIM))
                     {

@@ -240,8 +240,16 @@ configures a list, so both orders are enforced:
 
 | Order | Check | Error |
 |:--|:--|:--|
-| `WRITE_DAQ` into ODT 0 of a list already timestamped | the existing `Xcp_OdtUsedBytes + size > budget` test, with the reduced budget | `ERR_OUT_OF_RANGE` |
+| `WRITE_DAQ` into ODT 0 of a list already timestamped | the existing `Xcp_OdtUsedBytes + size > budget` test, with the reduced budget | `ERR_DAQ_CONFIG` |
 | `SET_DAQ_LIST_MODE` enabling `TIMESTAMP` | `Xcp_OdtUsedBytes(list, 0, none) > reduced budget` | `ERR_OUT_OF_RANGE` |
+
+*Corrected in the SP2b hygiene pass.* This row previously said `ERR_OUT_OF_RANGE`. The check
+`WRITE_DAQ` shares with every other overfill (DD8, `Xcp_DaqApplyOdtEntry` in `source/Xcp_Daq.c`) has
+always answered `ERR_DAQ_CONFIG`; the timestamp-reduced budget is a smaller threshold for the same
+comparison, not a different one, so it inherits the same error rather than introducing
+`ERR_OUT_OF_RANGE` alongside it. §1.7.3.2.4 lists `ERR_DAQ_CONFIG` for `WRITE_DAQ`, and
+`write_daq_test.py`'s `test_write_daq_respects_the_budget_the_timestamp_leaves_in_odt_zero` pins it
+for exactly this reduced-budget case.
 
 `ERR_OUT_OF_RANGE` is listed for `SET_DAQ_LIST_MODE` in §1.7.3.2.4, and its prescribed master action
 — "retry other parameter" — is exactly the recovery available: drop an entry, or leave the timestamp
@@ -327,9 +335,18 @@ Request: `2 + n*8` bytes. Byte 1 is `n`; each element is `BIT_OFFSET`, size, add
 extension, and a **mandatory** alignment dummy — including after the last element.
 
 Beyond `WRITE_DAQ`'s restrictions, inherited via the shared helper (DD21): all entries must land in
-one ODT, and the command must not write over an ODT border. A request whose length disagrees with
-`n`, or whose `n` would cross the ODT's entry count, answers `ERR_OUT_OF_RANGE`. Partial application
-stands on error (DD22).
+one ODT, and the command must not write over an ODT border. A request whose `n` would cross the
+ODT's entry count answers `ERR_OUT_OF_RANGE`, from the shared helper's own pointer-validity check
+(the same one a second `WRITE_DAQ` past the border trips). A request whose length disagrees with `n`
+answers `ERR_CMD_SYNTAX`, checked before any entry is applied. Partial application stands on error
+(DD22).
+
+*Corrected in the SP2b hygiene pass.* This paragraph previously prescribed `ERR_OUT_OF_RANGE` for
+both. `Xcp_DTOCmdDaqWriteDaqMultiple` (`source/Xcp_Daq.c`) checks the request's `SduLength` against
+`2 + n*8` before entering the per-entry loop and answers `ERR_CMD_SYNTAX` on a mismatch; only the
+ODT-border case reaches the shared helper and its `ERR_OUT_OF_RANGE`. Defensible either way — 1.1
+does not itself say which applies to a malformed `WRITE_DAQ_MULTIPLE` request — so the document is
+corrected to match the shipped behaviour rather than the reverse.
 
 Read from the 1.1 OCR, which is degraded here; the implementation must confirm the element stride
 of 8 bytes and the trailing dummy against the PDF page images.

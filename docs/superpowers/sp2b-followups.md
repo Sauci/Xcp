@@ -129,6 +129,30 @@ then the variant count is partly an artifact of how long the build directory has
   both probe tests pass a single configuration, and in the compiled two-configuration module the
   harness's `-D` pre-empts the header's blocks.
 
+
+## Resolved by the AUTOSAR specification — `Xcp_CanIfRxIndication` reentrancy
+
+Carried for the whole of SP2b as an open question: whether `Xcp_CanIfRxIndication` can preempt
+itself and race `cto_response`, `last_pid` and the protection-status clear for every CTO command.
+
+**SWS_Xcp_00813** settles it. `Xcp_<Lo>RxIndication` is specified as:
+
+> Reentrancy: **Reentrant for different PduIds. Non reentrant for the same PduId.**
+
+Every CTO command in this module arrives on exactly one PduId —
+`Xcp_Ptr->config->communicationChannel->channel_rx_pdu_ref->id` (`source/Xcp.c`, the first test in
+the function). CanIf therefore guarantees it will not re-enter the function for that PduId while a
+call is in progress, so the CTO request state cannot be raced. **No exclusive area is needed, and
+the module is conformant as written.** `Xcp_<Lo>TxConfirmation` (SWS_Xcp_00817) and
+`Xcp_<Lo>TriggerTransmit` (SWS_Xcp_00835) carry the identical clause.
+
+**This closes for today, not forever.** A *different* PduId may preempt, and the DAQ_STIM receive
+PDUs are different PduIds. Today that branch only sets `valid_pdu_id` and touches no shared CTO
+state, so nothing races. SP3 implements stimulation reception on exactly those PduIds — if its
+handler touches `cto_response`, the DAQ pointer, or the runtime mode bits, it will be able to
+preempt a CTO command in progress, and the question becomes live with a real answer required.
+Record this in SP3's design rather than rediscovering it.
+
 ## Infrastructure
 
 `test.sh` should prune stale `_cffi_xcp_*` module directories **at the start of a run**, before
@@ -213,3 +237,55 @@ branch or is recorded here because it did not.
   configuration[BYTE-ONE_BYTE-1]` — each passing on an immediate re-run of the same selection. Same
   signature as the five recorded under *Infrastructure* above; the stale `_cffi_xcp_*` prune is still
   the fix.
+
+---
+
+# SP2b hygiene pass, `chore/sp2b-hygiene`
+
+Four items picked out of the ~36 above because each compounds with the next sub-project or costs
+time on every test run. Closed here; left in place above rather than deleted, so the record before
+and after stays traceable. The other ~32 items are untouched.
+
+## Closed
+
+- **Infrastructure: `test.sh` prunes stale `_cffi_xcp_*` module directories at the start of a run,
+  before `cmake`.** Verified on this branch's own `build/`, which had accumulated 1600 such
+  directories (188 MB) from prior work: the first run after the fix pruned all of them before
+  compiling, and coverage still reported all six translation units (`Xcp.c`, `Xcp_Std.c`,
+  `Xcp_Cal.c`, `Xcp_Pag.c`, `Xcp_Daq.c`, `Xcp_DaqRuntime.c`). A second run immediately afterward
+  left the module count unchanged — 1604 both times, not 3208 — and reported byte-identical merge
+  group sizes for every source, which is the direct evidence that pruning keeps the count bounded
+  across repeated runs instead of letting it accumulate. `.gcda` accumulation across runs is fixed
+  by the same change, for the same reason: every module, `.gcda` included, is rebuilt fresh.
+- **`Xcp_DtoFrameStrideCheck` (`script/source_rt.c.jinja2`) now asserts `XCP_MAX_DTO >=` this
+  configuration's `max_dto`, not `==`.** A new test,
+  `daq_configuration_test.py::test_a_multi_configuration_build_with_differing_max_dto_compiles_and_behaves`,
+  builds a two-configuration file (`max_dto` 8 and 64) and was confirmed, by temporarily reverting
+  the relation, to fail exactly as described (`error: size of array 'Xcp_DtoFrameStrideCheck00' is
+  negative`) under `==` and to compile and correctly transmit a bounded frame under `>=`.
+- **Two of the wire-size table's eight copies are structurally dead** — `CMakeLists.txt`'s
+  `XCP_CFG_TIMESTAMP_SIZE` derivation and `script/header_cfg.h.jinja2`'s `wire_size` dict — both
+  unexercised while `config/xcp.json` declares no `timestamp` block, and the header's copy also
+  permanently pre-empted by `test/conftest.py`'s own `-D` override inside the test harness. Neither
+  is deletable: each is the only implementation for a case a differently-configured
+  `XCP_CONFIG_FILEPATH` would genuinely exercise, so each now carries a comment naming exactly why
+  it is unexercised and what would exercise it, rather than sitting there silently. Separately,
+  `test/parameter.py`'s `timestamp_type_name` (zero consumers, confirmed repository-wide) is
+  deleted outright, and the live duplicate copies in `test/conftest.py`,
+  `test/daq_configuration_test.py` and `test/daq_identification_field_test.py` are collapsed onto
+  `test/parameter.py`'s `timestamp_wire_size`. The address-granularity family's own copies
+  (`test/upload_test.py`, `test/truncated_frame_test.py`) are a different table and were left
+  alone, as scoped. The full JSON-table consolidation remains out of scope.
+- **The design doc is corrected against the shipped code.** §5.2's `WRITE_DAQ` overfill row said
+  `ERR_OUT_OF_RANGE`; `Xcp_DaqApplyOdtEntry` (`source/Xcp_Daq.c`) has always answered
+  `ERR_DAQ_CONFIG` there (§1.7.3.2.4 lists that code for `WRITE_DAQ`, and
+  `write_daq_test.py::test_write_daq_respects_the_budget_the_timestamp_leaves_in_odt_zero` pins it
+  for this exact reduced-budget case). §7.1 said a `WRITE_DAQ_MULTIPLE` length/`n` disagreement
+  answers `ERR_OUT_OF_RANGE`; `Xcp_DTOCmdDaqWriteDaqMultiple` answers `ERR_CMD_SYNTAX` there — the
+  ODT-border-crossing case the same paragraph also describes does answer `ERR_OUT_OF_RANGE`, and
+  was left as written. Both corrections are marked inline in the document as corrections, matching
+  its existing convention, rather than silently rewritten.
+
+Not touched: the ~32 other items above, SP2c/SP2d/SP3 territory, the `Xcp_CanIfRxIndication`
+self-reentrancy question, and the coverage-measures-one-variant limitation — all deliberately out
+of scope for this pass.

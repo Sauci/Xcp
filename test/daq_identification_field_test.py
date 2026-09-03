@@ -183,7 +183,7 @@ def test_an_entry_written_at_a_non_zero_slot_is_still_sampled():
 
 _timestamp_offset_identifications = (('ABSOLUTE', 1), ('RELATIVE_BYTE', 2), ('RELATIVE_WORD', 3),
                                      ('RELATIVE_WORD_ALIGNED', 4))
-_timestamp_offset_sizes = (('BYTE', 1), ('WORD', 2), ('DWORD', 4))
+_timestamp_offset_sizes = tuple((size, wire) for size, wire in timestamp_wire_size.items() if size is not None)
 
 # Every identification_field_type x every timestamp width, but the byte-order axis is trimmed to
 # LITTLE_ENDIAN alone for the three identification widths added on top of the original ABSOLUTE

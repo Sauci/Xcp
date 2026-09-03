@@ -41,8 +41,15 @@ static Xcp_DaqListRtType Xcp_DaqListRt{{'%02X' % loop.index0}}[{{'0x%02Xu' % con
 
 /* XCP_MAX_DTO reaches this module as a compile definition, so a mismatch between it and the
  * value this runtime was generated for would silently change the stride of the array below.
- * A negative array size turns that into a compile error instead. */
-typedef char Xcp_DtoFrameStrideCheck{{'%02X' % loop.index0}}[(XCP_MAX_DTO == {{'0x%02Xu' % configuration.protocol_layer.max_dto}}) ? 1 : -1];
+ * A negative array size turns that into a compile error instead.
+ *
+ * >=, not ==: XCP_MAX_DTO is a max() fold over every configuration in the generated file
+ * (script/header_cfg.h.jinja2), one macro sizing Xcp_DtoFrameType.data[] for every configuration
+ * compiled into this module, not just this one. A configuration whose own max_dto is smaller than
+ * another configuration's in the same file is correctly sized by the larger, shared stride --
+ * requiring equality failed a multi-configuration build the moment two configurations' max_dto
+ * disagreed, even though every frame remained large enough. */
+typedef char Xcp_DtoFrameStrideCheck{{'%02X' % loop.index0}}[(XCP_MAX_DTO >= {{'0x%02Xu' % configuration.protocol_layer.max_dto}}) ? 1 : -1];
 
 static Xcp_DtoFrameType Xcp_DtoFrame{{'%02X' % loop.index0}}[{{'0x%02Xu' % (configuration.protocol_layer.daq_queue_size | default(16))}}];
 

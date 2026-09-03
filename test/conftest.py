@@ -18,6 +18,12 @@ from pycparser.c_generator import CGenerator as Generator
 from pycparser.c_parser import CParser
 from pcpp.preprocessor import Preprocessor as Pp
 
+# parameter.py imports nothing from this module, so importing its canonical wire-size table here
+# creates no cycle. Collapses what used to be a second, independently-maintained copy of the same
+# BYTE/WORD/DWORD -> 1/2/4 mapping (see parameter.py's own comment on timestamp_wire_size for why
+# it is not derived from Xcp_TimestampTypeType).
+from .parameter import timestamp_wire_size
+
 
 def pytest_addoption(parser):
     parser.addoption('--build_directory', action='store')
@@ -347,9 +353,8 @@ class XcpTest(object):
         daq_timestamp_supported_define = ('XCP_DAQ_TIMESTAMP_SUPPORTED={}'.format(
                 1 if any(c['protocol_layer'].get('timestamp')
                          for c in config['configurations']) else 0),)
-        daq_timestamp_wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}
         daq_timestamp_size_define = ('XCP_DAQ_TIMESTAMP_SIZE={}'.format(
-                max((daq_timestamp_wire_size[c['protocol_layer']['timestamp']['size']]
+                max((timestamp_wire_size[c['protocol_layer']['timestamp']['size']]
                      for c in config['configurations'] if c['protocol_layer'].get('timestamp')),
                     default=0)),)
         # The module under test is only coupled to a configuration through the generated
