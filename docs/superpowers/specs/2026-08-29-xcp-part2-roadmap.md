@@ -349,6 +349,20 @@ master.
 STIM reception in `Xcp_CanIfRxIndication`, `DAQ_STIM` and `STIM` event channel types.
 Depends on SP2 for the DAQ list infrastructure it reuses wholesale.
 
+**Concurrency question SP3 must answer, found in SP2b.** SWS_Xcp_00813 specifies
+`Xcp_<Lo>RxIndication` as *"Reentrant for different PduIds. Non reentrant for the same PduId."*
+Every CTO command reaches the module on one PduId — `channel_rx_pdu_ref->id` — so CanIf's own
+contract prevents a CTO from racing itself, and no exclusive area guards `cto_response`, `last_pid`
+or the protection-status clear today.
+
+**STIM breaks that.** DAQ_STIM receive PDUs are *different* PduIds, so a stimulation indication may
+preempt a CTO command mid-dispatch. The branch that will host it already exists in
+`Xcp_CanIfRxIndication` and today only sets `valid_pdu_id`, touching nothing shared. The moment
+SP3's handler touches the response buffer, the DAQ pointer, the runtime mode bits or the DTO ring,
+the race is real and needs an exclusive area around the busy-check/dispatch/set-flag sequence —
+which affects all 256 PID entries and is a design decision, not an implementation detail.
+Settle it in SP3's design; do not discover it in review.
+
 ### SP4 — Non-volatile memory programming (PGM)
 
 The eleven PGM commands and their integrator callbacks. Independent of SP2 and SP3;
