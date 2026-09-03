@@ -110,6 +110,11 @@ static boolean Xcp_DaqListTxPduIsExclusive(uint16 daqListNumber)
  * @details An ODT becomes one DTO frame, so the entries it holds have to fit in what the frame
  * leaves after the identification field. Entries not yet written have length 0 and contribute
  * nothing.
+ * @note odtNumber must be below the list's maxOdt: the ODT array is generated with exactly maxOdt
+ * elements, and a configuration may set max_odt to 0 (config/xcp.schema.json's "minimum"), which
+ * makes that array zero-length -- a GCC extension it accepts silently. Every caller is responsible
+ * for the bound; Xcp_DTOCmdDaqSetDaqListMode's ODT-0 capacity check is the one that used to pass
+ * 0x00u unconditionally.
  */
 static uint8 Xcp_OdtUsedBytes(uint16 daqListNumber, uint8 odtNumber, uint8 excludedEntry)
 {
@@ -651,11 +656,18 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
      * 0 already filled past the reduced budget cannot carry one. 0xFFu as excludedEntry excludes
      * nothing -- every configured slot is counted; no real index can equal it because the loop in
      * Xcp_OdtUsedBytes bounds idx strictly below maxOdtEntries, itself a uint8.
- */
+     *
+     * maxOdt first, and short-circuited: a list configured with max_odt 0 has no ODT 0 at all, and
+     * its generated Xcp_OdtType array is zero-length, so passing 0x00u to Xcp_OdtUsedBytes reads
+     * off the end of it. This is the module's only odt[ index bounded by neither maxOdt nor
+     * SET_DAQ_PTR's validation. A list with nowhere to put the timestamp answers the same
+     * ERR_OUT_OF_RANGE the capacity check does: it is the capacity question with the answer
+     * "none", and the master's recovery -- retry other parameter -- is the same one. */
     else if (((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u) &&
-             ((uint16)Xcp_OdtUsedBytes(daq_list_number, 0x00u, 0xFFu) >
-              (uint16)(Xcp_Ptr->general->odtEntrySizeDaq -
-                       Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType))))
+             ((Xcp_Ptr->config->daqList[daq_list_number].maxOdt == 0x00u) ||
+              ((uint16)Xcp_OdtUsedBytes(daq_list_number, 0x00u, 0xFFu) >
+               (uint16)(Xcp_Ptr->general->odtEntrySizeDaq -
+                        Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType)))))
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }

@@ -197,3 +197,37 @@ def test_enabling_timestamp_is_refused_when_odt_zero_is_already_full():
     handle.lib.Xcp_MainFunction()
 
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_OUT_OF_RANGE'))
+
+
+@pytest.mark.parametrize('max_odt_entries', (0, 4))
+def test_enabling_timestamp_is_refused_for_a_list_with_no_odt(max_odt_entries):
+    """`max_odt: 0` is a configuration config/xcp.schema.json accepts (`"minimum": 0`) and
+    script/source_cfg.c.jinja2 emits as a zero-length `Xcp_OdtType` array, which GCC takes without
+    complaint. Every other `odt[` access in source/Xcp_Daq.c is bounded by `maxOdt` or by
+    SET_DAQ_PTR's own validation; the ODT-0 capacity check reached from here was the one that was
+    not.
+
+    The two parameters are not the same test twice, and only one of them discriminates without
+    AddressSanitizer:
+
+    - `max_odt_entries=0` is the deterministic half. Xcp_OdtUsedBytes' loop runs zero times, so it
+      reads nothing out of bounds and returns a well-defined 0 -- which is below any budget, so
+      before the maxOdt guard this request was *accepted*, arming a timestamp on a list with no
+      ODT to carry it. Removing the guard turns this case from 0xFE into 0xFF.
+    - `max_odt_entries=4` is the out-of-bounds read itself: Xcp_OdtUsedBytes dereferences
+      `daqList[n].odt[0]` past the end of a zero-length array and walks whatever `odtEntry` pointer
+      it finds there. Its answer is whatever memory follows, so this case cannot fail on the
+      response byte alone; it needs `XCP_ASAN=1` (test/conftest.py's `_asan_flags`, off by default)
+      to fail rather than quietly return one. It is kept because that is the case an ASAN run --
+      or a different link order -- has to be able to reach by name.
+
+    ERR_OUT_OF_RANGE, the same code the capacity check itself answers: a list with no ODT 0 has
+    nowhere to put a timestamp, which is the capacity question with the answer "none"."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=0, max_odt_entries=max_odt_entries),)))
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_OUT_OF_RANGE'))

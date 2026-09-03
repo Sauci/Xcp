@@ -283,7 +283,8 @@ to completion by transmit confirmations.
   `config/xcp.json` does exactly that), and two such lists with `PID_OFF` would put two unidentifiable DTOs on
   one CAN-Id. A shared `pdu_mapping` is otherwise perfectly legal; it only rules out `PID_OFF`. The command also
   answers `ERR_OUT_OF_RANGE` for a priority above 0, which §1.6.4.1.1.3 names explicitly as the required response
-  from a slave without DAQ list prioritisation.
+  from a slave without DAQ list prioritisation, and for `TIMESTAMP` on a DAQ list configured with `max_odt: 0`,
+  which has no ODT 0 to carry the timestamp field.
 - `START_STOP_SYNCH(start selected)` with no list currently selected answers `ERR_DAQ_CONFIG`, per §1.6.4.1.1.5.
 - `CLEAR_DAQ_LIST` is accepted while the addressed list is running, per §1.6.4.2.1.1, which requires the command to
   stop a running transmission rather than refuse because one is active; the error matrix row was corrected to
