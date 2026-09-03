@@ -129,3 +129,79 @@ reached 3017 directories (307 MB) against the container's 1024 file-descriptor l
 are the documented common cause of five transient failures, each of which cost a full four-minute
 run and none of which reproduced. The modules are keyed by digest and rebuilt on demand, so clearing
 them is safe. Raising the image's FD limit is worth doing as well, but treats the symptom.
+
+---
+
+# Round-2 review, consolidated fix wave
+
+A second independent review of the branch, in two lenses. Everything below either landed on this
+branch or is recorded here because it did not.
+
+## Fixed on this branch
+
+- **`PID_OFF` enforced only half of §1.1.2.1.** DD20 justified checking only `maxOdt == 1` by
+  claiming the transport-layer half — "separate CAN-Ids for each DAQ list" — held by construction,
+  since each list gets one TX PDU. One PDU per list is not a *distinct* PDU per list: the schema has
+  no `uniqueItems` on `pdu_mapping`, and `config/xcp.json` maps both its lists to
+  `XCP_PDU_ID_TRANSMIT`. `SET_DAQ_LIST_MODE` now also refuses `PID_OFF` when another list shares this
+  list's `dto[0].dto2PduMapping.txPdu.id`. DD20 records the correction rather than the original
+  claim.
+- **Out-of-bounds read via `max_odt: 0`.** The ODT-0 timestamp capacity check indexed `odt[0]` with
+  no `maxOdt` bound — the module's only `.odt[` site bounded by neither `maxOdt` nor `SET_DAQ_PTR`.
+  Guarded at the call site; a zero-ODT list now answers `ERR_OUT_OF_RANGE` for `TIMESTAMP`.
+- **The CMake derivation was latched in the cache.** `option()` / `set(... CACHE ...)` no-op once the
+  entry exists, so editing `XCP_CONFIG_FILEPATH` could not move `XCP_PAGING_SUPPORTED`,
+  `XCP_DAQ_TIMESTAMP_SUPPORTED` or `XCP_DAQ_TIMESTAMP_SIZE` in an existing build directory — while
+  `generated/CMakeLists.txt` regenerated `Xcp_Cfg.c` from the new file anyway. Now derived through
+  `xcp_derive_from_configuration`, which shadows the last derived value so `FORCE` can update it
+  without clobbering an explicit `-D`; `CMAKE_CONFIGURE_DEPENDS` makes the configure step re-run.
+- **`odtEntrySizeDaq` truncated without a guard**, and the sibling `counters.odt > 255` guard was
+  dead (shadowed by the stricter PID ceiling in an earlier template loop). Both corrected, with the
+  docstring that reasoned about them as independent ceilings.
+- **`daqs[].type: "STIM"` refused at generation**, rather than emitting `DAQ_LIST_PROPERTIES == 0x00`
+  — an encoding §1.6.4.2.2.1 marks "Not allowed".
+- **`READ_DAQ`'s `ERR_OUT_OF_RANGE`** kept, but recorded as a deliberate deviation: §1.7.3.2.4 does
+  not list that code for `READ_DAQ`, and its only listed alternative prescribes recovery advice
+  ("retry other syntax") that cannot repair a pointer.
+- **The coverage merge reported the timestamp-disabled variant**, and this document said the
+  opposite. Both corrected; see the section above.
+- **`test_max_daq_list_reports_the_full_reference_count_at_the_byte_boundary`'s docstring** claimed a
+  change no test can observe. Corrected to claim only the boundary check it performs.
+
+## Found in this wave and not fixed
+
+- **AddressSanitizer never runs.** `test/conftest.py`'s `_asan_flags` is gated on `XCP_ASAN=1` and
+  off by default, and the image is Alpine/musl, where it is not readily available. The round-2 review
+  assumed "the harness compiles with ASAN"; it does not. One half of
+  `test_enabling_timestamp_is_refused_for_a_list_with_no_odt` (`max_odt_entries=4`, the actual
+  out-of-bounds read) therefore cannot fail on the default suite — its docstring says so. A CI job on
+  a glibc image with `XCP_ASAN=1` would make that half, and any future memory-safety test, real.
+- **The schema still permits `max_odt: 0` and `max_odt_entries: 0`.** Now harmless — the C guard
+  covers the one unbounded site, and every other `.odt[` index is bounded — but a DAQ list with no
+  ODT can do nothing, and nothing tells the integrator so. Raising the minimum to 1 was rejected
+  here because the schema is enforced only on the CMake path: `test/conftest.py` bypasses it, and the
+  README documents building these sources under a different build system entirely, so a schema
+  minimum would have left the read reachable exactly where it was reachable.
+- **The schema still permits two DAQ lists to name the same `pdu_mapping`**, deliberately — it is
+  legal and useful for lists that keep their identification field. But the refusal it now causes
+  surfaces only at runtime, as `ERR_MODE_NOT_VALID` from `SET_DAQ_LIST_MODE`; an integrator who wants
+  `PID_OFF` gets no warning at generation. A generation-time *warning* (not an error) naming the
+  lists that share a PDU would close the gap; a hard guard would not, since `pdu_mapping` is a macro
+  name the preprocessor resolves.
+- **`xcp_derive_from_configuration` cannot distinguish an explicit `-D` that agrees with the
+  derivation** from the derivation itself, so such an override is followed if the configuration later
+  changes. Re-passing the `-D` pins it again. Documented at the function.
+- **`Xcp_DTOCmdDaqGetDaqListInfo`'s DAQ-bit condition now has an unreachable false arm**, since
+  `STIM` is refused at generation and both remaining types are DAQ-capable. Kept, with a comment
+  naming the guard it depends on, because SP3 lifts that guard. The test that used to pin the
+  condition says plainly that it no longer can.
+- **`PID_OFF_SUPPORTED` in `DAQ_PROPERTIES` is not narrowed by the PDU-sharing rule.** It is a
+  property of the slave, not of a list, so a configuration where some lists have an exclusive TX PDU
+  and others do not has no single honest answer. A master may therefore see `PID_OFF_SUPPORTED` set
+  and still be refused per list. Recorded in DD20.
+- **Two transient failures reproduced during this wave** —
+  `daq_acceptance_test.py::test_a_dto_filled_to_capacity_has_every_byte_in_place[AG = BYTE-MAX_DTO =
+  016d]` and `daq_configuration_test.py::test_configured_timestamp_reaches_the_generated_
+  configuration[BYTE-ONE_BYTE-1]` — each passing on an immediate re-run of the same selection. Same
+  signature as the five recorded under *Infrastructure* above; the stale `_cffi_xcp_*` prune is still
+  the fix.
