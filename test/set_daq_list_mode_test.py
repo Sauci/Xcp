@@ -72,9 +72,8 @@ def test_set_daq_list_mode_stores_channel_prescaler_and_priority():
 # test_pid_off_is_refused_when_another_list_shares_this_list_s_tx_pdu cover the three refusal paths
 # precisely and by name. Keeping a same-outcome entry here would only assert the same thing twice
 # for three different reasons.
-@pytest.mark.parametrize('mode, name', ((0x01, 'DIRECTION = STIM'),
-                                        (0x40, 'bit 6, ALTERNATING in 1.1'),
-                                        (0x80, 'bit 7')))
+@pytest.mark.parametrize('mode, name', ((0x02, 'DIRECTION = STIM, bit 1'),
+                                        (0x01, 'ALTERNATING, bit 0 in 1.1')))
 def test_set_daq_list_mode_rejects_every_unimplemented_mode_bit(mode, name):
     """DD9: 1.7.3.2.4 lists ERR_MODE_NOT_VALID for this command and that is what these are."""
     handle = daq_handle()
@@ -82,11 +81,36 @@ def test_set_daq_list_mode_rejects_every_unimplemented_mode_bit(mode, name):
     assert set_mode(handle, mode=mode) == (0xFE, 0x27), name
 
 
-@pytest.mark.parametrize('mode', (0x02, 0x04, 0x08))
-def test_set_daq_list_mode_tolerates_the_bits_1_0_marks_dont_care(mode):
+@pytest.mark.parametrize('mode', (0x04, 0x08, 0x40, 0x80))
+def test_set_daq_list_mode_tolerates_the_bits_the_specification_marks_dont_care(mode):
+    """Bits 2, 3, 6 and 7 carry an 'x' in the mode bit table of both 1.0 and 1.1, so a master may
+    set them to anything and the slave ignores them. Bits 6 and 7 were previously refused, on the
+    belief that 1.1 placed ALTERNATING in them -- it places it at bit 0."""
     handle = daq_handle()
 
     assert set_mode(handle, mode=mode)[0] == 0xFF
+
+
+def test_set_daq_list_mode_refuses_a_stimulation_direction_rather_than_ignoring_it():
+    """Regression. DIRECTION is bit 1 in both 1.0 and 1.1, but this module declared it at bit 0
+    until the mode-bit positions were corrected. Bit 1 was covered by nothing, and the mask's own
+    comment called bits 1-3 tolerated don't-cares -- so a master asking for STIM got a positive
+    response, believed it had configured stimulation, and the slave went on sampling in the DAQ
+    direction with no error anywhere. Silence was the whole defect, so this test asserts the error
+    code rather than merely that the request did not succeed."""
+    handle = daq_handle()
+
+    assert set_mode(handle, mode=0x02) == (0xFE, 0x27)
+
+
+def test_set_daq_list_mode_refuses_alternating_at_the_bit_the_specification_gives_it():
+    """ALTERNATING is bit 0, read off 1.1's own bit table. It is refused rather than implemented:
+    the capability is declared through DAQ_ALTERNATING_SUPPORTED in the A2L file, which this module
+    does not emit, it pairs the list with a display event channel the protocol layer never gives
+    slave-side semantics for, and 1.1 forbids combining it with TIMESTAMP."""
+    handle = daq_handle()
+
+    assert set_mode(handle, mode=0x01) == (0xFE, 0x27)
 
 
 def test_set_daq_list_mode_rejects_an_unknown_daq_list():
