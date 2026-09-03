@@ -337,8 +337,20 @@ not:
   transmission chain SP2a built — the one guarded by the `SchM` exclusive area and shaped by
   D16. Scope them deliberately, and consider splitting them out, rather than treating the
   bullet as one homogeneous list.
-- **SP2c** — **next.** DAQ list prioritisation, more than one outstanding DTO frame, and
-  `ALTERNATING`.
+- **SP2c** — DAQ list prioritisation and more than one outstanding DTO frame. **Deferred, and it
+  buys no conformance.** §1.6.4.1.1.3 states outright that *"If the ECU doesn't support the
+  prioritization of DAQ lists, a DAQ list priority > 0 is not allowed and will be indicated by
+  returning ERR_OUT_OF_RANGE"*, which is exactly what the module does today; and "more than one
+  outstanding DTO frame" is not a protocol concept at all, only throughput. SP2b made a full ring
+  a *reported* condition through `EV_DAQ_OVERLOAD`, so the current single-frame chain is slow
+  under load, never silent. Schedule this against a measured throughput requirement, not against
+  the specification.
+
+  `ALTERNATING` was removed from this entry on 2026-09-02 and needs no further work. It is
+  declared through `DAQ_ALTERNATING_SUPPORTED` in the **A2L file**, which this module does not
+  emit, and it takes a display event channel number; the protocol layer gives it no slave-side
+  transmission semantics, and 1.1 forbids combining it with `TIMESTAMP`, which SP2b shipped. It is
+  refused at bit 0 of the `SET_DAQ_LIST_MODE` mode byte, where 1.1 puts it.
 
   Unlike SP2a and SP2b, this is not additive. Those extended a dispatch surface that already
   worked; SP2c reworks the confirmation-driven transmission chain that DD3 built and the `SchM`
@@ -346,9 +358,11 @@ not:
   also differ in risk: prioritisation reorders what the ring already holds, while multiple
   outstanding frames changes the ring's own invariants. Consider splitting them.
 
-- **SP2d** — dynamic DAQ list configuration (§1.6.4.3), the `DAQ_CONFIG_TYPE` = dynamic branch, and
-  the four remaining commands: `FREE_DAQ` (0xD6), `ALLOC_DAQ` (0xD5), `ALLOC_ODT` (0xD4) and
-  `ALLOC_ODT_ENTRY` (0xD3).
+- **SP2d** — **next.** Dynamic DAQ list configuration (§1.6.4.2 in 1.0, renumbered in 1.1), the
+  `DAQ_CONFIG_TYPE` = dynamic branch, and the four remaining commands: `FREE_DAQ` (0xD6),
+  `ALLOC_DAQ` (0xD5), `ALLOC_ODT` (0xD4) and `ALLOC_ODT_ENTRY` (0xD3). Chosen ahead of SP2c
+  because it is additive to the dispatch surface, and because a master that cannot allocate its
+  own lists is confined to whatever the generated static configuration happens to contain.
 
 An earlier revision of this section proposed decomposing by layer — configuration model,
 then command surface, then runtime. That was rejected when the design was written: no layer
