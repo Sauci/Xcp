@@ -75,6 +75,7 @@ static Xcp_OdtType Xcp_OdtConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X
     {
         {{'0x%02Xu' % odt_entry_size_daq}}, /* XcpOdtEntryMaxSize */
         {{'0x%02Xu' % i}}, /* XcpOdtNumber */
+        {{'0x%02Xu' % daq.max_odt_entries}}, /* entryCount */
         0x00u, /* XcpOdt2DtoMapping */
         &Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}Daq{{'%02X' % daq_loop.index0}}Odt{{'%02X' % i}}[0x00u] /* reference to XcpOdtEntry */
     },

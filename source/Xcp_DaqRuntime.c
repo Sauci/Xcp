@@ -149,7 +149,7 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
 
     SchM_Enter_Xcp_DtoQueue();
 
-    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries; idx++)
+    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount; idx++)
     {
         const Xcp_OdtEntryType *p_live =
                 &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[idx];

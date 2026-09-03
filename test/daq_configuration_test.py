@@ -162,6 +162,18 @@ def test_odt_entries_start_with_a_cleared_address_extension():
     assert handle.config.lib.Xcp[0].config.daqList[0].odt[0].odtEntry[1].addressExtension == 0
 
 
+def test_each_odt_carries_its_own_entry_count_seeded_from_the_list_cap():
+    """DD34. ALLOC_ODT_ENTRY assigns entries to one ODT, so a per-ODT count is needed; the
+    per-list maxOdtEntries cannot express one ODT holding four entries and another two. Under
+    STATIC every ODT is seeded with the list's max_odt_entries, which is what keeps the six
+    relocated bound checks comparing against the value they compared against before."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3, max_odt_entries=9),)))
+    daq_list = handle.config.lib.Xcp[0].config.daqList[0]
+    assert daq_list.maxOdtEntries == 9
+    for odt in range(3):
+        assert daq_list.odt[odt].entryCount == 9
+
+
 def test_event_channels_are_generated_rather_than_left_null():
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1), daq(name='DAQ2', max_odt=1))))
 

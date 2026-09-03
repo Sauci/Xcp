@@ -57,7 +57,7 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
         SchM_Enter_Xcp_DtoQueue();
 
         for (entry_idx = 0x00u;
-             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].entryCount;
              entry_idx++)
         {
             Xcp_OdtEntryType *p_entry =
@@ -122,7 +122,7 @@ static uint8 Xcp_OdtUsedBytes(uint16 daqListNumber, uint8 odtNumber, uint8 exclu
     uint8 used = 0x00u;
     uint8_least idx;
 
-    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries; idx++)
+    for (idx = 0x00u; idx < p_odt->entryCount; idx++)
     {
         if (idx != (uint8_least)excludedEntry)
         {
@@ -170,7 +170,8 @@ static uint8 Xcp_DaqOdtEntryBudget(uint16 daqListNumber, uint8 odtNumber)
 static void Xcp_DaqPointerAdvance(void)
 {
     if ((uint16)(Xcp_Internal.daq_pointer.odtEntryNumber + 0x01u) <
-        (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber].maxOdtEntries)
+        (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber]
+                .odt[Xcp_Internal.daq_pointer.odtNumber].entryCount)
     {
         Xcp_Internal.daq_pointer.odtEntryNumber++;
     }
@@ -285,7 +286,7 @@ static boolean Xcp_DaqListIsConfigured(uint16 daqListNumber)
     for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
     {
         for (entry_idx = 0x00u;
-             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].entryCount;
              entry_idx++)
         {
             if (Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].odtEntry[entry_idx].length != 0x00u)
@@ -366,7 +367,7 @@ uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduI
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }
-    else if (odt_entry_number >= Xcp_Ptr->config->daqList[daq_list_number].maxOdtEntries)
+    else if (odt_entry_number >= Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount)
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }
