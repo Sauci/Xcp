@@ -36,7 +36,8 @@ def test_granularity_is_the_address_granularity_element_size(ag):
                                                       (8, 'RELATIVE_BYTE', 6),
                                                       (8, 'RELATIVE_WORD', 5),
                                                       (8, 'RELATIVE_WORD_ALIGNED', 4),
-                                                      (64, 'ABSOLUTE', 63)))
+                                                      (64, 'ABSOLUTE', 63),
+                                                      (256, 'ABSOLUTE', 255)))
 def test_max_odt_entry_size_is_what_a_dto_leaves_after_the_identification_field(max_dto, ident,
                                                                                expected):
     """MAX_ODT_ENTRY_SIZE_DAQ is Xcp_Ptr->general->odtEntrySizeDaq -- the exact same derived value
@@ -100,3 +101,29 @@ def test_timestamp_mode_is_invalid_regardless_of_byte_order():
     handle = daq_handle(byte_order='BIG_ENDIAN')
 
     assert info(handle)[5] == 0
+
+
+@pytest.mark.parametrize('size', timestamp_sizes)
+def test_timestamp_mode_encodes_the_configured_size_on_the_wire(size):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5: TIMESTAMP_MODE bits 2:0 carry the
+    size as 0, 1, 2 or 4 -- 3 is "Not allowed". Xcp_TimestampTypeType's enumerators are implicit, so
+    FOUR_BYTE is 3; writing the enumerator into these bits would emit exactly the forbidden value.
+    This test is the reason the Xcp_TimestampWireSize mapping exists.
+
+    The expected wire size comes from parameter.py's timestamp_wire_size table rather than a fresh
+    literal tuple. Task 1 added that table (and timestamp_sizes) already anticipating this test,
+    but nothing used it until now -- using it here is the first consumer, and avoids adding a
+    sixth independent copy of the BYTE/WORD/DWORD -> 1/2/4 map that already exists five times over
+    (CMakeLists.txt, script/header_cfg.h.jinja2, script/source_cfg.c.jinja2, test/conftest.py, and
+    a literal tuple in test/daq_configuration_test.py)."""
+    handle = daq_handle(timestamp=timestamp(size=size, unit='TIMESTAMP_UNIT_10US', ticks=250))
+
+    response = info(handle)
+
+    mode = response[5]
+    assert (mode & 0x07) == timestamp_wire_size[size]
+    assert (mode & 0x08) == 0x00, 'TIMESTAMP_FIXED must be clear: the master may switch the timestamp off'
+    assert ((mode >> 4) & 0x0F) == handle.lib.TIMESTAMP_UNIT_10US
+
+    ticks = payload_to_array(bytearray(response[6:8]), 1, 2, 'LITTLE_ENDIAN')[0]
+    assert ticks == 250

@@ -266,7 +266,13 @@ class XcpTest(object):
     def __init__(self,
                  config,
                  initialize=True,
-                 rx_buffer_size=0x0FFF):
+                 rx_buffer_size=0x0FFF,
+                 configuration_index=0):
+        # Which of the generated file's configurations Xcp_Init runs against, i.e. which element
+        # of `const Xcp_Type Xcp[]` becomes Xcp_Ptr. Only ever other than 0 for a MultiConfig
+        # (test/parameter.py): with one configuration there is nothing to choose, and a
+        # build-wide macro and the active configuration's own fields can never disagree.
+        self.configuration_index = configuration_index
         self.available_rx_buffer = rx_buffer_size
         # DD14/fix round 1: SchM_Enter_Xcp_DtoQueue and SchM_Exit_Xcp_DtoQueue below are given
         # side effects that model the exclusive area as a single boolean, so nesting,
@@ -325,6 +331,27 @@ class XcpTest(object):
         # above: the generated Xcp_Cfg.h is not visible to the module under test.
         max_dto_define = ('XCP_MAX_DTO=0x{:02X}'.format(
                 max(c['protocol_layer']['max_dto'] for c in config['configurations'])),)
+        # XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE gate Xcp_GetDaqTimestamp's declaration (once a later
+        # task wires it into Xcp.h) and describe the timestamp field width to code compiled
+        # against Xcp_Types.h. Same reasoning as paging_define/max_dto_define above: the generated
+        # Xcp_Cfg.h is not visible to the module under test, so these are derived here from the
+        # configuration dict directly and given to every module. One macro is on when ANY
+        # configuration declares a timestamp block, and the other is the largest configured wire
+        # size, mirroring header_cfg.h.jinja2's own aggregation over every configuration.
+        # Unlike paging_define, this is given as a bare 0/1 rather than STD_OFF/STD_ON: identical
+        # once the preprocessor expands STD_ON/STD_OFF for the actual `#if` compilation, but
+        # test.conftest.Preprocessor.on_directive_handle/resolve_effective_defines (above) only
+        # ever records a #define's value when it tokenizes as a literal integer, so a symbolic
+        # right-hand side would leave handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') KeyError-ing
+        # regardless of the override reaching the compiler correctly.
+        daq_timestamp_supported_define = ('XCP_DAQ_TIMESTAMP_SUPPORTED={}'.format(
+                1 if any(c['protocol_layer'].get('timestamp')
+                         for c in config['configurations']) else 0),)
+        daq_timestamp_wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}
+        daq_timestamp_size_define = ('XCP_DAQ_TIMESTAMP_SIZE={}'.format(
+                max((daq_timestamp_wire_size[c['protocol_layer']['timestamp']['size']]
+                     for c in config['configurations'] if c['protocol_layer'].get('timestamp')),
+                    default=0)),)
         # The module under test is only coupled to a configuration through the generated
         # runtime it links against, so key both on a digest of that generated source rather
         # than on the whole configuration. Configurations producing identical runtime source
@@ -340,14 +367,25 @@ class XcpTest(object):
         # MockGen's `if self.name in sys.modules` cache hit would silently keep serving whichever
         # one compiled first, including its baked-in XCP_MAX_DTO. Folding max_dto_define into the
         # digest directly keeps it, rather than incidental correlation, responsible for the key.
-        rt_key = hashlib.sha1((code_gen.source_rt + max_dto_define[0]).encode('utf-8')).hexdigest()[0:8]
+        # self.code below is keyed on this same rt_key (not a key of its own), so this digest is
+        # what protects it against staleness too. daq_timestamp_supported_define/size_define are
+        # in exactly max_dto_define's position -- nothing in source_rt reads protocol_layer
+        # .timestamp either -- so two configurations differing only by timestamp size would
+        # otherwise collide here and hand the second one the first one's baked-in
+        # XCP_DAQ_TIMESTAMP_SIZE. Confirmed by running the parametrized BYTE/WORD/DWORD cases of
+        # test_configured_timestamp_reaches_the_generated_configuration without this fold: the
+        # second case failed with the first case's wire size still in effect.
+        rt_key = hashlib.sha1((code_gen.source_rt + max_dto_define[0] + daq_timestamp_supported_define[0] +
+                              daq_timestamp_size_define[0]).encode('utf-8')).hexdigest()[0:8]
         self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
                           define_macros=tuple(self.compile_definitions) +
                                         ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
                                         paging_define +
-                                        max_dto_define,
+                                        max_dto_define +
+                                        daq_timestamp_supported_define +
+                                        daq_timestamp_size_define,
                           include_dirs=tuple(self.include_directories + [self.build_directory]),
                           compile_flags=_asan_flags(),
                           link_flags=_asan_flags(),
@@ -361,7 +399,9 @@ class XcpTest(object):
                                             ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),) +
                                             paging_define +
-                                            max_dto_define,
+                                            max_dto_define +
+                                            daq_timestamp_supported_define +
+                                            daq_timestamp_size_define,
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
                               compile_flags=_asan_flags(),
                               link_flags=_asan_flags(),
@@ -379,7 +419,9 @@ class XcpTest(object):
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
                                           paging_define +
-                                          max_dto_define,
+                                          max_dto_define +
+                                          daq_timestamp_supported_define +
+                                          daq_timestamp_size_define,
                             include_dirs=tuple(self.include_directories + [self.build_directory]),
                             compile_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage') + _asan_flags(),
                             link_flags=('-g', '-O0', '-fprofile-arcs', '-ftest-coverage',) + _asan_flags(),
@@ -402,6 +444,13 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16 = MagicMock()
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
+        # Xcp_GetDaqTimestamp reaches self.code.mocked on its own once Xcp_DaqTimestamp.h is
+        # pulled in under XCP_DAQ_TIMESTAMP_SUPPORTED -- pcpp discovers any `extern`-declared
+        # function reachable from interface/Xcp.h without help. What it does not do is invent this
+        # attribute: the loop below is a plain getattr(self, convert(func)), so a configuration
+        # that enables the timestamp without this assignment existing fails inside this
+        # constructor with AttributeError, not inside whichever test happened to ask for it.
+        self.xcp_get_daq_timestamp = MagicMock()
         self.sch_m_enter_xcp_dto_queue = MagicMock()
         self.sch_m_exit_xcp_dto_queue = MagicMock()
         self.xcp_user_cmd_function = MagicMock()
@@ -431,6 +480,18 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
+        # Fix round 1: MagicMock pre-configures __int__/__index__ to return 1, so a call reaching
+        # this mock through the real CFFI boundary (extern "Python+C", uint32 return) coerces
+        # successfully to 1 instead of raising -- _guarded_callback only records an exception the
+        # mock itself raises, and return-type coercion happens after mock() has already returned,
+        # outside that try/except. Left unset, a test that forgets to configure this callback would
+        # not fail loudly; it would silently bake a wrong-but-plausible-looking timestamp into a
+        # DTO. 0xFFFFFFFF rather than the more obvious 0: a free-running counter reading 0 is a
+        # plausible real sample (e.g. right after reset), so it would not stand out in a failing
+        # assertion the way this maximum-value sentinel does. Matches the precedent e150861 set for
+        # xcp_set_cal_page/xcp_get_cal_page/xcp_copy_cal_page: defaulted in the same commit that
+        # added the mock, before any real call site existed anywhere in source/*.c.
+        self.xcp_get_daq_timestamp.return_value = 0xFFFFFFFF
         def enter_dto_queue_area():
             if self.dto_queue_area_held:
                 self.dto_queue_area_violations.append(
@@ -448,7 +509,13 @@ class XcpTest(object):
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
-            self.code.lib.Xcp_Init(self.code.ffi.cast('const Xcp_Type *', self.config.lib.Xcp))
+            # addressof(array, index) rather than a plain cast of the array, so a
+            # configuration_index other than 0 selects that element of Xcp[] the way an
+            # integrator's own Xcp_Init(&Xcp[n]) call would. Index 0 is byte-for-byte the cast
+            # this replaced.
+            self.code.lib.Xcp_Init(self.code.ffi.cast(
+                    'const Xcp_Type *',
+                    self.config.ffi.addressof(self.config.lib.Xcp, configuration_index)))
 
     def _guarded_callback(self, name, mock):
         """Wraps a mock so an exception it raises is recorded rather than only printed.

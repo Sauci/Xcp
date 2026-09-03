@@ -42,6 +42,22 @@ extern "C" {
 
 #endif /* #ifndef XCP_MAX_DTO */
 
+#ifndef XCP_DAQ_TIMESTAMP_SUPPORTED
+
+/* A literal rather than STD_OFF: the test harness's Preprocessor.on_directive_handle
+ * (test/conftest.py) only records a #define's value when it tokenizes as an integer literal, and
+ * handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') relies on that. Numerically identical to STD_OFF
+ * either way once the preprocessor expands it for an #if. */
+#define XCP_DAQ_TIMESTAMP_SUPPORTED (0x00u)
+
+#endif /* #ifndef XCP_DAQ_TIMESTAMP_SUPPORTED */
+
+#ifndef XCP_DAQ_TIMESTAMP_SIZE
+
+#define XCP_DAQ_TIMESTAMP_SIZE (0u)
+
+#endif /* #ifndef XCP_DAQ_TIMESTAMP_SIZE */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -215,6 +231,18 @@ typedef enum
     TIMESTAMP_UNIT_1US = 0x03u
 } Xcp_TimestampUnitType;
 
+/**
+ * @note DAQ_LIST is appended with an explicit value rather than spelled DAQ and placed between
+ * ODT and EVENT, where the specification's own ordering would put it. Two reasons, both binding
+ * on anyone editing this enumeration. Inserting an enumerator here renumbers EVENT from 1 to 2,
+ * which is an ABI break for any integrator holding an already-compiled Xcp_Cfg.o. And DAQ is
+ * already an enumerator of Xcp_EventChannelTypeType above, so a member named DAQ here would not
+ * be a redefinition -- both are plain C enumerators in the same scope, so the second declaration
+ * is what would fail to compile, and the configuration generator emitting a bare `DAQ` would
+ * resolve to whichever came first. It resolved to Xcp_EventChannelTypeType::DAQ == 0x00u, i.e.
+ * silently to ODT, for as long as this member was commented out. script/source_cfg.c.jinja2 maps
+ * the configuration's "DAQ" onto DAQ_LIST rather than emitting the configured string verbatim.
+ */
 typedef enum
 {
     /**
@@ -223,14 +251,14 @@ typedef enum
     ODT = 0x00u,
 
     /**
-     * @brief consistency on DAQ list level
-     */
-    //DAQ,
-
-    /**
      * @brief consistency on event channel level
      */
-    EVENT
+    EVENT = 0x01u,
+
+    /**
+     * @brief consistency on DAQ list level
+     */
+    DAQ_LIST = 0x02u
 } Xcp_EventChannelConsistencyType;
 
 /**
@@ -439,6 +467,19 @@ typedef struct
      */
     const Xcp_DaqListType * const *triggeredDaqListRef;
     const uint32 triggeredDaqListRefCount;
+
+    /**
+     * @brief ASCII name of this event channel, without NUL terminator, or NULL_PTR when names are
+     * not published. GET_DAQ_EVENT_INFO sets the MTA here so the master can UPLOAD it.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7.
+     */
+    const uint8 *namePtr;
+
+    /**
+     * @brief Length of namePtr in bytes. 0 means the name is not available, which
+     * 1.1/1.6.4.1.2.7 permits explicitly.
+     */
+    const uint8 nameLength;
 } Xcp_EventChannelType;
 
 /**

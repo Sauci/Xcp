@@ -1,4 +1,6 @@
-cmake_minimum_required(VERSION 3.8.0)
+# 3.19 for string(JSON), which replaces the execute_process+python configuration reads below.
+# The Docker image gets it from PyPI (requirements.txt) because alpine 3.10's apk pins 3.14.5.
+cmake_minimum_required(VERSION 3.19)
 
 project(Xcp VERSION 0.1.0 LANGUAGES C)
 
@@ -16,31 +18,142 @@ set(XCP_PYTEST_ARGS "" CACHE STRING "extra arguments forwarded to pytest (e.g. -
 
 find_package(PythonInterp 3.6 REQUIRED)
 
+# All three configuration-derived values below come from one parse of XCP_CONFIG_FILEPATH.
+# string(JSON ... GET/LENGTH) reports a missing key through ERROR_VARIABLE rather than failing the
+# configure step -- an unchecked GET on an absent key is a hard configure error, unlike the
+# dict.get() the Python this replaces used -- so a configuration without "segments" or
+# "protocol_layer.timestamp" has to be, and is, treated as its OFF/0 default explicitly below. The
+# wire-size mapping stays a literal BYTE/WORD/DWORD -> 1/2/4, not anything derived from
+# Xcp_TimestampTypeType: that enum is implicit, and its FOUR_BYTE enumerator is 3, the size the
+# specification marks "Not allowed" (see script/header_cfg.h.jinja2 and script/source_cfg.c.jinja2).
+file(READ ${XCP_CONFIG_FILEPATH} XCP_CONFIG_JSON)
+
+# file(READ) creates no dependency of its own, so without this the configure step does not re-run
+# when the configuration changes -- and generated/CMakeLists.txt *does* DEPEND on the same file, so
+# `make` regenerates Xcp_Cfg.c from the new configuration while every value derived below still
+# describes the old one.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${XCP_CONFIG_FILEPATH})
+
+string(JSON XCP_CONFIG_N_CONFIGURATIONS LENGTH ${XCP_CONFIG_JSON} configurations)
+
+set(XCP_PAGING_SUPPORTED_DERIVED OFF)
+set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED OFF)
+set(XCP_DAQ_TIMESTAMP_SIZE_DERIVED 0)
+
+if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
+    math(EXPR XCP_CONFIG_LAST_INDEX "${XCP_CONFIG_N_CONFIGURATIONS} - 1")
+
+    foreach(XCP_CONFIG_INDEX RANGE ${XCP_CONFIG_LAST_INDEX})
+        string(JSON XCP_CFG_SEGMENTS_LENGTH ERROR_VARIABLE XCP_CFG_SEGMENTS_ERROR
+            LENGTH ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} segments)
+        if(NOT XCP_CFG_SEGMENTS_ERROR)
+            if(XCP_CFG_SEGMENTS_LENGTH GREATER 0)
+                set(XCP_PAGING_SUPPORTED_DERIVED ON)
+            endif()
+        endif()
+
+        string(JSON XCP_CFG_TIMESTAMP_SIZE ERROR_VARIABLE XCP_CFG_TIMESTAMP_ERROR
+            GET ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} protocol_layer timestamp size)
+        if(NOT XCP_CFG_TIMESTAMP_ERROR)
+            set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED ON)
+
+            if(XCP_CFG_TIMESTAMP_SIZE STREQUAL "BYTE")
+                set(XCP_CFG_TIMESTAMP_WIRE_SIZE 1)
+            elseif(XCP_CFG_TIMESTAMP_SIZE STREQUAL "WORD")
+                set(XCP_CFG_TIMESTAMP_WIRE_SIZE 2)
+            elseif(XCP_CFG_TIMESTAMP_SIZE STREQUAL "DWORD")
+                set(XCP_CFG_TIMESTAMP_WIRE_SIZE 4)
+            else()
+                message(FATAL_ERROR
+                    "configurations[${XCP_CONFIG_INDEX}].protocol_layer.timestamp.size '${XCP_CFG_TIMESTAMP_SIZE}' in ${XCP_CONFIG_FILEPATH} is not one of BYTE, WORD, DWORD")
+            endif()
+
+            if(XCP_CFG_TIMESTAMP_WIRE_SIZE GREATER XCP_DAQ_TIMESTAMP_SIZE_DERIVED)
+                set(XCP_DAQ_TIMESTAMP_SIZE_DERIVED ${XCP_CFG_TIMESTAMP_WIRE_SIZE})
+            endif()
+        endif()
+    endforeach()
+endif()
+
 # Whether the PAG commands are compiled in follows from whether the configuration declares a
 # segment, which is the rule the generated Xcp_Cfg.h states and the README documents. Deriving it
 # here rather than defaulting it means the default build of a configuration that declares one
 # actually answers those commands: a fixed default of STD_OFF silently compiled all eight out and
 # answered ERR_CMD_UNKNOWN, since nothing on the library's include path pulls in Xcp_Cfg.h to
 # supply the value instead.
-execute_process(
-    COMMAND ${PYTHON_EXECUTABLE} -c
-        "import json,sys;c=json.load(open(sys.argv[1]));print('ON' if any(x.get('segments') for x in c['configurations']) else 'OFF')"
-        ${XCP_CONFIG_FILEPATH}
-    OUTPUT_VARIABLE XCP_PAGING_SUPPORTED_DERIVED
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    RESULT_VARIABLE XCP_PAGING_SUPPORTED_RESULT)
+#
+# The three cache entries below are *derived* from XCP_CONFIG_FILEPATH, and all three have to stay
+# derived. option(), and set(... CACHE ...) without FORCE, both do nothing at all once the entry
+# exists -- so the first configure latched a value that the configuration could no longer move.
+# Adding a "timestamp" block to the configuration and re-configuring in the same build directory
+# left XCP_DAQ_TIMESTAMP_SUPPORTED at OFF and XCP_DAQ_TIMESTAMP_SIZE at 0, while
+# generated/CMakeLists.txt -- which does DEPEND on that same file -- regenerated Xcp_Cfg.c with
+# timestampType = FOUR_BYTE in it. That is exactly the mixed build the comments below say this
+# derivation exists to prevent: the slave reports timestamp support and accepts the mode bit while
+# the code that would transmit it is compiled out. Only a fresh build directory gave the right
+# answer, and nothing said so.
+#
+# A bare FORCE would fix that and break the documented override, because FORCE also overwrites a -D
+# given on the very command line that asked for it. So the derived value is shadowed in an INTERNAL
+# entry: while the visible entry still holds what this project last derived, it is this project's to
+# update; the moment it holds anything else, an integrator put it there and it is left alone.
+#
+# The one case this cannot distinguish is an explicit -D that agrees with the derivation; it is
+# indistinguishable from the derivation itself and will be followed if the configuration later
+# changes. Re-passing the -D pins it again, which is the same gesture that set it in the first
+# place.
+function(xcp_derive_from_configuration name type derived docstring)
+    set(shadow ${name}_DERIVED_LAST)
 
-if(NOT XCP_PAGING_SUPPORTED_RESULT EQUAL 0)
-    message(FATAL_ERROR "could not derive XCP_PAGING_SUPPORTED from ${XCP_CONFIG_FILEPATH}")
-endif()
+    if(DEFINED ${shadow})
+        set(baseline "${${shadow}}")
+    else()
+        # First configure after this shadow entry was introduced, in a build directory that already
+        # has the visible entry. Nothing records whether it was derived or overridden, so an entry
+        # that disagrees with the derivation is given the benefit of the doubt and treated as an
+        # override; from the next configure on, the shadow answers the question properly.
+        set(baseline "${derived}")
+    endif()
 
-# An option, like every other switch here, so that -DXCP_PAGING_SUPPORTED=ON does what a reader
-# of the others would expect. The AUTOSAR STD_ON/STD_OFF spelling is applied where the definition
-# reaches the compiler, as it is for ENABLE_DET. Not FORCE: an explicit -D has to survive the
-# next configure for the help string's "override" to mean anything.
-option(XCP_PAGING_SUPPORTED
-    "enables/disables the calibration page switching commands. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why."
-    ${XCP_PAGING_SUPPORTED_DERIVED})
+    if((NOT DEFINED ${name}) OR ("${${name}}" STREQUAL "${baseline}"))
+        set(${name} "${derived}" CACHE ${type} "${docstring}" FORCE)
+    else()
+        # An override keeps its value but still gets the type and help string it would have had:
+        # a -D on the command line lands in the cache as UNINITIALIZED, and simply skipping the
+        # set() above would leave it that way -- untyped in cmake-gui, undocumented in
+        # CMakeCache.txt, which is what option() used to fix on the way past.
+        set(${name} "${${name}}" CACHE ${type} "${docstring}" FORCE)
+    endif()
+
+    set(${shadow} "${derived}" CACHE INTERNAL
+        "what ${name} was last derived from XCP_CONFIG_FILEPATH; see xcp_derive_from_configuration")
+endfunction()
+
+# A BOOL cache entry, like every other switch here, so that -DXCP_PAGING_SUPPORTED=ON does what a
+# reader of the others would expect. The AUTOSAR STD_ON/STD_OFF spelling is applied where the
+# definition reaches the compiler, as it is for ENABLE_DET.
+xcp_derive_from_configuration(XCP_PAGING_SUPPORTED BOOL ${XCP_PAGING_SUPPORTED_DERIVED}
+    "enables/disables the calibration page switching commands. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why.")
+
+# XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE need exactly the same treatment as XCP_PAGING_SUPPORTED above,
+# and for the same reason: source/*.c includes Xcp.h, never the generated Xcp_Cfg.h, so nothing on
+# the library's include path supplies these two. The generated header does define them from the
+# configuration -- script/header_cfg.h.jinja2 now defines every derived macro before its first
+# #include, so Xcp_Types.h's own fallbacks (0x00u/0u, present so the test harness's
+# handle.define() has literal text to key off) no longer pre-empt them there -- but that only
+# reaches a translation unit that includes Xcp_Cfg.h, which the library sources do not. Left
+# undefined, or left to that fallback, a configuration declaring protocol_layer.timestamp would
+# silently build with XCP_DAQ_TIMESTAMP_SUPPORTED == STD_OFF, gating Xcp_GetDaqTimestamp's
+# declaration off entirely while Xcp_Cfg.c still set timestampType from the configuration. The
+# README's "Building the sources outside this CMake project" states the same obligation for a
+# build system that is not this one.
+xcp_derive_from_configuration(XCP_DAQ_TIMESTAMP_SUPPORTED BOOL ${XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED}
+    "enables/disables the data acquisition clock. Defaults to whether XCP_CONFIG_FILEPATH declares a protocol_layer.timestamp block; override only if you know why.")
+
+# Not boolean, so a BOOL cache entry does not fit; STRING is the closest equivalent, matching
+# XCP_PYTEST_ARGS above.
+xcp_derive_from_configuration(XCP_DAQ_TIMESTAMP_SIZE STRING ${XCP_DAQ_TIMESTAMP_SIZE_DERIVED}
+    "timestamp field width in bytes, as transmitted. Defaults to the largest size any configuration in XCP_CONFIG_FILEPATH declares; override only if you know why.")
 
 if (${ENABLE_DOC_GEN})
     find_package(Doxygen REQUIRED dot)
@@ -79,7 +192,9 @@ target_compile_definitions(Xcp
     PUBLIC XCP_CHANGE_PARAMETER_API=STD_ON # ECUC_Xcp_00299
     PUBLIC XCP_READ_PARAMETER_API=STD_ON # ECUC_Xcp_00300
     PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>
-    PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>
+    PUBLIC XCP_DAQ_TIMESTAMP_SUPPORTED=$<IF:$<BOOL:${XCP_DAQ_TIMESTAMP_SUPPORTED}>,STD_ON,STD_OFF>
+    PUBLIC XCP_DAQ_TIMESTAMP_SIZE=${XCP_DAQ_TIMESTAMP_SIZE})
 
 target_include_directories(Xcp
     PUBLIC interface

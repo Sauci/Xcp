@@ -47,6 +47,12 @@
                   ],
                   "default": "ODT"
                 },
+                "name": {
+                  "description": "ASCII name of this event channel, published through GET_DAQ_EVENT_INFO (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7) when protocol_layer.publish_names is true. No NUL terminator is transmitted, so this must be printable ASCII. Excludes '\"' and '\\\\': script/source_cfg.c.jinja2 interpolates this value raw into a generated C string literal, and either character there would break generation or inject into it. Bounded to 255 characters: EVENT_CHANNEL_NAME_LENGTH on the wire (and Xcp_EventChannelType::nameLength) is a uint8.",
+                  "type": "string",
+                  "pattern": "^[\\x20-\\x21\\x23-\\x5B\\x5D-\\x7E]+$",
+                  "maxLength": 255
+                },
                 "priority": {
                   "description": "Priority of the event channel",
                   "type": "integer",
@@ -224,6 +230,9 @@
               "xcp_write_daq_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_write_daq_multiple_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_set_daq_list_mode_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
@@ -347,6 +356,7 @@
               "xcp_clear_daq_list_api_enable",
               "xcp_set_daq_ptr_api_enable",
               "xcp_write_daq_api_enable",
+              "xcp_write_daq_multiple_api_enable",
               "xcp_set_daq_list_mode_api_enable",
               "xcp_get_daq_list_mode_api_enable",
               "xcp_start_stop_daq_list_api_enable",
@@ -470,6 +480,11 @@
                 "type": "boolean",
                 "default": true
               },
+              "publish_names": {
+                "description": "Whether event channel names are compiled in and reported through GET_DAQ_EVENT_INFO's EVENT_CHANNEL_NAME_LENGTH (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7). When false, every event channel reports EVENT_CHANNEL_NAME_LENGTH 0, which that section defines as 'if not available'. When true, every events[] entry must declare a name.",
+                "type": "boolean",
+                "default": true
+              },
               "overload_indication": {
                 "description": "How a DAQ processor overload is reported. EVENT transmits EV_DAQ_OVERLOAD; NONE drops silently",
                 "type": "string",
@@ -529,6 +544,16 @@
               "identification": {
                 "type": "string",
                 "default": "/path/to/database.a2l"
+              },
+              "timestamp": {
+                "description": "Data acquisition clock reported to the master through GET_DAQ_RESOLUTION_INFO, and transmitted in the first ODT of each cycle of a DAQ list the master has put into timestamped mode. Absent means the slave does not support timestamps: TIMESTAMP_SUPPORTED is reported clear and TIMESTAMP_MODE/TIMESTAMP_TICKS are invalid, which XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 permits explicitly. The module holds no clock; these values describe the counter the integrator supplies through Xcp_GetDaqTimestamp.",
+                "type": "object",
+                "properties": {
+                  "size": {"type": "string", "enum": ["BYTE", "WORD", "DWORD"]},
+                  "unit": {"type": "string", "enum": ["TIMESTAMP_UNIT_1NS", "TIMESTAMP_UNIT_10NS", "TIMESTAMP_UNIT_100NS", "TIMESTAMP_UNIT_1US", "TIMESTAMP_UNIT_10US", "TIMESTAMP_UNIT_100US", "TIMESTAMP_UNIT_1MS", "TIMESTAMP_UNIT_10MS", "TIMESTAMP_UNIT_100MS", "TIMESTAMP_UNIT_1S"]},
+                  "ticks": {"type": "integer", "minimum": 1, "maximum": 65535}
+                },
+                "required": ["size", "unit", "ticks"]
               }
             },
             "required": [

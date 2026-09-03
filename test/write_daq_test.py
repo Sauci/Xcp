@@ -33,8 +33,39 @@ def write_daq(handle, size=1, extension=0, address=0xDEADBEEF, bit_offset=0xFF,
                     tuple(u32_to_array(address, byte_order)))
 
 
+def set_daq_list_mode(handle, mode=0x00, daq_list=0, channel=0, prescaler=1, priority=0,
+                      byte_order='LITTLE_ENDIAN'):
+    return response(handle, (0xE0, mode) + tuple(u16_to_array(daq_list, byte_order)) +
+                    tuple(u16_to_array(channel, byte_order)) + (prescaler, priority))
+
+
 def entry(handle, odt=0, index=0):
     return handle.lib.Xcp_Ptr.config.daqList[0].odt[odt].odtEntry[index]
+
+
+def fill_odt(handle, daq_list=0, odt=0, upto=None, byte_order='LITTLE_ENDIAN'):
+    """SET_DAQ_PTR to (daq_list, odt, entry 0), then WRITE_DAQ one byte at a time -- relying on
+    the pointer's auto post-increment within the ODT (1.1/1.6.4.1.1.2) -- until the ODT holds
+    `upto` bytes (the full odtEntrySizeDaq budget, the same MAX_ODT_ENTRY_SIZE_DAQ
+    GET_DAQ_RESOLUTION_INFO reports, by default). Returns the number of bytes actually written and
+    asserts that total was reached: a helper that silently filled less would make a caller relying
+    on a specific fill level pass for the wrong reason."""
+    if upto is None:
+        upto = handle.lib.Xcp_Ptr.general.odtEntrySizeDaq
+
+    assert set_daq_ptr(handle, daq_list=daq_list, odt=odt, entry=0, byte_order=byte_order)[0] == 0xFF
+
+    for _ in range(upto):
+        assert write_daq(handle, size=1, byte_order=byte_order)[0] == 0xFF
+
+    used = sum(handle.lib.Xcp_Ptr.config.daqList[daq_list].odt[odt].odtEntry[idx].length
+              for idx in range(handle.lib.Xcp_Ptr.config.daqList[daq_list].maxOdtEntries))
+    assert used == upto, 'fill_odt only reached {} of {} bytes'.format(used, upto)
+    return used
+
+
+def fill_odt_zero(handle, daq_list=0, upto=None, byte_order='LITTLE_ENDIAN'):
+    return fill_odt(handle, daq_list=daq_list, odt=0, upto=upto, byte_order=byte_order)
 
 
 def test_write_daq_fills_the_entry_the_pointer_names():
@@ -192,3 +223,46 @@ def test_write_daq_excludes_the_targeted_entrys_own_stale_length_from_the_capaci
 
     assert write_daq(handle, size=3)[0] == 0xFF
     assert entry(handle, index=0).length == 3
+
+
+def test_write_daq_respects_the_budget_the_timestamp_leaves_in_odt_zero():
+    """The other order from Task 4's test: mode first, entries after. Both must reject, because
+    the master chooses the sequence.
+
+    The extra byte lands on an otherwise individually legal entry that no longer fits the ODT --
+    DD8's scenario, reported as ERR_DAQ_CONFIG (0x2A), the same code
+    test_write_daq_refuses_to_overfill_an_odt asserts for the unreduced budget. This check only
+    moves the threshold the DD8 comparison runs against; it does not change what the comparison
+    reports when it trips.
+
+    The expected budget subtracts timestamp_wire_size['DWORD'] -- a constant this file's own
+    timestamp(size='DWORD') above names -- rather than XCP_DAQ_TIMESTAMP_SIZE. Two reasons. That
+    macro is the largest size across every configuration in the build, not this configuration's
+    own width, so it is the wrong quantity for per-configuration arithmetic in the first place.
+    And reading it here would make the test self-referential: if the macro were wrong, this
+    computes the same wrong budget as the code under test and still passes."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=8),)))
+    connect(handle)
+    set_daq_list_mode(handle, daq_list=0, mode=0x10)
+
+    budget = handle.lib.Xcp_Ptr.general.odtEntrySizeDaq - timestamp_wire_size['DWORD']
+    written = fill_odt_zero(handle, daq_list=0, upto=budget)
+    assert written == budget
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE1, 0xFF, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_DAQ_CONFIG'))
+
+
+def test_write_daq_keeps_the_full_budget_in_later_odts():
+    """1.1/1.1.2.2 Diagram 10 puts the timestamp in the first ODT of a cycle only, so ODT 1 keeps
+    the whole MAX_ODT_ENTRY_SIZE_DAQ. A blanket reduction would be a silent capacity regression."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=2, max_odt_entries=8),)))
+    connect(handle)
+    set_daq_list_mode(handle, daq_list=0, mode=0x10)
+
+    written = fill_odt(handle, daq_list=0, odt=1, upto=handle.lib.Xcp_Ptr.general.odtEntrySizeDaq)
+    assert written == handle.lib.Xcp_Ptr.general.odtEntrySizeDaq

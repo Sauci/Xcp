@@ -4,7 +4,12 @@
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static Xcp_EventType Xcp_Event00[{{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}];
+{# The 00 suffix here and on Xcp_EventQueue below used to be literal while every other array in
+   this loop was suffixed with loop.index0. That was invisible for as long as every configuration
+   file carried exactly one configuration: the second and further iterations redefined
+   Xcp_Event00/Xcp_EventQueue00 and left Xcp_EventQueue01.. undefined, so a two-configuration
+   generation did not compile at all. #}
+static Xcp_EventType Xcp_Event{{'%02X' % loop.index0}}[{{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}];
 
 #define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -12,8 +17,8 @@ static Xcp_EventType Xcp_Event00[{{'0x%02Xu' % configuration.protocol_layer.even
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static Xcp_EventQueueType Xcp_EventQueue00 = {
-    &Xcp_Event00[0x00u],
+static Xcp_EventQueueType Xcp_EventQueue{{'%02X' % loop.index0}} = {
+    &Xcp_Event{{'%02X' % loop.index0}}[0x00u],
     0x00000000u,
     0x00000000u
 };

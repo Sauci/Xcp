@@ -16,9 +16,28 @@ The following definitions might be set by the user, depending on the needs.
 | ```ENABLE_PC_LINT```          | ```ON```/```OFF```               | ```OFF```                  | enables/disables generation of targets related to static code analysis (should be disabled if [PC-Lint](https://www.gimpel.com) software is not available)                       |
 | ```MISRA_C_VERSION```         | ```1998```/```2004```/```2012``` | ```2012```                 | specifies which version of **MISRA** should be used when performing static code analysis (only used if ```ENABLE_PC_LINT``` is set)                                              |
 | ```XCP_SUPPRESS_TX_SUPPORT``` | ```ON / OFF```                   | ```ON```                   | enables/disables transmission functionality of the XCP module                                                                                                                    | 
-| ```XCP_PAGING_SUPPORTED```    | ```ON```/```OFF```               | derived                    | enables/disables the **PAG** command group. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a segment. An explicit ```-D``` overrides it and survives reconfiguring. Configure from a clean build directory after upgrading: a cache entry written before this became an option holds ```STD_OFF```, which now reads as ON |
+| ```XCP_PAGING_SUPPORTED```    | ```ON```/```OFF```               | derived                    | enables/disables the **PAG** command group. Normally left alone: the value follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a segment, and keeps following it when that file changes — editing the configuration re-runs the configure step and updates this entry in place, in the build directory you already have. An explicit ```-D``` overrides it and survives reconfiguring. Configure from a clean build directory after upgrading: a cache entry written before this became an option holds ```STD_OFF```, which reads as ON and is indistinguishable from a deliberate override |
+| ```XCP_DAQ_TIMESTAMP_SUPPORTED``` | ```ON```/```OFF```           | derived                    | enables/disables the data acquisition clock: the DAQ timestamp field, the `GET_DAQ_CLOCK` command, and `interface/Xcp.h`'s inclusion of `Xcp_DaqTimestamp.h`. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a ```protocol_layer.timestamp``` block, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below — this one is **not** optional there |
+| ```XCP_DAQ_TIMESTAMP_SIZE```  | ```0```/```1```/```2```/```4```  | derived                    | the DAQ timestamp field's width in bytes, as transmitted. Normally left alone: the default is the largest ```protocol_layer.timestamp.size``` any configuration in ```XCP_CONFIG_FILEPATH``` declares (```BYTE```/```WORD```/```DWORD``` → 1/2/4), or 0 when none does, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below |
 
 To use this feature, simply add ```-D<definition>=<value>``` when configuring the build with CMake.
+
+## Building the sources outside this CMake project
+`source/*.c` includes `Xcp.h`, never the generated `Xcp_Cfg.h`. The generated header defines
+`XCP_PAGING_SUPPORTED`, `XCP_MAX_DTO`, `XCP_DAQ_TIMESTAMP_SUPPORTED` and `XCP_DAQ_TIMESTAMP_SIZE` from the
+configuration and is authoritative for any translation unit that includes it, but it never reaches the library
+sources. This project's `CMakeLists.txt` closes that gap by deriving the same four values from
+`XCP_CONFIG_FILEPATH` and putting them on the compiler command line; a build system that compiles `source/*.c`
+itself has to do the same.
+
+`interface/Xcp_Types.h` carries a fallback for three of them, so a translation unit that names none of them still
+compiles — but the fallback is *off* (`XCP_DAQ_TIMESTAMP_SUPPORTED` `STD_OFF`, `XCP_DAQ_TIMESTAMP_SIZE` 0), and
+nothing detects the disagreement that follows. The generated `Xcp_Cfg.c` sets `timestampType` from the
+configuration regardless, so a slave built this way **reports** `TIMESTAMP_SUPPORTED`, reports a valid
+`TIMESTAMP_MODE` and `TIMESTAMP_TICKS`, and accepts `SET_DAQ_LIST_MODE` with the `TIMESTAMP` bit — while the code
+that writes the timestamp into the DTO and answers `GET_DAQ_CLOCK` has been compiled out. The master then
+correlates every sample against timestamps that never reach the wire. Define both macros wherever you compile
+`source/*.c`, with the values the table above describes.
 
 # Module configuration
 A large part of this module consists of auto-generated code. It takes a *JSON* file as input (the path of this file is
@@ -129,10 +148,10 @@ DAQ lists live under `daqs`:
 | field                    | meaning                                                                             |
 |:-------------------------|:-------------------------------------------------------------------------------------|
 | ```daqs[].name```             | the list's name, referenced by `events[].triggered_daq_list_ref`                     |
-| ```daqs[].type```             | `DAQ`, `DAQ_STIM` or `STIM`; only `DAQ` is implemented, see Limitations              |
+| ```daqs[].type```             | `DAQ` or `DAQ_STIM`; only the `DAQ` direction is implemented, see Limitations. `STIM` is refused at generation: a list that is neither DAQ-capable nor stimulated could only be reported with both `DAQ_LIST_TYPE` bits clear, which §1.6.4.2.2.1 marks *Not allowed* |
 | ```daqs[].max_odt```          | the list's number of ODTs (static configuration only, see Limitations)               |
 | ```daqs[].max_odt_entries```  | the number of entries in each of the list's ODTs                                     |
-| ```daqs[].pdu_mapping```      | the lower-layer PDU that carries this list's traffic — a Tx PDU for `DAQ`, an Rx PDU for `DAQ_STIM`/`STIM` |
+| ```daqs[].pdu_mapping```      | the lower-layer PDU that carries this list's traffic — a Tx PDU for `DAQ`, an Rx PDU for `DAQ_STIM`. Two lists may share one, but a list sharing its Tx PDU cannot be granted `PID_OFF` |
 | ```daqs[].dtos[].pid```       | checked against the derived `FIRST_PID`, not what assigns it — see below             |
 
 `dtos[].pid` does not assign a DAQ list's `FIRST_PID`. XCP part 2 §1.6.4.1.1.4 requires that "for every ODT
@@ -145,20 +164,20 @@ Event channels live under `events`:
 
 | field                                | meaning                                                                           |
 |:--------------------------------------|:------------------------------------------------------------------------------------|
-| ```events[].consistency```            | `DAQ`, `EVENT` or `ODT` consistency; reported to the master by `GET_DAQ_EVENT_INFO`, not implemented in this phase, see Limitations |
-| ```events[].priority```               | the channel's own priority; carried through configuration but not consulted by any command implemented in this phase — not to be confused with a DAQ list's priority, set through `SET_DAQ_LIST_MODE` and limited to 0, see Limitations |
+| ```events[].consistency```            | `DAQ`, `EVENT` or `ODT` consistency; reported to the master by `GET_DAQ_EVENT_INFO` in `DAQ_EVENT_PROPERTIES` — `DAQ` (list-level consistency) is not yet distinguishable from `ODT` and is reported the same way `ODT` is |
+| ```events[].name```                   | this channel's ASCII name, published through `GET_DAQ_EVENT_INFO` as `EVENT_CHANNEL_NAME_LENGTH` bytes when `protocol_layer.publish_names` is true (the default) — required in that case, checked at code-generation time. Printable ASCII excluding `"` and `\`, at most 255 characters: `EVENT_CHANNEL_NAME_LENGTH` on the wire (and `Xcp_EventChannelType::nameLength`) is a `uint8` |
+| ```events[].priority```               | the channel's own priority; reported to the master by `GET_DAQ_EVENT_INFO` as `EVENT_CHANNEL_PRIORITY` — not to be confused with a DAQ list's priority, set through `SET_DAQ_LIST_MODE` and limited to 0 (DAQ list prioritisation is unimplemented, SP2c, see Limitations) |
 | ```events[].time_cycle```             | the sampling period this channel promises; 0 means "not cyclic"                    |
 | ```events[].time_unit```              | the unit of `time_cycle`, one of the `TIMESTAMP_UNIT_*` values                     |
 | ```events[].type```                   | `DAQ` or `DAQ_STIM`; only the `DAQ` direction is implemented                        |
 | ```events[].triggered_daq_list_ref``` | the `daqs[].name` values this channel triggers                                     |
 
-`time_cycle` and `time_unit` describe the raster this channel promises — the one a `GET_DAQ_EVENT_INFO` command
-would report to the master (that command is not implemented in this phase, see Limitations). The module does not
-enforce the promise itself: it keeps no clock of its own, so honouring it is entirely the integrator's
-responsibility, exercised by calling `Xcp_TriggerEventChannel` at the declared rate — see *Triggering event
-channels* below.
+`time_cycle` and `time_unit` describe the raster this channel promises — the one `GET_DAQ_EVENT_INFO` reports to
+the master as `EVENT_CHANNEL_TIME_CYCLE` and `EVENT_CHANNEL_TIME_UNIT`. The module does not enforce the promise
+itself: it keeps no clock of its own, so honouring it is entirely the integrator's responsibility, exercised by
+calling `Xcp_TriggerEventChannel` at the declared rate — see *Triggering event channels* below.
 
-Four `protocol_layer` keys configure the DAQ processor as a whole:
+Six `protocol_layer` keys configure the DAQ processor as a whole:
 
 | key                            | default | effect                                                                                                                                                                  |
 |:--------------------------------|:--------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -166,6 +185,8 @@ Four `protocol_layer` keys configure the DAQ processor as a whole:
 | ```daq_queue_size```            | 16      | how many sampled DTO frames may wait for transmission at once. `Xcp_TriggerEventChannel` fills the ring; the transmission chain drains one frame per `CanIf` confirmation, so this sizes the burst the slave can absorb when sampling briefly outruns the bus. One slot is a whole `Xcp_DtoFrameType`, so the ring costs `daq_queue_size * (MAX_DTO + 4)` bytes of RAM at worst — `MAX_DTO` of payload after a `PduIdType` and a length byte, padded to the alignment of `PduIdType` (`uint16` here, so +4, or +3 when `MAX_DTO` is odd). At the defaults, 16 * (8 + 4) = 192 bytes per configuration. A frame sampled while the ring is full is dropped and reported per `overload_indication` |
 | ```prescaler_supported```       | `true`  | sets `PRESCALER_SUPPORTED` in `DAQ_PROPERTIES`; `false` makes `SET_DAQ_LIST_MODE` refuse a prescaler above 1                                                          |
 | ```overload_indication```       | `EVENT` | how a full DTO ring is reported: `EVENT` transmits `EV_DAQ_OVERLOAD` (at most once per trigger, regardless of how many frames it dropped); `NONE` drops silently and reports no overload capability |
+| ```timestamp```                 | absent  | the data acquisition clock: an object with `size` (`BYTE`/`WORD`/`DWORD`, a 1/2/4-byte wire width), `unit` (one of the `TIMESTAMP_UNIT_*` values) and `ticks` (ticks per unit, 1-65535). Reported as `TIMESTAMP_SUPPORTED` in `DAQ_PROPERTIES` (`GET_DAQ_PROCESSOR_INFO`) and, when present, as `TIMESTAMP_MODE`/`TIMESTAMP_TICKS` (`GET_DAQ_RESOLUTION_INFO`). Absent means the slave has no clock: `TIMESTAMP_SUPPORTED` stays clear, `TIMESTAMP_MODE`/`TIMESTAMP_TICKS` are invalid (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 permits this explicitly), and `SET_DAQ_LIST_MODE` refuses the `TIMESTAMP` mode bit with `ERR_MODE_NOT_VALID`. When present, the integrator must supply `Xcp_GetDaqTimestamp` — see *Supplying the data acquisition clock* below |
+| ```publish_names```             | `true`  | whether event channel names are compiled in and reported through `GET_DAQ_EVENT_INFO`'s `EVENT_CHANNEL_NAME_LENGTH` (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7). `true` requires every `events[]` entry to declare a `name`, checked at code-generation time. `false` reports `EVENT_CHANNEL_NAME_LENGTH` 0 for every channel, which that section defines as "if not available" |
 
 ### Triggering event channels
 The module holds no clock and never triggers an event channel on its own. Call
@@ -184,6 +205,35 @@ This is **not** an AUTOSAR service. The API surface `SWS_Xcp` R4.3.1 defines is 
 event channel, so an integrator will not find one there. `Xcp_TriggerEventChannel` is a vendor extension of this
 module, in the same sense as the *JSON* configuration itself and the module's other integrator-facing extension
 headers (`Xcp_Paging.h`, `Xcp_SeedKey.h`, and the rest under `test/stub/`).
+
+### Supplying the data acquisition clock
+When `protocol_layer.timestamp` is configured, the module needs a counter to read. Implement
+
+```c
+uint32 Xcp_GetDaqTimestamp(void);
+```
+
+whose prototype is defined [here](./test/stub/Xcp_DaqTimestamp.h). Like the paging and seed/key callbacks, this
+header is integrator-supplied and lives under `test/stub/`, not in `interface/`: this module ships only its own
+four headers there (`Xcp.h`, `XcpOnCan_Cbk.h`, `Xcp_Errors.h`, `Xcp_Types.h`), and `interface/Xcp.h` pulls
+`Xcp_DaqTimestamp.h` in only when `XCP_DAQ_TIMESTAMP_SUPPORTED` is `STD_ON` — the same conditional inclusion
+`Xcp_Paging.h` gets, so a configuration with no `timestamp` block is never asked to supply a clock.
+
+The implementation must be:
+- a **free-running counter**, never reset or modified by this module or the integrator, that wraps around on
+  overflow — XCP part 2 - Protocol Layer Specification 1.1/1.1.2.2 requires exactly this of the data acquisition
+  clock;
+- **re-entrant**, because it is called from two different contexts: from `Xcp_TriggerEventChannel`, in whatever
+  context the integrator triggers an event from, and from `Xcp_CanIfRxIndication` on receipt of `GET_DAQ_CLOCK`,
+  which may be a different context again, including an interrupt;
+- **non-blocking**, for the same reason;
+- kept at the resolution `protocol_layer.timestamp` declares. The module only reports that `size`/`unit`/`ticks`
+  declaration to the master — through `GET_DAQ_PROCESSOR_INFO` and `GET_DAQ_RESOLUTION_INFO` — it cannot verify
+  the counter actually runs at it. A mismatch here is not a build error or a runtime fault; it is silently wrong
+  measurement data on the bus.
+
+`Xcp_GetDaqTimestamp` always returns `uint32`, regardless of the configured `size`: `GET_DAQ_CLOCK` transmits a
+DWORD whatever the DTO timestamp field's width is, and the DTO field truncates the same value down to it.
 
 ### The exclusive area
 `SchM_Xcp.h` declares `SchM_Enter_Xcp_DtoQueue()` and `SchM_Exit_Xcp_DtoQueue()`. An integrator replaces the stub
@@ -221,9 +271,20 @@ to completion by transmit confirmations.
   master is the one that applies `BIT_MASK` to what it receives.
 - `WRITE_DAQ` against an invalid DAQ pointer answers `ERR_OUT_OF_RANGE`; §1.6.4.1.1.2 leaves the pointer undefined
   in that state and prescribes no code for it.
-- `SET_DAQ_LIST_MODE` answers `ERR_MODE_NOT_VALID` for every mode bit this phase does not implement (`ALTERNATING`,
-  `DIRECTION`, `TIMESTAMP`, `PID_OFF`), and `ERR_OUT_OF_RANGE` for a priority above 0, which §1.6.4.1.1.3 names
-  explicitly as the required response from a slave without DAQ list prioritisation.
+- `SET_DAQ_LIST_MODE` answers `ERR_MODE_NOT_VALID` unconditionally for `DIRECTION` and `ALTERNATING`, neither of
+  which this phase implements. `TIMESTAMP` and `PID_OFF` are conditionally accepted rather than blanket-refused:
+  `TIMESTAMP` requires `protocol_layer.timestamp` to be configured, answering `ERR_MODE_NOT_VALID` otherwise, and
+  enough spare capacity left in ODT 0 for the timestamp field once it is added, answering `ERR_OUT_OF_RANGE`
+  otherwise. `PID_OFF` requires `identification_field_type: ABSOLUTE`, a single-ODT DAQ list, and a
+  `pdu_mapping` no other DAQ list in the same configuration uses, answering `ERR_MODE_NOT_VALID` otherwise —
+  1.1/1.1.2.1 allows `PID_OFF` only for the absolute identification field type, and then requires "separate
+  CAN-IDs for each DAQ list and only one ODT for each DAQ list" at the transport layer. Both halves of that
+  sentence are checked: nothing stops two DAQ lists from naming the same `pdu_mapping` (the shipped
+  `config/xcp.json` does exactly that), and two such lists with `PID_OFF` would put two unidentifiable DTOs on
+  one CAN-Id. A shared `pdu_mapping` is otherwise perfectly legal; it only rules out `PID_OFF`. The command also
+  answers `ERR_OUT_OF_RANGE` for a priority above 0, which §1.6.4.1.1.3 names explicitly as the required response
+  from a slave without DAQ list prioritisation, and for `TIMESTAMP` on a DAQ list configured with `max_odt: 0`,
+  which has no ODT 0 to carry the timestamp field.
 - `START_STOP_SYNCH(start selected)` with no list currently selected answers `ERR_DAQ_CONFIG`, per §1.6.4.1.1.5.
 - `CLEAR_DAQ_LIST` is accepted while the addressed list is running, per §1.6.4.2.1.1, which requires the command to
   stop a running transmission rather than refuse because one is active; the error matrix row was corrected to
@@ -250,21 +311,23 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
 - `SHORT_DOWNLOAD` can transfer no data at all when `MAX_CTO` is 8, as it is for XCP on CAN, because the command's
   own header fills the whole frame. The specification notes this. The stack still accepts the command, and rejects any
   element count above `(MAX_CTO - 8) / AG` with `ERR_OUT_OF_RANGE`.
-- There are no timestamps: `TIMESTAMP_SUPPORTED` is clear in `DAQ_PROPERTIES`, and `SET_DAQ_LIST_MODE` refuses the
-  `TIMESTAMP` mode bit with `ERR_MODE_NOT_VALID`.
-- No `PID_OFF`, no `ALTERNATING`, no STIM direction, and no DAQ list prioritisation: a priority above 0 is refused
-  with `ERR_OUT_OF_RANGE`, which §1.6.4.1.1.3 requires of a slave that does not support it.
-- DAQ list configuration is static only. `FREE_DAQ` and the three `ALLOC_*` commands (`ALLOC_DAQ`, `ALLOC_ODT`,
-  `ALLOC_ODT_ENTRY`) answer `ERR_CMD_UNKNOWN`.
-- `WRITE_DAQ_MULTIPLE`, `READ_DAQ`, `GET_DAQ_CLOCK`, `GET_DAQ_LIST_INFO` and `GET_DAQ_EVENT_INFO` are not
-  implemented.
-- At most one DTO frame is in flight at a time: `Xcp_StartNextTransmission` arbitrates a single transmit slot
-  across command responses, event packets and DAQ frames alike, and starts the next one only once the current one
-  is confirmed. This is mandatory rather than a simplification, not merely a design choice this implementation
-  happens to make: the AUTOSAR CAN Interface specification (SWS_CANIF_00068) has `CanIf` *overwrite* an
-  already-buffered instance of the same L-PDU when `Can_Write` returns `CAN_BUSY`, so handing `CanIf` a second
-  frame for a PDU before the first is confirmed would destroy the first silently — no error, no confirmation, one
-  measurement sample simply missing.
+- `WRITE_DAQ_MULTIPLE` is implemented but ships disabled in `config/xcp.json`
+  (`apis.xcp_write_daq_multiple_api_enable.enabled: false`), with `max_cto` left at 8. XCP part 2 §1.6.4.1.2.1
+  requires `MAX_CTO >= 10` for this command, and 10 is neither a classic CAN frame size nor a CAN FD payload
+  length, so enabling it is an integrator decision with transport consequences, not a flag to flip casually: an
+  integrator who enables the API without also raising `max_cto` to at least 10 gets a code-generation failure,
+  and one who raises `max_cto` to exactly 10 gets a frame no CAN network carries.
+- No `ALTERNATING` and no DAQ list prioritisation — both SP2c: a priority above 0 is refused with
+  `ERR_OUT_OF_RANGE`, which §1.6.4.1.1.3 requires of a slave that does not support it. No STIM direction (SP3).
+- DAQ list configuration is static only (SP2d). `FREE_DAQ` and the three `ALLOC_*` commands (`ALLOC_DAQ`,
+  `ALLOC_ODT`, `ALLOC_ODT_ENTRY`) answer `ERR_CMD_UNKNOWN`.
+- At most one DTO frame is in flight at a time (SP2c): `Xcp_StartNextTransmission` arbitrates a single transmit
+  slot across command responses, event packets and DAQ frames alike, and starts the next one only once the
+  current one is confirmed. This is mandatory rather than a simplification, not merely a design choice this
+  implementation happens to make: the AUTOSAR CAN Interface specification (SWS_CANIF_00068) has `CanIf`
+  *overwrite* an already-buffered instance of the same L-PDU when `Can_Write` returns `CAN_BUSY`, so handing
+  `CanIf` a second frame for a PDU before the first is confirmed would destroy the first silently — no error, no
+  confirmation, one measurement sample simply missing.
 - The test suite that exercises the exclusive area (see *The exclusive area* above) is single-threaded. It models
   the area as a real lock — detecting imbalance, mismatched nesting, and a lock left held at teardown — so a
   one-sided guard or a missing exit is caught directly. What it cannot do is observe a genuine race: the

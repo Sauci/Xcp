@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import json
+import os
+
 import pytest
 
+from io import StringIO
+
+from bsw_code_gen import BSWCodeGen
 from jinja2.exceptions import UndefinedError
 
 from .parameter import *
-from .conftest import XcpTest
+from .conftest import Preprocessor, XcpTest
 
 
 identification_field_cases = [
@@ -95,7 +101,7 @@ def test_event_channels_are_generated_rather_than_left_null():
 
 def test_event_channel_references_resolve_to_the_named_daq_lists():
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=3), daq(name='DAQ2', max_odt=5)),
-                                   events=(event(triggered_daq_list_ref=['DAQ2']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ2']),)))
 
     channel = handle.config.lib.Xcp[0].config.eventChannel[0]
 
@@ -106,7 +112,7 @@ def test_event_channel_references_resolve_to_the_named_daq_lists():
 
 def test_event_channel_may_reference_several_daq_lists():
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1), daq(name='DAQ2', max_odt=1)),
-                                   events=(event(triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1', 'DAQ2']),)))
 
     channel = handle.config.lib.Xcp[0].config.eventChannel[0]
 
@@ -159,21 +165,77 @@ def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
     """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1 caps a DAQ PID at 0xFB, so the total
     ODT count across every DAQ list must not exceed 0xFC (252).
 
-    253, not a round number: Xcp_GeneralType's own odtCount field (Task 1's guard, source_cfg.c
-    .jinja2's `counters.odt > 255`) independently rejects anything over 255, so a total that also
-    clears 255 -- 300, say -- would still abort generation even if this task's own >252 guard were
-    broken or deleted, and the test would stay green for the wrong reason. 253 sits strictly between
-    the two ceilings (252 < 253 <= 255), so only the guard this test exists to cover can reject it.
-    Verified empirically: rendering this exact configuration with only the >252 guard suppressed
-    produces 215,968 characters of clean C, with nothing else in the template objecting."""
+    253 is chosen for a different reason than this docstring used to give. It claimed
+    source_cfg.c.jinja2's `counters.odt > 255` was an *independent* second ceiling that a rounder
+    300 would also trip, so 253 was needed to isolate this one. That was wrong in both directions:
+    `counters.odt` and `pid.next` are the same sum, and the PID guard runs in an earlier template
+    loop, so the uint8 condition could never fire at all -- 253 and 300 alike aborted here, and
+    nothing about 253 isolated anything. The dead half has since been removed; XcpOdtCount's uint8
+    field is protected by this stricter 252 ceiling rather than by a guard of its own.
+
+    253 is kept because it is the smallest total that violates the ceiling, which is the value a
+    boundary test should use. Verified empirically: rendering this exact configuration with only
+    the >252 guard suppressed produces 215,968 characters of clean C, with nothing else in the
+    template objecting."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=53))))
 
 
+def test_generation_fails_when_odt_entry_size_daq_exceeds_the_uint8_field():
+    """odtEntrySizeDaq is emitted as one byte into Xcp_GeneralType's uint8 XcpOdtEntrySizeDaq, but
+    it is derived from max_dto, whose schema maximum is 65535. It sat two lines below the
+    odtCount/odtEntriesCount guard with no bound of its own, so `max_dto: 1000` emitted 0x3E7u and
+    the compiler truncated it to 231: GET_DAQ_RESOLUTION_INFO reported MAX_ODT_ENTRY_SIZE_DAQ 231
+    for a 999-byte ODT, and every ODT-0 budget computation in source/Xcp_Daq.c ran on the truncated
+    value. -Woverflow warned about it; nothing failed.
+
+    257, not 1000: with the default ABSOLUTE identification field it is the smallest max_dto whose
+    remainder (256) will not fit, and the companion below shows that 256 -- one less, remainder 255
+    -- still generates. Nothing else in the template objects to either, so the pair discriminates
+    this guard from the nine others that abort with the same "'raise' is undefined"."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(identification_field_type='ABSOLUTE', max_dto=257))
+
+
+def test_generation_fails_when_a_daq_list_is_configured_as_stim():
+    """A pure STIM list can do nothing in this module: stimulation arrives in SP3. Generating one
+    anyway made Xcp_DTOCmdDaqGetDaqListInfo answer DAQ_LIST_PROPERTIES with both type bits clear
+    -- DAQ clear because the list is not DAQ-capable, STIM clear because the direction is
+    unimplemented -- and XCP part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks that encoding "Not
+    allowed". Refusing the list is the alternative to emitting a forbidden encoding or advertising
+    a capability the module lacks.
+
+    The companion below is what discriminates this guard from the other generation guards, all of
+    which surface the same "'raise' is undefined": the very same configuration with DAQ_STIM in
+    place of STIM generates and runs."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),)))
+
+
+def test_generation_accepts_a_daq_stim_list():
+    """DAQ_STIM is not caught by the guard above and must not be: such a list is DAQ-capable
+    today, and only its stimulation half waits for SP3."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM'),)))
+
+    assert handle.config.lib.Xcp[0].config.daqList[0].type == handle.lib.DAQ_STIM
+
+
+def test_generation_accepts_the_largest_odt_entry_size_the_uint8_field_can_hold():
+    """The boundary the guard above is placed at, from the accepting side: 255 is representable and
+    must stay accepted, so the guard is `> 255` and not `>= 255` or a rounder cut."""
+    handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE', max_dto=256))
+
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeDaq == 255
+
+
 def test_generation_fails_when_an_event_channel_references_an_unknown_daq_list():
+    """name='EVT1': without it, this configuration would also trip the newer publish_names guard
+    (script/source_cfg.c.jinja2 checks the DAQ-list reference before the name), so this test would
+    keep passing -- for the wrong reason -- even if the reference-validity guard it names were
+    reordered after the name guard or deleted outright."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
-                              events=(event(triggered_daq_list_ref=['NOPE']),)))
+                              events=(event(name='EVT1', triggered_daq_list_ref=['NOPE']),)))
 
 
 def test_generation_fails_when_an_event_has_no_time_unit():
@@ -185,10 +247,180 @@ def test_generation_fails_when_an_event_has_no_time_unit():
                                        "triggered_daq_list_ref": ["DAQ1"]},)))
 
 
+@pytest.mark.parametrize('size, expected_type, expected_wire', (('BYTE', 'ONE_BYTE', 1),
+                                                                 ('WORD', 'TWO_BYTE', 2),
+                                                                 ('DWORD', 'FOUR_BYTE', 4)))
+def test_configured_timestamp_reaches_the_generated_configuration(size, expected_type, expected_wire):
+    """The three values were hard-coded literals (FOUR_BYTE, TIMESTAMP_UNIT_1MS, 0x0001u) before
+    SP2b. XCP_DAQ_TIMESTAMP_SIZE is the wire size in bytes, deliberately not the enumerator:
+    Xcp_TimestampTypeType is implicit, so FOUR_BYTE == 3, while the wire size is 4."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size=size,
+                                                        unit='TIMESTAMP_UNIT_10US',
+                                                        ticks=250)))
+
+    assert handle.config.lib.Xcp[0].general.timestampType == getattr(handle.lib, expected_type)
+    assert handle.config.lib.Xcp[0].general.timestampUnit == handle.lib.TIMESTAMP_UNIT_10US
+    assert handle.config.lib.Xcp[0].general.timestampTicks == 250
+    assert handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') == handle.define('STD_ON')
+    assert handle.define('XCP_DAQ_TIMESTAMP_SIZE') == expected_wire
+
+
+def test_an_absent_timestamp_block_disables_timestamps():
+    handle = XcpTest(DefaultConfig())
+
+    assert handle.config.lib.Xcp[0].general.timestampType == handle.lib.NO_TIME_STAMP
+    assert handle.define('XCP_DAQ_TIMESTAMP_SUPPORTED') == handle.define('STD_OFF')
+    assert handle.define('XCP_DAQ_TIMESTAMP_SIZE') == 0
+
+
+def _preprocess_against_the_generated_header(config, probe_body):
+    """Writes the Xcp_Cfg.h `config` generates into the build directory and preprocesses
+    `probe_body` against it with NO compile definitions at all -- the position an integrator is in
+    when they compile a translation unit that includes the generated header without replicating
+    this project's target_compile_definitions. Returns the expanded text, whitespace-normalised."""
+    probe_header = 'Xcp_Cfg_ordering_probe.h'
+    build_directory = os.environ['build_directory']
+    with open(os.path.join(build_directory, probe_header), 'w') as fp:
+        fp.write(BSWCodeGen(config, os.environ['script_directory']).header_cfg)
+
+    pre_processor = Preprocessor()
+    for include_directory in os.environ['include_directories'].split(';') + [build_directory]:
+        pre_processor.add_path(include_directory)
+    pre_processor.parse('#include "{}"\n{}'.format(probe_header, probe_body))
+    handle = StringIO()
+    pre_processor.write(handle)
+    return ' '.join(handle.getvalue().split())
+
+
+ORDERING_PROBE = """
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+PROBE_TIMESTAMP_IS_ON
+#else
+PROBE_TIMESTAMP_IS_OFF
+#endif
+PROBE_TIMESTAMP_WIDTH XCP_DAQ_TIMESTAMP_SIZE
+PROBE_MAX_DTO XCP_MAX_DTO
+"""
+
+
+def test_the_generated_header_is_authoritative_for_the_macros_it_derives():
+    """interface/Xcp_Types.h carries `#ifndef X / #define X <fallback> / #endif` for XCP_MAX_DTO,
+    XCP_DAQ_TIMESTAMP_SUPPORTED and XCP_DAQ_TIMESTAMP_SIZE, so that the harness's handle.define()
+    has literal #define text to key off. The generated Xcp_Cfg.h used to include Xcp_Types.h before
+    its own conditional blocks for the same three names, which meant those fallbacks always won and
+    every one of the generated blocks was unreachable -- both halves were added by the same task
+    and cancelled each other out. A configuration declaring a DWORD timestamp generated a header
+    saying XCP_DAQ_TIMESTAMP_SUPPORTED (STD_OFF) and XCP_DAQ_TIMESTAMP_SIZE (0u), while its
+    Xcp_Cfg.c set timestampType = FOUR_BYTE regardless.
+
+    Preprocessed with no compile definitions whatsoever, deliberately: what this pins is that the
+    header stands on its own, not that CMakeLists.txt threads the right -D through (its sibling
+    below covers that, and it is a separate obligation -- source/*.c never includes Xcp_Cfg.h, so
+    the -D is still what reaches the library sources)."""
+    expanded = _preprocess_against_the_generated_header(
+            DefaultConfig(timestamp=timestamp(size='DWORD'), max_dto=64), ORDERING_PROBE)
+
+    assert 'PROBE_TIMESTAMP_IS_ON' in expanded
+    assert 'PROBE_TIMESTAMP_WIDTH (4u)' in expanded
+    assert 'PROBE_MAX_DTO (0x40u)' in expanded
+
+
+def test_the_generated_header_still_reports_no_clock_when_none_is_configured():
+    """The other direction of the test above: making the blocks reachable must not make them
+    unconditional."""
+    expanded = _preprocess_against_the_generated_header(DefaultConfig(), ORDERING_PROBE)
+
+    assert 'PROBE_TIMESTAMP_IS_OFF' in expanded
+    assert 'PROBE_TIMESTAMP_WIDTH (0u)' in expanded
+
+
+def test_the_build_derives_daq_timestamp_macros_from_the_repository_configuration():
+    """The two tests above only prove the harness's own per-test override reaches
+    Xcp_GeneralConfig00 -- test/conftest.py injects XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE as compile
+    definitions computed straight from each test's own configuration dict, bypassing the generated
+    Xcp_Cfg.h entirely (handle.define() reads that injected value, not anything CMake derived).
+    A real, non-test build never gets that injection, and the generated Xcp_Cfg.h cannot stand in
+    for it: source/*.c includes Xcp.h and never Xcp_Cfg.h, so what that header defines does not
+    reach the library sources at all. (It does now define these two correctly for whoever *does*
+    include it -- script/header_cfg.h.jinja2 defines every derived macro ahead of its first
+    #include, so Xcp_Types.h's fallback, which exists only so handle.define() has literal text to
+    key off, no longer pre-empts it. That is a separate hole, closed separately.) Without
+    CMakeLists.txt deriving and injecting the same two macros the way it already does for
+    XCP_PAGING_SUPPORTED, an integrator configuring protocol_layer.timestamp would silently get a
+    module built with XCP_DAQ_TIMESTAMP_SUPPORTED permanently STD_OFF -- Task 2 gates
+    Xcp_GetDaqTimestamp's declaration on exactly that macro.
+
+    This test reads what CMake actually computed for the Xcp target's own COMPILE_DEFINITIONS
+    (threaded through as the --compile_definitions pytest option, itself
+    $<TARGET_PROPERTY:Xcp,COMPILE_DEFINITIONS>) straight from os.environ, never touching an XcpTest
+    instance or its per-test override, and recomputes the expected values independently, straight
+    from config/xcp.json on disk -- the file the CMakeLists.txt derivation itself reads -- rather
+    than hard-coding today's STD_OFF/0 as a literal, so this stays correct if that file ever grows
+    a timestamp block. Deleting the two new target_compile_definitions entries in CMakeLists.txt,
+    or reverting to a fixed default there, fails this test with a KeyError or a mismatch; it cannot
+    pass by coincidence the way it could if it re-read the harness's own injected value instead."""
+    repository_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                          'config', 'xcp.json')
+    with open(repository_config_path) as fp:
+        repository_config = json.load(fp)
+
+    wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}
+    expected_supported = 'STD_ON' if any(c['protocol_layer'].get('timestamp')
+                                         for c in repository_config['configurations']) else 'STD_OFF'
+    expected_size = str(max((wire_size[c['protocol_layer']['timestamp']['size']]
+                             for c in repository_config['configurations']
+                             if c['protocol_layer'].get('timestamp')),
+                            default=0))
+
+    definitions = dict(item.split('=', 1) for item in os.environ['compile_definitions'].split(';') if '=' in item)
+
+    assert definitions['XCP_DAQ_TIMESTAMP_SUPPORTED'] == expected_supported
+    assert definitions['XCP_DAQ_TIMESTAMP_SIZE'] == expected_size
+
+
+def test_generation_fails_when_the_timestamp_does_not_fit_the_odt_zero_budget():
+    """MAX_DTO 7 with a 4-byte RELATIVE_WORD_ALIGNED identification field leaves
+    odt_entry_size_daq = 3, less than the 4-byte DWORD timestamp XCP part 2 1.1/1.1.2.2 puts in
+    ODT 0 alongside the identification field. Left ungenerated, source/Xcp_Daq.c's ODT-0 budget
+    arithmetic (odtEntrySizeDaq minus the timestamp's wire size, both uint8/uint16) would underflow
+    instead: Xcp_DTOCmdDaqSetDaqListMode's capacity guard becomes a comparison against a wrapped
+    ~65535 that can never trip, and Xcp_DaqOdtEntryBudget saturates to 255, so WRITE_DAQ would
+    accept far more than the 7-byte frame buffer holds -- an out-of-bounds write once
+    Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c) actually stores the timestamp there. The schema's
+    max_dto minimum of 8 keeps a real, schema-validated build from reaching this configuration, but
+    this harness deliberately bypasses the schema, the same way every other test in this file's
+    UndefinedError cluster does."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(max_dto=7, identification_field_type='RELATIVE_WORD_ALIGNED',
+                              timestamp=timestamp(size='DWORD')))
+
+
 def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
     """An empty triggered_daq_list_ref would emit a zero-length C array
     (Xcp_EventChannelDaqListRef...[0x00u]) -- a GCC extension, an ISO C constraint violation, and
-    rejected by MISRA and several embedded toolchains. The schema has no minItems to catch it."""
+    rejected by MISRA and several embedded toolchains. The schema has no minItems to catch it.
+
+    name='EVT1': without it, this configuration would also trip the newer publish_names guard,
+    which source_cfg.c.jinja2 currently checks after the empty-ref guard -- so this test would
+    keep passing, for the wrong reason, if that ordering were ever reversed or the empty-ref
+    guard itself were deleted."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1'),),
-                              events=(event(triggered_daq_list_ref=[]),)))
+                              events=(event(name='EVT1', triggered_daq_list_ref=[]),)))
+
+
+def test_generation_fails_when_write_daq_multiple_is_enabled_with_max_cto_below_ten():
+    """1.6.4.1.2.1: 'If the optional command WRITE_DAQ_MULTIPLE is used, the requirement
+    MAX_CTO >= 10 has to be fulfilled.' A single element is 8 bytes after a 2-byte header, so a
+    smaller MAX_CTO cannot carry even one."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(max_cto=9, xcp_write_daq_multiple_api_enable=True))
+
+
+def test_generation_fails_when_publish_names_is_set_but_an_event_has_no_name():
+    """publish_names defaults to True (test/parameter.py, matching protocol_layer.publish_names'
+    own schema default), and event()'s own default omits "name" entirely -- see its comment --
+    so this is what actually fires script/source_cfg.c.jinja2's guard rather than the helper
+    inventing a name that would paper over a real integrator misconfiguration."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(publish_names=True, events=(event(triggered_daq_list_ref=['DAQ1']),)))

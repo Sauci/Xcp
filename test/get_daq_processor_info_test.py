@@ -24,14 +24,18 @@ def daq_handle(**kwargs):
 
 def test_daq_properties_report_what_this_phase_implements():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE static (bit 0
-    clear), PRESCALER_SUPPORTED set (bit 1), RESUME/BIT_STIM/TIMESTAMP/PID_OFF clear (bits 2-5),
+    clear), PRESCALER_SUPPORTED set (bit 1), RESUME/BIT_STIM clear (bits 2-3), TIMESTAMP_SUPPORTED
+    clear (bit 4 -- this handle's configuration declares no clock), PID_OFF_SUPPORTED set (bit 5
+    -- daq_handle()'s identification field type defaults to ABSOLUTE;
+    test/daq_pid_off_test.py::test_pid_off_supported_is_advertised_only_for_absolute_identification
+    covers all four identification types, including the other three, where the bit clears),
     OVERLOAD_MSB clear (bit 6), overload reported by event packet (bit 7).
 
     Checked as one exact byte rather than a mask on the two bits this phase drives, so a stray
     bit anywhere -- including a wrongly-set OVERLOAD_MSB -- fails this test too."""
     handle = daq_handle(prescaler_supported=True, overload_indication='EVENT')
 
-    assert info(handle)[1] == 0x82
+    assert info(handle)[1] == 0xA2
 
 
 def test_daq_properties_drop_the_overload_bit_when_indication_is_off():
@@ -67,7 +71,8 @@ def test_max_daq_and_max_event_channel_and_min_daq():
     if GET_DAQ_PROCESSOR_INFO's own byte-6 assignment were ever deleted, this response would
     still carry that leftover 0x01 instead of 0x00. Confirmed by mutation -- see
     task-13-report.md."""
-    handle = daq_handle(events=(event(triggered_daq_list_ref=['DAQ1']), event(triggered_daq_list_ref=['DAQ2'])))
+    handle = daq_handle(events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),
+                                event(name='EVT2', triggered_daq_list_ref=['DAQ2'])))
 
     response = info(handle)
 
@@ -83,7 +88,8 @@ def test_words_follow_the_configured_byte_order():
     configuration. Same distinctive counts as above (3 DAQ lists, 2 event channels), so neither
     0x0003 nor 0x0002 is byte-palindromic under a swap."""
     handle = daq_handle(byte_order='BIG_ENDIAN',
-                        events=(event(triggered_daq_list_ref=['DAQ1']), event(triggered_daq_list_ref=['DAQ2'])))
+                        events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),
+                                event(name='EVT2', triggered_daq_list_ref=['DAQ2'])))
 
     response = info(handle)
 
@@ -105,3 +111,20 @@ def test_daq_key_byte_carries_the_identification_field_type_in_bits_7_6(name, ke
     handle = daq_handle(identification_field_type=name)
 
     assert info(handle)[7] == key, 'optimisation type OM_DEFAULT and address extension 0'
+
+
+def test_timestamp_supported_is_set_when_a_clock_is_configured():
+    """DAQ_PROPERTIES bit 4 (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4). Mirrors the
+    prescaler/overload set-clear pairs above: this proves the bit sets when a clock is configured,
+    the sibling below proves it clears when none is."""
+    handle = daq_handle(timestamp=timestamp())
+
+    assert (info(handle)[1] & 0x10) == 0x10
+
+
+def test_timestamp_supported_is_clear_without_a_clock():
+    """The other half of the pair above: DefaultConfig's timestamp=None means no protocol_layer
+    timestamp block, i.e. NO_TIME_STAMP (Task 1), so TIMESTAMP_SUPPORTED must stay clear."""
+    handle = daq_handle()
+
+    assert (info(handle)[1] & 0x10) == 0x00

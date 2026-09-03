@@ -153,19 +153,41 @@ def daq(name='DAQ1',
             "dtos": list(dtos) if dtos is not None else [{}]}
 
 
+timestamp_sizes = [pytest.param(v, id='TS = {}'.format(v)) for v in ('BYTE', 'WORD', 'DWORD')]
+
+# The wire encoding of the TIMESTAMP_MODE size field, XCP part 2 - Protocol Layer Specification
+# 1.1/1.6.4.1.2.5. Deliberately not Xcp_TimestampTypeType's enumerator values: that enum is
+# implicit, so FOUR_BYTE == 3, and 3 is the one size the specification marks "Not allowed".
+timestamp_wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4, None: 0}
+
+timestamp_type_name = {'BYTE': 'ONE_BYTE', 'WORD': 'TWO_BYTE', 'DWORD': 'FOUR_BYTE', None: 'NO_TIME_STAMP'}
+
+
+def timestamp(size='DWORD', unit='TIMESTAMP_UNIT_1MS', ticks=1):
+    return {"size": size, "unit": unit, "ticks": ticks}
+
+
 def event(consistency='ODT',
           priority=0,
           time_cycle=10,
           time_unit='TIMESTAMP_UNIT_1MS',
           type='DAQ',
-          triggered_daq_list_ref=None):
-    return {"consistency": consistency,
-            "priority": priority,
-            "time_cycle": time_cycle,
-            "time_unit": time_unit,
-            "type": type,
-            "triggered_daq_list_ref": list(triggered_daq_list_ref)
-            if triggered_daq_list_ref is not None else ['DAQ1']}
+          triggered_daq_list_ref=None,
+          name=None):
+    # name=None omits the key entirely rather than inventing one: protocol_layer.publish_names
+    # defaults to True (DefaultConfig below), and script/source_cfg.c.jinja2 rejects a published
+    # event channel with no name, so a caller testing that guard must see it fire, not see this
+    # helper paper over the missing name.
+    result = {"consistency": consistency,
+              "priority": priority,
+              "time_cycle": time_cycle,
+              "time_unit": time_unit,
+              "type": type,
+              "triggered_daq_list_ref": list(triggered_daq_list_ref)
+              if triggered_daq_list_ref is not None else ['DAQ1']}
+    if name is not None:
+        result["name"] = name
+    return result
 
 
 class DefaultConfig(dict):
@@ -204,6 +226,14 @@ class DefaultConfig(dict):
                  xcp_clear_daq_list_api_enable=True,
                  xcp_set_daq_ptr_api_enable=True,
                  xcp_write_daq_api_enable=True,
+                 # Unlike every other *_api_enable default above, this one defaults to False, not
+                 # True: WRITE_DAQ_MULTIPLE's own generation guard (script/source_cfg.c.jinja2)
+                 # rejects MAX_CTO < 10, and this class's own max_cto default is 8. Defaulting this
+                 # flag to True would make DefaultConfig() itself fail to generate, breaking every
+                 # test in the suite that does not care about WRITE_DAQ_MULTIPLE at all. Tests that
+                 # exercise the command pass both xcp_write_daq_multiple_api_enable=True and a
+                 # max_cto >= 10 explicitly.
+                 xcp_write_daq_multiple_api_enable=False,
                  xcp_set_daq_list_mode_api_enable=True,
                  xcp_get_daq_list_mode_api_enable=True,
                  xcp_start_stop_daq_list_api_enable=True,
@@ -248,17 +278,44 @@ class DefaultConfig(dict):
                  identification_field_type='ABSOLUTE',
                  daq_queue_size=16,
                  prescaler_supported=True,
+                 publish_names=True,
                  overload_indication='EVENT',
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
                  trailing_value=0,
-                 identification='/path/to/database.a2l'):
+                 identification='/path/to/database.a2l',
+                 timestamp=None):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref
         self._default_daq_dto_pdu_mapping = default_daq_dto_pdu_mapping
         self._event_queue_size = event_queue_size
         self._daq_queue_size = daq_queue_size
+        protocol_layer = {
+            "byte_order": byte_order,
+            "address_granularity": address_granularity,
+            "master_block_mode": master_block_mode,
+            "slave_block_mode": slave_block_mode,
+            "interleaved_mode": interleaved_mode,
+            "max_bs": max_bs,
+            "min_st": min_st,
+            "cto_queue_size": cto_queue_size,
+            "event_queue_size": event_queue_size,
+            "max_cto": max_cto,
+            "max_dto": max_dto,
+            "identification_field_type": identification_field_type,
+            "daq_queue_size": daq_queue_size,
+            "prescaler_supported": prescaler_supported,
+            "publish_names": publish_names,
+            "overload_indication": overload_indication,
+            "checksum_type": checksum_type,
+            "user_defined_checksum_function": user_defined_checksum_function,
+            "user_cmd_function": user_cmd_function,
+            "trailing_value": trailing_value,
+            'identification': identification
+        }
+        if timestamp is not None:
+            protocol_layer["timestamp"] = timestamp
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -268,7 +325,12 @@ class DefaultConfig(dict):
                 "daqs": list(daqs),
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
-                "events": list(events) if events is not None else [event()],
+                # event()'s own bare default omits "name" (see its docstring comment), and
+                # publish_names defaults to True two lines above -- so DefaultConfig's own
+                # fallback event needs a name of its own, or every test that builds DefaultConfig()
+                # without an explicit events= would trip script/source_cfg.c.jinja2's publish_names
+                # guard by accident.
+                "events": list(events) if events is not None else [event(name='EVT1')],
                 "apis": {
                     "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
                     "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},
@@ -286,6 +348,8 @@ class DefaultConfig(dict):
                     "xcp_clear_daq_list_api_enable": {"enabled": xcp_clear_daq_list_api_enable, "protected": False},
                     "xcp_set_daq_ptr_api_enable": {"enabled": xcp_set_daq_ptr_api_enable, "protected": False},
                     "xcp_write_daq_api_enable": {"enabled": xcp_write_daq_api_enable, "protected": False},
+                    "xcp_write_daq_multiple_api_enable": {"enabled": xcp_write_daq_multiple_api_enable,
+                                                          "protected": False},
                     "xcp_set_daq_list_mode_api_enable": {"enabled": xcp_set_daq_list_mode_api_enable,
                                                          "protected": False},
                     "xcp_get_daq_list_mode_api_enable": {"enabled": xcp_get_daq_list_mode_api_enable,
@@ -331,28 +395,7 @@ class DefaultConfig(dict):
                         "programming": resource_protection_programming
                     }
                 },
-                "protocol_layer": {
-                    "byte_order": byte_order,
-                    "address_granularity": address_granularity,
-                    "master_block_mode": master_block_mode,
-                    "slave_block_mode": slave_block_mode,
-                    "interleaved_mode": interleaved_mode,
-                    "max_bs": max_bs,
-                    "min_st": min_st,
-                    "cto_queue_size": cto_queue_size,
-                    "event_queue_size": event_queue_size,
-                    "max_cto": max_cto,
-                    "max_dto": max_dto,
-                    "identification_field_type": identification_field_type,
-                    "daq_queue_size": daq_queue_size,
-                    "prescaler_supported": prescaler_supported,
-                    "overload_indication": overload_indication,
-                    "checksum_type": checksum_type,
-                    "user_defined_checksum_function": user_defined_checksum_function,
-                    "user_cmd_function": user_cmd_function,
-                    "trailing_value": trailing_value,
-                    'identification': identification
-                }
+                "protocol_layer": protocol_layer
             }
         ])
 
@@ -383,6 +426,61 @@ class DefaultConfig(dict):
     @property
     def daq_queue_size(self):
         return self._daq_queue_size
+
+
+class MultiConfig(dict):
+    """A configuration file carrying more than one configuration.
+
+    DefaultConfig always emits exactly one, so until this existed every aggregation over
+    `configurations` was unexercised: the `any`/`max` folds in script/header_cfg.h.jinja2, the
+    matching ones in test/conftest.py's own compile definitions, and CMakeLists.txt's derivation
+    of the same macros. So was the distinction those aggregations exist to preserve -- a
+    build-wide macro says what SOME configuration needs, and a command must still gate on what
+    *the active* configuration declares (Xcp_Ptr->general->...). A single-configuration harness
+    cannot tell the two apart, because there the build-wide answer and the per-configuration
+    answer are always the same.
+
+    Composed from already-built DefaultConfig instances rather than from a second parallel set of
+    keyword arguments, so each configuration is still described exactly the way every other test
+    in the suite describes one. Select which one Xcp_Init runs against with XcpTest's
+    configuration_index.
+    """
+
+    def __init__(self, *configs):
+        if len(configs) < 2:
+            raise ValueError('MultiConfig exists to hold more than one configuration; '
+                             'use DefaultConfig directly for one')
+        # Every configuration in one generated file shares the PDU reference *names*
+        # (XCP_PDU_ID_CTO_RX and friends are literals in DefaultConfig's communication/daqs
+        # blocks), and test/conftest.py passes each name to the compiler exactly once. Two
+        # configurations asking for different numeric values for one name is therefore not
+        # something the generated file could express; refuse it here rather than silently
+        # applying the first one's value to both.
+        for attribute in ('channel_rx_pdu', 'channel_tx_pdu', 'default_daq_dto_pdu_mapping'):
+            values = set(getattr(config, attribute) for config in configs)
+            if len(values) != 1:
+                raise ValueError('{} differs between configurations ({}), but every configuration '
+                                 'in one generated file shares that PDU reference name'.format(
+                                         attribute, sorted(values)))
+        self._channel_rx_pdu = configs[0].channel_rx_pdu
+        self._channel_tx_pdu = configs[0].channel_tx_pdu
+        self._default_daq_dto_pdu_mapping = configs[0].default_daq_dto_pdu_mapping
+        # XCP_EVENT_QUEUE_SIZE is one compile definition for the whole module, so it takes the
+        # largest any configuration asks for -- the same fold header_cfg.h.jinja2 applies to
+        # XCP_MAX_DTO.
+        self._event_queue_size = max(config.event_queue_size for config in configs)
+        self._daq_queue_size = max(config.daq_queue_size for config in configs)
+        super(MultiConfig, self).__init__(
+                configurations=[configuration
+                                for config in configs
+                                for configuration in config['configurations']])
+
+    get_id = DefaultConfig.get_id
+    channel_rx_pdu = DefaultConfig.channel_rx_pdu
+    channel_tx_pdu = DefaultConfig.channel_tx_pdu
+    default_daq_dto_pdu_mapping = DefaultConfig.default_daq_dto_pdu_mapping
+    event_queue_size = DefaultConfig.event_queue_size
+    daq_queue_size = DefaultConfig.daq_queue_size
 
 
 if __name__ == '__main__':

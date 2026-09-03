@@ -27,6 +27,26 @@ def set_mode(handle, mode=0x00, daq_list=0, channel=0, prescaler=1, priority=0,
                     tuple(u16_to_array(channel, byte_order)) + (prescaler, priority))
 
 
+def fill_odt_zero_to_capacity(handle, daq_list=0, byte_order='LITTLE_ENDIAN'):
+    """SET_DAQ_PTR to ODT 0 entry 0, then WRITE_DAQ one byte at a time -- relying on the pointer's
+    auto post-increment within the ODT (1.1/1.6.4.1.1.2) -- until the ODT holds odtEntrySizeDaq
+    bytes, the same MAX_ODT_ENTRY_SIZE_DAQ GET_DAQ_RESOLUTION_INFO reports. Asserts capacity was
+    actually reached: a helper that silently filled less would make a caller relying on a full
+    ODT 0 pass for the wrong reason."""
+    capacity = handle.lib.Xcp_Ptr.general.odtEntrySizeDaq
+
+    assert response(handle, (0xE2, 0x00) + tuple(u16_to_array(daq_list, byte_order)) +
+                    (0x00, 0x00))[0] == 0xFF
+
+    for _ in range(capacity):
+        assert response(handle, (0xE1, 0xFF, 0x01, 0x00) +
+                        tuple(u32_to_array(0xDEADBEEF, byte_order)))[0] == 0xFF
+
+    used = sum(handle.lib.Xcp_Ptr.config.daqList[daq_list].odt[0].odtEntry[idx].length
+              for idx in range(handle.lib.Xcp_Ptr.config.daqList[daq_list].maxOdtEntries))
+    assert used == capacity, 'fill_odt_zero_to_capacity only reached {} of {} bytes'.format(used, capacity)
+
+
 def test_set_daq_list_mode_stores_channel_prescaler_and_priority():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3"""
     handle = daq_handle()
@@ -40,9 +60,19 @@ def test_set_daq_list_mode_stores_channel_prescaler_and_priority():
     assert rt.daqList[1].prescalerCounter == 0, 'a mode change restarts the division'
 
 
+# TIMESTAMP (0x10) and PID_OFF (0x20) used to be in this list and are not any more: neither is
+# unconditionally refused any longer. TIMESTAMP is refused only by daq_handle()'s no-clock fixture
+# -- test_set_daq_list_mode_refuses_timestamp_without_a_clock (below) covers exactly that. PID_OFF
+# is refused only for a non-ABSOLUTE identification field type, a multi-ODT list, or a TX PDU some
+# other list shares. daq_handle() builds two lists that do share one, so PID_OFF is in fact refused
+# under this fixture -- but for a reason this file does not name, which is worse than not testing
+# it here at all; test/daq_pid_off_test.py's
+# test_pid_off_is_refused_unless_identification_is_absolute,
+# test_pid_off_is_refused_for_a_multi_odt_list and
+# test_pid_off_is_refused_when_another_list_shares_this_list_s_tx_pdu cover the three refusal paths
+# precisely and by name. Keeping a same-outcome entry here would only assert the same thing twice
+# for three different reasons.
 @pytest.mark.parametrize('mode, name', ((0x01, 'DIRECTION = STIM'),
-                                        (0x10, 'TIMESTAMP'),
-                                        (0x20, 'PID_OFF'),
                                         (0x40, 'bit 6, ALTERNATING in 1.1'),
                                         (0x80, 'bit 7')))
 def test_set_daq_list_mode_rejects_every_unimplemented_mode_bit(mode, name):
@@ -109,3 +139,95 @@ def test_set_daq_list_mode_reads_words_in_the_configured_byte_order():
 
     assert set_mode(handle, daq_list=1, byte_order='BIG_ENDIAN')[0] == 0xFF
     assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[1].prescaler == 1
+
+
+def test_set_daq_list_mode_accepts_timestamp_when_a_clock_is_configured():
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='WORD')))
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0] == 0xFF
+    # XCP_DAQ_LIST_MODE_TIMESTAMP (GET_DAQ_LIST_MODE layout, 1.1/1.6.4.1.2.6): accepting the
+    # request is not enough on its own -- Task 5 reads this stored bit to decide whether to
+    # timestamp the DTO, so the request must actually reach the runtime mode.
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) != 0x00
+
+
+def test_set_daq_list_mode_clears_timestamp_when_a_later_request_omits_it():
+    """The bit is fully re-specified on every request, not only ever settable: a master that turns
+    TIMESTAMP back off must see it actually cleared from the stored mode. Every other test that
+    reaches the clearing arm starts from mode 0, where clearing an already-clear bit proves
+    nothing; this one starts from the bit set, so it is the only test that would fail if that arm
+    were deleted, or its `&=` mistyped as `|=`."""
+    handle = daq_handle(timestamp=timestamp(size='WORD'))
+
+    assert set_mode(handle, mode=0x10)[0] == 0xFF
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) != 0x00
+
+    assert set_mode(handle, mode=0x00)[0] == 0xFF
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x10) == 0x00
+
+
+def test_set_daq_list_mode_refuses_timestamp_without_a_clock():
+    """ERR_MODE_NOT_VALID, not ERR_OUT_OF_RANGE: the mode is unsupported by this build, which is
+    exactly what 1.7.3.2.4 lists the code for (DD9)."""
+    handle = XcpTest(DefaultConfig())
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_MODE_NOT_VALID'))
+
+
+def test_enabling_timestamp_is_refused_when_odt_zero_is_already_full():
+    """The master may write entries before setting the mode. MAX_ODT_ENTRY_SIZE_DAQ, which
+    GET_DAQ_RESOLUTION_INFO reports, does not change; the timestamp reduces ODT 0's budget, so an
+    ODT 0 already filled to that reported maximum can no longer carry a timestamp.
+    ERR_OUT_OF_RANGE, whose prescribed master action -- retry other parameter -- is exactly the
+    recovery available: drop an entry, or leave the timestamp off."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=8),)))
+    connect(handle)
+    fill_odt_zero_to_capacity(handle, daq_list=0)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_OUT_OF_RANGE'))
+
+
+@pytest.mark.parametrize('max_odt_entries', (0, 4))
+def test_enabling_timestamp_is_refused_for_a_list_with_no_odt(max_odt_entries):
+    """`max_odt: 0` is a configuration config/xcp.schema.json accepts (`"minimum": 0`) and
+    script/source_cfg.c.jinja2 emits as a zero-length `Xcp_OdtType` array, which GCC takes without
+    complaint. Every other `odt[` access in source/Xcp_Daq.c is bounded by `maxOdt` or by
+    SET_DAQ_PTR's own validation; the ODT-0 capacity check reached from here was the one that was
+    not.
+
+    The two parameters are not the same test twice, and only one of them discriminates without
+    AddressSanitizer:
+
+    - `max_odt_entries=0` is the deterministic half. Xcp_OdtUsedBytes' loop runs zero times, so it
+      reads nothing out of bounds and returns a well-defined 0 -- which is below any budget, so
+      before the maxOdt guard this request was *accepted*, arming a timestamp on a list with no
+      ODT to carry it. Removing the guard turns this case from 0xFE into 0xFF.
+    - `max_odt_entries=4` is the out-of-bounds read itself: Xcp_OdtUsedBytes dereferences
+      `daqList[n].odt[0]` past the end of a zero-length array and walks whatever `odtEntry` pointer
+      it finds there. Its answer is whatever memory follows, so this case cannot fail on the
+      response byte alone; it needs `XCP_ASAN=1` (test/conftest.py's `_asan_flags`, off by default)
+      to fail rather than quietly return one. It is kept because that is the case an ASAN run --
+      or a different link order -- has to be able to reach by name.
+
+    ERR_OUT_OF_RANGE, the same code the capacity check itself answers: a list with no ODT 0 has
+    nowhere to put a timestamp, which is the capacity question with the answer "none"."""
+    handle = XcpTest(DefaultConfig(timestamp=timestamp(size='DWORD'),
+                                   daqs=(daq(name='DAQ1', max_odt=0, max_odt_entries=max_odt_entries),)))
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x10, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_OUT_OF_RANGE'))

@@ -132,14 +132,18 @@ extern "C" {
 #define XCP_DAQ_LIST_MODE_REQ_PID_OFF (0x01u << 0x05u)
 
 /**
- * @brief every mode bit this implementation does not honour.
- * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. Everything else is
- * refused: DIRECTION selects STIM, TIMESTAMP and PID_OFF are unimplemented, and 1.1 places
- * ALTERNATING somewhere in bits 6..7. Refusing the whole class is conformant whichever bit
- * ALTERNATING turns out to occupy.
+ * @brief every mode bit this implementation refuses outright, regardless of configuration.
+ * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. TIMESTAMP is not in
+ * this mask any more: Xcp_DTOCmdDaqSetDaqListMode decides that bit itself, depending on whether
+ * this build has a clock configured and whether ODT 0 still has room for one. PID_OFF is not in
+ * this mask either, for the same reason: Xcp_DTOCmdDaqSetDaqListMode decides it itself, depending
+ * on whether the identification field type is absolute and the targeted DAQ list has exactly one
+ * ODT (1.1/1.1.2.1). What remains here is refused unconditionally: DIRECTION selects STIM, out of
+ * scope until SP3; and 1.1 places ALTERNATING somewhere in bits 6..7 -- refusing the whole class
+ * is conformant whichever bit it turns out to occupy.
  */
 #define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
-    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_TIMESTAMP | XCP_DAQ_LIST_MODE_REQ_PID_OFF | \
+    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | \
      (0x01u << 0x06u) | (0x01u << 0x07u)) /* bits 6-7 reserved: 1.1 places ALTERNATING somewhere in them */
 
 /* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */
@@ -167,6 +171,21 @@ extern "C" {
 #define XCP_DAQ_PROPERTIES_PID_OFF_SUPPORTED (0x01u << 0x05u)
 #define XCP_DAQ_PROPERTIES_OVERLOAD_MSB (0x01u << 0x06u)
 #define XCP_DAQ_PROPERTIES_OVERLOAD_EVENT (0x01u << 0x07u)
+
+/* DAQ_LIST_PROPERTIES, 1.1/1.6.4.2.2.1. Note the section number: unlike the GET_DAQ_* commands
+ * around GET_DAQ_LIST_INFO in the PID table (0xD9, 0xDA, 0xDB -- all 1.6.4.1.2.x), this one lives
+ * in a different subtree. 1.6.4 is renumbered wholesale between 1.0 and 1.1, so this citation
+ * does not carry over from a 1.0-era comment, and neither would a 1.0 one carry over here. */
+#define XCP_DAQ_LIST_PROPERTIES_PREDEFINED (0x01u << 0x00u)
+#define XCP_DAQ_LIST_PROPERTIES_EVENT_FIXED (0x01u << 0x01u)
+#define XCP_DAQ_LIST_PROPERTIES_DAQ (0x01u << 0x02u)
+#define XCP_DAQ_LIST_PROPERTIES_STIM (0x01u << 0x03u)
+
+/* DAQ_EVENT_PROPERTIES, 1.1/1.6.4.1.2.7. Bits 0, 1, 4 and 5 are reserved. */
+#define XCP_DAQ_EVENT_PROPERTIES_DAQ (0x01u << 0x02u)
+#define XCP_DAQ_EVENT_PROPERTIES_STIM (0x01u << 0x03u)
+#define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_DAQ (0x01u << 0x06u)
+#define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_EVENT (0x01u << 0x07u)
 
 /**
  * @brief BIT_OFFSET value meaning "this entry is a normal element, ignore the field".
@@ -445,6 +464,15 @@ uint8 Xcp_DTOCmdPagGetPageInfo(boolean *responseExpected, const PduInfoType *pPd
 uint8 Xcp_DTOCmdPagCopyCalPage(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqWriteDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+uint8 Xcp_DTOCmdDaqWriteDaqMultiple(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief READ_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.2.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqWriteDaq and
+ * Xcp_DTOCmdDaqWriteDaqMultiple: all three read or write through the same DAQ pointer state
+ * (Xcp_Internal.daq_pointer) and share its auto-post-increment (Xcp_DaqPointerAdvance).
+ */
+uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
  * @brief resets every ODT entry of one DAQ list to its power-up state.
@@ -457,10 +485,55 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_DAQ_EVENT_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqGetDaqListInfo: 0xD7 precedes
+ * 0xD8 in the PID table, and the two share the same shape -- a channel/list number in, an
+ * ERR_OUT_OF_RANGE for one that does not exist, and a PROPERTIES byte built the same way.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_DAQ_LIST_INFO, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqGetDaqListMode: both take a DAQ_LIST_NUMBER
+ * and answer ERR_OUT_OF_RANGE for one Xcp_DaqListIsValid rejects. Unlike its neighbours in the
+ * PID table, this command's own section sits in a different subtree -- 1.6.4 is renumbered
+ * wholesale between 1.0 and 1.1, so no 1.6.4 citation carries over between them either way.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
 uint8 Xcp_DTOCmdDaqStartStopDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqStartStopSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief maps Xcp_TimestampTypeType onto the TIMESTAMP_MODE size field (0, 1, 2 or 4).
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqGetDaqResolutionInfo which is its first
+ * caller, but declared here with external linkage because per-configuration DTO encoding needs
+ * the same enumerator-to-wire-size mapping and must call this on
+ * Xcp_Ptr->general->timestampType rather than use XCP_DAQ_TIMESTAMP_SIZE for arithmetic: that
+ * macro is the maximum across every configuration, correct for compile-time sizing and #if
+ * gating, but wrong as the wire width of one particular configuration's DTO.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 encodes the size in bits 2:0
+ * as 0, 1, 2 or 4, and marks 3 "Not allowed". Xcp_TimestampTypeType's enumerators are implicit,
+ * so FOUR_BYTE is 3 -- passing the enumerator through unmapped would transmit precisely the
+ * value the specification forbids.
+ */
+uint8 Xcp_TimestampWireSize(Xcp_TimestampTypeType type);
+
 uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_DAQ_CLOCK, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.3.
+ * @details Defined in Xcp_Daq.c, guarded there by XCP_DAQ_TIMESTAMP_SUPPORTED, same as the
+ * Xcp_GetDaqTimestamp() call it makes directly. Declared unconditionally here -- the same
+ * convention the XCP_PAGING_SUPPORTED-guarded Xcp_DTOCmdPag* handlers above already use -- because
+ * nothing references this declaration when the feature is off: the PID table falls back to
+ * Xcp_CmdNotImplemented in that build instead.
+ */
+uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo);
+
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);

@@ -52,6 +52,7 @@
       "events": [
         {
           "consistency": "ODT",
+          "name": "EVT_10MS",
           "priority": 0,
           "time_cycle": 10,
           "time_unit": "TIMESTAMP_UNIT_1MS",
@@ -124,6 +125,10 @@
         },
         "xcp_write_daq_api_enable": {
           "enabled": true,
+          "protected": false
+        },
+        "xcp_write_daq_multiple_api_enable": {
+          "enabled": false,
           "protected": false
         },
         "xcp_set_daq_list_mode_api_enable": {
@@ -252,6 +257,7 @@
         "identification_field_type": "ABSOLUTE",
         "daq_queue_size": 16,
         "prescaler_supported": true,
+        "publish_names": true,
         "overload_indication": "EVENT",
         "checksum_type": "XCP_CRC_16",
         "user_defined_checksum_function": null,

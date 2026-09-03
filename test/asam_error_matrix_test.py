@@ -2662,18 +2662,22 @@ def test_clear_daq_list_error_matrix_row_does_not_declare_err_daq_active():
 
 
 def test_write_daq_multiple_has_a_named_packet_identifier():
-    """D11. WRITE_DAQ_MULTIPLE is new in 1.1 at 0xC7 and arrives in SP2b; until then the PID is
-    named so nothing else claims it, and it still answers ERR_CMD_UNKNOWN because
-    Xcp_PIDTable[0xC7] is deliberately left at Xcp_CmdNotImplemented.
+    """D11. WRITE_DAQ_MULTIPLE is new in 1.1 at 0xC7; SP2b Task 10 implemented it
+    (Xcp_DTOCmdDaqWriteDaqMultiple, source/Xcp_Daq.c), so Xcp_PIDTable[0xC7] is no longer
+    Xcp_CmdNotImplemented. This harness's DefaultConfig still defaults
+    xcp_write_daq_multiple_api_enable to False (parameter.py explains why: its own generation
+    guard requires MAX_CTO >= 10, and DefaultConfig's own max_cto default is 8), so the request
+    below is refused before Xcp_PIDTable is even consulted -- through the same ctoInfo enable-bit
+    path every other optional command's DefaultConfig(..., xcp_..._api_enable=False) goes
+    through, not because the command is unimplemented. See write_daq_multiple_test.py for the
+    command's actual behaviour once enabled.
 
     XCP_PID_CMD_WRITE_DAQ_MULTIPLE lives in source/Xcp_Internal.h, which interface/Xcp.h (the
     only header this CFFI harness's cdef is built from) does not include, so
     handle.define('XCP_PID_CMD_WRITE_DAQ_MULTIPLE') cannot resolve it -- there is no runtime
     handle onto a bare #define at all, the same reason the matrix test above reads source text
     instead of going through handle.lib. Reading the declaration back out of
-    source/Xcp_Internal.h is the honest way to pin it, and it is also the only part of this test
-    that actually exercises D11: Xcp_PIDTable[0xC7] answering ERR_CMD_UNKNOWN below was already
-    true before D11 and stays true after it -- D11 only adds the name."""
+    source/Xcp_Internal.h is the honest way to pin it."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
 
     xcp_c = next(path for path in handle.sources if os.path.basename(path) == 'Xcp.c')
