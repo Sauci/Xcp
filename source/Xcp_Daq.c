@@ -74,6 +74,38 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
 }
 
 /**
+ * @brief TRUE when no other DAQ list transmits through this list's TX PDU.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1 makes the transport layer
+ * responsible for identifying a DTO once PID_OFF removes the identification field, and gives the
+ * CAN example: "separate CAN-Ids for each DAQ list". This module gives each DAQ list exactly one
+ * TX PDU, which is not the same thing as giving each list a *distinct* one -- nothing forbids two
+ * lists naming the same XcpDto2PduMapping, and config/xcp.json ships exactly that, mapping both of
+ * its lists to XCP_PDU_ID_TRANSMIT. So the distinctness has to be checked, not assumed.
+ *
+ * It is checked here rather than at generation time because the mapping is a macro name in the
+ * configuration (script/source_cfg.c.jinja2 emits `{{daq.pdu_mapping}}` verbatim); the numbers two
+ * names resolve to are the preprocessor's answer, not the generator's, so only the built
+ * configuration knows whether two lists collide.
+ */
+static boolean Xcp_DaqListTxPduIsExclusive(uint16 daqListNumber)
+{
+    const uint16 tx_pdu_id = Xcp_Ptr->config->daqList[daqListNumber].dto[0x00u].dto2PduMapping.txPdu.id;
+    boolean exclusive = TRUE;
+    uint16 idx;
+
+    for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+    {
+        if ((idx != daqListNumber) &&
+            (Xcp_Ptr->config->daqList[idx].dto[0x00u].dto2PduMapping.txPdu.id == tx_pdu_id))
+        {
+            exclusive = FALSE;
+        }
+    }
+
+    return exclusive;
+}
+
+/**
  * @brief bytes already claimed by the written entries of one ODT.
  * @details An ODT becomes one DTO frame, so the entries it holds have to fit in what the frame
  * leaves after the identification field. Entries not yet written have length 0 and contribute
@@ -618,7 +650,8 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
      * GET_DAQ_RESOLUTION_INFO reports and WRITE_DAQ enforced when the entries were written. An ODT
      * 0 already filled past the reduced budget cannot carry one. 0xFFu as excludedEntry excludes
      * nothing -- every configured slot is counted; no real index can equal it because the loop in
-     * Xcp_OdtUsedBytes bounds idx strictly below maxOdtEntries, itself a uint8. */
+     * Xcp_OdtUsedBytes bounds idx strictly below maxOdtEntries, itself a uint8.
+ */
     else if (((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u) &&
              ((uint16)Xcp_OdtUsedBytes(daq_list_number, 0x00u, 0xFFu) >
               (uint16)(Xcp_Ptr->general->odtEntrySizeDaq -
@@ -644,11 +677,17 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
     }
     /* 1.1/1.1.2.1: PID_OFF is 'only allowed if the Identification Field Type is absolute ODT
      * number', and identification then falls to the transport layer, which 1.1.2.1 says needs
-     * 'separate CAN-Ids for each DAQ list and only one ODT for each DAQ list'. This module gives a
-     * DAQ list exactly one TX PDU, so a single-ODT list satisfies that and no other list can. */
+     * 'separate CAN-Ids for each DAQ list and only one ODT for each DAQ list'.
+     *
+     * All three conditions are checked, because the transport-layer half is not satisfied by
+     * construction: this module gives a DAQ list exactly one TX PDU, which is not the same as
+     * giving each list a distinct one (Xcp_DaqListTxPduIsExclusive, this file). Two single-ODT
+     * lists sharing a TX PDU -- the arrangement config/xcp.json ships -- would otherwise both be
+     * granted PID_OFF and put two DTOs on one CAN-Id with nothing to tell them apart. */
     else if (((mode & XCP_DAQ_LIST_MODE_REQ_PID_OFF) != 0x00u) &&
              ((Xcp_Ptr->general->identificationFieldType != ABSOLUTE) ||
-              (Xcp_Ptr->config->daqList[daq_list_number].maxOdt != 0x01u)))
+              (Xcp_Ptr->config->daqList[daq_list_number].maxOdt != 0x01u) ||
+              (Xcp_DaqListTxPduIsExclusive(daq_list_number) == FALSE)))
     {
         error = XCP_E_ASAM_MODE_NOT_VALID;
     }

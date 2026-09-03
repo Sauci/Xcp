@@ -88,6 +88,53 @@ def test_pid_off_is_refused_for_a_multi_odt_list():
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_MODE_NOT_VALID'))
 
 
+def test_pid_off_is_refused_when_another_list_shares_this_list_s_tx_pdu():
+    """The half of 1.1.2.1 that DD20 originally waved away. "Separate CAN-Ids for each DAQ list"
+    is a claim about *distinctness*, and giving every list exactly one TX PDU does not establish
+    it: config/xcp.schema.json puts no uniqueItems on pdu_mapping, and config/xcp.json itself maps
+    both of its DAQ lists to XCP_PDU_ID_TRANSMIT. Two single-ODT lists on one CAN-Id, both with
+    PID_OFF, put two DTOs on that Id with nothing to say which list produced either.
+
+    Both lists are max_odt=1 and identification is ABSOLUTE, so the two conditions that were
+    already checked are both satisfied: the shared PDU is the only thing left that can refuse
+    this, which is what makes it the discriminating half of its pair with the test below."""
+    handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE',
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1,
+                                             pdu_mapping='XCP_PDU_ID_TRANSMIT'),
+                                         daq(name='DAQ2', max_odt=1, max_odt_entries=1,
+                                             pdu_mapping='XCP_PDU_ID_TRANSMIT'))))
+    connect(handle)
+    assert (handle.lib.Xcp_Ptr.config.daqList[0].dto[0].dto2PduMapping.txPdu.id ==
+            handle.lib.Xcp_Ptr.config.daqList[1].dto[0].dto2PduMapping.txPdu.id), 'the premise'
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xE0, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00)))
+    handle.lib.Xcp_MainFunction()
+
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, handle.define('XCP_E_ASAM_MODE_NOT_VALID'))
+
+
+def test_pid_off_is_accepted_when_no_other_list_shares_this_list_s_tx_pdu():
+    """The other direction of the same rule, and the reason the refusal above is not simply "more
+    than one DAQ list". Two lists again, differing only in which TX PDU they name: DAQ2's
+    XCP_PDU_ID_TRANSMIT_B is left undefined by the harness, so script/source_cfg.c.jinja2's own
+    #ifndef fallback assigns it the next free id -- which is what the first assertion checks,
+    since a fallback that happened to collide would make this test pass for the wrong reason.
+
+    As in test_pid_off_is_accepted_for_an_absolute_single_odt_list, the 0xFF is not the evidence:
+    the stored runtime mode is, because that is the only thing Xcp_DaqSampleOdt consults."""
+    handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE',
+                                   daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1,
+                                             pdu_mapping='XCP_PDU_ID_TRANSMIT'),
+                                         daq(name='DAQ2', max_odt=1, max_odt_entries=1,
+                                             pdu_mapping='XCP_PDU_ID_TRANSMIT_B'))))
+    connect(handle)
+    assert (handle.lib.Xcp_Ptr.config.daqList[0].dto[0].dto2PduMapping.txPdu.id !=
+            handle.lib.Xcp_Ptr.config.daqList[1].dto[0].dto2PduMapping.txPdu.id), 'the premise'
+
+    assert response(handle, (0xE0, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF
+    assert (daq_list_mode(handle) & 0x20) != 0x00, 'PID_OFF reached the stored mode'
+
+
 def test_a_pid_off_dto_carries_no_identification_field():
     handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE',
                                    daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),),

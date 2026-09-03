@@ -134,13 +134,36 @@ Field Type is *absolute ODT number*. If the Identification Field is not transfer
 Packet, the unambiguous identification has to be done on the level of the Transport Layer. This can
 be done e.g. on CAN with separate CAN-Ids for each DAQ list and only one ODT for each DAQ list."
 
-This module gives each DAQ list exactly one TX PDU (`dto[0].dto2PduMapping.txPdu.id`), so the
-transport-layer half is satisfied by construction for a single-ODT list and impossible for any
-other. `SET_DAQ_LIST_MODE` therefore accepts `PID_OFF` only when the configured identification field
-type is `ABSOLUTE` **and** that list's `maxOdt == 1`, and answers `ERR_MODE_NOT_VALID` otherwise —
-the code §1.7.3.2.4 lists for the command, and an accurate description of a mode this slave cannot
-honour. `PID_OFF_SUPPORTED` in `DAQ_PROPERTIES` is set only when the configured identification type
-is `ABSOLUTE`, since with any other type no list could ever accept the bit.
+The sentence names **two** transport-layer conditions, and both are checked at runtime.
+
+*Corrected after review.* This design originally argued that only `maxOdt == 1` needed checking,
+because "this module gives each DAQ list exactly one TX PDU (`dto[0].dto2PduMapping.txPdu.id`), so
+the transport-layer half is satisfied by construction". That is false. *One* PDU per list is not a
+*distinct* PDU per list: `config/xcp.schema.json` puts no `uniqueItems` on `pdu_mapping`, and
+`config/xcp.json` maps **both** of its DAQ lists to `XCP_PDU_ID_TRANSMIT` — sharing one TX PDU is
+this project's own shipped convention, not an exotic configuration. Under the original rule, two
+single-ODT lists on that shared PDU would each have been granted `PID_OFF` and would each have
+queued a frame with the same `txPduId` and no identification field: two DTOs on one CAN-Id with
+nothing to say which list produced either, which is exactly what §1.1.2.1 forbids.
+
+`SET_DAQ_LIST_MODE` therefore accepts `PID_OFF` only when the configured identification field type
+is `ABSOLUTE`, that list's `maxOdt == 1`, **and** no other DAQ list names the same
+`dto[0].dto2PduMapping.txPdu.id`; it answers `ERR_MODE_NOT_VALID` otherwise — the code §1.7.3.2.4
+lists for the command, and an accurate description of a mode this slave cannot honour.
+
+The distinctness check is a runtime loop over `daqCount` (`Xcp_DaqListTxPduIsExclusive`,
+`source/Xcp_Daq.c`) rather than a generation-time guard or a schema `uniqueItems`, because
+`pdu_mapping` is a **macro name**: `script/source_cfg.c.jinja2` emits it verbatim and the
+preprocessor decides what number it resolves to, so two distinct names may still collide and only
+the built configuration knows. A schema rule would also be the wrong shape — sharing a TX PDU is
+legal and useful for every list that keeps its identification field; it is only `PID_OFF` that
+cannot live with it.
+
+`PID_OFF_SUPPORTED` in `DAQ_PROPERTIES` is set only when the configured identification type is
+`ABSOLUTE`, since with any other type no list could ever accept the bit. It is deliberately *not*
+narrowed further by the PDU-sharing rule: `DAQ_PROPERTIES` is a property of the slave, not of a
+list, and a configuration where some lists have an exclusive PDU and others do not has no single
+honest answer to give there.
 
 **DD21 — `WRITE_DAQ_MULTIPLE` and `WRITE_DAQ` share one entry-application helper.** §1.6.4.1.2.1:
 "In general `WRITE_DAQ_MULTIPLE` has the same restrictions as the `WRITE_DAQ` command." Restating
@@ -355,8 +378,8 @@ remain in it and keep answering `ERR_MODE_NOT_VALID` (DD9).
 
 - `TIMESTAMP` requires `timestamp` to be configured — otherwise `ERR_MODE_NOT_VALID` — and passes the
   §5.2 capacity check, otherwise `ERR_OUT_OF_RANGE`.
-- `PID_OFF` requires `ABSOLUTE` identification and `maxOdt == 1`, otherwise `ERR_MODE_NOT_VALID`
-  (DD20).
+- `PID_OFF` requires `ABSOLUTE` identification, `maxOdt == 1`, and a TX PDU no other DAQ list
+  shares, otherwise `ERR_MODE_NOT_VALID` (DD20).
 
 ---
 

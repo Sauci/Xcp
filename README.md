@@ -275,12 +275,15 @@ to completion by transmit confirmations.
   which this phase implements. `TIMESTAMP` and `PID_OFF` are conditionally accepted rather than blanket-refused:
   `TIMESTAMP` requires `protocol_layer.timestamp` to be configured, answering `ERR_MODE_NOT_VALID` otherwise, and
   enough spare capacity left in ODT 0 for the timestamp field once it is added, answering `ERR_OUT_OF_RANGE`
-  otherwise. `PID_OFF` requires `identification_field_type: ABSOLUTE` and a single-ODT DAQ list, answering
-  `ERR_MODE_NOT_VALID` otherwise — 1.1/1.1.2.1 allows `PID_OFF` only for the absolute identification field type,
-  and then requires "separate CAN-IDs for each DAQ list and only one ODT for each DAQ list" at the transport
-  layer; since this module gives each DAQ list exactly one TX PDU, only a single-ODT list can satisfy that. The
-  command also answers `ERR_OUT_OF_RANGE` for a priority above 0, which §1.6.4.1.1.3 names explicitly as the
-  required response from a slave without DAQ list prioritisation.
+  otherwise. `PID_OFF` requires `identification_field_type: ABSOLUTE`, a single-ODT DAQ list, and a
+  `pdu_mapping` no other DAQ list in the same configuration uses, answering `ERR_MODE_NOT_VALID` otherwise —
+  1.1/1.1.2.1 allows `PID_OFF` only for the absolute identification field type, and then requires "separate
+  CAN-IDs for each DAQ list and only one ODT for each DAQ list" at the transport layer. Both halves of that
+  sentence are checked: nothing stops two DAQ lists from naming the same `pdu_mapping` (the shipped
+  `config/xcp.json` does exactly that), and two such lists with `PID_OFF` would put two unidentifiable DTOs on
+  one CAN-Id. A shared `pdu_mapping` is otherwise perfectly legal; it only rules out `PID_OFF`. The command also
+  answers `ERR_OUT_OF_RANGE` for a priority above 0, which §1.6.4.1.1.3 names explicitly as the required response
+  from a slave without DAQ list prioritisation.
 - `START_STOP_SYNCH(start selected)` with no list currently selected answers `ERR_DAQ_CONFIG`, per §1.6.4.1.1.5.
 - `CLEAR_DAQ_LIST` is accepted while the addressed list is running, per §1.6.4.2.1.1, which requires the command to
   stop a running transmission rather than refuse because one is active; the error matrix row was corrected to

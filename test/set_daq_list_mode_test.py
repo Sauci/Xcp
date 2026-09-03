@@ -63,13 +63,15 @@ def test_set_daq_list_mode_stores_channel_prescaler_and_priority():
 # TIMESTAMP (0x10) and PID_OFF (0x20) used to be in this list and are not any more: neither is
 # unconditionally refused any longer. TIMESTAMP is refused only by daq_handle()'s no-clock fixture
 # -- test_set_daq_list_mode_refuses_timestamp_without_a_clock (below) covers exactly that. PID_OFF
-# is refused only for a non-ABSOLUTE identification field type or a multi-ODT list --
-# daq_handle()'s default (ABSOLUTE, single-ODT DAQ1) is precisely the case Task 7 makes PID_OFF
-# valid for, so it is now accepted here, not refused; test/daq_pid_off_test.py's
-# test_pid_off_is_refused_unless_identification_is_absolute and
-# test_pid_off_is_refused_for_a_multi_odt_list cover its refusal paths precisely and by name. In
-# both cases, keeping a same-outcome entry here would only assert the same thing twice for two
-# different reasons.
+# is refused only for a non-ABSOLUTE identification field type, a multi-ODT list, or a TX PDU some
+# other list shares. daq_handle() builds two lists that do share one, so PID_OFF is in fact refused
+# under this fixture -- but for a reason this file does not name, which is worse than not testing
+# it here at all; test/daq_pid_off_test.py's
+# test_pid_off_is_refused_unless_identification_is_absolute,
+# test_pid_off_is_refused_for_a_multi_odt_list and
+# test_pid_off_is_refused_when_another_list_shares_this_list_s_tx_pdu cover the three refusal paths
+# precisely and by name. Keeping a same-outcome entry here would only assert the same thing twice
+# for three different reasons.
 @pytest.mark.parametrize('mode, name', ((0x01, 'DIRECTION = STIM'),
                                         (0x40, 'bit 6, ALTERNATING in 1.1'),
                                         (0x80, 'bit 7')))
