@@ -67,11 +67,11 @@ positive response without doing anything, which was defect D2, fixed in SP1.
 |:--|:--|:--|
 | 0xFF | CONNECT | done |
 | 0xFE | DISCONNECT | done |
-| 0xFD | GET_STATUS | partial — bytes 4,5 (session configuration id) are hard-coded to 0xABCD at `source/Xcp.c:3193`; see defect D9 |
+| 0xFD | GET_STATUS | yes | reports session configuration id 0, which is truthful while no DAQ configuration is stored; see defect D9 |
 | 0xFC | SYNCH | done |
 | 0xFB | GET_COMM_MODE_INFO | done |
 | 0xFA | GET_ID | partial — identification type 0 (ASCII) only; §1.6.1.2.2 defines 0–4 plus 128–255 user-defined, all implementation-specific |
-| 0xF9 | SET_REQUEST | partial — accepts the session configuration id in bytes 2,3 but does not store it; see defect D9 |
+| 0xF9 | SET_REQUEST | yes | STORE_CAL_REQ implemented; STORE_DAQ_REQ and CLEAR_DAQ_REQ refused with ERR_OUT_OF_RANGE as unsupported modes; see defect D9 |
 | 0xF8 | GET_SEED | done |
 | 0xF7 | UNLOCK | done |
 | 0xF6 | SET_MTA | done |
@@ -178,8 +178,10 @@ into SP1; it belongs with D6.
 
 ## 3. Known defects in existing code
 
-**Status as of 2026-09-02:** D1, D2, D3, D4, D5 and D8 were fixed in SP1; D7 fell out of the
-same dispatch rework. D6 and D9 remain open — D9 is scheduled into SP5, D6 travels with the
+**Status as of 2026-09-03:** D1, D2, D3, D4, D5 and D8 were fixed in SP1; D7 fell out of the
+same dispatch rework. D9 was resolved by refusing the two modes it could not fulfil, which also
+closed a session-wide denial of service found while investigating it; the non-volatile storage
+that would let those modes be accepted is tracked as SP5-NV. D6 remains open and travels with the
 per-segment checksum reconciliation noted at the end of §2.6. The entries below are kept as
 written, each with its outcome, because the reasoning is what makes the fix reviewable.
 
@@ -276,7 +278,27 @@ reset it to 0 on `CLEAR_DAQ_REQ`. `Xcp_CTOCmdStdGetStatus` returns the constant 
 `test/get_status_test.py` is the marker left for it — note its name misstates the byte
 offsets. Because persistence is defined in terms of DAQ list storage, this belongs with SP2.
 
-> **Open.** Scheduled into SP5.
+> **Resolved 2026-09-03, by refusal rather than by implementation.** Investigating this found the
+> defect was not the cosmetic one described above. `SET_REQUEST` accepted `STORE_DAQ_REQ` and
+> `CLEAR_DAQ_REQ` and OR-ed them into `Xcp_Internal.session_status`; no code fulfils either
+> request, so nothing ever cleared the bit, and the `ERR_PGM_ACTIVE` gate in
+> `Xcp_CanIfRxIndication` (`source/Xcp.c`) refuses **every command carrying that flag — 42 of
+> them — for as long as one of the three request bits is set**. A single conformant `SET_REQUEST`
+> therefore disabled most of the command set until the next `CONNECT`. `STORE_CAL_REQ` was never
+> affected: `Xcp_MainFunction` fulfils it and clears its bit.
+>
+> The nonzero-session-id rejection was also inert. It ran after the success branch had been
+> entered, so it set the local `result` and then finalized a positive response regardless — the
+> error never reached the master, and the check only read as validation.
+>
+> §1.6.1.2.3's own escape hatch — *"If the slave device does not support the requested mode, an
+> ERR_OUT_OF_RANGE will be returned"* — makes refusing both modes fully conformant, and it agrees
+> with what the module already advertises, since `GET_DAQ_PROCESSOR_INFO` reports RESUME
+> unsupported and non-volatile DAQ storage exists to serve RESUME. `GET_STATUS` now reports
+> session configuration id 0, the value the specification itself resets it to.
+>
+> **This closes the misreporting, not the feature.** Accepting the two modes needs non-volatile
+> storage, tracked as SP5-NV below.
 
 **D7 — `Xcp_PIDTable` misroutes the entire command space above 0xE3.** §1.1.5.1 fixes the
 master-to-slave identifier space at `0xC0..0xFF` for commands and `0x00..0xBF` for STIM ODT
@@ -397,14 +419,43 @@ schedulable whenever flash programming becomes a requirement.
 
 The residue: the interleaved communication model (§1.7.2.3), `EV_CMD_PENDING` (§1.7.2.4.2),
 RESUME mode, `GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2),
-`SET_DAQ_LIST_CAN_ID`, defect D9, the remaining `EV_*` event codes and the `SERV_*` service
-request codes.
+`SET_DAQ_LIST_CAN_ID`, the remaining `EV_*` event codes and the `SERV_*` service request codes.
 
 Note that time-out handling itself is *not* here: §1.7.2 places the t1…t6 timers entirely on
 the master. `EV_CMD_PENDING` and the interleaved request queue are the slave's whole share
 of that chapter.
 
-**Dependencies.** `SET_DAQ_LIST_CAN_ID`, RESUME mode and D9 all depend on SP2 — RESUME is a
+#### SP5-NV — non-volatile DAQ storage
+
+Everything the module currently refuses because it keeps no non-volatile DAQ configuration:
+`SET_REQUEST`'s `STORE_DAQ_REQ` and `CLEAR_DAQ_REQ` modes, the session configuration id that is
+stored and cleared alongside them (§1.6.1.2.3), the `GET_STATUS` byte pair that reports it, and
+RESUME mode itself, which is what the whole mechanism exists to serve. D9 closed the
+*misreporting* by refusing these modes outright; this item is what would let them be accepted.
+
+**Intended shape** (agreed 2026-09-03, not yet designed): an integrator-provided callback pair
+for storing and reading the configuration, **asynchronous**, following the pattern already
+established by `Xcp_StoreCalibrationDataToNonVolatileMemory` — which `Xcp_MainFunction` polls
+until it reports completion, then clears the request bit and raises `EV_STORE_CAL`. The DAQ side
+needs the same treatment for `EV_STORE_DAQ` and `EV_CLEAR_DAQ`, plus a read path at
+initialisation that RESUME depends on and that calibration has no equivalent of.
+
+Three things this must get right, all of them discovered by D9:
+
+- **A request bit that is never cleared is a denial of service, not a cosmetic flaw.** The
+  `ERR_PGM_ACTIVE` gate in `Xcp_CanIfRxIndication` refuses the 42 commands that carry it while
+  any of the three request bits is set. Any asynchronous store must guarantee the bit is
+  cleared on *every* exit path, including callback failure, or it reintroduces exactly what D9
+  removed.
+- **Storing has an ordering requirement.** §1.6.1.2.3: the slave must first clear any DAQ list
+  configuration already in non-volatile memory, then store the new one — so a store interrupted
+  midway must not leave a configuration the master would take for complete.
+- **`GET_DAQ_PROCESSOR_INFO` must stop reporting RESUME unsupported at the same time**, and the
+  refusals in `SET_REQUEST` and `SET_DAQ_LIST_MODE` must be lifted together with it. The
+  module's advertisement and its refusals are currently consistent; changing one without the
+  others is what would make it incoherent.
+
+**Dependencies.** `SET_DAQ_LIST_CAN_ID` and SP5-NV both depend on SP2 — RESUME is a
 `SET_DAQ_LIST_MODE` bit backed by `STORE_DAQ_REQ` persistence, and the session configuration
 id is persisted and cleared through the same DAQ storage mechanism. Only the interleaved
 model, `EV_CMD_PENDING`, `GET_ID` types and the `SERV_*` codes are genuinely independent and

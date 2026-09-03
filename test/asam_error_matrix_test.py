@@ -9,6 +9,22 @@ from .parameter import *
 from .conftest import XcpTest
 
 
+# The SET_REQUEST mode bits that can put the session into the ERR_PGM_ACTIVE state, which is what
+# every test_returns_err_pgm_active below needs to provoke.
+#
+# STORE_DAQ_REQ (0b100) and CLEAR_DAQ_REQ (0b1000) were listed here as well until defect D9 was
+# closed. That was asserting the defect: SET_REQUEST accepted both, no code fulfils either, so
+# nothing ever cleared the bit -- and because these very tests show the bit gates ERR_PGM_ACTIVE,
+# one SET_REQUEST left all 42 commands carrying that flag refused for the rest of the session.
+# SET_REQUEST now refuses both as unsupported modes (1.0/1.6.1.2.3), so neither can reach the gate.
+#
+# STORE_CAL_REQ remains, because it is genuinely implemented: Xcp_MainFunction fulfils it through
+# the integrator's store callback and then clears the bit. Each test below stubs that callback to
+# fail, which is what holds the bit set across the command under test. When SP5-NV adds
+# non-volatile DAQ storage, the other two modes belong back in this tuple.
+PGM_ACTIVE_MODE_BITS = (0b00000001,)
+
+
 class TestConnectErrorHandling:
     """
     Command               Error               Pre-Action Action
@@ -59,7 +75,7 @@ class TestDisconnectErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -228,7 +244,7 @@ class TestSetRequestErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -308,7 +324,7 @@ class TestGetSeedErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -451,7 +467,7 @@ class TestUnlockErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -613,7 +629,7 @@ class TestSetMtaErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -679,7 +695,7 @@ class TestUploadErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -755,7 +771,7 @@ class TestShortUploadErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -843,7 +859,7 @@ class TestBuildChecksumErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -928,7 +944,7 @@ class TestTransportLayerCmdErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -1000,7 +1016,7 @@ class TestUserCmdErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -1069,7 +1085,7 @@ class TestDownloadErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
@@ -1181,7 +1197,7 @@ class TestDownloadNextErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -1317,7 +1333,7 @@ class TestDownloadMaxErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -1435,7 +1451,7 @@ class TestShortDownloadErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -1561,7 +1577,7 @@ class TestModifyBitsErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -1690,7 +1706,7 @@ class TestSetCalPageErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -1841,7 +1857,7 @@ class TestGetCalPageErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -1956,7 +1972,7 @@ class TestGetPagProcessorInfoErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -2026,7 +2042,7 @@ class TestGetSegmentInfoErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -2151,7 +2167,7 @@ class TestGetPageInfoErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -2279,7 +2295,7 @@ class TestSetSegmentModeErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -2414,7 +2430,7 @@ class TestGetSegmentModeErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
@@ -2505,7 +2521,7 @@ class TestCopyCalPageErrorHandling:
         # matrix row lost the bit, the command would have run and left its own response here.
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x10)
 
-    @pytest.mark.parametrize('mode_bit', (0b00000001, 0b00000100, 0b00001000))
+    @pytest.mark.parametrize('mode_bit', PGM_ACTIVE_MODE_BITS)
     def test_returns_err_pgm_active(self, mode_bit):
         """XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2"""
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
