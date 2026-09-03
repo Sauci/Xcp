@@ -4,6 +4,22 @@ result=0
 mkdir -p build
 cd build || exit 1
 
+# _cffi_xcp_* module directories (test/conftest.py's MockGen) accumulate without bound across
+# runs that reuse this build/ directory -- they reached 3017 directories (307 MB) against this
+# container's 1024 file-descriptor limit during one sub-project, and are the documented common
+# cause of transient pycparser/PLY, Jinja2 template-compilation and CFFI/distutils failures, each
+# non-reproducing and each costing a full run. They also hold the .gcda profiles the coverage
+# merge below reads, and gcov accumulates a binary's execution counts across runs rather than
+# overwriting them, so leaving old modules in place makes the reported coverage cumulative since
+# whenever build/ was last removed by hand, not a measurement of this run alone -- a deleted
+# test's coverage keeps counting.
+#
+# Pruning here, before cmake/ctest regenerate what this run actually needs, fixes both: the
+# modules are keyed by a content digest and rebuilt on demand (test/conftest.py's MockGen), so
+# removing them is safe. This cannot move to the end of the script instead: the coverage merge
+# below depends on the modules THIS run creates still being present once ctest finishes.
+rm -rf _cffi_xcp_*
+
 # A configure or build failure has to fail this script, and so does an empty test run: a branch
 # that does not compile must not report a green build having run nothing. --no-tests=error makes
 # ctest itself exit non-zero when no tests are registered, so a branch that does not compile is
