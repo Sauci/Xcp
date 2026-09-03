@@ -84,7 +84,12 @@ def test_read_daq_answers_out_of_range_without_a_valid_pointer():
     """DD10 (SP2a): the pointer is undefined past the last entry of an ODT and repositioning it
     is the master's responsibility. ERR_OUT_OF_RANGE's prescribed action, "retry other
     parameter", means exactly that -- reposition with SET_DAQ_PTR. A freshly connected slave has
-    never had a SET_DAQ_PTR at all, so the pointer starts out invalid the same way."""
+    never had a SET_DAQ_PTR at all, so the pointer starts out invalid the same way.
+
+    This code is a deliberate deviation, recorded in design section 7.2: 1.7.3.2.4's READ_DAQ row
+    does not list ERR_OUT_OF_RANGE, unlike every other command SP2b touches. The only listed
+    alternative is ERR_CMD_SYNTAX, whose prescribed action -- "retry other syntax" -- cannot
+    reposition a pointer, so it would send the master somewhere with nothing to find."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=1, max_odt_entries=1),)))
     connect(handle)
 

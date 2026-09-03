@@ -338,7 +338,21 @@ of 8 bytes and the trailing dummy against the PDF page images.
 
 Response: `0xFF`, `BIT_OFFSET`, size, address extension, address DWORD. Reads the entry at the DAQ
 pointer with the same auto-post-increment within an ODT that `WRITE_DAQ` uses. An invalid pointer
-answers `ERR_OUT_OF_RANGE`, consistent with DD10.
+answers `ERR_OUT_OF_RANGE`.
+
+*Corrected after review.* This section originally called that "consistent with DD10". It is not
+consistent with §1.7.3.2.4, which is what DD10 is about: that section's `READ_DAQ` row does **not**
+list `ERR_OUT_OF_RANGE`. Its rows are the t1 timeout, `ERR_CMD_BUSY`, `ERR_PGM_ACTIVE`,
+`ERR_CMD_UNKNOWN` and `ERR_CMD_SYNTAX` — verified against the 1.0 PDF. Every *other* command SP2b
+touches does list `ERR_OUT_OF_RANGE`, which is why the choice looked unremarkable.
+
+The code stands as a **deliberate deviation**. The only listed alternative is `ERR_CMD_SYNTAX`,
+whose prescribed master action in §1.7.3.2.4 is "retry other syntax" — actively wrong advice for a
+DAQ pointer left undefined past the last entry of an ODT (§1.6.4.1.1.2), a state no change of
+syntax can fix. `ERR_OUT_OF_RANGE`'s prescribed action is "retry other parameter", which is exactly
+the recovery available: reposition with `SET_DAQ_PTR`. Answering a code that sends the master down
+a road with no destination is a worse failure than answering one the table omits, so the code is
+kept and the deviation recorded here.
 
 ### 7.3 GET_DAQ_CLOCK — 0xDC (§1.6.4.1.2.3)
 

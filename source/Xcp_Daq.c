@@ -517,7 +517,14 @@ uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInf
      * repositioning it. ERR_OUT_OF_RANGE's prescribed action in 1.7.3.2.4 is "retry other
      * parameter" (SP2a DD10) -- reposition with SET_DAQ_PTR. There is no
      * Xcp_DaqPointerIsValid()-style predicate in this file (Task 9); every call site, this one
-     * included, reads Xcp_Internal.daq_pointer.valid directly, e.g. Xcp_DaqApplyOdtEntry above. */
+     * included, reads Xcp_Internal.daq_pointer.valid directly, e.g. Xcp_DaqApplyOdtEntry above.
+     *
+     * A deliberate deviation, not an oversight: 1.7.3.2.4's READ_DAQ row does not list
+     * ERR_OUT_OF_RANGE at all (its rows are the t1 timeout, ERR_CMD_BUSY, ERR_PGM_ACTIVE,
+     * ERR_CMD_UNKNOWN and ERR_CMD_SYNTAX), unlike every other command in this file. The only
+     * listed alternative is ERR_CMD_SYNTAX, whose prescribed action is "retry other syntax" --
+     * advice that cannot help, since no change of syntax repositions a pointer. Sending the master
+     * down a road with no destination is the worse failure. Design section 7.2 records this. */
     if (Xcp_Internal.daq_pointer.valid == FALSE)
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
