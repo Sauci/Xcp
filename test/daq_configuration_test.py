@@ -13,6 +13,7 @@ from jinja2.exceptions import UndefinedError
 
 from .parameter import *
 from .conftest import Preprocessor, XcpTest
+from .download_test import connect
 
 
 identification_field_cases = [
@@ -68,6 +69,78 @@ def test_max_dto_is_available_as_a_compile_time_macro(max_dto):
     handle = XcpTest(DefaultConfig(max_dto=max_dto))
 
     assert handle.define('XCP_MAX_DTO') == max_dto
+
+
+def test_a_multi_configuration_build_with_differing_max_dto_compiles_and_behaves():
+    """script/source_rt.c.jinja2's Xcp_DtoFrameStrideCheck asserted XCP_MAX_DTO == this
+    configuration's own max_dto, inside the per-configuration loop that emits one check per
+    configuration in the generated file. XCP_MAX_DTO is a max() fold over every configuration in
+    that file (script/header_cfg.h.jinja2), sizing Xcp_DtoFrameType.data[] once for the whole
+    module, so any configuration whose own max_dto is smaller than another's in the same file
+    failed to compile under ==, even though the shared, larger buffer already had room for it. >=
+    is the correct relation: it demands the buffer be at least as large as this configuration
+    needs, which a max() fold guarantees by construction.
+
+    Constructing each XcpTest instance below is itself the compile-time half of this test --
+    MockGen raises if the generated runtime fails to build, and before this fix it did, for
+    configuration 0, the smaller of the two, the moment its own max_dto (8) disagreed with the
+    fold's 64.
+
+    The behavioural half follows, so a fix that merely compiles by coercing every configuration to
+    the larger value cannot pass here. CONNECT's MAX_DTO field (source/Xcp_Std.c) reads
+    Xcp_Ptr->general->maxDto, a per-configuration runtime field distinct from the compile-time
+    macro above, so each configuration must still report its own. And Xcp_DtoFrameType.data[]
+    itself -- shared, and sized to the larger configuration's 64 by the very fold this fix must
+    not break -- must still produce a correctly bounded frame when a DAQ list running under the
+    smaller configuration is triggered: one written byte plus its PID is a 2-byte frame in an
+    8-byte MAX_DTO configuration exactly as it would be in a single-configuration build, not a
+    64-byte one.
+
+    Configuration 0 is built, used, and finished with before configuration 1 is ever constructed,
+    rather than interleaved: MockGen caches the compiled module by rt_key, which folds in every
+    configuration's max_dto (not just the active one), so both configurations here share one
+    compiled module, including its def_extern callback registrations. A second XcpTest against
+    the same rt_key re-registers those callbacks against its own mocks, so a live handle_small
+    call made after handle_large exists would silently land on handle_large's mocks instead."""
+    def exchange(handle, request):
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    multi = MultiConfig(DefaultConfig(max_dto=8), DefaultConfig(max_dto=64))
+
+    handle_small = XcpTest(multi, configuration_index=0)
+
+    assert handle_small.define('XCP_MAX_DTO') == 64, \
+        'one compiled stride, shared by both configurations -- the fold this fix must not break'
+
+    connect(handle_small)
+    small_connect = tuple(handle_small.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
+    assert (small_connect[4] | (small_connect[5] << 8)) == 8, \
+        "CONNECT must report configuration 0's own MAX_DTO, not the shared compiled stride"
+
+    exchange(handle_small, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))  # SET_DAQ_PTR: list 0, odt 0, entry 0
+    exchange(handle_small, (0xE1, 0xFF, 0x01, 0x00) + tuple(u32_to_array(0x1000, 'LITTLE_ENDIAN')))  # WRITE_DAQ
+    exchange(handle_small, (0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))  # SET_DAQ_LIST_MODE: channel 0
+    exchange(handle_small, (0xDE, 0x01, 0x00, 0x00))  # START_STOP_DAQ_LIST: start list 0
+
+    handle_small.can_if_transmit.reset_mock()
+    handle_small.lib.Xcp_TriggerEventChannel(0)
+
+    assert handle_small.can_if_transmit.call_count == 1
+    frame = handle_small.can_if_transmit.call_args[0][1]
+    assert frame.SduLength == 2, 'FIRST_PID plus the one written byte -- not the 64-byte stride'
+    assert frame.SduDataPtr[0] == 0x00, 'FIRST_PID of the sole DAQ list/ODT'
+
+    # Configuration 1, the larger of the two, in the same generated file -- built only now that
+    # handle_small is done with (see the docstring for why).
+    handle_large = XcpTest(multi, configuration_index=1)
+
+    assert handle_large.define('XCP_MAX_DTO') == 64
+
+    connect(handle_large)
+    large_connect = tuple(handle_large.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
+    assert (large_connect[4] | (large_connect[5] << 8)) == 64
 
 
 def test_first_pid_is_the_running_sum_of_preceding_odt_counts():
@@ -364,10 +437,9 @@ def test_the_build_derives_daq_timestamp_macros_from_the_repository_configuratio
     with open(repository_config_path) as fp:
         repository_config = json.load(fp)
 
-    wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}
     expected_supported = 'STD_ON' if any(c['protocol_layer'].get('timestamp')
                                          for c in repository_config['configurations']) else 'STD_OFF'
-    expected_size = str(max((wire_size[c['protocol_layer']['timestamp']['size']]
+    expected_size = str(max((timestamp_wire_size[c['protocol_layer']['timestamp']['size']]
                              for c in repository_config['configurations']
                              if c['protocol_layer'].get('timestamp')),
                             default=0))
