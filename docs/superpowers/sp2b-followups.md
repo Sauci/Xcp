@@ -25,9 +25,28 @@ group, pair with that group's notes. With a single variant the largest group is 
 behaviour is preserved rather than replaced.
 
 **Residual, by design and documented in the code:** reported coverage is the union across the largest
-variant group, not across all variants — `Xcp_Daq.c` and `Xcp_DaqRuntime.c` report the 24-module
-timestamp-enabled variant, and the other 12 modules' coverage of the disabled variant is real but not
-folded in. gcov offers no way to combine them. An honest 92.42% beats a silent 0.00%.
+variant group, not across all variants. gcov offers no way to combine them. An honest 92.42% beats a
+silent 0.00%.
+
+**Corrected in the round-2 fix wave — this paragraph previously stated the residual inverted.** It
+said `Xcp_Daq.c` and `Xcp_DaqRuntime.c` report "the 24-module timestamp-**enabled** variant". It is
+the opposite, and the inversion mattered: most test configurations declare no
+`protocol_layer.timestamp` block, so the majority group is the timestamp-**disabled** compilation.
+`build/Xcp_DaqRuntime.c.gcov` marks every line inside `#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)`
+as `-` — not compiled, rather than uncovered — so its headline `100.00% of 105` is 100% of a
+compilation containing none of SP2b's feature. `Xcp_Daq.c`'s uncovered lines are almost entirely the
+new timestamp code, at `#####`.
+
+The split is also not two-way. `Xcp_Daq.gcno` sizes fell into four groups (33044 ×24, 33736 ×1,
+33756 ×2, 33844 ×9), so the losing side is itself several unmergeable groups and no selection rule
+recovers the union; each new build-time gate erodes it further. `test.sh` now prints the winning
+`.gcno`'s byte size and the number of variants present alongside the module count, and says outright
+that the figure is one variant's, so a `100.00%` that omits a feature cannot be read as a clean bill
+of health.
+
+Still open: nothing folds the variants together, and nothing fails when the *measured* variant is the
+one without the feature under test. A per-variant report, or a coverage gate keyed on the winning
+`.gcno` size, would close it.
 
 ## Test hygiene
 

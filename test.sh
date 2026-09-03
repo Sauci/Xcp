@@ -38,6 +38,23 @@ result=$?
 # union across one compilation variant, not across every variant the suite exercises -- but it
 # is the best gcov can do, since there is no tool-level way to combine profiles from
 # structurally different compilations. An honest majority-variant figure beats a silent 0%.
+#
+# Read every percentage this loop prints as "one variant's coverage", never as the suite's. The
+# cost is larger than the paragraph above makes it sound, in two ways worth stating outright.
+#
+# The winning variant is usually the one with the *fewest* functions. Most test configurations
+# declare no protocol_layer.timestamp block, so the largest group for Xcp_Daq.c and
+# Xcp_DaqRuntime.c is the timestamp-DISABLED compilation -- and every line inside
+# #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) shows as '-', not compiled, rather than as
+# uncovered. Xcp_DaqRuntime.c reported 100.00% that way: 100% of a compilation that contained
+# none of the timestamp feature. A clean-looking figure here is not evidence that a feature is
+# covered; it may be evidence that the feature was compiled out of the variant being measured.
+#
+# And the split is not two-way. Xcp_Daq.c's notes fall into four or more distinct sizes at the
+# time of writing, so the losing side is itself several unmergeable groups and no selection rule
+# recovers the union. Every new build-time gate erodes it further. That is why the line below
+# prints the winning notes' byte size and how many variants there were: two runs whose percentages
+# agree may not have measured the same code, and the size is what says so.
 merged=gcov_merged
 rm -rf "$merged"
 mkdir -p "$merged" || exit 1
@@ -107,9 +124,17 @@ while read -r source; do
     awk -v h="$top" '$1==h{print $2}' "$hashes_file" > "$group_file"
     group_size=$(wc -l < "$group_file")
     total_usable=$(wc -l < "$hashes_file")
+    # Which variant won, not just how many modules voted for it. The byte size of the winning
+    # .gcno is the only cheap handle on "which compilation of this file was measured": a smaller
+    # one means fewer functions, i.e. a build-time gate compiled part of the file away, and the
+    # percentage that follows is 100% of what was left. variants says how much was not folded in
+    # -- anything above 1 means some real coverage exists that no rule here can reach.
+    variants=$(awk '{print $1}' "$hashes_file" | sort -u | wc -l | tr -d ' ')
+    top_notes=$(head -n 1 "$group_file")
+    top_bytes=$(wc -c < "$top_notes/$notes" | tr -d ' ')
     # Said out loud regardless of outcome, success included, so a future reader can see the
     # trade this merge makes rather than infer it from the coverage percentage alone.
-    echo "test.sh: $f coverage merged from $group_size of $total_usable module(s) that compiled it the same way" >&2
+    echo "test.sh: $f coverage is ONE variant's, not the union: merged from $group_size of $total_usable module(s) sharing a ${top_bytes}-byte $notes, of $variants variant(s) present" >&2
 
     acc="$merged.acc"
     rm -rf "$acc"
