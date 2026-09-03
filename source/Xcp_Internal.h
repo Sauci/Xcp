@@ -520,6 +520,37 @@ uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInf
  */
 void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
+ * (1.1/1.6.4.3.1.1), but declared here with external linkage because Xcp_CTOCmdStdDisconnect
+ * (Xcp_Std.c) calls it too -- the same arrangement, and for the same kind of reason, as
+ * Xcp_DaqListClearEntries just above.
+ *
+ * XCP part 1 - Overview 1.0/2.3: in DISCONNECTED state "the session status, all DAQ lists and the
+ * protection status bits are reset". Nothing did that: Xcp_CTOCmdStdDisconnect reset only
+ * connection_status, CONNECT reset nothing, and Xcp_Init was the module's only session-state
+ * reset path. Under a DYNAMIC configuration that is not merely untidy. The allocation state
+ * machine's initial state is XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no preceding FREE_DAQ
+ * (DD28), and repeated ALLOC_DAQ accumulates, so a master that allocated and then disconnected
+ * without sending FREE_DAQ left the allocation standing -- and the next master's ALLOC_DAQ added
+ * to it, handing that master more lists than it asked for, carrying the previous session's ODT
+ * entries.
+ * @note DISCONNECT calls this in a STATIC build too, where it frees nothing (there is no dynamic
+ * allocation to release) but still stops every list and clears every ODT entry, which is what
+ * 1.0/2.3 asks for and what the master's next CONNECT is entitled to assume.
+ */
+void Xcp_DaqFreeAll(void);
+
+/**
+ * @brief FREE_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1.
+ * @details Defined in Xcp_Daq.c, immediately after Xcp_DTOCmdDaqClearDaqList: the two are the
+ * module's two reset commands and share Xcp_DaqListReset, differing in scope -- CLEAR_DAQ_LIST
+ * resets one list and keeps its allocation, FREE_DAQ resets every list and releases the
+ * allocation as well.
+ */
+uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 

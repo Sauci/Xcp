@@ -1101,6 +1101,12 @@ uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPdu
 
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
 
+    /* XCP part 1 - Overview 1.0/2.3: in "DISCONNECTED" state "the session status, all DAQ lists
+     * and the protection status bits are reset, which means that DAQ list transfer is inactive".
+     * The same unwind FREE_DAQ performs, and for the same reasons -- see Xcp_DaqFreeAll's
+     * declaration in Xcp_Internal.h for what a DYNAMIC configuration inherited without it. */
+    Xcp_DaqFreeAll();
+
     return E_OK;
 }
 

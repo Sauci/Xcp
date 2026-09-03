@@ -74,6 +74,36 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
 }
 
 /**
+ * @brief returns one DAQ list's runtime state to its power-up values.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1 for CLEAR_DAQ_LIST and
+ * 1.1/1.6.4.3.1.1 for FREE_DAQ: both stop transmission on the list and reset its state. The
+ * prescaler returns to 1, not 0 -- 1.1/1.6.4.1.1.3, "Without reduction, the prescaler value must
+ * equal 1", and a zero prescaler would mean Xcp_TriggerEventChannel's `prescalerCounter >=
+ * prescaler` never fails, i.e. every trigger elapses, not none. Xcp_Init resets the same five
+ * fields to the same five values.
+ * @note the entries are cleared BEFORE any caller zeroes the counts that describe them:
+ * Xcp_DaqListClearEntries is bounded by this list's own maxOdt and per-ODT entryCount, so a
+ * caller that zeroed those first would leave the entries themselves untouched. Xcp_Init has
+ * exactly that shape in the other direction and is why a dynamic pool's entries are stale after
+ * a re-initialisation that follows an allocation -- there maxOdt is already zero when the clear
+ * runs. Xcp_DaqFreeAll below therefore clears first and zeroes second.
+ * @note the caller invalidates the DAQ pointer if it names this list, and calls
+ * Xcp_DaqSessionStatusUpdate once it has reset every list it intends to -- DAQ_RUNNING is a
+ * property of every list together (1.1/1.6.1.1.3), so recomputing it per list would be wrong for
+ * a caller resetting more than one.
+ */
+static void Xcp_DaqListReset(uint16 daqListNumber)
+{
+    Xcp_DaqListClearEntries(daqListNumber);
+
+    Xcp_DaqListRt(daqListNumber)->mode = 0x00u;
+    Xcp_DaqListRt(daqListNumber)->eventChannelNumber = 0x0000u;
+    Xcp_DaqListRt(daqListNumber)->prescaler = 0x01u;
+    Xcp_DaqListRt(daqListNumber)->prescalerCounter = 0x00u;
+    Xcp_DaqListRt(daqListNumber)->priority = 0x00u;
+}
+
+/**
  * @brief TRUE when no other DAQ list transmits through this list's TX PDU.
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1 makes the transport layer
  * responsible for identifying a DTO once PID_OFF removes the identification field, and gives the
@@ -328,6 +358,76 @@ static void Xcp_DaqSessionStatusUpdate(void)
     }
 }
 
+/**
+ * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
+ * @details The body of FREE_DAQ (1.1/1.6.4.3.1.1), factored out because DISCONNECT needs exactly
+ * the same unwind -- see this function's declaration in Xcp_Internal.h for why, and
+ * Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) for the other call site.
+ */
+void Xcp_DaqFreeAll(void)
+{
+    uint16 daq_idx;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1: "This command clears all DAQ
+     * lists and frees all dynamically allocated DAQ lists, ODTs and ODT entries."
+     *
+     * DD30. The unwind order is the reverse of allocation and is not stylistic.
+     * Xcp_TriggerEventChannel (source/Xcp_DaqRuntime.c) runs in interrupt context and reaches
+     * entry storage by walking maxOdt, then each ODT's entryCount, so a count must never outlive
+     * the storage it describes -- the DD14 failure class. Stopping the lists first means no new
+     * sampling begins; clearing the entries while the counts still describe them means nothing is
+     * left behind (Xcp_DaqListReset's own note); zeroing the counts last means a trigger
+     * interleaved at any later point sees zero and samples nothing, rather than a stale count into
+     * released storage. Xcp_DaqListClearEntries, called through Xcp_DaqListReset, takes the DAQ
+     * exclusive area for the entry writes themselves, and the count writes below take it too.
+     *
+     * The loops are bounded by the configured pool, Xcp_Ptr->general->daqCount, rather than by
+     * Xcp_Internal.allocated_daq_count. That is the range Xcp_TriggerEventChannel itself walks
+     * (and Xcp_DaqSessionStatusUpdate above with it), so it is the range that has to be left safe
+     * against the sampler; bounding by the allocated count instead would, if the two ever
+     * disagreed, leave a list with a non-zero maxOdt standing while this function reported having
+     * freed everything. Under STATIC the two bounds are equal by construction (Xcp_Init), and
+     * under DYNAMIC every list above the allocated count already holds a zeroed descriptor, so
+     * the wider bound costs a few no-op writes and can never do less than the narrower one. */
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+    {
+        Xcp_DaqListReset(daq_idx);
+    }
+
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+        {
+            uint8_least odt_idx;
+
+            SchM_Enter_Xcp_DtoQueue();
+
+            for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+            {
+                Xcp_Ptr->config->daqList[daq_idx].odt[odt_idx].entryCount = 0x00u;
+            }
+
+            Xcp_Ptr->config->daqList[daq_idx].maxOdt = 0x00u;
+            /* DD31: firstPid is a prefix sum over the lists' ODT counts, so zeroing every count
+             * makes every prefix sum zero. Recomputing it would produce the same answer; writing
+             * it here keeps the descriptor consistent without a second pass. */
+            Xcp_Ptr->config->daqList[daq_idx].firstPid = 0x00u;
+
+            SchM_Exit_Xcp_DtoQueue();
+        }
+
+        Xcp_Internal.allocated_daq_count = 0x0000u;
+    }
+
+    /* The resets above may have stopped the only running list, so DAQ_RUNNING (1.1/1.6.1.1.3)
+     * needs recomputing across every list rather than per list. */
+    Xcp_DaqSessionStatusUpdate();
+
+    /* The pointer names an ODT entry that no longer exists. */
+    Xcp_Internal.daq_pointer.valid = FALSE;
+    Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -579,17 +679,17 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     {
         /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1
          * "For a configurable DAQ list, all ODT entries will be reset to address=0, extension=0
-         * and size=0 (if valid : bit_offset = 0xFF)." */
-        Xcp_DaqListClearEntries(daq_list_number);
-
-        /* "For PREDEFINED and configurable DAQ lists, the running Data Transmission on this list
+         * and size=0 (if valid : bit_offset = 0xFF)."
+         *
+         * "For PREDEFINED and configurable DAQ lists, the running Data Transmission on this list
          * will be stopped and all DAQ list states are reset." The command is therefore legal
-         * while the list runs -- see defect D10 against the error matrix. */
-        Xcp_DaqListRt(daq_list_number)->mode = 0x00u;
-        Xcp_DaqListRt(daq_list_number)->eventChannelNumber = 0x0000u;
-        Xcp_DaqListRt(daq_list_number)->prescaler = 0x01u;
-        Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
-        Xcp_DaqListRt(daq_list_number)->priority = 0x00u;
+         * while the list runs -- see defect D10 against the error matrix.
+         *
+         * Both halves are Xcp_DaqListReset, shared with FREE_DAQ (1.1/1.6.4.3.1.1), which resets
+         * every list the same way. The two commands stay distinct in what they do around it:
+         * CLEAR_DAQ_LIST resets one list and keeps its allocation, FREE_DAQ resets all of them
+         * and releases the allocation as well. */
+        Xcp_DaqListReset(daq_list_number);
 
         /* The mode reset above may have just stopped the only list that was running, so
          * DAQ_RUNNING (1.1/1.6.1.1.3) needs recomputing across every list, not just this one. */
@@ -614,6 +714,26 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     {
         Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
     }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* The request carries no argument, so there is nothing to validate and nothing to refuse.
+     * DD29: Xcp_CTOErrorMatrix (source/Xcp.c) gives 0xD6 only CMD_BUSY, PGM_ACTIVE, CMD_UNKNOWN
+     * and CMD_SYNTAX -- ERR_DAQ_ACTIVE is absent, so refusing a running slave is not authorised.
+     * FREE_DAQ therefore stops every running list rather than refusing, which Xcp_DaqFreeAll does.
+     * DD28 gives FREE_DAQ "any" as its accepted-from state, so there is no ERR_SEQUENCE either. */
+    Xcp_DaqFreeAll();
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
 
     return E_OK;
 }

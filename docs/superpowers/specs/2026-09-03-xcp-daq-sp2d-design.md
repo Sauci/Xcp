@@ -326,7 +326,10 @@ Bytes 2,3 are `DAQ_LIST_NUMBER`; byte 4 is `ODT_NUMBER`, relative within the lis
 
 - `source/Xcp_Daq.c` — the four new handlers, the state machine, the prefix-sum recomputation.
 - `source/Xcp_Internal.h` — the allocation state enum, `allocatedDaqCount`.
-- `source/Xcp.c` — reset of the allocation state in `Xcp_Init` and on DISCONNECT.
+- `source/Xcp.c` — reset of the allocation state in `Xcp_Init`, and the `FREE_DAQ` PID table entry.
+- `source/Xcp_Std.c` — DISCONNECT calls the same unwind `FREE_DAQ` does (`Xcp_DaqFreeAll`), so a
+  master that allocates and disconnects without freeing does not leave its allocation for the next
+  one to accumulate onto (XCP part 1 — Overview 1.0/2.3).
 - `interface/Xcp_Types.h` — `const` dropped from the descriptor members the allocator writes,
   and `uint8 entryCount` added to `Xcp_OdtType` (DD27, DD34).
 - `script/source_cfg.c.jinja2`, `script/header_cfg.h.jinja2` — §8.
@@ -414,13 +417,38 @@ named so a change fails with the cell's name rather than a bare index.
 `test/cmd_unknown_test.py` already asserts 0xD3–0xD6 answer `ERR_CMD_UNKNOWN`, which must stay true
 for a STATIC build; it gains a DYNAMIC counterpart asserting they no longer do.
 
-**On the sampler race, plainly:** the harness asserts exclusive-area nesting, balance and
-non-leakage globally on every test, so DD30's area discipline is checked throughout. The
-interleaving itself is harder. The `SchM` mock's `side_effect` is a preemption-injection point — a
-trigger can be driven from inside the area-taking call — and that is to be attempted first. If
-CFFI reentrancy makes it impractical, the fallback is the post-condition alone: after `FREE_DAQ`, a
-trigger samples nothing and no frame reaches the ring. If that is where it lands, this document
-must be updated to say the outcome is covered and the interleaving is not.
+**On the sampler race, plainly** (settled in Task 4; this replaces the plan this section carried):
+the harness asserts exclusive-area nesting, balance and non-leakage globally on every test, so
+DD30's area discipline is checked throughout. Beyond that, `test/free_daq_test.py` covers:
+
+- **The interleaving, at the points where a preemption can actually land.** Driving the trigger
+  from `SchM_Exit_Xcp_DtoQueue`'s `side_effect` puts it at each point in the unwind where the DAQ
+  exclusive area is *not* held, one point per run, swept over all of them. At every one the
+  sampler reads no slave memory and queues no frame: at the first release the ODT's entries have
+  been cleared while its counts still describe them, at the second the counts are already zero.
+  The sweep's width is pinned by a companion test, so a critical section added to the unwind fails
+  loudly rather than silently going unswept.
+- **The post-condition.** After `FREE_DAQ` returns, a trigger samples nothing and no frame reaches
+  the ring — with a named control test showing the same configuration does sample when `FREE_DAQ`
+  does not run, so the post-condition cannot pass vacuously.
+
+**What is deliberately not covered:** a trigger driven from *inside* a held area, i.e. from
+`SchM_Enter_Xcp_DtoQueue`'s `side_effect`. It was attempted first, as this section originally
+asked. CFFI reentrancy is not the obstacle — the trigger runs — but the scenario is not one the
+module can face: `SchM_Enter_Xcp_DtoQueue` exists precisely to suppress the interrupt the sampler
+runs in, so a trigger inside the held area models a preemption the exclusive area forbids rather
+than one it must survive. The harness agrees, and says so: it records the injection as
+`SchM_Enter_Xcp_DtoQueue called while already held` plus an unbalanced exit, because it models the
+area as one boolean and cannot distinguish a forbidden preemption from a double-enter defect.
+Suppressing those violations to let such a test pass would disable, for that test, the very
+invariant the suite relies on everywhere else. So it is not written.
+
+**One gap this exposed, not closed by SP2d so far:** `Xcp_Init` resets `Xcp_Internal` and every
+`Xcp_DaqListRt`, and clears the ODT entries, but never resets the descriptor's own `maxOdt`,
+`firstPid` or per-ODT `entryCount` — which under DYNAMIC *are* the allocation. A re-initialised
+module therefore reports nothing allocated while the descriptor still describes the previous
+session's lists. `Xcp_DaqFreeAll` is exactly the operation `Xcp_Init` is missing; see the Task 4
+report.
 
 Generator guards are tested by asserting generation fails, not by matching the message.
 

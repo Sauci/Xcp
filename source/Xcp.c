@@ -343,7 +343,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xD3, optional */
     Xcp_CmdNotImplemented, /* 0xD4, optional */
     Xcp_CmdNotImplemented, /* 0xD5, optional */
-    Xcp_CmdNotImplemented, /* 0xD6, optional */
+    Xcp_DTOCmdDaqFreeDaq, /* FREE_DAQ 0xD6, optional */
     Xcp_DTOCmdDaqGetDaqEventInfo, /* GET_DAQ_EVENT_INFO 0xD7, optional */
     Xcp_DTOCmdDaqGetDaqListInfo, /* GET_DAQ_LIST_INFO 0xD8, optional */
     Xcp_DTOCmdDaqGetDaqResolutionInfo, /* GET_DAQ_RESOLUTION_INFO 0xD9, optional */
