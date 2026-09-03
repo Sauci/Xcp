@@ -876,7 +876,12 @@ uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType 
          * definition of MAX_DAQ_LIST, while triggeredDaqListRefCount is a uint32 that a cast here
          * would silently truncate -- 256 references would report 0, telling the master the
          * channel handles no lists at all. The count that cannot be represented now fails
-         * generation instead (script/source_cfg.c.jinja2), so the two agree by construction. */
+         * generation instead (script/source_cfg.c.jinja2), so the two agree by construction.
+         *
+         * Which also means no test can tell this line from the cast it replaced: both fields are
+         * emitted from the same `triggered_daq_list_ref|length`, and they diverge only above 255,
+         * where the generation guard already refuses. The guard is what makes this safe; the
+         * choice of field is what makes it obviously safe. */
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = p_channel->maxDaqList;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_channel->nameLength;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = p_channel->timeCycle;

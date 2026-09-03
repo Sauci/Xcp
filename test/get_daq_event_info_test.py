@@ -202,12 +202,21 @@ def test_the_event_channel_consistency_enumerators_keep_their_numeric_values():
 
 
 def test_max_daq_list_reports_the_full_reference_count_at_the_byte_boundary():
-    """MAX_DAQ_LIST is one byte (1.6.4.1.2.7), and 255 references is the most it can carry. The
-    value used to be read as (uint8)triggeredDaqListRefCount, a uint32, so this boundary was the
-    last count before a silent truncation -- 256 rendered as 0x00000100u and reported 0, telling
-    the master the channel handles no lists at all. It is now read from maxDaqList, the uint8 field
-    the type declares for it, and the count that will not fit fails generation (below) rather than
-    wrapping."""
+    """MAX_DAQ_LIST is one byte (1.6.4.1.2.7), and 255 references is the most it can carry. This
+    asserts that boundary: a channel referencing exactly 255 lists reports 255, and the count that
+    will not fit fails generation instead (the test below).
+
+    What this does NOT assert, despite an earlier docstring here claiming it did, is that the byte
+    is read from maxDaqList rather than from (uint8)triggeredDaqListRefCount. Reverting
+    source/Xcp_Daq.c to the old cast passes all thirteen tests in this file, and no test can
+    separate them: script/source_cfg.c.jinja2 emits both fields from the same
+    `triggered_daq_list_ref|length`, so they differ only above 255, which the generation guard
+    makes unreachable. A test that poked maxDaqList through the handle would discriminate on paper
+    while asserting a state the module never produces, which is worse than admitting the gap.
+
+    The change to maxDaqList is still worth having -- it is the uint8 field whose doxygen quotes
+    1.6.4.1.2.7's own definition of MAX_DAQ_LIST, against a uint32 that a cast would truncate --
+    but it is a change the generation guard, not this test, is what makes safe."""
     handle = XcpTest(DefaultConfig(events=(event(name='EVT', triggered_daq_list_ref=['DAQ1'] * 255),)))
     connect(handle)
 
