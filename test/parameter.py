@@ -160,8 +160,6 @@ timestamp_sizes = [pytest.param(v, id='TS = {}'.format(v)) for v in ('BYTE', 'WO
 # implicit, so FOUR_BYTE == 3, and 3 is the one size the specification marks "Not allowed".
 timestamp_wire_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4, None: 0}
 
-timestamp_type_name = {'BYTE': 'ONE_BYTE', 'WORD': 'TWO_BYTE', 'DWORD': 'FOUR_BYTE', None: 'NO_TIME_STAMP'}
-
 
 def timestamp(size='DWORD', unit='TIMESTAMP_UNIT_1MS', ticks=1):
     return {"size": size, "unit": unit, "ticks": ticks}
