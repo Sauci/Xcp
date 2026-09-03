@@ -656,8 +656,12 @@ typedef struct {
 
     /**
      * @brief current mode, in the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6.
-     * @details Stored in the layout the slave reports rather than the one it receives:
-     * SET_DAQ_LIST_MODE puts DIRECTION at bit 0, while this byte puts SELECTED there.
+     * @details Stored in the layout the slave reports rather than the one it receives. The two
+     * layouts differ only at bit 0, where SET_DAQ_LIST_MODE has ALTERNATING (refused) and this
+     * byte has SELECTED, and at bits 6 and 7, which carry RUNNING and RESUME here and are
+     * don't-care in the request. DIRECTION is bit 1 in both. This previously read "SET_DAQ_LIST_MODE
+     * puts DIRECTION at bit 0", which was true of the module's own constants but not of the
+     * specification; the constants were corrected to bit 1 and this note was left behind.
      */
     uint8 mode;
 
