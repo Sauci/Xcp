@@ -129,6 +129,30 @@ then the variant count is partly an artifact of how long the build directory has
   both probe tests pass a single configuration, and in the compiled two-configuration module the
   harness's `-D` pre-empts the header's blocks.
 
+
+## Resolved by the AUTOSAR specification — `Xcp_CanIfRxIndication` reentrancy
+
+Carried for the whole of SP2b as an open question: whether `Xcp_CanIfRxIndication` can preempt
+itself and race `cto_response`, `last_pid` and the protection-status clear for every CTO command.
+
+**SWS_Xcp_00813** settles it. `Xcp_<Lo>RxIndication` is specified as:
+
+> Reentrancy: **Reentrant for different PduIds. Non reentrant for the same PduId.**
+
+Every CTO command in this module arrives on exactly one PduId —
+`Xcp_Ptr->config->communicationChannel->channel_rx_pdu_ref->id` (`source/Xcp.c`, the first test in
+the function). CanIf therefore guarantees it will not re-enter the function for that PduId while a
+call is in progress, so the CTO request state cannot be raced. **No exclusive area is needed, and
+the module is conformant as written.** `Xcp_<Lo>TxConfirmation` (SWS_Xcp_00817) and
+`Xcp_<Lo>TriggerTransmit` (SWS_Xcp_00835) carry the identical clause.
+
+**This closes for today, not forever.** A *different* PduId may preempt, and the DAQ_STIM receive
+PDUs are different PduIds. Today that branch only sets `valid_pdu_id` and touches no shared CTO
+state, so nothing races. SP3 implements stimulation reception on exactly those PduIds — if its
+handler touches `cto_response`, the DAQ pointer, or the runtime mode bits, it will be able to
+preempt a CTO command in progress, and the question becomes live with a real answer required.
+Record this in SP3's design rather than rediscovering it.
+
 ## Infrastructure
 
 `test.sh` should prune stale `_cffi_xcp_*` module directories **at the start of a run**, before
