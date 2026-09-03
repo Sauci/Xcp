@@ -93,17 +93,33 @@ makes allocation failure depend on the order the master allocates in rather than
 per-list cap. Reserving the full rectangle costs RAM in the corners a master never uses; that cost
 buys an allocation that cannot fail while every request stays inside its cap.
 
-**DD27 — the DAQ list descriptor becomes mutable rather than indirect.** `Xcp_DaqListType` is
-generated `const` today. The generator emits it `const` for STATIC and non-`const` for DYNAMIC;
-`ALLOC_*` fills it in. Struct layout is unchanged, so the 14 DAQ handlers, and in particular the
-23 sites that bound an ODT number against `maxOdt` and the 13 that bound an entry against
-`maxOdtEntries`, compile and behave exactly as they do now.
+**DD27 — the DAQ list descriptor becomes mutable rather than indirect.** `ALLOC_*` writes the
+descriptor in place; the handlers keep reading the same fields and see values that changed at
+runtime.
+
+Two implementation facts, both established by reading the code rather than assumed:
+
+- **The arrays are already declared non-`const`.** `static Xcp_DaqListType Xcp_DaqListConfigNN[]`
+  and `static Xcp_OdtType Xcp_OdtConfigNNDaqNN[]` carry no `const` keyword. What places them in
+  flash is the AUTOSAR MemMap section around them — `Xcp_START_SEC_CONST_UNSPECIFIED`. So the
+  build-time difference is a **MemMap section**, not a `const` qualifier: DYNAMIC emits these two
+  arrays into a VAR section, STATIC leaves them exactly where they are. The ODT *entry* arrays are
+  already in `Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED`, because `WRITE_DAQ` writes them.
+- **The `const` that must go is on the struct members** — `Xcp_DaqListType.number`, `.firstPid`,
+  `.maxOdt`, `.maxOdtEntries` and `Xcp_OdtType.odtNumber`. A struct definition cannot differ
+  between builds without an `#if` in the header, which would create a type variant the CFFI
+  harness compiles separately, so these lose `const` in **both** builds. STATIC keeps its flash
+  placement regardless, since that comes from MemMap.
+
+**Cost, counted rather than estimated.** The fields the allocator writes are read at 16 code sites:
+`.maxOdt` at 7, `.maxOdtEntries` at 7, `.firstPid` at 2. Of those, only the 7 `.maxOdtEntries`
+sites change, and for the reason in DD34 rather than for this decision. An earlier draft of this
+document put the figure at 62 and called them all bounds checks; that came from grepping comments
+along with code, and is corrected here.
 
 The alternative — accessor functions resolving to the const table or to pool state — separates the
-two models more cleanly and keeps `const` where it belongs, but it rewrites all 62 read sites,
-every one of them a bounds check, in the area where this codebase's defects have clustered. The
-mutable descriptor buys the same capability for a fraction of that risk. STATIC keeps its tables
-in flash; DYNAMIC pays RAM, which runtime allocation requires in any design.
+two models more cleanly, but converts every one of those sites in the area where this codebase's
+defects have clustered, and buys no capability the mutable descriptor lacks.
 
 **DD28 — the allocation state machine refuses exactly what the specification enumerates, and
 nothing more.** §1.6.4.3.1 lists six `ERR_SEQUENCE` cases. They reduce to four states and this
@@ -183,6 +199,21 @@ until allocated. **SP2d adds no new bounds check anywhere.**
 dependency is `MAX_DAQ = MIN_DAQ + DAQ_COUNT`, and `minDaq` is 0. Reporting the allocated count
 would tell a master nothing before it allocates, which is precisely when it needs to know how much
 it may ask for.
+
+**DD34 — `Xcp_OdtType` gains a per-ODT entry count.** `ALLOC_ODT_ENTRY` assigns entries to *one
+ODT*, but the module has no per-ODT count: every entry bound goes through the per-list
+`daqList[n].maxOdtEntries`, at 7 code sites. That field cannot express "ODT 0 has four entries and
+ODT 1 has two", so allocating per ODT is not representable without a new field.
+
+`Xcp_OdtType` therefore gains `uint8 entryCount` — how many entries this ODT has — while
+`daqList[n].maxOdtEntries` keeps its present meaning as the cap any one ODT in the list may reach
+(`odt_entries_count` under DYNAMIC). The 7 bound sites move from the list field to the ODT field.
+
+**STATIC behaviour is provably unchanged**: the generator initialises every ODT's `entryCount` to
+that list's `max_odt_entries`, so each of the 7 checks compares against exactly the value it
+compares against today. This is the only place SP2d edits an existing bounds check, and it does so
+by changing which field is read, not the comparison — DD32's claim that SP2d adds no new bounds
+check stands.
 
 ---
 
@@ -296,7 +327,8 @@ Bytes 2,3 are `DAQ_LIST_NUMBER`; byte 4 is `ODT_NUMBER`, relative within the lis
 - `source/Xcp_Daq.c` — the four new handlers, the state machine, the prefix-sum recomputation.
 - `source/Xcp_Internal.h` — the allocation state enum, `allocatedDaqCount`.
 - `source/Xcp.c` — reset of the allocation state in `Xcp_Init` and on DISCONNECT.
-- `interface/Xcp_Types.h` — no new types; `Xcp_DaqListType`'s qualifiers become generator-driven.
+- `interface/Xcp_Types.h` — `const` dropped from the descriptor members the allocator writes,
+  and `uint8 entryCount` added to `Xcp_OdtType` (DD27, DD34).
 - `script/source_cfg.c.jinja2`, `script/header_cfg.h.jinja2` — §8.
 - `config/xcp.schema.json` — §4.
 
@@ -313,8 +345,13 @@ Bytes 2,3 are `DAQ_LIST_NUMBER`; byte 4 is `ODT_NUMBER`, relative within the lis
   `DAQ_DYNAMIC`. No `.c` file reads either field, so this corrects a latent wrong value rather than
   changing behaviour — but SP2d is what would otherwise start relying on the wrong reading. They
   become `0` under STATIC and `odt_count` / `odt_entries_count` under DYNAMIC.
-- The DAQ list descriptor arrays are emitted `const` under STATIC and non-`const` under DYNAMIC,
-  zero-initialised, sized `daq_count` × `odt_count` × `odt_entries_count`.
+- The `Xcp_DaqListType` and `Xcp_OdtType` arrays are emitted into `Xcp_START_SEC_CONST_UNSPECIFIED`
+  under STATIC, exactly as today, and into a VAR section under DYNAMIC, where the allocator writes
+  them (DD27). Under DYNAMIC they are zero-initialised and sized `daq_count`, `daq_count ×
+  odt_count` and `daq_count × odt_count × odt_entries_count` respectively.
+- Every ODT's `entryCount` (DD34) is emitted as that list's `max_odt_entries` under STATIC, which
+  is what keeps the 7 relocated bound checks comparing against the same value they do today, and
+  as `0` under DYNAMIC, where `ALLOC_ODT_ENTRY` raises it.
 - The existing `pid.next > 252` guard stays for STATIC. DYNAMIC gets no such generation guard, per
   DD31.
 
@@ -334,10 +371,11 @@ strings are documentation for whoever reads the template.
 
 ## 9. Risks
 
-- **The descriptor loses `const` under DYNAMIC.** The compiler no longer prevents a handler from
-  writing a field it should not. Mitigated by the fields being written in exactly one place — the
-  allocator — and by DD27's alternative being a rewrite of 62 bounds checks, which is the larger
-  risk.
+- **The descriptor members lose `const` in both builds** (DD27), so the compiler no longer
+  prevents a handler from writing a field it should not. Mitigated by those fields being written
+  in exactly one place, the allocator, and by the alternative converting all 16 read sites for no
+  extra capability. Flash placement is unaffected: it comes from the MemMap section, which STATIC
+  keeps.
 - **The sampler race is only partly testable.** §10 says what is covered and what is not.
 - **A DYNAMIC build reserves the full rectangle.** An integrator declaring
   `daq_count: 16, odt_count: 32, odt_entries_count: 64` reserves 32768 entry slots. The generator
@@ -398,6 +436,7 @@ Generator guards are tested by asserting generation fails, not by matching the m
   unchanged for it.
 - `DAQ_CONFIG_TYPE`, `MAX_DAQ` and `MAX_DAQ_LIST` report per DD33 and §6.
 - `firstPid` blocks are contiguous and non-overlapping under any allocation order.
-- No new bounds check was added to any DAQ handler (DD32).
+- No new bounds check was added to any DAQ handler (DD32); the 7 entry bounds moved from the
+  per-list field to the per-ODT one (DD34) and compare against the same values under STATIC.
 - Coverage of `Xcp_Daq.c` and `Xcp_DaqRuntime.c` is no lower than before the branch.
 - The full suite passes, with the pytest filter confirmed empty for the final run.
