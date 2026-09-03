@@ -443,8 +443,19 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
         {%- if event.time_unit is not defined %}
 {{ raise('event channel {} has no time_unit configured'.format(event_index)) }}
         {%- endif %}
-        {%- if (not daq_dynamic) and event.triggered_daq_list_ref | length == 0 %}
-{{ raise('event channel {} has an empty triggered_daq_list_ref; a zero-length C array is not portable'.format(event_index)) }}
+        {#- One guard for both models, because the array below is sized from daq_list_ref_count in
+            both: a static configuration with an empty triggered_daq_list_ref and a dynamic one
+            with daq_count 0 emit the same zero-length Xcp_EventChannelDaqListRef. Scoping this to
+            `not daq_dynamic` left the dynamic half unguarded -- daq_count's schema minimum is 0,
+            and every channel references the whole pool, so daq_count 0 rendered exactly the array
+            this guard's own message says is not portable. Neither the schema's absent `minItems`
+            on triggered_daq_list_ref nor its `minimum: 0` on daq_count catches it.
+
+            The ODT and ODT-entry arrays are deliberately not covered here: `max_odt: 0` making
+            those zero-length is pre-existing tolerated behaviour, documented above
+            Xcp_OdtUsedBytes in source/Xcp_Daq.c. #}
+        {%- if daq_list_ref_count == 0 %}
+{{ raise('event channel {} would emit a zero-length Xcp_EventChannelDaqListRef, which is not portable C -- a GCC extension, an ISO C constraint violation, and rejected by MISRA and several embedded toolchains. Under DAQ_STATIC that means an empty triggered_daq_list_ref; under DAQ_DYNAMIC it means daq_count is 0, since every channel references the whole pool'.format(event_index)) }}
         {%- endif %}
         {%- for name in event.triggered_daq_list_ref | default([]) %}
         {%- if name not in daq_index_by_name %}

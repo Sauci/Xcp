@@ -629,6 +629,20 @@ def test_generation_fails_when_an_event_has_an_empty_triggered_daq_list_ref():
                               events=(event(name='EVT1', triggered_daq_list_ref=[]),)))
 
 
+def test_generation_fails_when_a_dynamic_pool_holds_no_daq_lists():
+    """The DAQ_DYNAMIC half of the guard above, which is one guard on daq_list_ref_count rather
+    than two. daq_count's schema minimum is 0 and every event channel references the whole pool,
+    so daq_count 0 emits the same zero-length Xcp_EventChannelDaqListRef0000[0x00u] that an empty
+    triggered_daq_list_ref does under DAQ_STATIC.
+
+    Not about the ODT and ODT-entry arrays, which daq_count 0 also makes zero-length: `max_odt: 0`
+    has always been allowed to do that, and source/Xcp_Daq.c documents it above Xcp_OdtUsedBytes
+    as tolerated. This asserts only the event-channel array, which the static configuration has
+    always been refused for."""
+    with pytest.raises(UndefinedError):
+        XcpTest(dynamic_config(daq_count=0))
+
+
 def test_generation_fails_when_write_daq_multiple_is_enabled_with_max_cto_below_ten():
     """1.6.4.1.2.1: 'If the optional command WRITE_DAQ_MULTIPLE is used, the requirement
     MAX_CTO >= 10 has to be fulfilled.' A single element is 8 bytes after a 2-byte header, so a
