@@ -1,7 +1,7 @@
 # XCP Part 2 — Conformance Roadmap
 
-**Date:** 2026-08-29, revised 2026-09-02 after SP1 and SP2a
-**Baseline:** branch `develop`, commit `50a0a0f` (2026-09-02)
+**Date:** 2026-08-29, revised 2026-09-03 after SP1, SP2a and SP2b
+**Baseline:** branch `develop`, commit `35a07ad` (2026-09-03)
 **Reference:** *XCP -Part 2- Protocol Layer Specification -1.1*, ASAM e.V. (`docs/external/`).
 Version 1.0 is kept alongside it: the two renumber §1.6.4 wholesale, so a citation is only
 unambiguous once it names its version.
@@ -18,12 +18,12 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 
 | Concern | Where |
 |:--|:--|
-| Protocol logic | six translation units, 5139 lines: `Xcp.c` (2084, dispatch and shared machinery), `Xcp_Std.c` (1203), `Xcp_Cal.c` (301), `Xcp_Pag.c` (470), `Xcp_Daq.c` (735), `Xcp_DaqRuntime.c` (346) |
+| Protocol logic | six translation units, 5835 lines: `Xcp.c` (2097, dispatch and shared machinery), `Xcp_Std.c` (1203), `Xcp_Cal.c` (301), `Xcp_Pag.c` (470), `Xcp_Daq.c` (1341), `Xcp_DaqRuntime.c` (423) |
 | Public API | `interface/Xcp.h`, `Xcp_Types.h`, `Xcp_Errors.h`, `XcpOnCan_Cbk.h` |
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12455 passing, 30 skipped |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12574 passing, 30 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -122,19 +122,20 @@ declares a segment; the PIDs then dispatch to `Xcp_CmdNotImplemented`.
 | 0xDF | GET_DAQ_LIST_MODE | yes in 1.1 | done |
 | 0xDE | START_STOP_DAQ_LIST | no | done |
 | 0xDD | START_STOP_SYNCH | no | done |
-| 0xDC | GET_DAQ_CLOCK | yes | absent — SP2b |
-| 0xDB | READ_DAQ | yes | absent — SP2b |
+| 0xDC | GET_DAQ_CLOCK | yes | done — compiled out when no clock is configured |
+| 0xDB | READ_DAQ | yes | done |
 | 0xDA | GET_DAQ_PROCESSOR_INFO | yes | done |
 | 0xD9 | GET_DAQ_RESOLUTION_INFO | yes | done |
-| 0xD8 | GET_DAQ_LIST_INFO | yes | absent — SP2b |
-| 0xD7 | GET_DAQ_EVENT_INFO | yes | absent — SP2b |
+| 0xD8 | GET_DAQ_LIST_INFO | yes | done |
+| 0xD7 | GET_DAQ_EVENT_INFO | yes | done — publishes the event channel name via the MTA |
 | 0xD6 | FREE_DAQ | yes | absent — SP2c |
 | 0xD5 | ALLOC_DAQ | yes | absent — SP2c |
 | 0xD4 | ALLOC_ODT | yes | absent — SP2c |
 | 0xD3 | ALLOC_ODT_ENTRY | yes | absent — SP2c |
-| 0xC7 | WRITE_DAQ_MULTIPLE | yes | absent — SP2b. New in 1.1; named in `Xcp_PIDTable` so the gap is visible |
+| 0xC7 | WRITE_DAQ_MULTIPLE | yes | done — ships **disabled**, since it requires `MAX_CTO >= 10`, which is neither a classic CAN frame size nor a CAN FD payload length |
 
-Nine of the eighteen are implemented. The DAQ *runtime* exists: `Xcp_DaqRuntime.c` samples
+Fourteen of the eighteen are implemented; the four that remain are the dynamic-configuration
+commands of SP2d. The DAQ *runtime* exists: `Xcp_DaqRuntime.c` samples
 every running list bound to an event channel, builds the identification field, and queues
 complete frames on a ring drained by the transmission chain. All four identification field
 types of §1.1.2.1 are supported.
@@ -147,9 +148,9 @@ triggering a DAQ event, and ECUC_Xcp_00014 states the module does not require it
 function period, so a module-driven raster could not have been built on anything the
 configuration is allowed to know.
 
-Still absent from the runtime: the timestamp field (§1.1.2.2), `PID_OFF` and `ALTERNATING`,
-DAQ list prioritisation, more than one outstanding DTO frame, and STIM reception in
-`Xcp_CanIfRxIndication`, which remains SP3.
+The timestamp field (§1.1.2.2) and `PID_OFF` landed in SP2b. Still absent from the runtime:
+`ALTERNATING`, DAQ list prioritisation and more than one outstanding DTO frame — all SP2c — and
+STIM reception in `Xcp_CanIfRxIndication`, which remains SP3.
 
 ### 2.5 Non-volatile memory programming (§1.4.5, §1.6.5)
 
@@ -292,8 +293,8 @@ SP1 removes `Xcp_DTODaqPacket` from the table entirely.
 
 Ordered. Each sub-project is independently shippable and leaves the suite green.
 
-**Progress:** SP1 is complete (#1). SP2a is complete (#2), with follow-ups in #3 and #4.
-SP2b is next.
+**Progress:** SP1 is complete (#1). SP2a is complete (#2), with follow-ups in #3 and #4. SP2b is
+complete (#6), with a hygiene pass in #7. **SP2c is next.**
 
 ### SP1 — Calibration and page switching (CAL + PAG) — **complete**
 
@@ -327,7 +328,7 @@ not:
   commands, the two discovery commands, the configuration model, all four identification
   field types, and the sampling and transmission runtime. Design:
   `2026-09-01-xcp-daq-design.md`.
-- **SP2b** — **next.** The remaining optional commands (`WRITE_DAQ_MULTIPLE`, `READ_DAQ`,
+- **SP2b** — **complete** (#6). The remaining optional commands (`WRITE_DAQ_MULTIPLE`, `READ_DAQ`,
   `GET_DAQ_CLOCK`, `GET_DAQ_LIST_INFO`, `GET_DAQ_EVENT_INFO`), the timestamp field, `PID_OFF`,
   `ALTERNATING`, DAQ list prioritisation, and multiple outstanding DTO frames.
 
@@ -336,8 +337,18 @@ not:
   transmission chain SP2a built — the one guarded by the `SchM` exclusive area and shaped by
   D16. Scope them deliberately, and consider splitting them out, rather than treating the
   bullet as one homogeneous list.
-- **SP2c** — dynamic DAQ list configuration (§1.6.4.3) and the `DAQ_CONFIG_TYPE` = dynamic
-  branch.
+- **SP2c** — **next.** DAQ list prioritisation, more than one outstanding DTO frame, and
+  `ALTERNATING`.
+
+  Unlike SP2a and SP2b, this is not additive. Those extended a dispatch surface that already
+  worked; SP2c reworks the confirmation-driven transmission chain that DD3 built and the `SchM`
+  exclusive area guards, with the sampler running in interrupt context against it. The two halves
+  also differ in risk: prioritisation reorders what the ring already holds, while multiple
+  outstanding frames changes the ring's own invariants. Consider splitting them.
+
+- **SP2d** — dynamic DAQ list configuration (§1.6.4.3), the `DAQ_CONFIG_TYPE` = dynamic branch, and
+  the four remaining commands: `FREE_DAQ` (0xD6), `ALLOC_DAQ` (0xD5), `ALLOC_ODT` (0xD4) and
+  `ALLOC_ODT_ENTRY` (0xD3).
 
 An earlier revision of this section proposed decomposing by layer — configuration model,
 then command surface, then runtime. That was rejected when the design was written: no layer
