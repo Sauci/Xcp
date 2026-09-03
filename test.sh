@@ -18,7 +18,22 @@ cd build || exit 1
 # modules are keyed by a content digest and rebuilt on demand (test/conftest.py's MockGen), so
 # removing them is safe. This cannot move to the end of the script instead: the coverage merge
 # below depends on the modules THIS run creates still being present once ctest finishes.
-rm -rf _cffi_xcp_*
+#
+# libcffi_xcp_rt_*.so is pruned for the identical reason and used not to be. The _cffi_xcp_* glob
+# already catches the configuration modules, whose compiled objects are named _cffi_xcp_cfg_*.so,
+# but the generated RUNTIME is linked as a library and so is named libcffi_xcp_rt_*.so -- outside
+# that glob, and therefore accumulating without bound exactly as the module directories did (41
+# had built up when this was found, against 573 .so files in total). They are keyed by the same
+# content digest and rebuilt on demand, so removing them is as safe as removing the directories.
+#
+# One thing pruning does NOT fix, so that a future reader does not conclude it should have: the
+# transient failures above still occur, and were reproduced on a clean build/ directory and on an
+# unmodified source tree. Raising the container's file-descriptor soft limit --
+# `docker run --ulimit nofile=65536:524288 ...`, against a 524288 hard limit -- measurably helps
+# and is not sufficient either. It is left to the caller rather than wired in here, because this
+# script does not control how it is invoked. A run that stops short with a pycparser/PLY, Jinja2
+# or CFFI error is not a result; re-run it.
+rm -rf _cffi_xcp_* libcffi_xcp_rt_*.so
 
 # A configure or build failure has to fail this script, and so does an empty test run: a branch
 # that does not compile must not report a green build having run nothing. --no-tests=error makes
