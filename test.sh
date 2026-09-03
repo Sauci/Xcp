@@ -42,19 +42,20 @@ result=$?
 # Read every percentage this loop prints as "one variant's coverage", never as the suite's. The
 # cost is larger than the paragraph above makes it sound, in two ways worth stating outright.
 #
-# The winning variant is usually the one with the *fewest* functions. Most test configurations
-# declare no protocol_layer.timestamp block, so the largest group for Xcp_Daq.c and
-# Xcp_DaqRuntime.c is the timestamp-DISABLED compilation -- and every line inside
-# #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) shows as '-', not compiled, rather than as
-# uncovered. Xcp_DaqRuntime.c reported 100.00% that way: 100% of a compilation that contained
-# none of the timestamp feature. A clean-looking figure here is not evidence that a feature is
-# covered; it may be evidence that the feature was compiled out of the variant being measured.
+# The winning variant is the majority one, which is not the same as the complete one. Most test
+# configurations declare no protocol_layer.timestamp block, so the largest group for both
+# Xcp_Daq.c and Xcp_DaqRuntime.c is the timestamp-DISABLED compilation -- and every line inside
+# #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) then shows as '-', not compiled, rather than as
+# uncovered. Xcp_DaqRuntime.c reports 100.00% that way: 100% of a compilation that contains none
+# of the timestamp feature. A clean-looking figure here is not evidence that a feature is covered;
+# it may be evidence that the feature was compiled out of the variant being measured.
 #
-# And the split is not two-way. Xcp_Daq.c's notes fall into four or more distinct sizes at the
-# time of writing, so the losing side is itself several unmergeable groups and no selection rule
-# recovers the union. Every new build-time gate erodes it further. That is why the line below
-# prints the winning notes' byte size and how many variants there were: two runs whose percentages
-# agree may not have measured the same code, and the size is what says so.
+# Nor is the byte size a reliable proxy for completeness: more than one macro gates these files
+# (XCP_PAGING_SUPPORTED as well as the two timestamp ones), so a larger .gcno does not mean the
+# feature you care about is in it. Size is an identity, not a ranking. That is all the line below
+# uses it for: two runs whose percentages agree may not have measured the same code, and the size
+# is what says so. The variant count beside it says how much coverage exists that no selection
+# rule here can fold in -- anything above 1 is real coverage left on the floor.
 merged=gcov_merged
 rm -rf "$merged"
 mkdir -p "$merged" || exit 1

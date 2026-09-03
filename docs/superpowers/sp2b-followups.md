@@ -37,16 +37,24 @@ as `-` — not compiled, rather than uncovered — so its headline `100.00% of 1
 compilation containing none of SP2b's feature. `Xcp_Daq.c`'s uncovered lines are almost entirely the
 new timestamp code, at `#####`.
 
-The split is also not two-way. `Xcp_Daq.gcno` sizes fell into four groups (33044 ×24, 33736 ×1,
-33756 ×2, 33844 ×9), so the losing side is itself several unmergeable groups and no selection rule
-recovers the union; each new build-time gate erodes it further. `test.sh` now prints the winning
-`.gcno`'s byte size and the number of variants present alongside the module count, and says outright
-that the figure is one variant's, so a `100.00%` that omits a feature cannot be read as a clean bill
-of health.
+The review that found the inversion also reported the split as **four** groups for `Xcp_Daq.c`
+(33044 ×24, 33736 ×1, 33756 ×2, 33844 ×9). That count was inflated by the stale `_cffi_xcp_*`
+directories recorded under *Infrastructure* below: those hold `.gcno` from earlier revisions of the
+source, which group separately from anything the current tree produces. Measured on a pruned tree,
+the branch itself produces **two** variants of `Xcp_Daq.c` (25 + 12 of 37 modules) and **three** of
+`Xcp_DaqRuntime.c` (24 of 37 in the winning group). Smaller than reported, still more than one, and
+still not foldable — the direction of the finding stands even though its magnitude does not.
+
+`test.sh` now prints the winning `.gcno`'s byte size and the number of variants present alongside
+the module count, and says outright that the figure is one variant's, so a `100.00%` that omits a
+feature cannot be read as a clean bill of health. Note the size is an *identity*, not a ranking:
+`XCP_PAGING_SUPPORTED` gates these files too, so the winning notes are sometimes the larger of the
+two even though the feature under test is the one compiled out.
 
 Still open: nothing folds the variants together, and nothing fails when the *measured* variant is the
 one without the feature under test. A per-variant report, or a coverage gate keyed on the winning
-`.gcno` size, would close it.
+`.gcno` size, would close it. Pruning stale modules before a run is a prerequisite for either — until
+then the variant count is partly an artifact of how long the build directory has been alive.
 
 ## Test hygiene
 
