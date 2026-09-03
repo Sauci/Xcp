@@ -935,7 +935,15 @@ uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *
          * and zero-filled.
          * STIM stays clear even for a DAQ_STIM list: data stimulation arrives in SP3, matching
          * the STIM granularity of 0 that Xcp_DTOCmdDaqGetDaqResolutionInfo (this file) already
-         * reports for the same reason. */
+         * reports for the same reason.
+         *
+         * The false arm of the DAQ test below is unreachable today, and deliberately kept. Both
+         * type bits clear is what a pure STIM list would produce, and 1.6.4.2.2.1's DAQ_LIST_TYPE
+         * table marks that encoding "Not allowed" -- so script/source_cfg.c.jinja2 refuses
+         * daqs[].type == "STIM" outright, leaving DAQ and DAQ_STIM as the only types that reach
+         * here and both of them DAQ-capable. Do not simplify the condition to an unconditional
+         * set: SP3 lifts that generation guard when it implements the direction, and this is the
+         * expression that has to be right on the day it does. */
         if ((Xcp_Ptr->config->daqList[daq_list_number].type == DAQ) ||
             (Xcp_Ptr->config->daqList[daq_list_number].type == DAQ_STIM))
         {

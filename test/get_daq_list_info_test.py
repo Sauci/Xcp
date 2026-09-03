@@ -74,22 +74,30 @@ def test_daq_list_properties_report_a_configurable_list_on_a_movable_event():
     assert (properties & 0x08) == 0x00, 'STIM arrives in SP3'
 
 
-@pytest.mark.parametrize('daq_type, daq_bit_set', (('DAQ', True), ('DAQ_STIM', True), ('STIM', False)))
-def test_daq_list_properties_daq_bit_follows_the_configured_type(daq_type, daq_bit_set):
+@pytest.mark.parametrize('daq_type', ('DAQ', 'DAQ_STIM'))
+def test_daq_list_properties_daq_bit_is_set_for_every_type_that_can_be_configured(daq_type):
     """The DAQ bit (0x04) is set for both DAQ and DAQ_STIM lists -- the same two types
     Xcp_CanIfRxIndication (source/Xcp.c) already treats as DAQ-capable when routing a stimulation
-    PDU -- and clear for a pure STIM list. The sibling test above only exercises the plain DAQ
-    case; this one is what actually pins the OR in Xcp_DTOCmdDaqGetDaqListInfo rather than letting
-    it pass by coincidence. STIM (0x08) stays clear throughout: stimulation support arrives in
-    SP3, matching the STIM granularity of 0 GET_DAQ_RESOLUTION_INFO already reports for the same
-    reason (test_stim_fields_are_zero_while_stimulation_is_out_of_scope,
-    get_daq_resolution_info_test.py)."""
+    PDU. STIM (0x08) stays clear for both: stimulation support arrives in SP3, matching the STIM
+    granularity of 0 GET_DAQ_RESOLUTION_INFO already reports for the same reason
+    (test_stim_fields_are_zero_while_stimulation_is_out_of_scope,
+    get_daq_resolution_info_test.py).
+
+    This used to carry a third case, `('STIM', False)`, and claimed to pin the OR in
+    Xcp_DTOCmdDaqGetDaqListInfo against a coincidence. It no longer can, and says so rather than
+    pretending: a pure STIM list is now refused at generation
+    (test_generation_fails_when_a_daq_list_is_configured_as_stim, daq_configuration_test.py),
+    because DAQ_LIST_PROPERTIES for one would have both type bits clear, an encoding
+    1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks "Not allowed". Every type that can reach this
+    handler is DAQ-capable, so the OR's false arm is unreachable until SP3 implements the
+    direction and lifts the guard. What is left here is still worth asserting -- DAQ_STIM reaches
+    the same bit as DAQ, and neither sets STIM -- it is just not a test of the OR."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type=daq_type),)))
     connect(handle)
 
     properties = daq_list_info(handle)[1]
 
-    assert (properties & 0x04) == (0x04 if daq_bit_set else 0x00), 'DAQ'
+    assert (properties & 0x04) == 0x04, 'DAQ'
     assert (properties & 0x08) == 0x00, 'STIM arrives in SP3'
 
 

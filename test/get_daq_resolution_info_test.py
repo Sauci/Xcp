@@ -36,7 +36,8 @@ def test_granularity_is_the_address_granularity_element_size(ag):
                                                       (8, 'RELATIVE_BYTE', 6),
                                                       (8, 'RELATIVE_WORD', 5),
                                                       (8, 'RELATIVE_WORD_ALIGNED', 4),
-                                                      (64, 'ABSOLUTE', 63)))
+                                                      (64, 'ABSOLUTE', 63),
+                                                      (256, 'ABSOLUTE', 255)))
 def test_max_odt_entry_size_is_what_a_dto_leaves_after_the_identification_field(max_dto, ident,
                                                                                expected):
     """MAX_ODT_ENTRY_SIZE_DAQ is Xcp_Ptr->general->odtEntrySizeDaq -- the exact same derived value

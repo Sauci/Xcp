@@ -148,10 +148,10 @@ DAQ lists live under `daqs`:
 | field                    | meaning                                                                             |
 |:-------------------------|:-------------------------------------------------------------------------------------|
 | ```daqs[].name```             | the list's name, referenced by `events[].triggered_daq_list_ref`                     |
-| ```daqs[].type```             | `DAQ`, `DAQ_STIM` or `STIM`; only `DAQ` is implemented, see Limitations              |
+| ```daqs[].type```             | `DAQ` or `DAQ_STIM`; only the `DAQ` direction is implemented, see Limitations. `STIM` is refused at generation: a list that is neither DAQ-capable nor stimulated could only be reported with both `DAQ_LIST_TYPE` bits clear, which §1.6.4.2.2.1 marks *Not allowed* |
 | ```daqs[].max_odt```          | the list's number of ODTs (static configuration only, see Limitations)               |
 | ```daqs[].max_odt_entries```  | the number of entries in each of the list's ODTs                                     |
-| ```daqs[].pdu_mapping```      | the lower-layer PDU that carries this list's traffic — a Tx PDU for `DAQ`, an Rx PDU for `DAQ_STIM`/`STIM` |
+| ```daqs[].pdu_mapping```      | the lower-layer PDU that carries this list's traffic — a Tx PDU for `DAQ`, an Rx PDU for `DAQ_STIM`. Two lists may share one, but a list sharing its Tx PDU cannot be granted `PID_OFF` |
 | ```daqs[].dtos[].pid```       | checked against the derived `FIRST_PID`, not what assigns it — see below             |
 
 `dtos[].pid` does not assign a DAQ list's `FIRST_PID`. XCP part 2 §1.6.4.1.1.4 requires that "for every ODT

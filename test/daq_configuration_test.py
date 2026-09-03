@@ -165,15 +165,67 @@ def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
     """XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1 caps a DAQ PID at 0xFB, so the total
     ODT count across every DAQ list must not exceed 0xFC (252).
 
-    253, not a round number: Xcp_GeneralType's own odtCount field (Task 1's guard, source_cfg.c
-    .jinja2's `counters.odt > 255`) independently rejects anything over 255, so a total that also
-    clears 255 -- 300, say -- would still abort generation even if this task's own >252 guard were
-    broken or deleted, and the test would stay green for the wrong reason. 253 sits strictly between
-    the two ceilings (252 < 253 <= 255), so only the guard this test exists to cover can reject it.
-    Verified empirically: rendering this exact configuration with only the >252 guard suppressed
-    produces 215,968 characters of clean C, with nothing else in the template objecting."""
+    253 is chosen for a different reason than this docstring used to give. It claimed
+    source_cfg.c.jinja2's `counters.odt > 255` was an *independent* second ceiling that a rounder
+    300 would also trip, so 253 was needed to isolate this one. That was wrong in both directions:
+    `counters.odt` and `pid.next` are the same sum, and the PID guard runs in an earlier template
+    loop, so the uint8 condition could never fire at all -- 253 and 300 alike aborted here, and
+    nothing about 253 isolated anything. The dead half has since been removed; XcpOdtCount's uint8
+    field is protected by this stricter 252 ceiling rather than by a guard of its own.
+
+    253 is kept because it is the smallest total that violates the ceiling, which is the value a
+    boundary test should use. Verified empirically: rendering this exact configuration with only
+    the >252 guard suppressed produces 215,968 characters of clean C, with nothing else in the
+    template objecting."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=53))))
+
+
+def test_generation_fails_when_odt_entry_size_daq_exceeds_the_uint8_field():
+    """odtEntrySizeDaq is emitted as one byte into Xcp_GeneralType's uint8 XcpOdtEntrySizeDaq, but
+    it is derived from max_dto, whose schema maximum is 65535. It sat two lines below the
+    odtCount/odtEntriesCount guard with no bound of its own, so `max_dto: 1000` emitted 0x3E7u and
+    the compiler truncated it to 231: GET_DAQ_RESOLUTION_INFO reported MAX_ODT_ENTRY_SIZE_DAQ 231
+    for a 999-byte ODT, and every ODT-0 budget computation in source/Xcp_Daq.c ran on the truncated
+    value. -Woverflow warned about it; nothing failed.
+
+    257, not 1000: with the default ABSOLUTE identification field it is the smallest max_dto whose
+    remainder (256) will not fit, and the companion below shows that 256 -- one less, remainder 255
+    -- still generates. Nothing else in the template objects to either, so the pair discriminates
+    this guard from the nine others that abort with the same "'raise' is undefined"."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(identification_field_type='ABSOLUTE', max_dto=257))
+
+
+def test_generation_fails_when_a_daq_list_is_configured_as_stim():
+    """A pure STIM list can do nothing in this module: stimulation arrives in SP3. Generating one
+    anyway made Xcp_DTOCmdDaqGetDaqListInfo answer DAQ_LIST_PROPERTIES with both type bits clear
+    -- DAQ clear because the list is not DAQ-capable, STIM clear because the direction is
+    unimplemented -- and XCP part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks that encoding "Not
+    allowed". Refusing the list is the alternative to emitting a forbidden encoding or advertising
+    a capability the module lacks.
+
+    The companion below is what discriminates this guard from the other generation guards, all of
+    which surface the same "'raise' is undefined": the very same configuration with DAQ_STIM in
+    place of STIM generates and runs."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),)))
+
+
+def test_generation_accepts_a_daq_stim_list():
+    """DAQ_STIM is not caught by the guard above and must not be: such a list is DAQ-capable
+    today, and only its stimulation half waits for SP3."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM'),)))
+
+    assert handle.config.lib.Xcp[0].config.daqList[0].type == handle.lib.DAQ_STIM
+
+
+def test_generation_accepts_the_largest_odt_entry_size_the_uint8_field_can_hold():
+    """The boundary the guard above is placed at, from the accepting side: 255 is representable and
+    must stay accepted, so the guard is `> 255` and not `>= 255` or a rounder cut."""
+    handle = XcpTest(DefaultConfig(identification_field_type='ABSOLUTE', max_dto=256))
+
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeDaq == 255
 
 
 def test_generation_fails_when_an_event_channel_references_an_unknown_daq_list():

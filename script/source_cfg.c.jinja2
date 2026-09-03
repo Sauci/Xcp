@@ -153,6 +153,17 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- endif %}
     {%- for daq in configuration.daqs %}
         {%- set daq_index = loop.index0 %}
+        {#- A pure STIM list is refused rather than generated. source/Xcp_Daq.c's
+            Xcp_DTOCmdDaqGetDaqListInfo would answer DAQ_LIST_PROPERTIES with both type bits clear
+            for one -- the DAQ bit because the list is not DAQ-capable, the STIM bit because
+            stimulation is unimplemented -- and XCP part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table
+            marks that encoding "Not allowed". The alternatives were to emit a forbidden encoding
+            or to advertise a capability this module does not have; refusing a list that can do
+            nothing today is the honest third. DAQ_STIM stays accepted: it is DAQ-capable now and
+            its STIM half simply waits. SP3 lifts this guard when it implements the direction. #}
+        {%- if daq.type == 'STIM' %}
+{{ raise('DAQ list {} is configured as STIM, but data stimulation is not implemented; GET_DAQ_LIST_INFO would report DAQ_LIST_PROPERTIES with neither type bit set, which XCP part 2 1.1/1.6.4.2.2.1 marks "Not allowed". Use DAQ_STIM for a list that is DAQ-capable today'.format(daq.name)) }}
+        {%- endif %}
         {%- for dto in daq.dtos %}
         {%- if dto.pid is defined and loop.index0 == 0 and dto.pid != first_pids[daq_index] %}
 {{ raise('DAQ list {} configures pid {} but its derived FIRST_PID is {}; FIRST_PID is assigned by the slave (XCP part 2 1.1/1.6.4.1.1.4)'.format(daq.name, dto.pid, first_pids[daq_index])) }}
@@ -366,8 +377,23 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {{ raise('MAX_DTO {} leaves {} bytes after a {}-byte {} identification field, less than the {}-byte timestamp XCP part 2 1.1/1.1.2.2 puts in ODT 0; the ODT-0 budget arithmetic in source/Xcp_Daq.c assumes odtEntrySizeDaq minus the timestamp size does not underflow'.format(configuration.protocol_layer.max_dto, odt_entry_size_daq, identification_field_size[identification_field_type], identification_field_type, wire_size)) }}
 {%- endif %}
 {%- endif %}
-{%- if counters.odt > 255 or counters.odt_entries > 255 %}
-{{ raise('odtCount {} / odtEntriesCount {} exceed the uint8 fields of Xcp_GeneralType'.format(counters.odt, counters.odt_entries)) }}
+{#- counters.odt is deliberately absent from this guard. It is the same sum as pid.next above, and
+    the PID-ceiling guard there refuses anything over 252 -- so by the time rendering reaches this
+    point counters.odt cannot exceed 252, and a `counters.odt > 255` condition here could never
+    fire. Reordering the two would only move which guard reports the same configuration; the
+    252 ceiling subsumes the 255 one outright, so XcpOdtCount's uint8 field is protected there
+    rather than here. Its two neighbours below have no such stricter guard upstream and are the
+    only live halves. #}
+{%- if counters.odt_entries > 255 %}
+{{ raise('odtEntriesCount {} exceeds the uint8 XcpOdtEntriesCount field of Xcp_GeneralType'.format(counters.odt_entries)) }}
+{%- endif %}
+{#- odtEntrySizeDaq is emitted below as '0x%02Xu', into the uint8 XcpOdtEntrySizeDaq field, but it
+    is derived from max_dto, whose schema maximum is 65535. Without this guard max_dto 1000 emitted
+    0x3E7u -- 231 after truncation -- so GET_DAQ_RESOLUTION_INFO reported MAX_ODT_ENTRY_SIZE_DAQ 231
+    for a 999-byte ODT, and every ODT-0 budget computation in source/Xcp_Daq.c ran on the truncated
+    value. -Woverflow warned; nothing failed. #}
+{%- if odt_entry_size_daq > 255 %}
+{{ raise('MAX_DTO {} leaves {} bytes after a {}-byte {} identification field, which exceeds the uint8 XcpOdtEntrySizeDaq field of Xcp_GeneralType; MAX_ODT_ENTRY_SIZE_DAQ is one byte in the GET_DAQ_RESOLUTION_INFO response (XCP part 2 1.1/1.6.4.1.2.5), so a larger value cannot be reported and would be emitted here as a truncated literal'.format(configuration.protocol_layer.max_dto, odt_entry_size_daq, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
 {%- for event in configuration.events %}
 {%- if event.triggered_daq_list_ref|length > 255 %}
