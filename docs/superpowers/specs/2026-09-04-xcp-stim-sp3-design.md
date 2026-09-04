@@ -191,6 +191,29 @@ and the failure it would have caused is the one the draft itself named: with the
 unparsed, every applied value in ODT 0 would be shifted by one, two or four bytes. It was found by
 reading §1.1.2.2 rather than reasoning about it — the same correction that PR #9 needed.
 
+**DD45 — an ODT entry with a non-zero address extension is skipped on apply, not written.** The
+two memory-access tables are not symmetric:
+
+```c
+extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
+extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address,                 uint8 *pBuffer);
+```
+
+Sampling passes each entry's `addressExtension` through; the write table has no parameter for it.
+So an entry that names a segment other than 0 can be read but cannot be written to the place it
+names.
+
+Applying it anyway would write to the right offset in the wrong segment — silent, and exactly the
+class of failure this module has spent four sub-projects removing. So the apply loop skips such an
+entry and reports it through `Det`, consistent with DD39's handling of everything else it cannot
+honour. A list whose entries all use extension 0 — the common case, and the only one
+`config/xcp.json` exercises — is unaffected.
+
+This asymmetry is pre-existing and not STIM's doing: `DOWNLOAD` stores an extension in
+`Xcp_Internal.memory_transfer.extension` and writes without it too. STIM is where it becomes
+visible, because an ODT entry carries the extension explicitly. Widening the write table is an
+integrator-facing signature change and belongs in its own task; §8 records it.
+
 **DD42 — STIM has a lower PID ceiling than DAQ, checked where each model's type is decided.**
 §1.1.5.1 gives master-to-slave STIM ODT numbers `0x00..0xBF`; §1.1.5.2 gives slave-to-master DAQ
 `0x00..0xFB`. SP2d enforces one ceiling, `XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX` at `0xFC`. A STIM-capable
@@ -316,6 +339,9 @@ test that cannot fail is worth less here than anywhere else in the module.
 - Per-direction resource protection, which requires moving the protection check from the dispatcher
   into the handlers (DD41).
 - Distinct RX PDUs per dynamic STIM list, the receive-side twin of the TX PDU pool SP2d deferred.
+- Widening `Xcp_WriteSlaveMemoryTable` to carry the address extension, so a STIM entry naming a
+  non-zero segment can be applied rather than skipped (DD45). Integrator-facing: it changes a
+  callback signature, and `DOWNLOAD` would want the same treatment.
 - The DAQ/STIM correlation check §1.1.2.2 offers: comparing the echoed timestamp against the clock
   value the slave sent with the corresponding DAQ cycle, to confirm the two belong together (DD44).
   Needs a record of what was sent when, which is its own mechanism.
