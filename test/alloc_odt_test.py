@@ -54,20 +54,76 @@ def test_alloc_odt_first_pid_blocks_never_overlap_read_back_through_the_protocol
 
     assert first_pids == [(0xFF, 0), (0xFF, 3), (0xFF, 6)]
 
-    # Spelt out as the property the numbers above stand for: each list's block of absolute ODT
-    # numbers is firstPid .. firstPid + maxOdt - 1, and no two blocks may share a number.
-    blocks = [set(range(pid, pid + odt_count))
-              for (_, pid), odt_count in zip(first_pids, (3, 3, 0))]
+    # Spelt out as the property the three numbers above stand for: each list's block of absolute
+    # ODT numbers is FIRST_PID .. FIRST_PID + MAX_ODT - 1, and no two blocks may share a number.
+    #
+    # MAX_ODT is read back through GET_DAQ_LIST_INFO (0xD8) rather than taken from the literal ODT
+    # counts the requests above used. Taken from the literals, every line below would be arithmetic
+    # on the line above -- blocks[2] would be set(range(6, 6)), empty for any FIRST_PID at all --
+    # and could not fail. Read back, this is a second and independent statement: that the MAX_ODT
+    # 0xD8 reports and the FIRST_PID 0xDE reports describe one allocation, so it fails if ALLOC_ODT
+    # ever moves one without the other.
+    max_odts = [exchange(handle, (0xD8, 0x00, daq, 0x00))[2] for daq in range(3)]
+    blocks = [set(range(pid, pid + max_odt))
+              for (_, pid), max_odt in zip(first_pids, max_odts)]
     assert blocks[0] == {0, 1, 2}
     assert blocks[1] == {3, 4, 5}
-    assert (blocks[0] & blocks[1]) == set()
-    assert blocks[2] == set()
+    assert blocks[2] == set(), 'list 2 is allocated but empty, so it owns no absolute ODT number'
 
 
 def test_alloc_odt_refuses_a_list_that_was_never_allocated():
     handle = dynamic_handle(daq_count=4, odt_count=4)
     exchange(handle, (0xD5, 0x00, 0x01, 0x00))
     assert exchange(handle, (0xD4, 0x00, 0x01, 0x00, 0x01))[0:2] == (0xFE, 0x22)
+
+
+def test_alloc_odt_refusal_leaves_the_allocation_state_unadvanced():
+    """The sibling of test_alloc_odt_entry_refusal_leaves_the_allocation_state_unadvanced, for
+    0xD4. Nothing else pins that a refused ALLOC_ODT leaves daq_alloc_state where it found it: a
+    mutant that moves the `Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_ODT` assignment out of the
+    else and after the if/else chain survives the whole rest of the suite, because every refusal
+    still answers with the same error byte.
+
+    Observed indirectly through ALLOC_DAQ (0xD5), which is accepted from XCP_DAQ_ALLOC_FREE and
+    XCP_DAQ_ALLOC_DAQ but answers ERR_SEQUENCE from XCP_DAQ_ALLOC_ODT (1.1/1.6.4.3.1.2). If the
+    ERR_OUT_OF_RANGE refusal below had advanced the state to ODT, the ALLOC_DAQ after it would
+    answer ERR_SEQUENCE instead of succeeding. daq_count leaves three lists unhanded-out, so that
+    follow-up ALLOC_DAQ succeeding turns on the state alone and not on any pool capacity left."""
+    handle = dynamic_handle(daq_count=4, odt_count=4)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    assert exchange(handle, (0xD4, 0x00, 0x01, 0x00, 0x01))[0:2] == (0xFE, 0x22)
+    assert exchange(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF
+
+
+def test_alloc_odt_refused_by_sequence_does_not_reopen_the_odt_state():
+    """Design §9, precondition 1 of the running-list FIRST_PID argument, stated as a test.
+
+    That argument says a running list's FIRST_PID cannot move because Xcp_DaqRecomputeFirstPids
+    runs only from ALLOC_ODT, and ALLOC_ODT answers ERR_SEQUENCE from XCP_DAQ_ALLOC_ODT_ENTRY --
+    the state every list carrying an entry has passed through. It holds only while the refusal
+    itself leaves the state alone.
+
+    This is the exact sequence the argument breaks under: from ODT_ENTRY, a refused ALLOC_ODT that
+    nevertheless set the state to ODT would make the *next* ALLOC_ODT succeed, raise maxOdt, and
+    move FIRST_PID under a list that is already transmitting. The second ALLOC_ODT below is what
+    test_alloc_odt_entry_blocks_alloc_odt_once_reached stops short of sending, which is why that
+    test does not cover this and this one is not redundant with it. Only FREE_DAQ may reopen the
+    state, and the tail asserts it still does."""
+    handle = dynamic_handle(daq_count=1, odt_count=4, odt_entries_count=4)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
+    assert exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF
+
+    assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0:2] == (0xFE, 0x29)
+    assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0:2] == (0xFE, 0x29), \
+        'the refused ALLOC_ODT put the state back into XCP_DAQ_ALLOC_ODT'
+    assert handle.lib.Xcp_Ptr.config.daqList[0].maxOdt == 1, 'a refused ALLOC_ODT raised maxOdt'
+
+    # FREE_DAQ is still the only way back, so the refusals above are the state machine holding and
+    # not the command having become permanently unusable.
+    exchange(handle, (0xD6,))
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF
 
 
 def test_alloc_odt_refuses_more_odts_than_one_list_may_hold():

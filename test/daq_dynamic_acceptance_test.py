@@ -146,8 +146,11 @@ def test_the_allocation_sequence_end_to_end_reaches_a_sampled_frame():
 
     frames = queued_frames(handle)
     assert len(frames) == 1, 'one non-empty ODT samples to exactly one frame'
-    first_pid = handle.lib.Xcp_Ptr.config.daqList[0].firstPid
-    assert frames[0][0] == first_pid, 'absolute ODT number: FIRST_PID + relative ODT 0'
+    # 0, not the descriptor's firstPid: the sampler computes this byte from that very field, so
+    # comparing the two could not tell a correct FIRST_PID from a wrong one. The literal is what
+    # pins the prefix sum -- the first and only allocated list starts the PID space at 0, and its
+    # relative ODT 0 is therefore absolute ODT 0.
+    assert frames[0][0] == 0x00, 'absolute ODT number: FIRST_PID + relative ODT 0'
     assert frames[0][1] == 0xA5, 'the sampled payload'
 
     assert exchange(handle, (0xDE, 0x00, 0x00, 0x00))[0] == 0xFF            # START_STOP_DAQ_LIST(STOP, list 0)
@@ -177,18 +180,36 @@ def test_clear_daq_list_clears_entries_without_releasing_the_allocation():
     assert entry.address == handle.ffi.NULL
     assert entry.length == 0
     # ... but the allocation itself -- the list is still valid and still has its ODT and entry
-    # slot -- survived.
+    # slot -- survived. A repeat of the CLEAR_DAQ_LIST above used to close this test; it was
+    # byte-identical to that line and implied by the two assertions here, so it is gone.
     assert handle.lib.Xcp_Ptr.config.daqList[0].maxOdt == 1
     assert handle.lib.Xcp_Ptr.config.daqList[0].odt[0].entryCount == 1
-    assert exchange(handle, (0xE3, 0x00, 0x00, 0x00))[0] == 0xFF
 
 
 def test_set_daq_ptr_is_refused_on_a_list_the_master_never_allocated():
-    """Spec §6 and DD32: no new bounds check was added for this. maxOdt is zero until ALLOC_ODT,
-    so the check already in SET_DAQ_PTR refuses it."""
+    """Spec §6 and DD32: no new bounds check was added for this. SET_DAQ_PTR is refused before any
+    ALLOC_DAQ and again after ALLOC_DAQ but before ALLOC_ODT, and both are asserted below.
+
+    The first is the case this test is named for, and an earlier version did not reach it: it sent
+    ALLOC_DAQ before the request, so the only thing it ever exercised was the second case.
+
+    What the wire says and does not say. Both cases answer ERR_OUT_OF_RANGE (1.1/1.6.4.1.1.1, "If
+    the specified list is not available") and SET_DAQ_PTR has two checks that produce it -- the
+    Xcp_DaqListIsValid gate and `odt_number >= maxOdt` three branches later -- so the response does
+    not identify which one fired, and this test does not claim to. It claims the outcome: neither
+    an unallocated list nor an allocated list with no ODTs may be pointed at. Which branch answers
+    the first case is pinned separately, by
+    test_a_dynamic_build_has_no_valid_daq_lists_until_alloc_daq above, through CLEAR_DAQ_LIST --
+    a command that has the validity gate and no maxOdt bound behind it."""
     handle = dynamic_handle(daq_count=2, odt_count=2, odt_entries_count=2)
+
+    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x22), \
+        'a list the master never allocated was pointed at'
+
     exchange(handle, (0xD5, 0x00, 0x01, 0x00))
-    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x22)
+
+    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x22), \
+        'a list allocated but holding no ODTs was pointed at'
 
 
 def test_get_daq_list_info_reports_the_allocated_shape_not_the_configured_one():
@@ -219,4 +240,12 @@ def test_pid_off_under_dynamic_follows_the_shared_tx_pdu_rule(daq_count, accepte
     exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
     # SET_DAQ_LIST_MODE with PID_OFF (bit 5) on list 0, event channel 0, prescaler 1, priority 0.
     result = exchange(handle, (0xE0, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))
-    assert (result[0] == 0xFF) == accepted
+    # The refused case pins ERR_MODE_NOT_VALID specifically rather than "some error": SET_DAQ_LIST_
+    # MODE has four other refusals (OUT_OF_RANGE for the list, the event channel and the prescaler,
+    # SEQUENCE for a running list), so `result[0] == 0xFF` being False would be satisfied by the
+    # refusal migrating to any of them -- including ones that would refuse this request whether or
+    # not the shared-TX-PDU rule existed at all.
+    if accepted:
+        assert result[0] == 0xFF
+    else:
+        assert result[0:2] == (0xFE, 0x27)
