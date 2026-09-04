@@ -1548,12 +1548,16 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
 
     *responseExpected = TRUE;
 
-    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4
-     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME and
-     * BIT_STIM are unimplemented and so are reported unsupported, which is what lets
-     * SET_DAQ_LIST_MODE refuse the matching mode bits. TIMESTAMP_SUPPORTED and PID_OFF_SUPPORTED
-     * are not in that group: TIMESTAMP_SUPPORTED follows whether the configuration declares a
-     * clock, set just below; PID_OFF_SUPPORTED follows the identification field type, set here. */
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE now follows the
+     * configuration: a DAQ_DYNAMIC build lets the master allocate lists through 1.1/1.6.4.3.1,
+     * where a DAQ_STATIC build serves the lists the generator declared. RESUME and BIT_STIM
+     * remain unimplemented and so remain reported unsupported, which is what lets
+     * SET_DAQ_LIST_MODE refuse the matching mode bits. */
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        properties |= XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE;
+    }
+
     if (Xcp_Ptr->general->prescalerSupported == TRUE)
     {
         properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;

@@ -17,6 +17,19 @@ def daq_event_info(handle, event_channel_number=0, byte_order='LITTLE_ENDIAN'):
     return handle.can_if_transmit.call_args[0][1].SduDataPtr
 
 
+def dynamic_handle(**kwargs):
+    handle = XcpTest(dynamic_config(**kwargs))
+    connect(handle)
+    return handle
+
+
+def exchange(handle, request, length=8):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
 def read_through_to_real_memory(handle):
     """A mock side_effect that genuinely dereferences the address the slave hands it, rather than
     fabricating a value the way the block-transfer tests elsewhere in this suite do (they only
@@ -256,3 +269,9 @@ def test_get_daq_event_info_is_refused_when_disabled():
     frame = daq_event_info(handle)
 
     assert tuple(frame[0:2]) == (0xFE, handle.define('XCP_E_ASAM_CMD_UNKNOWN'))
+
+
+def test_get_daq_event_info_reports_the_pool_as_max_daq_list_under_dynamic():
+    """Any allocated list may bind to any event channel, so the pool size is the honest answer."""
+    handle = dynamic_handle(daq_count=4)
+    assert exchange(handle, (0xD7, 0x00, 0x00, 0x00))[2] == 0x04

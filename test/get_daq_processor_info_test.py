@@ -22,6 +22,19 @@ def daq_handle(**kwargs):
     return handle
 
 
+def dynamic_handle(**kwargs):
+    handle = XcpTest(dynamic_config(**kwargs))
+    connect(handle)
+    return handle
+
+
+def exchange(handle, request, length=8):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
 def test_daq_properties_report_what_this_phase_implements():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE static (bit 0
     clear), PRESCALER_SUPPORTED set (bit 1), RESUME/BIT_STIM clear (bits 2-3), TIMESTAMP_SUPPORTED
@@ -128,3 +141,16 @@ def test_timestamp_supported_is_clear_without_a_clock():
     handle = daq_handle()
 
     assert (info(handle)[1] & 0x10) == 0x00
+
+
+def test_get_daq_processor_info_reports_dynamic_configuration_and_the_whole_pool():
+    """DD33. MAX_DAQ is the configured pool, constant across allocation: ECUC_Xcp_00164's
+    dependency is MAX_DAQ = MIN_DAQ + DAQ_COUNT with minDaq 0, and the allocated count would tell
+    a master nothing before it allocates -- which is exactly when it needs to know how much it may
+    ask for."""
+    handle = dynamic_handle(daq_count=4)
+    response = exchange(handle, (0xDA,))
+    assert response[1] & 0b00000001 == 0b00000001      # DAQ_CONFIG_TYPE set
+    assert response[2:4] == (0x04, 0x00)               # MAX_DAQ, little endian
+    exchange(handle, (0xD5, 0x00, 0x02, 0x00))
+    assert exchange(handle, (0xDA,))[2:4] == (0x04, 0x00)   # still the pool, not the 2 allocated
