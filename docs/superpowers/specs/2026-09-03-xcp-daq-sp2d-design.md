@@ -314,6 +314,19 @@ Bytes 2,3 are `DAQ_LIST_NUMBER`; byte 4 is `ODT_NUMBER`, relative within the lis
   keeps its allocation. Its behaviour is unchanged in both models.
 - **`SET_DAQ_PTR` and `WRITE_DAQ` against an unallocated list** are refused by the bounds checks
   that already exist, since `maxOdt` is zero.
+- **`GET_DAQ_ID` answers for any slot in the pool, allocated or not.** Each pool slot is generated
+  carrying its own `XcpDaqListNumber` (its index), which is what `Xcp_Std.c` scans for. Before
+  that they all carried `0x0000u`, under a comment claiming `ALLOC_DAQ` assigned it — which it
+  never did — so the command refused every allocated dynamic list except slot 0. Fixing it widens
+  a pre-existing false positive rather than closing it: a slot the master never allocated now
+  answers positively, where previously only slot 0 did.
+
+  That is deliberate. The value returned is correct, since every dynamic list shares the one
+  configured TX PDU, so the direction is permissive rather than wrong, and under DYNAMIC the
+  master chose its own allocation count. Gating it on `allocated_daq_count` is perfectly possible
+  — `Xcp_Std.c` already reaches `Xcp_Internal`, and the gate is a no-op under STATIC where
+  `allocated_daq_count` equals `daqCount` — but it is a new refusal on a command SP2d otherwise
+  does not touch, so it belongs in its own task with its own test.
 - **`PID_OFF` under DYNAMIC is available only in a pool configured with exactly one list.** All
   dynamic lists share the configured `pdu_mapping`, so SP2b's rule applies unchanged:
   `Xcp_DaqListTxPduIsExclusive` is true only while no other list shares that PDU. The
@@ -415,7 +428,10 @@ strings are documentation for whoever reads the template.
      be accepted, and `FIRST_PID` would move under a list that is already running. Pinned by
      `test_alloc_odt_entry_refusal_leaves_the_allocation_state_unadvanced` and its two siblings for
      `ALLOC_ODT` and `ALLOC_DAQ`; all three exist for this reason and are not redundant with each
-     other.
+     other. Those three catch the state moving. What the moved state then *permits* — the second
+     `ALLOC_ODT`, the one that would be wrongly accepted — is pinned only by
+     `test_alloc_odt_refused_by_sequence_does_not_reopen_the_odt_state`, which is the sole test
+     that sends it.
   2. **`Xcp_Init` and `DISCONNECT` must zero every ODT's `entryCount`.** The state machine's memory
      of "this list has entries" is `daq_alloc_state`, which both paths reset to `FREE`. If the
      counts survived while the state did not, a list would re-enter `ALLOC_ODT` carrying entries

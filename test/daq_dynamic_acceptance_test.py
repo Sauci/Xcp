@@ -194,9 +194,10 @@ def test_set_daq_ptr_is_refused_on_a_list_the_master_never_allocated():
     ALLOC_DAQ before the request, so the only thing it ever exercised was the second case.
 
     What the wire says and does not say. Both cases answer ERR_OUT_OF_RANGE (1.1/1.6.4.1.1.1, "If
-    the specified list is not available") and SET_DAQ_PTR has two checks that produce it -- the
-    Xcp_DaqListIsValid gate and `odt_number >= maxOdt` three branches later -- so the response does
-    not identify which one fired, and this test does not claim to. It claims the outcome: neither
+    the specified list is not available") and SET_DAQ_PTR has three checks that produce it -- the
+    Xcp_DaqListIsValid gate, `odt_number >= maxOdt` two branches later (the RUNNING check sits
+    between them and answers a different code), and `odt_entry_number >= entryCount` after that --
+    so the response does not identify which one fired, and this test does not claim to. It claims the outcome: neither
     an unallocated list nor an allocated list with no ODTs may be pointed at. Which branch answers
     the first case is pinned separately, by
     test_a_dynamic_build_has_no_valid_daq_lists_until_alloc_daq above, through CLEAR_DAQ_LIST --
@@ -240,11 +241,19 @@ def test_pid_off_under_dynamic_follows_the_shared_tx_pdu_rule(daq_count, accepte
     exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
     # SET_DAQ_LIST_MODE with PID_OFF (bit 5) on list 0, event channel 0, prescaler 1, priority 0.
     result = exchange(handle, (0xE0, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))
-    # The refused case pins ERR_MODE_NOT_VALID specifically rather than "some error": SET_DAQ_LIST_
-    # MODE has four other refusals (OUT_OF_RANGE for the list, the event channel and the prescaler,
-    # SEQUENCE for a running list), so `result[0] == 0xFF` being False would be satisfied by the
-    # refusal migrating to any of them -- including ones that would refuse this request whether or
-    # not the shared-TX-PDU rule existed at all.
+    # The refused case pins ERR_MODE_NOT_VALID rather than "some error": SET_DAQ_LIST_MODE refuses
+    # in nine places, eight of them other than the shared-TX-PDU rule -- five ERR_OUT_OF_RANGE (the
+    # list, the event channel, and three on the prescaler and priority), one ERR_DAQ_ACTIVE for a
+    # running list, and two more ERR_MODE_NOT_VALID (an unsupported mode bit, and TIMESTAMP where
+    # the configuration declares no clock). So `result[0] == 0xFF` being False would be satisfied
+    # by the refusal migrating to any of them, including ones that would refuse this request
+    # whether or not the shared-TX-PDU rule existed.
+    #
+    # Pinning 0x27 therefore narrows the field to three branches rather than isolating one. It is
+    # still worth pinning: the mode byte here is PID_OFF alone, so neither of the other two can
+    # fire -- an unsupported bit needs DIRECTION or ALTERNATING set, and the TIMESTAMP branch needs
+    # bit 4 -- which makes 0x27 unambiguous for this request specifically. A wider sweep over mode
+    # bytes would need to distinguish them some other way.
     if accepted:
         assert result[0] == 0xFF
     else:
