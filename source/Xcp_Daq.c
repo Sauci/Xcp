@@ -722,6 +722,51 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_count;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_count, Xcp_Ptr->general->byteOrder);
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.2: ERR_SEQUENCE for an ALLOC_DAQ
+     * directly after an ALLOC_ODT or an ALLOC_ODT_ENTRY without a FREE_DAQ in between. Sequence is
+     * checked before the argument, because it is a statement about the command stream rather than
+     * about this command's parameters. */
+    if ((Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_FREE) &&
+        (Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_DAQ))
+    {
+        error = XCP_E_ASAM_SEQUENCE;
+    }
+    else if ((uint32)((uint32)Xcp_Internal.allocated_daq_count + (uint32)daq_count) >
+             (uint32)Xcp_Ptr->general->daqCount)
+    {
+        /* "If there's not enough memory available to allocate the requested DAQ lists an
+         * ERR_MEMORY_OVERFLOW will be returned." Rejected whole: a partly applied allocation
+         * would leave the master unaware of how much it actually has. */
+        error = XCP_E_ASAM_MEMORY_OVERFLOW;
+    }
+    else
+    {
+        Xcp_Internal.allocated_daq_count = (uint16)(Xcp_Internal.allocated_daq_count + daq_count);
+        Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_DAQ;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     (void)pPduInfo;

@@ -545,6 +545,18 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
 void Xcp_DaqFreeAll(void);
 
 /**
+ * @brief ALLOC_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.2.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqFreeDaq: 0xD5 precedes 0xD6 in
+ * the PID table, and the two are the allocation state machine's grant and release halves.
+ * @note DD28: repeated ALLOC_DAQ calls accumulate onto Xcp_Internal.allocated_daq_count rather
+ * than replacing it -- the specification's ERR_SEQUENCE cases forbid ALLOC_DAQ only after
+ * ALLOC_ODT and ALLOC_ODT_ENTRY, so a repeat from FREE or DAQ is permitted, and a permitted
+ * repeat that merely replaced the previous grant would be indistinguishable from one that was
+ * refused.
+ */
+uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief FREE_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1.
  * @details Defined in Xcp_Daq.c, immediately after Xcp_DTOCmdDaqClearDaqList: the two are the
  * module's two reset commands and share Xcp_DaqListReset, differing in scope -- CLEAR_DAQ_LIST
