@@ -133,3 +133,36 @@ def test_transport_layer_cmd_sub_cmd_set_daq_list_can_identifier_returns_err_cmd
     handle.lib.Xcp_MainFunction()
 
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+
+def test_get_daq_id_refuses_a_pool_slot_the_master_never_allocated():
+    """The scan is bounded by Xcp_Internal.allocated_daq_count, not by the configured pool.
+
+    Giving every pool slot its own number fixed a scan that refused allocated lists, but it widened
+    the other half of the same defect: with the whole pool scanned, a slot inside daq_count that
+    ALLOC_DAQ had never handed out was found and answered positively -- reporting a CAN-Id for a
+    DAQ list the master does not hold. The value returned was even correct, since every dynamic
+    list shares the one configured TX PDU, which is exactly what made it easy to leave.
+
+    Allocating 2 of a 4-slot pool is what separates the two bounds: lists 0 and 1 must answer, and
+    lists 2 and 3 must not, though all four exist in the generated descriptor and carry their own
+    numbers. A scan bounded by daqListCount answers for all four and fails here.
+
+    Under a static configuration the two bounds are the same number -- Xcp_Init seeds
+    allocated_daq_count from daqCount, and the generator emits daqListCount and XcpDaqCount from a
+    single expression -- so this gate cannot change static behaviour. That is pinned by
+    test_get_daq_id_returns_the_can_id_of_a_daq_list above, which runs on a static configuration."""
+    config = dynamic_config(daq_count=4, odt_count=2, odt_entries_count=2)
+    handle = XcpTest(config)
+    connect(handle)
+
+    assert exchange(handle, (0xD5, 0x00, 0x02, 0x00))[0] == 0xFF, 'ALLOC_DAQ(2) was refused'
+
+    for daq_list_number in (0, 1):
+        assert exchange(handle, (0xF2, 0xFE) + tuple(u16_to_array(daq_list_number, 'LITTLE_ENDIAN')))[0] == 0xFF, \
+            'GET_DAQ_ID refused allocated DAQ list {}'.format(daq_list_number)
+
+    for daq_list_number in (2, 3):
+        assert exchange(handle, (0xF2, 0xFE) +
+                        tuple(u16_to_array(daq_list_number, 'LITTLE_ENDIAN')))[0:2] == (0xFE, 0x22), \
+            'GET_DAQ_ID answered for pool slot {}, which ALLOC_DAQ never handed out'.format(daq_list_number)

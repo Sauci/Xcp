@@ -428,7 +428,16 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
 
                 object_found = FALSE;
 
-                for (daq_list_idx = 0x00u; daq_list_idx < Xcp_Ptr->config->daqListCount; daq_list_idx ++) {
+                /* Bounded by what the master has allocated, not by the configured pool. Under a
+                 * static configuration Xcp_Init seeds allocated_daq_count from daqCount, and the
+                 * generator emits daqListCount and XcpDaqCount from one expression, so the two
+                 * bounds are the same number and this reads exactly as it always did. Under a
+                 * dynamic one they differ until ALLOC_DAQ runs, and scanning the whole pool would
+                 * answer for a slot the master never allocated -- reporting a CAN-Id for a DAQ
+                 * list that does not exist yet. Each pool slot carries its index as its number
+                 * (script/source_cfg.c.jinja2), so an unallocated slot is simply not reached and
+                 * the ERR_OUT_OF_RANGE below is what the master gets. */
+                for (daq_list_idx = 0x00u; daq_list_idx < Xcp_Internal.allocated_daq_count; daq_list_idx ++) {
                     if (Xcp_Ptr->config->daqList[daq_list_idx].number == daq_list_number) {
                         object_found = TRUE;
 
@@ -448,7 +457,14 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
 
                         Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
                     } else {
-
+                        /* Unreachable for any schema-valid configuration -- config/xcp.schema.json
+                         * gives `dtos` minItems 1, so every generated DAQ list has at least one
+                         * DTO. It was an empty branch, which is worse than unreachable: it left
+                         * the response buffer holding whatever the previous command wrote while
+                         * responseExpected stayed TRUE, so the master would have read a stale
+                         * positive response. That is the defect class D2 and D7 fixed twice in
+                         * SP1; an unreachable trap is still a trap. */
+                        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
                     }
                 } else {
                     Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
