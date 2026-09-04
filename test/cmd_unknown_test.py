@@ -8,6 +8,19 @@ from .conftest import XcpTest
 from .download_test import connect
 
 
+def dynamic_handle(**kwargs):
+    handle = XcpTest(dynamic_config(**kwargs))
+    connect(handle)
+    return handle
+
+
+def exchange(handle, request, length=8):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
 @pytest.mark.parametrize('pid', tuple(pid for pid in range(0xC0, 0xE4) if pid not in (0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDD, 0xDE, 0xDF, 0xE0, 0xE1, 0xE2, 0xE3)))
 def test_unimplemented_commands_return_err_cmd_unknown(pid):
     """XCP part 2 - Protocol Layer Specification 1.0/1.4: an attempt to execute a not implemented
@@ -41,6 +54,15 @@ def test_unimplemented_commands_return_err_cmd_unknown(pid):
 
     assert handle.can_if_transmit.call_count == 1
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20)
+
+
+@pytest.mark.parametrize('pid', (0xD3, 0xD4, 0xD5, 0xD6))
+def test_the_dynamic_allocation_commands_are_known_in_a_dynamic_build(pid):
+    """The four are optional and answer ERR_CMD_UNKNOWN under a STATIC configuration, which the
+    test above pins. Under DYNAMIC they must not: a dynamic build with no way to allocate is what
+    the generator's own guard refuses."""
+    handle = dynamic_handle()
+    assert exchange(handle, (pid, 0x00, 0x00, 0x00, 0x00, 0x00))[0:2] != (0xFE, 0x20)
 
 
 @pytest.mark.parametrize('pid, flag', ((0xEF, 'xcp_download_next_api_enable'),
