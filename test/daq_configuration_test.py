@@ -745,3 +745,53 @@ def test_generation_refuses_a_dynamic_pool_declared_under_a_static_configuration
 
     with pytest.raises(UndefinedError):
         XcpTest(config)
+
+
+def test_a_stim_capable_pool_reserves_a_slot_for_every_odt():
+    """DD43. A STIM buffer must exist for any list that might receive, and under a dynamic pool
+    there is no per-list type -- SET_DAQ_LIST_MODE sets direction at runtime. The pool therefore
+    declares its own direction, mirroring daqs[].type for a static list.
+
+    A DAQ-typed pool generates no slots at all, which is what keeps a DAQ-only build paying
+    nothing for stimulation it never uses.
+
+    Reads Xcp_Rt[...] the way every other test in the suite does -- handle.lib, the module under
+    test linked against the generated runtime, not handle.config.lib, which is the generated
+    CONFIGURATION module and carries no Xcp_Rt at all."""
+    handle = XcpTest(stim_config(daq_count=2, odt_count=3, odt_entries_count=2))
+    rt = handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef]
+
+    assert rt.stimSlotCount == 2 * 3
+
+    for daq_idx in range(2):
+        for odt_idx in range(3):
+            slot = rt.stimSlot[(daq_idx * 3) + odt_idx]
+            assert slot.length == 0, 'a freshly generated slot holds nothing'
+
+
+def test_a_daq_only_pool_reserves_no_stim_slots():
+    """The other half of DD43: declaring `DAQ` must cost nothing.
+
+    The second half of this test drops the key entirely, because `type` is deliberately absent
+    from the schema's required list for daq_dynamic -- the default is what keeps every dynamic
+    configuration written before stimulation existed valid, and DAQ-only. Without this, both
+    templates' `| default('DAQ')` would be reached by no test at all."""
+    handle = XcpTest(dynamic_config(daq_count=2, odt_count=3, odt_entries_count=2))
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0
+
+    config = dynamic_config(daq_count=2, odt_count=3, odt_entries_count=2)
+    del config['configurations'][0]['daq_dynamic']['type']
+    handle = XcpTest(config)
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0
+
+
+def test_odt_entry_size_stim_is_reported_for_a_stim_capable_build():
+    """DD44/§4. XcpOdtEntrySizeStim derives exactly as XcpOdtEntrySizeDaq does -- MAX_DTO less the
+    identification field -- and was hard-coded 0x00u with the comment "STIM arrives in SP3"."""
+    handle = XcpTest(stim_config(daq_count=1, odt_count=1, odt_entries_count=1, max_dto=8))
+
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeStim == \
+        handle.config.lib.Xcp[0].general.odtEntrySizeDaq
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeStim != 0

@@ -213,6 +213,11 @@ class DefaultConfig(dict):
                  daq_count=4,
                  odt_count=8,
                  odt_entries_count=16,
+                 # Direction the pool supports, mirroring daqs[].type for a static list. Read only
+                 # when daq_config_type is 'DYNAMIC', for the same reason as the three dimensions
+                 # above. 'DAQ' is both this default and the schema's, so a dynamic configuration
+                 # that says nothing reserves no stimulation storage at all.
+                 daq_dynamic_type='DAQ',
                  segments=(),
                  freeze_supported=False,
                  xcp_set_request_api_enable=True,
@@ -429,7 +434,8 @@ class DefaultConfig(dict):
             configuration["daq_dynamic"] = {"daq_count": daq_count,
                                             "odt_count": odt_count,
                                             "odt_entries_count": odt_entries_count,
-                                            "pdu_mapping": "XCP_PDU_ID_TRANSMIT"}
+                                            "pdu_mapping": "XCP_PDU_ID_TRANSMIT",
+                                            "type": daq_dynamic_type}
 
     @property
     def get_id(self):
@@ -475,6 +481,13 @@ def dynamic_config(daq_count=4, odt_count=8, odt_entries_count=16, **kwargs):
                          xcp_alloc_odt_api_enable=True,
                          xcp_alloc_odt_entry_api_enable=True,
                          **kwargs)
+
+
+def stim_config(daq_count=2, odt_count=2, odt_entries_count=2, pool_type='DAQ_STIM', **kwargs):
+    """A dynamic pool that can receive stimulation. Mirrors dynamic_config, which builds a
+    DAQ-only pool; both enable the four ALLOC APIs, which a DAQ_DYNAMIC configuration must."""
+    return dynamic_config(daq_count=daq_count, odt_count=odt_count,
+                          odt_entries_count=odt_entries_count, daq_dynamic_type=pool_type, **kwargs)
 
 
 class MultiConfig(dict):

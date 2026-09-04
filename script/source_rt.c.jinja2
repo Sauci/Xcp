@@ -1,5 +1,39 @@
 
 #include "Xcp_Rt.h"
+{#- The number of stimulation slots a configuration reserves (DD43): one per ODT it can ever
+   receive into, and zero when it cannot receive at all. A macro rather than a `set`, because this
+   file needs the number in two separate `for configuration in configurations` blocks -- the array
+   definitions below and the Xcp_Rt initialiser at the end -- and Jinja does not share `set`
+   bindings across them.
+
+   Under a dynamic pool there is no per-list direction to consult: SET_DAQ_LIST_MODE assigns
+   DIRECTION at runtime (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4), so any list
+   the master allocates out of a receiving pool may receive, and the pool's whole rectangle is the
+   bound -- daq_count x odt_count slots, addressed as (daqListNumber * odt_count) + odtNumber. A
+   static configuration declares each list's direction up front, so only the ODTs of its non-DAQ
+   lists need a slot; a pure DAQ list has nothing to store.
+
+   `type` is optional on daq_dynamic and defaults to DAQ, which is what keeps every configuration
+   written before stimulation existed reserving nothing at all.
+
+   The result fits the uint16 stimSlotCount of Xcp_RtType by construction, so there is no guard
+   here to overflow: script/source_cfg.c.jinja2 already refuses daq_count above 255 (the uint8
+   maxDaqList of Xcp_EventChannelType) and config/xcp.schema.json caps odt_count at 252, for at
+   most 64260; a static configuration's total is capped at 252 by the same file's 0xFB PID
+   ceiling guard. #}
+{%- macro stim_slot_count(configuration) -%}
+{%- set stim = namespace(count=0) -%}
+{%- if configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' -%}
+{%- if (configuration.daq_dynamic.type | default('DAQ')) != 'DAQ' -%}
+{%- set stim.count = configuration.daq_dynamic.daq_count * configuration.daq_dynamic.odt_count -%}
+{%- endif -%}
+{%- else -%}
+{%- for daq in configuration.daqs | default([]) if daq.type != 'DAQ' -%}
+{%- set stim.count = stim.count + daq.max_odt -%}
+{%- endfor -%}
+{%- endif -%}
+{{ stim.count }}
+{%- endmacro %}
 {% for configuration in configurations %}
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -67,6 +101,15 @@ static Xcp_DtoQueueType Xcp_DtoQueue{{'%02X' % loop.index0}} = {
     0x00u,
     0x00u
 };
+{%- set stim_slots = stim_slot_count(configuration) | int %}
+{%- if stim_slots > 0 %}
+
+/* One stimulation slot per ODT this configuration can receive into -- see the macro at the top of
+ * this file for how the count is derived, and why a configuration that cannot receive emits no
+ * array here at all. Sized by XCP_MAX_DTO through Xcp_StimSlotType, so the stride check above
+ * covers this array too. */
+static Xcp_StimSlotType Xcp_StimSlot{{'%02X' % loop.index0}}[{{'0x%04Xu' % stim_slots}}];
+{%- endif %}
 
 #define Xcp_STOP_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
@@ -77,11 +120,14 @@ static Xcp_DtoQueueType Xcp_DtoQueue{{'%02X' % loop.index0}} = {
 
 Xcp_RtType Xcp_Rt[{{'0x%02Xu' % configurations|length}}] = {
 {%- for configuration in configurations %}
+{%- set stim_slots = stim_slot_count(configuration) | int %}
     {
         &Xcp_EventQueue{{'%02X' % loop.index0}},
         &Xcp_SegmentRt{{'%02X' % loop.index0}}[0x00u],
         &Xcp_DaqListRt{{'%02X' % loop.index0}}[0x00u],
-        &Xcp_DtoQueue{{'%02X' % loop.index0}}
+        &Xcp_DtoQueue{{'%02X' % loop.index0}},
+        {% if stim_slots > 0 %}&Xcp_StimSlot{{'%02X' % loop.index0}}[0x00u]{% else %}NULL_PTR{% endif %}, /* stimSlot */
+        {{'0x%04Xu' % stim_slots}} /* stimSlotCount */
     },
 {%- endfor %}
 };

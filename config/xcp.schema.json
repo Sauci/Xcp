@@ -201,6 +201,12 @@
                 "description": "This reference specifies the mapping of the DTO to the PDU from the lower-layer interface every list in the pool transmits on. A dynamic configuration declares no DAQ lists of its own, so there is no per-list pdu_mapping to take this from (see ECUC_Xcp_00067)",
                 "type": "string",
                 "pattern": "[A-Z_][A-Z0-9_]*"
+              },
+              "type": {
+                "description": "Direction this dynamic pool supports, mirroring daqs[].type for a static list. DAQ generates no stimulation storage (see ECUC_Xcp_00052)",
+                "type": "string",
+                "enum": ["DAQ", "DAQ_STIM", "STIM"],
+                "default": "DAQ"
               }
             },
             "required": [

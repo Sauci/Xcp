@@ -559,6 +559,19 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- set identification_field_type = configuration.protocol_layer.identification_field_type | default('ABSOLUTE') %}
 {%- set odt_entry_size_daq = configuration.protocol_layer.max_dto - identification_field_size[identification_field_type] %}
 {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+{#- Whether this configuration can receive stimulation at all (DD43): a dynamic pool that declares
+    a direction other than DAQ, or a static configuration with at least one non-DAQ list. It is the
+    same question script/source_rt.c.jinja2's stim_slot_count macro answers -- that file needs the
+    ODT total, this one only needs the yes/no -- and `type` is optional on daq_dynamic and defaults
+    to DAQ, so a configuration written before stimulation existed reports nothing new. #}
+{%- set stim = namespace(capable=false) %}
+{%- if daq_dynamic %}
+{%- set stim.capable = (configuration.daq_dynamic.type | default('DAQ')) != 'DAQ' %}
+{%- else %}
+{%- for daq in configuration.daqs | default([]) if daq.type != 'DAQ' %}
+{%- set stim.capable = true %}
+{%- endfor %}
+{%- endif %}
 {%- if odt_entry_size_daq < 1 %}
 {{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
@@ -635,7 +648,16 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % (configuration.daq_dynamic.odt_count if daq_dynamic else 0)}}, /* XcpOdtCount */
     {{'0x%02Xu' % (configuration.daq_dynamic.odt_entries_count if daq_dynamic else 0)}}, /* XcpOdtEntriesCount */
     {{'0x%02Xu' % odt_entry_size_daq}}, /* XcpOdtEntrySizeDaq */
-    0x00u, /* XcpOdtEntrySizeStim; STIM arrives in SP3 */
+    {#- MAX_ODT_ENTRY_SIZE_STIM derives exactly as MAX_ODT_ENTRY_SIZE_DAQ does -- MAX_DTO less the
+        identification field -- so in this module the two are always the same number: master and
+        slave exchange stimulation DTOs in the same frame format, with the same identification
+        field type, as the DAQ direction (XCP part 2 1.1/1.1.4.2). GET_DAQ_RESOLUTION_INFO reports
+        them as two separate bytes regardless (1.1/1.6.4.1.2.5), because the specification allows a
+        slave whose two directions differ; this one's do not, and reporting the DAQ value twice
+        would be a coincidence dressed up as a derivation. A configuration that cannot receive
+        reports 0, which is what it has always reported and what a DAQ-only build keeps
+        reporting. #}
+    {{'0x%02Xu' % (odt_entry_size_daq if stim.capable else 0)}}, /* XcpOdtEntrySizeStim */
     TRUE, /* hard-coded XcpOnCanEnabled */
     FALSE, /* hard-coded XcpOnCddEnabled */
     FALSE, /* hard-coded XcpOnEthernetEnabled */
