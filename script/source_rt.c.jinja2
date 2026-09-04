@@ -37,7 +37,14 @@ static Xcp_SegmentRtType Xcp_SegmentRt{{'%02X' % loop.index0}}[{{'0x%02Xu' % ((c
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static Xcp_DaqListRtType Xcp_DaqListRt{{'%02X' % loop.index0}}[{{'0x%02Xu' % configuration.daqs|length}}];
+{#- One runtime record per DAQ list the configuration can present, which under DAQ_DYNAMIC is the
+   whole pool rather than the lists declared under `daqs` -- there are none. Xcp_Init and
+   Xcp_TriggerEventChannel both index this array by daqCount (source/Xcp.c, source/Xcp_DaqRuntime.c),
+   and daqCount is the pool size under DAQ_DYNAMIC, so anything smaller is read out of bounds
+   before the master has allocated a thing. #}
+{%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+
+static Xcp_DaqListRtType Xcp_DaqListRt{{'%02X' % loop.index0}}[{{'0x%02Xu' % (configuration.daq_dynamic.daq_count if daq_dynamic else configuration.daqs|length)}}];
 
 /* XCP_MAX_DTO reaches this module as a compile definition, so a mismatch between it and the
  * value this runtime was generated for would silently change the stride of the array below.

@@ -126,6 +126,21 @@ extern "C" {
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)
 #define XCP_SESSION_STATUS_MASK_DAQ_RUNNING (0x01u << 0x06u)
 
+/**
+ * @brief how many absolute ODT numbers exist, across every DAQ list together.
+ * @details An absolute ODT number IS the PID a DAQ DTO carries in an ABSOLUTE identification
+ * field (XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1), so it is bounded by the PID
+ * space rather than by any configured dimension. The four highest slave-to-master PIDs are taken:
+ * 0xFC is SERV, 0xFD is EV (XCP_PID_EVENT), 0xFE is ERR (XCP_PID_ERROR) and 0xFF is RES
+ * (XCP_PID_RESPONSE). That leaves 0x00..0xFB, so the count is 0xFC -- the value below is both the
+ * number of usable absolute ODT numbers and the first PID that is not one.
+ * @note ALLOC_ODT enforces this at runtime, against what a master has actually allocated. The
+ * generator deliberately does NOT guard daq_count x odt_count against it for a DAQ_DYNAMIC
+ * configuration (DD31, script/source_cfg.c.jinja2): the pool's rectangle is an upper bound a
+ * master rarely reaches, so guarding it there would refuse configurations that work.
+ */
+#define XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFCu)
+
 /* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
  * Read off the specification's own bit table, which is identical in 1.0 and 1.1 except that 1.1
  * fills bit 0, which 1.0 left don't-care:
@@ -255,6 +270,22 @@ typedef enum {
     XCP_CONNECTION_STATE_RESUME
 } Xcp_ConnectionState;
 
+/**
+ * @brief where a dynamic DAQ list configuration sequence has got to.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1 enumerates six ERR_SEQUENCE
+ * cases, which reduce to these four states and the transition table in Xcp_Daq.c. The initial
+ * value is XCP_DAQ_ALLOC_FREE: §1.6.4.3.1.1 requires the master to send FREE_DAQ first, but that
+ * is a requirement on the master and the slave's enumerated refusals do not include an ALLOC_DAQ
+ * with no preceding command -- nothing is allocated at that point, so accepting it is defined.
+ * @note explicitly 0, since it may live in a cleared memory section.
+ */
+typedef enum {
+    XCP_DAQ_ALLOC_FREE = 0x00u,
+    XCP_DAQ_ALLOC_DAQ,
+    XCP_DAQ_ALLOC_ODT,
+    XCP_DAQ_ALLOC_ODT_ENTRY
+} Xcp_DaqAllocStateType;
+
 typedef struct {
     uint8 connect_mode;
     Xcp_ConnectionState connection_status;
@@ -325,6 +356,15 @@ typedef struct {
         uint8 odtEntryNumber;
         boolean valid;
     } daq_pointer;
+
+    Xcp_DaqAllocStateType daq_alloc_state;
+
+    /**
+     * @brief DAQ lists currently available to the master.
+     * @details Equals Xcp_Ptr->general->daqCount under a STATIC configuration and is raised from
+     * zero by ALLOC_DAQ under a DYNAMIC one, so Xcp_DaqListIsValid serves both models unchanged.
+     */
+    uint16 allocated_daq_count;
     uint8 internal_buffer[0x08u];
 } Xcp_InternalType;
 
@@ -495,6 +535,85 @@ uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInf
  */
 void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
+ * (1.1/1.6.4.3.1.1), but declared here with external linkage because two other places need the
+ * same unwind -- the same arrangement, and for the same kind of reason, as Xcp_DaqListClearEntries
+ * just above. The three callers are:
+ *
+ * - Xcp_DTOCmdDaqFreeDaq (Xcp_Daq.c), for which this is the whole command;
+ * - Xcp_Init (Xcp.c), which has to establish the same invariant at start-up, and whose
+ *   open-coded loop used to leave the descriptor's maxOdt, firstPid and per-ODT entryCount
+ *   standing -- so a re-initialised DYNAMIC module reported nothing allocated while the
+ *   descriptor still described the previous session's lists;
+ * - Xcp_CTOCmdStdDisconnect (Xcp_Std.c), under DYNAMIC only. The allocation state machine starts
+ *   in XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no preceding FREE_DAQ (DD28), and repeats
+ *   accumulate, so an allocation a master leaves standing at DISCONNECT is one the next master's
+ *   ALLOC_DAQ adds to -- handing it more lists than it asked for, carrying the previous session's
+ *   ODT entries.
+ * @note the DISCONNECT caller is gated on DAQ_DYNAMIC. A STATIC configuration has no allocation
+ * to release, and clearing its generated DAQ entries on disconnect would be a behaviour change to
+ * the static model that SP2d is required not to make (DD25).
+ */
+void Xcp_DaqFreeAll(void);
+
+/**
+ * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqAllocOdt: 0xD3 precedes 0xD4 in
+ * the PID table, and the allocation commands are kept together in that order.
+ * @note DD34: raises Xcp_OdtType.entryCount (interface/Xcp_Types.h), the per-ODT field that lets
+ * two ODTs of one list hold different numbers of entries -- daqList[n].maxOdtEntries cannot
+ * express that, and keeps its own DYNAMIC meaning unchanged: the cap any one ODT may reach
+ * (odt_entries_count).
+ * @note DD28: like its three siblings, a repeat naming the same ODT accumulates onto its
+ * entryCount rather than replacing it -- the specification forbids ALLOC_ODT_ENTRY only after
+ * FREE and DAQ, so a repeat from ODT or ODT_ENTRY is permitted, and a permitted repeat that
+ * merely replaced the previous grant would be indistinguishable from one that was refused.
+ * @note this is the step that closes the running-list FIRST_PID safety argument: starting a list
+ * (Xcp_DTOCmdDaqStartStopDaqList) requires Xcp_DaqListIsConfigured, which requires an ODT entry
+ * of non-zero length, which requires entryCount > 0 -- the field only this command raises under
+ * DYNAMIC. This command also leaves the state at XCP_DAQ_ALLOC_ODT_ENTRY, from which
+ * Xcp_DTOCmdDaqAllocOdt answers ERR_SEQUENCE, so once a list has an entry, only FREE_DAQ (which
+ * stops every running list first, DD30) can move its maxOdt, and so its FIRST_PID, again.
+ */
+uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief ALLOC_ODT, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.3.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqAllocDaq: 0xD4 precedes 0xD5 in
+ * the PID table, and the allocation commands are kept together in that order.
+ * @note DD28: like ALLOC_DAQ, repeated calls naming the same DAQ list accumulate onto its maxOdt
+ * rather than replacing it -- the specification forbids ALLOC_ODT only after ALLOC_ODT_ENTRY, so
+ * a repeat from DAQ or ODT is permitted, and a permitted repeat that merely replaced the previous
+ * grant would be indistinguishable from one that was refused.
+ * @note DD31: this is the command that assigns FIRST_PID, and it assigns every list's, not just
+ * the addressed one's. See Xcp_DaqRecomputeFirstPids beside the definition for why a prefix sum
+ * over list index is the only assignment that survives the accumulate rule above.
+ */
+uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief ALLOC_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.2.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqFreeDaq: 0xD5 precedes 0xD6 in
+ * the PID table, and the two are the allocation state machine's grant and release halves.
+ * @note DD28: repeated ALLOC_DAQ calls accumulate onto Xcp_Internal.allocated_daq_count rather
+ * than replacing it -- the specification's ERR_SEQUENCE cases forbid ALLOC_DAQ only after
+ * ALLOC_ODT and ALLOC_ODT_ENTRY, so a repeat from FREE or DAQ is permitted, and a permitted
+ * repeat that merely replaced the previous grant would be indistinguishable from one that was
+ * refused.
+ */
+uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief FREE_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1.
+ * @details Defined in Xcp_Daq.c, immediately after Xcp_DTOCmdDaqClearDaqList: the two are the
+ * module's two reset commands and share Xcp_DaqListReset, differing in scope -- CLEAR_DAQ_LIST
+ * resets one list and keeps its allocation, FREE_DAQ resets every list and releases the
+ * allocation as well.
+ */
+uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdDaqGetDaqListMode(boolean *responseExpected, const PduInfoType *pPduInfo);
 

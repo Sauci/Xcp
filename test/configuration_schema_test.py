@@ -95,3 +95,33 @@ def test_an_event_name_containing_a_quote_is_rejected(schema):
     source at worst -- so the schema has to refuse it before generation ever sees it."""
     with pytest.raises(jsonschema.ValidationError):
         validate(DefaultConfig(events=(event(name='EVT"10MS', triggered_daq_list_ref=['DAQ1']),)), schema)
+
+
+def test_a_dynamic_configuration_is_valid(schema):
+    """The DAQ_DYNAMIC half of the schema is reached by no other test here: every configuration
+    above is DAQ_STATIC, and the harness drives BSWCodeGen directly, so nothing would otherwise
+    check that the daq_dynamic block an integrator has to write is one the schema accepts."""
+    validate(dynamic_config(), schema)
+
+
+def test_a_dynamic_configuration_may_not_also_declare_daq_lists(schema):
+    """`daqs` is required by a static configuration and refused by a dynamic one, which is why it
+    is pinned by the schema's if/then/else rather than by the unconditional required list. The
+    generator refuses the same pair -- this is the half an integrator hits before generation."""
+    configuration = dynamic_config()
+    configuration['configurations'][0]['daqs'] = [daq()]
+
+    with pytest.raises(jsonschema.ValidationError):
+        validate(configuration, schema)
+
+
+def test_a_static_configuration_may_not_declare_a_dynamic_pool(schema):
+    """The mirror: a daq_dynamic block under DAQ_STATIC configures a pool nothing allocates from."""
+    configuration = DefaultConfig()
+    configuration['configurations'][0]['daq_dynamic'] = {"daq_count": 4,
+                                                         "odt_count": 8,
+                                                         "odt_entries_count": 16,
+                                                         "pdu_mapping": "XCP_PDU_ID_TRANSMIT"}
+
+    with pytest.raises(jsonschema.ValidationError):
+        validate(configuration, schema)

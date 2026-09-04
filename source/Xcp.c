@@ -340,10 +340,10 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xD0 */
     Xcp_CmdNotImplemented, /* 0xD1 */
     Xcp_CmdNotImplemented, /* 0xD2 */
-    Xcp_CmdNotImplemented, /* 0xD3, optional */
-    Xcp_CmdNotImplemented, /* 0xD4, optional */
-    Xcp_CmdNotImplemented, /* 0xD5, optional */
-    Xcp_CmdNotImplemented, /* 0xD6, optional */
+    Xcp_DTOCmdDaqAllocOdtEntry, /* ALLOC_ODT_ENTRY 0xD3, optional */
+    Xcp_DTOCmdDaqAllocOdt, /* ALLOC_ODT 0xD4, optional */
+    Xcp_DTOCmdDaqAllocDaq, /* ALLOC_DAQ 0xD5, optional */
+    Xcp_DTOCmdDaqFreeDaq, /* FREE_DAQ 0xD6, optional */
     Xcp_DTOCmdDaqGetDaqEventInfo, /* GET_DAQ_EVENT_INFO 0xD7, optional */
     Xcp_DTOCmdDaqGetDaqListInfo, /* GET_DAQ_LIST_INFO 0xD8, optional */
     Xcp_DTOCmdDaqGetDaqResolutionInfo, /* GET_DAQ_RESOLUTION_INFO 0xD9, optional */
@@ -1107,6 +1107,10 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.connect_mode = XCP_CONNECT_MODE_NORMAL;
             Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
             Xcp_Internal.session_status = 0x00u;
+            Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
+            Xcp_Internal.allocated_daq_count =
+                    (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC) ? 0x0000u
+                                                                     : Xcp_Ptr->general->daqCount;
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
             Xcp_Internal.last_pid = 0x00u;
@@ -1129,20 +1133,37 @@ void Xcp_Init(const Xcp_Type *pConfig)
             for (idx = 0x00000000u; idx < Xcp_Ptr->general->maxSegment; idx ++) {
                 Xcp_Rt[Xcp_Ptr->xcpRtRef].segment[idx].freeze = FALSE;
             }
-            for (idx = 0x00u; idx < Xcp_Ptr->general->daqCount; idx++)
-            {
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].eventChannelNumber = 0x0000u;
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode = 0x00u;
-                /* 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." */
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescaler = 0x01u;
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].prescalerCounter = 0x00u;
-                Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].priority = 0x00u;
-                /* The generated ODT entry arrays are module-level mutable statics with no
-                 * initialisation of their own; reset them here too, or a re-initialised module
-                 * inherits a previous session's DAQ configuration. See
-                 * Xcp_DaqListClearEntries's own doc comment (Xcp_Daq.c). */
-                Xcp_DaqListClearEntries((uint16)idx);
-            }
+            /* Initialisation establishes exactly the invariant FREE_DAQ does, so it runs the same
+             * unwind rather than a second, slightly different copy of it: every DAQ list stopped,
+             * every ODT entry cleared, the prescaler back to 1 (1.1/1.6.4.1.1.3), and -- under
+             * DYNAMIC -- the descriptor's own maxOdt, firstPid and per-ODT entryCount back to
+             * zero.
+             *
+             * That last part is why this is a call and not the open-coded loop it replaces. The
+             * generated DAQ list descriptor and ODT entry arrays are module-level mutable statics
+             * with no initialisation of their own, and under DYNAMIC maxOdt/firstPid/entryCount
+             * ARE the allocation. The loop that used to stand here reset Xcp_DaqListRt and called
+             * Xcp_DaqListClearEntries, but left those three untouched. Two things follow, and
+             * only these two:
+             *
+             *   - A re-initialised module set allocated_daq_count to 0 and daq_alloc_state to
+             *     FREE, reporting nothing allocated, while the descriptor still described the
+             *     previous session's lists. The two halves of the allocation state disagreed,
+             *     and the previous session's shape leaked into the next one.
+             *   - The surviving entryCounts break the argument that a running list's FIRST_PID
+             *     cannot move (see Xcp_DaqRecomputeFirstPids and design §9): that argument needs
+             *     initialisation to zero them.
+             *
+             * What did NOT follow is that the entries themselves were left populated.
+             * Xcp_DaqListClearEntries is bounded by maxOdt and each ODT's entryCount, so counts
+             * surviving is exactly the condition under which it covers every allocated entry --
+             * the clear was correct, and it was correct BECAUSE the counts were still standing.
+             * An earlier version of this comment had that backwards; do not reason from it.
+             *
+             * Ordering: allocated_daq_count is assigned above, before this call. Xcp_DaqFreeAll
+             * lowers it to zero only under DYNAMIC, which is what that assignment already says
+             * there, and leaves the STATIC value (daqCount) alone. */
+            Xcp_DaqFreeAll();
 
             Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->read = 0x00u;
             Xcp_Rt[Xcp_Ptr->xcpRtRef].dtoQueue->write = 0x00u;

@@ -1101,6 +1101,24 @@ uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPdu
 
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
 
+    /* Release a dynamic allocation the disconnecting master never freed, so it cannot leak into
+     * the next session. DYNAMIC only, and deliberately so: the gap being closed is that the
+     * allocation state machine starts in XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no
+     * preceding FREE_DAQ (DD28), and repeated ALLOC_DAQ accumulates -- so an allocation left
+     * standing at DISCONNECT is one the NEXT master's ALLOC_DAQ adds to, handing it more lists
+     * than it asked for, carrying the previous session's ODT entries. A STATIC configuration has
+     * no allocation to leak: its lists are generated, not allocated, so there is nothing here for
+     * it to release.
+     *
+     * This therefore does not touch a static build's configured DAQ entries. Whether DISCONNECT
+     * ought to clear those as well is a separate question about XCP part 1 - Overview 2.3 and is
+     * not settled here; changing it would be a behaviour change to the static model, which SP2d
+     * is required to leave byte-for-byte as it is (DD25). */
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        Xcp_DaqFreeAll();
+    }
+
     return E_OK;
 }
 

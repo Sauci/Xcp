@@ -172,19 +172,19 @@
           "protected": false
         },
         "xcp_free_daq_api_enable": {
-          "enabled": true,
+          "enabled": false,
           "protected": false
         },
         "xcp_alloc_daq_api_enable": {
-          "enabled": true,
+          "enabled": false,
           "protected": false
         },
         "xcp_alloc_odt_api_enable": {
-          "enabled": true,
+          "enabled": false,
           "protected": false
         },
         "xcp_alloc_odt_entry_api_enable": {
-          "enabled": true,
+          "enabled": false,
           "protected": false
         },
         "xcp_program_clear_api_enable": {

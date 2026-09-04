@@ -17,7 +17,7 @@
 
 static boolean Xcp_DaqListIsValid(uint16 daqListNumber)
 {
-    return (boolean)((daqListNumber < Xcp_Ptr->general->daqCount) ? TRUE : FALSE);
+    return (boolean)((daqListNumber < Xcp_Internal.allocated_daq_count) ? TRUE : FALSE);
 }
 
 static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
@@ -29,8 +29,9 @@ static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
  * @brief resets every ODT entry of one DAQ list to its power-up state.
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1: "For a configurable DAQ
  * list, all ODT entries will be reset to address=0, extension=0 and size=0 (if valid :
- * bit_offset = 0xFF)." Bounded by daqListNumber's own maxOdt/maxOdtEntries, not any other list's,
- * so clearing one list never touches another's entries.
+ * bit_offset = 0xFF)." Bounded by daqListNumber's own maxOdt and, within each ODT, that ODT's own
+ * entryCount -- not maxOdtEntries, which is the slice's width rather than what is in it, and not
+ * any other list's counts, so clearing one list never touches another's entries.
  * @note Despite living beside this file's other file-local helpers, this one has external
  * linkage and a declaration in Xcp_Internal.h: Xcp_Init (source/Xcp.c) calls it too. The
  * generated ODT entry arrays are module-level mutable statics (script/source_cfg.c.jinja2 emits
@@ -42,10 +43,10 @@ static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
  * CanIf's receive context while the sampler walks the same array from a task or an interrupt --
  * including the sampler's own interrupt preempting a clear already in progress at task level, the
  * direction a lock taken only on the read side cannot help with. The inner loop below is wrapped
- * per ODT, not once for the whole nest, so each critical section is bounded by maxOdtEntries field
- * writes rather than maxOdt * maxOdtEntries: neither Xcp_Init (source/Xcp.c) nor
- * Xcp_DTOCmdDaqClearDaqList, this function's only callers, hold the area themselves, so nesting
- * across ODTs is not a concern either way.
+ * per ODT, not once for the whole nest, so each critical section is bounded by that ODT's
+ * entryCount field writes rather than by the sum of them over maxOdt: neither Xcp_Init
+ * (source/Xcp.c) nor Xcp_DTOCmdDaqClearDaqList, this function's only callers, hold the area
+ * themselves, so nesting across ODTs is not a concern either way.
  */
 void Xcp_DaqListClearEntries(uint16 daqListNumber)
 {
@@ -57,7 +58,7 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
         SchM_Enter_Xcp_DtoQueue();
 
         for (entry_idx = 0x00u;
-             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].entryCount;
              entry_idx++)
         {
             Xcp_OdtEntryType *p_entry =
@@ -71,6 +72,35 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
 
         SchM_Exit_Xcp_DtoQueue();
     }
+}
+
+/**
+ * @brief returns one DAQ list's runtime state to its power-up values.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1 for CLEAR_DAQ_LIST and
+ * 1.1/1.6.4.3.1.1 for FREE_DAQ: both stop transmission on the list and reset its state. The
+ * prescaler returns to 1, not 0 -- 1.1/1.6.4.1.1.3, "Without reduction, the prescaler value must
+ * equal 1", and a zero prescaler would mean Xcp_TriggerEventChannel's `prescalerCounter >=
+ * prescaler` never fails, i.e. every trigger elapses, not none. Xcp_Init resets the same five
+ * fields to the same five values.
+ * @note the entries are cleared BEFORE any caller zeroes the counts that describe them:
+ * Xcp_DaqListClearEntries is bounded by this list's own maxOdt and per-ODT entryCount, so a
+ * caller that zeroed those first would leave the entries themselves untouched. Xcp_DaqFreeAll
+ * below therefore clears first and zeroes second, and Xcp_Init reaches this through that same
+ * function for the same reason.
+ * @note the caller invalidates the DAQ pointer if it names this list, and calls
+ * Xcp_DaqSessionStatusUpdate once it has reset every list it intends to -- DAQ_RUNNING is a
+ * property of every list together (1.1/1.6.1.1.3), so recomputing it per list would be wrong for
+ * a caller resetting more than one.
+ */
+static void Xcp_DaqListReset(uint16 daqListNumber)
+{
+    Xcp_DaqListClearEntries(daqListNumber);
+
+    Xcp_DaqListRt(daqListNumber)->mode = 0x00u;
+    Xcp_DaqListRt(daqListNumber)->eventChannelNumber = 0x0000u;
+    Xcp_DaqListRt(daqListNumber)->prescaler = 0x01u;
+    Xcp_DaqListRt(daqListNumber)->prescalerCounter = 0x00u;
+    Xcp_DaqListRt(daqListNumber)->priority = 0x00u;
 }
 
 /**
@@ -122,7 +152,7 @@ static uint8 Xcp_OdtUsedBytes(uint16 daqListNumber, uint8 odtNumber, uint8 exclu
     uint8 used = 0x00u;
     uint8_least idx;
 
-    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries; idx++)
+    for (idx = 0x00u; idx < p_odt->entryCount; idx++)
     {
         if (idx != (uint8_least)excludedEntry)
         {
@@ -170,7 +200,8 @@ static uint8 Xcp_DaqOdtEntryBudget(uint16 daqListNumber, uint8 odtNumber)
 static void Xcp_DaqPointerAdvance(void)
 {
     if ((uint16)(Xcp_Internal.daq_pointer.odtEntryNumber + 0x01u) <
-        (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber].maxOdtEntries)
+        (uint16)Xcp_Ptr->config->daqList[Xcp_Internal.daq_pointer.daqListNumber]
+                .odt[Xcp_Internal.daq_pointer.odtNumber].entryCount)
     {
         Xcp_Internal.daq_pointer.odtEntryNumber++;
     }
@@ -285,7 +316,7 @@ static boolean Xcp_DaqListIsConfigured(uint16 daqListNumber)
     for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdt; odt_idx++)
     {
         for (entry_idx = 0x00u;
-             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries;
+             entry_idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].entryCount;
              entry_idx++)
         {
             if (Xcp_Ptr->config->daqList[daqListNumber].odt[odt_idx].odtEntry[entry_idx].length != 0x00u)
@@ -327,6 +358,86 @@ static void Xcp_DaqSessionStatusUpdate(void)
     }
 }
 
+/**
+ * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
+ * @details The body of FREE_DAQ (1.1/1.6.4.3.1.1), factored out because DISCONNECT needs exactly
+ * the same unwind -- see this function's declaration in Xcp_Internal.h for why, and
+ * Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) for the other call site.
+ */
+void Xcp_DaqFreeAll(void)
+{
+    uint16 daq_idx;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1: "This command clears all DAQ
+     * lists and frees all dynamically allocated DAQ lists, ODTs and ODT entries."
+     *
+     * DD30. The unwind order is the reverse of allocation and is not stylistic.
+     * Xcp_TriggerEventChannel (source/Xcp_DaqRuntime.c) runs in interrupt context and reaches
+     * entry storage by walking maxOdt, then each ODT's entryCount, so a count must never outlive
+     * the storage it describes -- the DD14 failure class.
+     *
+     * The actual order, per list, is: entries cleared, then the list stopped (both inside
+     * Xcp_DaqListReset, in that order -- it calls Xcp_DaqListClearEntries before it writes
+     * mode = 0), then, in the second loop below, the counts zeroed. Clearing before stopping is
+     * not an oversight and is not the other way round: Xcp_DaqListClearEntries is bounded by
+     * maxOdt and each ODT's entryCount, so it must run while those counts still describe the
+     * storage, and a trigger interleaved between the clear and the stop finds entries whose
+     * length is already 0 and samples nothing from them. Zeroing the counts last means a trigger
+     * interleaved at any point after that sees zero and walks nothing at all, rather than a stale
+     * count into released storage. Xcp_DaqListClearEntries takes the DAQ exclusive area for the
+     * entry writes themselves, and the count writes below take it too.
+     *
+     * The loops are bounded by the configured pool, Xcp_Ptr->general->daqCount, rather than by
+     * Xcp_Internal.allocated_daq_count. That is the range Xcp_TriggerEventChannel itself walks
+     * (and Xcp_DaqSessionStatusUpdate above with it), so it is the range that has to be left safe
+     * against the sampler; bounding by the allocated count instead would, if the two ever
+     * disagreed, leave a list with a non-zero maxOdt standing while this function reported having
+     * freed everything. Under STATIC the two bounds are equal by construction (Xcp_Init), and
+     * under DYNAMIC every list above the allocated count already holds a zeroed descriptor, so
+     * the wider bound costs a few no-op writes and can never do less than the narrower one.
+     *
+     * Do not narrow this to allocated_daq_count. The no-op writes are what it looks like it
+     * buys, and they are not the point: the point is that the sampler's bound and this function's
+     * bound are the same number, so no list the sampler can reach is outside what this releases. */
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+    {
+        Xcp_DaqListReset(daq_idx);
+    }
+
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+        {
+            uint8_least odt_idx;
+
+            SchM_Enter_Xcp_DtoQueue();
+
+            for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+            {
+                Xcp_Ptr->config->daqList[daq_idx].odt[odt_idx].entryCount = 0x00u;
+            }
+
+            Xcp_Ptr->config->daqList[daq_idx].maxOdt = 0x00u;
+            /* DD31: firstPid is a prefix sum over the lists' ODT counts, so zeroing every count
+             * makes every prefix sum zero. Recomputing it would produce the same answer; writing
+             * it here keeps the descriptor consistent without a second pass. */
+            Xcp_Ptr->config->daqList[daq_idx].firstPid = 0x00u;
+
+            SchM_Exit_Xcp_DtoQueue();
+        }
+
+        Xcp_Internal.allocated_daq_count = 0x0000u;
+    }
+
+    /* The resets above may have stopped the only running list, so DAQ_RUNNING (1.1/1.6.1.1.3)
+     * needs recomputing across every list rather than per list. */
+    Xcp_DaqSessionStatusUpdate();
+
+    /* The pointer names an ODT entry that no longer exists. */
+    Xcp_Internal.daq_pointer.valid = FALSE;
+    Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -366,7 +477,7 @@ uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduI
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }
-    else if (odt_entry_number >= Xcp_Ptr->config->daqList[daq_list_number].maxOdtEntries)
+    else if (odt_entry_number >= Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount)
     {
         error = XCP_E_ASAM_OUT_OF_RANGE;
     }
@@ -578,17 +689,17 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     {
         /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1
          * "For a configurable DAQ list, all ODT entries will be reset to address=0, extension=0
-         * and size=0 (if valid : bit_offset = 0xFF)." */
-        Xcp_DaqListClearEntries(daq_list_number);
-
-        /* "For PREDEFINED and configurable DAQ lists, the running Data Transmission on this list
+         * and size=0 (if valid : bit_offset = 0xFF)."
+         *
+         * "For PREDEFINED and configurable DAQ lists, the running Data Transmission on this list
          * will be stopped and all DAQ list states are reset." The command is therefore legal
-         * while the list runs -- see defect D10 against the error matrix. */
-        Xcp_DaqListRt(daq_list_number)->mode = 0x00u;
-        Xcp_DaqListRt(daq_list_number)->eventChannelNumber = 0x0000u;
-        Xcp_DaqListRt(daq_list_number)->prescaler = 0x01u;
-        Xcp_DaqListRt(daq_list_number)->prescalerCounter = 0x00u;
-        Xcp_DaqListRt(daq_list_number)->priority = 0x00u;
+         * while the list runs -- see defect D10 against the error matrix.
+         *
+         * Both halves are Xcp_DaqListReset, shared with FREE_DAQ (1.1/1.6.4.3.1.1), which resets
+         * every list the same way. The two commands stay distinct in what they do around it:
+         * CLEAR_DAQ_LIST resets one list and keeps its allocation, FREE_DAQ resets all of them
+         * and releases the allocation as well. */
+        Xcp_DaqListReset(daq_list_number);
 
         /* The mode reset above may have just stopped the only list that was running, so
          * DAQ_RUNNING (1.1/1.6.1.1.3) needs recomputing across every list, not just this one. */
@@ -613,6 +724,329 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     {
         Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
     }
+
+    return E_OK;
+}
+
+/**
+ * @brief reassigns every DAQ list's FIRST_PID as a prefix sum over the ODT counts.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the absolute ODT number of
+ * relative ODT i in a list is FIRST_PID + i, so each list's block must be contiguous and no two
+ * blocks may overlap. Assigning PIDs in ALLOC_ODT call order cannot hold that once a list may
+ * receive ODTs in more than one call, so the whole set is recomputed instead. This is the same
+ * rule script/source_cfg.c.jinja2 applies to a static configuration.
+ *
+ * Concretely, ALLOC_ODT(0, 2), ALLOC_ODT(1, 3), ALLOC_ODT(0, 1) is a legal sequence -- DD28 makes
+ * the third call accumulate -- and it leaves list 0 needing three contiguous numbers when a
+ * call-order scheme has already handed 2..4 to list 1. There is no way to repair that by
+ * appending; the assignment has to be a function of the counts alone, which is what a prefix sum
+ * over list index is. It is also order-independent, so the same set of requests in any order
+ * produces the same layout.
+ *
+ * Bounded by Xcp_Internal.allocated_daq_count rather than by the configured pool, and that is the
+ * narrower bound on purpose: a list the master has not allocated cannot have ODTs (ALLOC_ODT
+ * refuses it), so including it would add nothing to the running sum, while the numbers it would
+ * write past the allocated count are meaningless -- no command reports them and no DTO carries
+ * them. Xcp_DaqFreeAll zeroes firstPid across the whole pool, so nothing stale survives there
+ * either.
+ *
+ * @note `next` is a uint8, matching the field, and cannot wrap: Xcp_DTOCmdDaqAllocOdt refuses any
+ * request that would take the total past XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFC), so the sum this
+ * accumulates is at most 0xFC and every value written is at most 0xFC. The check is what makes
+ * the arithmetic here safe, not the other way round.
+ *
+ * 0xFC, not 0xFB: the bound on a *usable* absolute ODT number is 0xFB, because 0xFC..0xFF are the
+ * slave-to-master SERV, EV, ERR and RES codes, but a firstPid of exactly 0xFC is reachable and is
+ * written. With the total at 252 and an allocated-but-empty list after the full one, that list's
+ * prefix sum is 0xFC -- the state test_alloc_odt_refuses_to_exhaust_the_pid_space creates. It is
+ * harmless because it is the address of a first ODT that does not exist: that list's maxOdt is 0,
+ * so Xcp_TriggerEventChannel's ODT loop never runs for it and no frame can carry the value. It is
+ * still observable, in the FIRST_PID byte START_STOP_DAQ_LIST mode STOP returns for that list,
+ * which correctly names where its first ODT *would* begin. A master that then allocated an ODT
+ * there would be refused by the same 0xFC ceiling before the number could ever reach the wire.
+ */
+static void Xcp_DaqRecomputeFirstPids(void)
+{
+    uint16 daq_idx;
+    uint8 next = 0x00u;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
+    {
+        Xcp_Ptr->config->daqList[daq_idx].firstPid = next;
+        next = (uint8)(next + Xcp_Ptr->config->daqList[daq_idx].maxOdt);
+    }
+}
+
+/**
+ * @brief total ODTs currently allocated across every DAQ list the master holds.
+ * @details The quantity XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX bounds, and the same sum
+ * Xcp_DaqRecomputeFirstPids ends on.
+ * @note uint16, not the uint8 the ODT counts themselves live in, so that neither this total nor
+ * the caller's total-plus-ODT_COUNT is ever narrowed back to eight bits. That narrowing is a
+ * reachable defect, not a theoretical one: a pool whose odtCount is 252 admits a second request
+ * for 252 on a list holding none, and 252 + 252 is 248 in a uint8 -- under the very ceiling it is
+ * being compared against, so the check would pass exactly the request it exists to refuse.
+ * test/alloc_odt_test.py::test_alloc_odt_ceiling_holds_where_a_uint8_total_would_wrap pins that.
+ *
+ * The type that matters is the one the sum is stored or cast to, not this return type on its own:
+ * C's integer promotions widen both operands of the caller's addition to int, so a uint8 return
+ * value alone would still compute 504 correctly there. Spelling both uint16 is what keeps the
+ * result from depending on that, and on nobody later adding a cast back.
+ */
+static uint16 Xcp_DaqAllocatedOdtCount(void)
+{
+    uint16 daq_idx;
+    uint16 total = 0x0000u;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
+    {
+        total = (uint16)(total + (uint16)Xcp_Ptr->config->daqList[daq_idx].maxOdt);
+    }
+
+    return total;
+}
+
+/**
+ * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.
+ * @details The refusals are ordered the same way Xcp_DTOCmdDaqAllocOdt's are: SEQUENCE, then
+ * OUT_OF_RANGE -- the list, then the ODT within it -- then MEMORY_OVERFLOW, each a narrower
+ * question than the one before.
+ *
+ * Unlike ALLOC_ODT and ALLOC_DAQ, there is no second, cross-list ceiling to check here: an ODT's
+ * entries live in that ODT's own slice of the pool (script/source_cfg.c.jinja2's
+ * Xcp_OdtEntryConfig, sliced odt_entries_count wide per ODT), so the one bound against
+ * Xcp_Ptr->general->odtEntriesCount -- read from the general configuration rather than from
+ * daqList[n].maxOdtEntries so the ceiling is stated once, even though DYNAMIC gives both the same
+ * value -- is everything there is to check.
+ * @note DD28: repeated calls naming the same ODT accumulate onto its entryCount rather than
+ * replacing it, for the same reason ALLOC_ODT and ALLOC_DAQ accumulate: the specification's
+ * ERR_SEQUENCE cases forbid ALLOC_ODT_ENTRY only after FREE and DAQ, so a repeat from ODT or
+ * ODT_ENTRY is permitted, and a permitted repeat that merely replaced the previous grant would be
+ * indistinguishable from one that was refused.
+ * @note the running sum is a uint16: entryCount and odt_entries_count are both uint8, and 255 +
+ * 255 would wrap a uint8 total back under most any ceiling worth checking against.
+ * @note DD34, and the closing step of the running-list FIRST_PID safety argument -- see this
+ * function's declaration in Xcp_Internal.h for the full chain.
+ */
+uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 odt_number = pPduInfo->SduDataPtr[0x04u];
+    const uint8 odt_entries_count = pPduInfo->SduDataPtr[0x05u];
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if ((Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_ODT) &&
+        (Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_ODT_ENTRY))
+    {
+        /* ERR_SEQUENCE for an ALLOC_ODT_ENTRY that has had no ALLOC_ODT before it -- unlike
+         * ALLOC_ODT, a bare ALLOC_DAQ is not enough -- or that follows a FREE_DAQ with nothing
+         * reallocated since. */
+        error = XCP_E_ASAM_SEQUENCE;
+    }
+    else if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        /* DD32: valid means allocated, not merely inside the configured pool. */
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if (odt_number >= Xcp_Ptr->config->daqList[daq_list_number].maxOdt)
+    {
+        /* Bounded against this list's own maxOdt, the same way Xcp_DaqListIsValid bounds the list
+         * number against allocated_daq_count just above: an ODT ALLOC_ODT has not handed this
+         * list is "not available" either. */
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((uint16)((uint16)Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount +
+                       (uint16)odt_entries_count) >
+             (uint16)Xcp_Ptr->general->odtEntriesCount)
+    {
+        error = XCP_E_ASAM_MEMORY_OVERFLOW;
+    }
+    else
+    {
+        /* Raised, not assigned: DD28 makes a repeat naming the same ODT accumulate. Rejected
+         * whole above, never in part -- a partly applied allocation would leave the master unaware
+         * of how much it actually has. */
+        SchM_Enter_Xcp_DtoQueue();
+
+        Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount =
+                (uint8)(Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount +
+                        odt_entries_count);
+
+        SchM_Exit_Xcp_DtoQueue();
+
+        Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_ODT_ENTRY;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 odt_count = pPduInfo->SduDataPtr[0x04u];
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.3. The refusals below are ordered by
+     * the error matrix's own precedence -- SEQUENCE, then OUT_OF_RANGE, then MEMORY_OVERFLOW,
+     * which two independent capacity limits share -- and each asks a narrower question than the
+     * one before: the command stream, then the list named, then how much room is left. */
+    if ((Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_DAQ) &&
+        (Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_ODT))
+    {
+        /* ERR_SEQUENCE for an ALLOC_ODT that has had no ALLOC_DAQ before it, or that follows an
+         * ALLOC_ODT_ENTRY without a FREE_DAQ in between. */
+        error = XCP_E_ASAM_SEQUENCE;
+    }
+    else if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        /* DD32: valid means allocated, not merely inside the configured pool. A list ALLOC_DAQ
+         * has not handed out is "not available", so it answers ERR_OUT_OF_RANGE. */
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((uint16)((uint16)Xcp_Ptr->config->daqList[daq_list_number].maxOdt + (uint16)odt_count) >
+             (uint16)Xcp_Ptr->general->odtCount)
+    {
+        /* The pool is rectangular (ECUC_Xcp_00054), so one list may hold odtCount ODTs and no
+         * more -- its slice of the generated ODT array is exactly that wide. odtCount is zero
+         * under a STATIC configuration, which is not a hazard here: script/source_cfg.c.jinja2
+         * refuses a STATIC configuration that enables any of the four allocation APIs, so 0xD4 is
+         * unreachable in a build where this bound would be zero. */
+        error = XCP_E_ASAM_MEMORY_OVERFLOW;
+    }
+    else if ((uint16)(Xcp_DaqAllocatedOdtCount() + (uint16)odt_count) >
+             (uint16)XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX)
+    {
+        /* A second, independent ceiling: the per-list slice above says nothing about the total,
+         * and absolute ODT numbers are drawn from one PID space shared by every list. */
+        error = XCP_E_ASAM_MEMORY_OVERFLOW;
+    }
+    else
+    {
+        /* Both writes under one exclusive area, because a trigger interleaved between them would
+         * transmit a frame whose PID belongs to the layout being replaced: Xcp_TriggerEventChannel
+         * walks maxOdt and Xcp_DaqWriteIdentificationField (source/Xcp_DaqRuntime.c) computes an
+         * ABSOLUTE field's PID as firstPid + ODT number. This is the DD14 failure class, and the
+         * reason the recompute is inside the area rather than after it -- raising maxOdt is what
+         * makes the standing firstPid values wrong.
+         *
+         * The mechanism is interrupt suppression, not mutual exclusion, and the difference matters
+         * for anyone reasoning about it: the sampler does NOT take this area around its own reads.
+         * Xcp_TriggerEventChannel reads maxOdt and Xcp_DaqWriteIdentificationField reads firstPid
+         * with no area held (Xcp_DaqSampleOdt takes it only around the ODT-entry copy, DD14). What
+         * protects the pair is that the sampler runs in an interrupt this area suppresses on a
+         * target, so it cannot land between the two writes at all. On the test harness, where
+         * SchM_Enter_Xcp_DtoQueue suppresses nothing, an injected trigger inside the held area is
+         * a preemption the target cannot have -- which is why test/free_daq_test.py sweeps its
+         * interleavings from SchM_Exit's side effect rather than SchM_Enter's.
+         *
+         * Raised, not assigned: DD28 makes a repeat naming the same list accumulate. Rejected
+         * whole above, never in part -- a partly applied allocation would leave the master
+         * unaware of how much it actually has, and would put the prefix sum out of step with what
+         * the response said. */
+        SchM_Enter_Xcp_DtoQueue();
+
+        Xcp_Ptr->config->daqList[daq_list_number].maxOdt =
+                (uint8)(Xcp_Ptr->config->daqList[daq_list_number].maxOdt + odt_count);
+
+        Xcp_DaqRecomputeFirstPids();
+
+        SchM_Exit_Xcp_DtoQueue();
+
+        Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_ODT;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqAllocDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 daq_count;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_count, Xcp_Ptr->general->byteOrder);
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.2: ERR_SEQUENCE for an ALLOC_DAQ
+     * directly after an ALLOC_ODT or an ALLOC_ODT_ENTRY without a FREE_DAQ in between. Sequence is
+     * checked before the argument, because it is a statement about the command stream rather than
+     * about this command's parameters. */
+    if ((Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_FREE) &&
+        (Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_DAQ))
+    {
+        error = XCP_E_ASAM_SEQUENCE;
+    }
+    else if ((uint32)((uint32)Xcp_Internal.allocated_daq_count + (uint32)daq_count) >
+             (uint32)Xcp_Ptr->general->daqCount)
+    {
+        /* "If there's not enough memory available to allocate the requested DAQ lists an
+         * ERR_MEMORY_OVERFLOW will be returned." Rejected whole: a partly applied allocation
+         * would leave the master unaware of how much it actually has. */
+        error = XCP_E_ASAM_MEMORY_OVERFLOW;
+    }
+    else
+    {
+        Xcp_Internal.allocated_daq_count = (uint16)(Xcp_Internal.allocated_daq_count + daq_count);
+        Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_DAQ;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* The request carries no argument, so there is nothing to validate and nothing to refuse.
+     * DD29: Xcp_CTOErrorMatrix (source/Xcp.c) gives 0xD6 only CMD_BUSY, PGM_ACTIVE, CMD_UNKNOWN
+     * and CMD_SYNTAX -- ERR_DAQ_ACTIVE is absent, so refusing a running slave is not authorised.
+     * FREE_DAQ therefore stops every running list rather than refusing, which Xcp_DaqFreeAll does.
+     * DD28 gives FREE_DAQ "any" as its accepted-from state, so there is no ERR_SEQUENCE either. */
+    Xcp_DaqFreeAll();
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
 
     return E_OK;
 }
@@ -661,8 +1095,9 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
      * Diagram 10), so enabling it shrinks that ODT's budget below the MAX_ODT_ENTRY_SIZE_DAQ that
      * GET_DAQ_RESOLUTION_INFO reports and WRITE_DAQ enforced when the entries were written. An ODT
      * 0 already filled past the reduced budget cannot carry one. 0xFFu as excludedEntry excludes
-     * nothing -- every configured slot is counted; no real index can equal it because the loop in
-     * Xcp_OdtUsedBytes bounds idx strictly below maxOdtEntries, itself a uint8.
+     * nothing -- every allocated slot is counted; no real index can equal it because the loop in
+     * Xcp_OdtUsedBytes bounds idx strictly below that ODT's entryCount, itself a uint8, so the
+     * largest index it ever reaches is 0xFE.
      *
      * maxOdt first, and short-circuited: a list configured with max_odt 0 has no ODT 0 at all, and
      * its generated Xcp_OdtType array is zero-length, so passing 0x00u to Xcp_OdtUsedBytes reads
@@ -1139,12 +1574,16 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
 
     *responseExpected = TRUE;
 
-    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4
-     * DAQ_CONFIG_TYPE stays clear: this phase configures DAQ lists statically. RESUME and
-     * BIT_STIM are unimplemented and so are reported unsupported, which is what lets
-     * SET_DAQ_LIST_MODE refuse the matching mode bits. TIMESTAMP_SUPPORTED and PID_OFF_SUPPORTED
-     * are not in that group: TIMESTAMP_SUPPORTED follows whether the configuration declares a
-     * clock, set just below; PID_OFF_SUPPORTED follows the identification field type, set here. */
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE now follows the
+     * configuration: a DAQ_DYNAMIC build lets the master allocate lists through 1.1/1.6.4.3.1,
+     * where a DAQ_STATIC build serves the lists the generator declared. RESUME and BIT_STIM
+     * remain unimplemented and so remain reported unsupported, which is what lets
+     * SET_DAQ_LIST_MODE refuse the matching mode bits. */
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        properties |= XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE;
+    }
+
     if (Xcp_Ptr->general->prescalerSupported == TRUE)
     {
         properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;

@@ -94,7 +94,7 @@
                   "default": "DAQ"
                 },
                 "triggered_daq_list_ref": {
-                  "description": "References all DAQ lists that are trigged by this event channel (see ECUC_Xcp_00151)",
+                  "description": "References all DAQ lists that are trigged by this event channel (see ECUC_Xcp_00151). Required by a DAQ_STATIC configuration and refused by a DAQ_DYNAMIC one -- see the $comment beside the if/then/else at the end of this configuration item -- because a dynamic configuration declares no DAQ lists for a reference to name. Every list the master allocates out of the pool may bind to any event channel, so a dynamic configuration reports the whole pool as each channel's MAX_DAQ_LIST instead",
                   "type": "array",
                   "items": {
                     "type": "string"
@@ -104,8 +104,7 @@
               "required": [
                 "priority",
                 "time_cycle",
-                "time_unit",
-                "triggered_daq_list_ref"
+                "time_unit"
               ]
             },
             "minItems": 1,
@@ -175,6 +174,42 @@
               ]
             },
             "minItems": 1
+          },
+          "daq_dynamic": {
+            "description": "Dimensions of the DAQ pool a DAQ_DYNAMIC configuration reserves at build time, and which the master hands out at runtime through FREE_DAQ, ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY. Required when protocol_layer.daq_config_type is DYNAMIC, and rejected otherwise: a pool nothing can ever allocate from would silently go nowhere. AUTOSAR's capacity model is rectangular, so the reservation is daq_count x odt_count x odt_entries_count in full, and every DAQ list gets the same caps",
+            "type": "object",
+            "properties": {
+              "daq_count": {
+                "description": "DAQ_COUNT indicates the number of DAQ lists the master may allocate (DYNAMIC configuration) (see ECUC_Xcp_00012). Generation refuses a value above 255: GET_DAQ_EVENT_INFO transmits MAX_DAQ_LIST as one byte (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.7), and a dynamic configuration reports the pool size there because any allocated list may bind to any event channel",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 65535
+              },
+              "odt_count": {
+                "description": "This parameter indicates the maximum amount of ODTs in a DAQ list (DYNAMIC configuration) (see ECUC_Xcp_00054)",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 252
+              },
+              "odt_entries_count": {
+                "description": "This parameter indicates the maximum amount of entries in an ODT (DYNAMIC configuration) (see ECUC_Xcp_00059)",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "pdu_mapping": {
+                "description": "This reference specifies the mapping of the DTO to the PDU from the lower-layer interface every list in the pool transmits on. A dynamic configuration declares no DAQ lists of its own, so there is no per-list pdu_mapping to take this from (see ECUC_Xcp_00067)",
+                "type": "string",
+                "pattern": "[A-Z_][A-Z0-9_]*"
+              }
+            },
+            "required": [
+              "daq_count",
+              "odt_count",
+              "odt_entries_count",
+              "pdu_mapping"
+            ],
+            "additionalProperties": false
           },
           "segments": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/segment"}},
           "paging": {"$ref": "#/definitions/paging"},
@@ -390,6 +425,15 @@
             "description": "This container allows the user to specify protocol layer specific parameters. This is not part of the specification",
             "type": "object",
             "properties": {
+              "daq_config_type": {
+                "description": "Sets the DAQ_CONFIG_TYPE bit within DAQ_PROPERTIES to static or dynamic (see ECUC_Xcp_00164). DAQ_STATIC generates the DAQ lists declared under daqs; DAQ_DYNAMIC generates an empty pool the master fills through FREE_DAQ, ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY",
+                "type": "string",
+                "enum": [
+                  "STATIC",
+                  "DYNAMIC"
+                ],
+                "default": "STATIC"
+              },
               "byte_order": {
                 "type": "string",
                 "enum": [
@@ -579,10 +623,67 @@
         "required": [
           "communication",
           "events",
-          "daqs",
           "apis",
           "protocol_layer"
         ],
+        "$comment": "daqs is deliberately absent from the required list above and pinned by the if/then/else below instead: it is required by a DAQ_STATIC configuration, which is what declares DAQ lists, and refused outright by a DAQ_DYNAMIC one, which declares a pool for the master to allocate out of. daq_dynamic is the exact mirror. The two directions are also guarded in script/source_cfg.c.jinja2, because a configuration reaches the generator through BSWCodeGen's Python API without passing this schema at all",
+        "if": {
+          "required": [
+            "protocol_layer"
+          ],
+          "properties": {
+            "protocol_layer": {
+              "required": [
+                "daq_config_type"
+              ],
+              "properties": {
+                "daq_config_type": {
+                  "const": "DYNAMIC"
+                }
+              }
+            }
+          }
+        },
+        "then": {
+          "required": [
+            "daq_dynamic"
+          ],
+          "not": {
+            "required": [
+              "daqs"
+            ]
+          },
+          "properties": {
+            "events": {
+              "items": {
+                "not": {
+                  "required": [
+                    "triggered_daq_list_ref"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "else": {
+          "required": [
+            "daqs"
+          ],
+          "not": {
+            "required": [
+              "daq_dynamic"
+            ]
+          },
+          "properties": {
+            "events": {
+              "items": {
+                "required": [
+                  "triggered_daq_list_ref"
+                ]
+              }
+            }
+          }
+        },
         "additionalProperties": false
       },
       "minItems": 1

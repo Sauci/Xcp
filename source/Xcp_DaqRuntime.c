@@ -118,8 +118,10 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
  * write once the entries of one ODT would sum past odtEntrySizeDaq = XCP_MAX_DTO -
  * <identification field size> bytes, and every entry that contributes at all contributes at least
  * one byte. So at most XCP_MAX_DTO - 1 entries can ever be simultaneously non-empty, regardless of
- * maxOdtEntries or which slots they occupy. The scan below therefore walks every configured slot
- * (cheap: one length comparison, no per-slot storage) but copies only the non-empty ones,
+ * maxOdtEntries or which slots they occupy. The scan below therefore walks every slot the ODT
+ * holds -- its entryCount, which is every configured slot under STATIC and exactly what
+ * ALLOC_ODT_ENTRY handed out under DYNAMIC
+ * (cheap: one length comparison, no per-slot storage) -- but copies only the non-empty ones,
  * compacted, and stops copying -- defensively; the bound above says this cannot trigger -- once
  * XCP_MAX_DTO copies have been made. This is what keeps a function that may run in an interrupt
  * from putting up to 255 (a uint8 count) full entries, or roughly 1 KB, on its stack.
@@ -149,7 +151,7 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
 
     SchM_Enter_Xcp_DtoQueue();
 
-    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].maxOdtEntries; idx++)
+    for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount; idx++)
     {
         const Xcp_OdtEntryType *p_live =
                 &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[idx];

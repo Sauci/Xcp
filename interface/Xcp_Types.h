@@ -385,7 +385,17 @@ typedef struct
     /**
      * @brief index number of this ODT within the DAQ list
      */
-    const uint8 odtNumber;
+    uint8 odtNumber;
+
+    /**
+     * @brief number of ODT entries allocated to this ODT.
+     * @details Under a STATIC configuration the generator seeds this with the DAQ list's
+     * max_odt_entries for every ODT, so it equals maxOdtEntries throughout. Under DYNAMIC it
+     * starts at zero and ALLOC_ODT_ENTRY raises it, which is what lets two ODTs of one list hold
+     * different numbers of entries.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.
+     */
+    uint8 entryCount;
 
     /**
      * @brief this reference maps the ODT to the according DTO in which it will be transmitted
@@ -398,9 +408,17 @@ typedef struct
     Xcp_OdtEntryType *odtEntry;
 } Xcp_OdtType;
 
+/**
+ * @note The members below are not const because a DAQ_DYNAMIC configuration assigns them at
+ * runtime from ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY (1.1/1.6.4.3.1). A struct definition
+ * cannot differ between builds without an #if here, which would give the CFFI test harness a
+ * second type to compile, so they are non-const in both. Flash placement is unaffected: it comes
+ * from the Xcp_START_SEC_CONST_UNSPECIFIED MemMap section the generator emits around these
+ * arrays, which a STATIC configuration keeps. Only the allocator writes them.
+ */
 typedef struct
 {
-    const uint16 number;
+    uint16 number;
 
     /**
      * @brief absolute ODT number of this DAQ list's first ODT.
@@ -408,10 +426,10 @@ typedef struct
      * START_STOP_DAQ_LIST. The absolute ODT number of ODT i is firstPid + i.
      * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4.
      */
-    const uint8 firstPid;
+    uint8 firstPid;
     const Xcp_EventChannelTypeType type;
-    const uint8 maxOdt;
-    const uint8 maxOdtEntries;
+    uint8 maxOdt;
+    uint8 maxOdtEntries;
     const Xcp_DtoType *dto;
     const uint32 dtoCount; /* TODO: check if this value can be retrieved from somewhere else... */
     Xcp_OdtType *odt;

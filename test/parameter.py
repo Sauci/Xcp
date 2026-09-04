@@ -206,6 +206,13 @@ class DefaultConfig(dict):
                          }
                      ]
                  },),
+                 daq_config_type='STATIC',
+                 # Read only when daq_config_type is 'DYNAMIC'. A STATIC configuration emits no
+                 # daq_dynamic block at all -- the generator refuses one, since a pool nothing can
+                 # ever allocate from is an integrator saying two incompatible things at once.
+                 daq_count=4,
+                 odt_count=8,
+                 odt_entries_count=16,
                  segments=(),
                  freeze_supported=False,
                  xcp_set_request_api_enable=True,
@@ -242,10 +249,16 @@ class DefaultConfig(dict):
                  xcp_get_daq_resolution_info_api_enable=True,
                  xcp_get_daq_list_info_api_enable=True,
                  xcp_get_daq_event_info_api_enable=True,
-                 xcp_free_daq_api_enable=True,
-                 xcp_alloc_daq_api_enable=True,
-                 xcp_alloc_odt_api_enable=True,
-                 xcp_alloc_odt_entry_api_enable=True,
+                 # False, not True, for the same reason as xcp_write_daq_multiple_api_enable
+                 # above: the generation guard added with SP2d rejects these four being enabled
+                 # under a STATIC configuration, and this class's own daq_config_type default is
+                 # STATIC. Defaulting them True would make DefaultConfig() itself fail to
+                 # generate. A DYNAMIC configuration must enable all four, and the guard rejects
+                 # that direction too -- dynamic_config() below is what supplies the coherent set.
+                 xcp_free_daq_api_enable=False,
+                 xcp_alloc_daq_api_enable=False,
+                 xcp_alloc_odt_api_enable=False,
+                 xcp_alloc_odt_entry_api_enable=False,
                  xcp_program_clear_api_enable=True,
                  xcp_program_api_enable=True,
                  xcp_program_max_api_enable=True,
@@ -310,10 +323,19 @@ class DefaultConfig(dict):
             "user_defined_checksum_function": user_defined_checksum_function,
             "user_cmd_function": user_cmd_function,
             "trailing_value": trailing_value,
-            'identification': identification
+            'identification': identification,
+            "daq_config_type": daq_config_type
         }
         if timestamp is not None:
             protocol_layer["timestamp"] = timestamp
+        # A DAQ_DYNAMIC configuration declares no DAQ lists -- the master allocates them out of
+        # the pool -- so "daqs" is dropped entirely rather than left empty, and with no list to
+        # name, every event's triggered_daq_list_ref goes with it. Both are what the generator's
+        # own coherence guards demand; leaving either in place makes generation fail.
+        events = list(events) if events is not None else [event(name='EVT1')]
+        if daq_config_type == 'DYNAMIC':
+            events = [{key: value for key, value in one.items()
+                       if key != 'triggered_daq_list_ref'} for one in events]
         super(DefaultConfig, self).__init__(configurations=[
             {
                 "communication": {
@@ -327,8 +349,9 @@ class DefaultConfig(dict):
                 # publish_names defaults to True two lines above -- so DefaultConfig's own
                 # fallback event needs a name of its own, or every test that builds DefaultConfig()
                 # without an explicit events= would trip script/source_cfg.c.jinja2's publish_names
-                # guard by accident.
-                "events": list(events) if events is not None else [event(name='EVT1')],
+                # guard by accident. That fallback is applied where `events` is normalised above,
+                # so that the DAQ_DYNAMIC branch there sees it too.
+                "events": events,
                 "apis": {
                     "xcp_set_request_api_enable": {"enabled": xcp_set_request_api_enable, "protected": False},
                     "xcp_get_id_api_enable": {"enabled": xcp_get_id_api_enable, "protected": False},
@@ -396,6 +419,17 @@ class DefaultConfig(dict):
                 "protocol_layer": protocol_layer
             }
         ])
+        if daq_config_type == 'DYNAMIC':
+            configuration = self['configurations'][0]
+            del configuration["daqs"]
+            # pdu_mapping is not a keyword argument of its own: every list the master allocates
+            # out of one pool transmits on the same PDU, and XCP_PDU_ID_TRANSMIT is the name
+            # test/conftest.py compiles a value for -- the same one daq() and the daqs default
+            # above already use.
+            configuration["daq_dynamic"] = {"daq_count": daq_count,
+                                            "odt_count": odt_count,
+                                            "odt_entries_count": odt_entries_count,
+                                            "pdu_mapping": "XCP_PDU_ID_TRANSMIT"}
 
     @property
     def get_id(self):
@@ -424,6 +458,23 @@ class DefaultConfig(dict):
     @property
     def daq_queue_size(self):
         return self._daq_queue_size
+
+
+def dynamic_config(daq_count=4, odt_count=8, odt_entries_count=16, **kwargs):
+    """A DefaultConfig with a dynamic DAQ pool. The four ALLOC APIs must all be enabled: the
+    generator refuses a DAQ_DYNAMIC configuration with any of them disabled, since that is a
+    dynamic build with no way to allocate. `daqs` is left empty because a dynamic configuration
+    declares no lists -- the master allocates them."""
+    return DefaultConfig(daq_config_type='DYNAMIC',
+                         daq_count=daq_count,
+                         odt_count=odt_count,
+                         odt_entries_count=odt_entries_count,
+                         daqs=(),
+                         xcp_free_daq_api_enable=True,
+                         xcp_alloc_daq_api_enable=True,
+                         xcp_alloc_odt_api_enable=True,
+                         xcp_alloc_odt_entry_api_enable=True,
+                         **kwargs)
 
 
 class MultiConfig(dict):
