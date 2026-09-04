@@ -206,7 +206,14 @@ def test_a_dynamic_pool_is_reserved_empty_and_sliced_per_list_and_per_odt():
     maxOdt is 0, not odt_count: an unallocated list must fail the bounds checks that already
     exist, which is what lets SP2d add none of its own (see the plan's global constraints).
     maxOdtEntries is the rectangle's width because that is the per-list cap the allocator may
-    never exceed, and nothing raises it at runtime."""
+    never exceed, and nothing raises it at runtime.
+
+    `number` is the exception to "starts empty": it is slot i's own index, seeded at build time
+    exactly as a static list's is, because ALLOC_DAQ hands out the first N slots of this pool in
+    order and so slot i is list number i whether or not it has been handed out. It used to be
+    zero here, which made every slot claim to be list 0 and broke GET_DAQ_ID's scan over this
+    field -- see
+    test/transport_layer_cmd_test.py::test_get_daq_id_answers_each_allocated_dynamic_list_by_its_own_number."""
     handle = XcpTest(dynamic_config(daq_count=3, odt_count=2, odt_entries_count=4))
     config = handle.config.lib.Xcp[0].config
     first_odt = config.daqList[0].odt
@@ -215,7 +222,7 @@ def test_a_dynamic_pool_is_reserved_empty_and_sliced_per_list_and_per_odt():
     assert config.daqListCount == 3
     for i in range(3):
         daq_list = config.daqList[i]
-        assert daq_list.number == 0
+        assert daq_list.number == i
         assert daq_list.firstPid == 0
         assert daq_list.maxOdt == 0
         assert daq_list.maxOdtEntries == 4

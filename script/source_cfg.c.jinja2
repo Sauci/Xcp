@@ -132,15 +132,23 @@ static Xcp_OdtEntryType Xcp_OdtEntryConfig{{'%02X' % configuration_loop.index0}}
         ODT wired to its own slice of the entry pool above.
 
         Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED rather than the static branch's
-        Xcp_START_SEC_CONST_UNSPECIFIED, and likewise for the DAQ lists further down: ALLOC_ODT and
-        ALLOC_ODT_ENTRY write odtNumber and entryCount at runtime (XCP part 2 1.1/1.6.4.3.1). The
-        section is what places these arrays, not the `const` keyword they already lack -- see the
-        note above Xcp_DaqListType in interface/Xcp_Types.h -- so leaving them here would put them
-        in flash and make every allocation a write to read-only memory.
+        Xcp_START_SEC_CONST_UNSPECIFIED, and likewise for the DAQ lists further down:
+        ALLOC_ODT_ENTRY writes entryCount here, and ALLOC_ODT writes maxOdt and firstPid in the DAQ
+        list descriptors below, at runtime (XCP part 2 1.1/1.6.4.3.1). The section is what places
+        these arrays, not the `const` keyword they already lack -- see the note above
+        Xcp_DaqListType in interface/Xcp_Types.h -- so leaving them here would put them in flash
+        and make every allocation a write to read-only memory.
 
-        odtNumber and entryCount start at zero, not at their index and the entry cap: an ODT the
-        master has not allocated holds nothing, and entryCount is exactly what ALLOC_ODT_ENTRY
-        raises. odtEntryMaxSize is a build-time property of MAX_DTO, so it is seeded here. #}
+        entryCount starts at zero rather than at the entry cap: an ODT the master has not allocated
+        holds nothing, and entryCount is exactly what ALLOC_ODT_ENTRY raises. odtEntryMaxSize is a
+        build-time property of MAX_DTO, so it is seeded here.
+
+        odtNumber is zero here where the static branch seeds it with the ODT's index, and that
+        difference costs nothing: nothing in source/ or interface/ ever reads Xcp_OdtType.odtNumber
+        -- the sampler and the DAQ pointer both carry an ODT number of their own (the `odtNumber`
+        parameters in source/Xcp_DaqRuntime.c and Xcp_Internal.daq_pointer.odtNumber are locals,
+        not this field). It is left as the dead descriptive field it is in both branches rather
+        than being given a runtime meaning no allocation command implements. #}
     {%- if daq_dynamic %}
         {%- set pool = configuration.daq_dynamic %}
 #define Xcp_START_SEC_VAR_FAST_POWER_ON_INIT_UNSPECIFIED
@@ -304,15 +312,22 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
 
 /* The DAQ list pool. Every descriptor starts empty and ALLOC_DAQ, ALLOC_ODT and ALLOC_ODT_ENTRY
  * fill it in place (XCP part 2 1.1/1.6.4.3.1), which is why this array is in a writable section
- * and why number, FIRST_PID and MAX_ODT are zero rather than derived: a list nobody has allocated
- * owns no ODTs, so it fails the bounds checks that already exist without any new check being
- * added for it. MAX_ODT_ENTRIES is the rectangle's width, the cap the allocator may never exceed.
- * FIRST_PID is assigned at allocation time, not here, because it is a prefix sum over the ODT
- * counts the master chooses. */
+ * and why FIRST_PID and MAX_ODT are zero rather than derived: a list nobody has allocated owns no
+ * ODTs, so it fails the bounds checks that already exist without any new check being added for it.
+ * MAX_ODT_ENTRIES is the rectangle's width, the cap the allocator may never exceed. FIRST_PID is
+ * assigned at allocation time, not here, because it is a prefix sum over the ODT counts the master
+ * chooses.
+ *
+ * XcpDaqListNumber is the exception: it is the slot's own index, seeded here exactly as the static
+ * branch below seeds it, and no allocation command writes it. It is an identity, not a resource --
+ * ALLOC_DAQ hands out the first N slots of this pool in order (source/Xcp_Daq.c), so slot i is
+ * always list number i whether or not it has been handed out. Zeroing it made every slot claim to
+ * be list 0, and Xcp_DTOCmdStdTransportLayerCmd's GET_DAQ_ID scan (source/Xcp_Std.c) matches on
+ * this field: it answered ERR_OUT_OF_RANGE for every allocated list but the first. */
 static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % pool.daq_count}}] = {
     {%- for i in range(pool.daq_count) %}
     {
-        0x0000u, /* XcpDaqListNumber, assigned by ALLOC_DAQ */
+        {{'0x%04Xu' % i}}, /* XcpDaqListNumber */
         0x00u, /* FIRST_PID, assigned by ALLOC_ODT */
         DAQ, /* XcpDaqListType */
         0x00u, /* XcpMaxOdt, raised by ALLOC_ODT */
