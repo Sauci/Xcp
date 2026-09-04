@@ -1143,12 +1143,22 @@ void Xcp_Init(const Xcp_Type *pConfig)
              * generated DAQ list descriptor and ODT entry arrays are module-level mutable statics
              * with no initialisation of their own, and under DYNAMIC maxOdt/firstPid/entryCount
              * ARE the allocation. The loop that used to stand here reset Xcp_DaqListRt and called
-             * Xcp_DaqListClearEntries, but left those three untouched -- so a re-initialised
-             * module set allocated_daq_count to 0 and daq_alloc_state to FREE, reporting nothing
-             * allocated, while the descriptor still described the previous session's lists. The
-             * two halves of the allocation state disagreed, and the clear itself missed the
-             * entries of any list whose maxOdt it had not reset, since Xcp_DaqListClearEntries is
-             * bounded by exactly the counts that were being left behind.
+             * Xcp_DaqListClearEntries, but left those three untouched. Two things follow, and
+             * only these two:
+             *
+             *   - A re-initialised module set allocated_daq_count to 0 and daq_alloc_state to
+             *     FREE, reporting nothing allocated, while the descriptor still described the
+             *     previous session's lists. The two halves of the allocation state disagreed,
+             *     and the previous session's shape leaked into the next one.
+             *   - The surviving entryCounts break the argument that a running list's FIRST_PID
+             *     cannot move (see Xcp_DaqRecomputeFirstPids and design §9): that argument needs
+             *     initialisation to zero them.
+             *
+             * What did NOT follow is that the entries themselves were left populated.
+             * Xcp_DaqListClearEntries is bounded by maxOdt and each ODT's entryCount, so counts
+             * surviving is exactly the condition under which it covers every allocated entry --
+             * the clear was correct, and it was correct BECAUSE the counts were still standing.
+             * An earlier version of this comment had that backwards; do not reason from it.
              *
              * Ordering: allocated_daq_count is assigned above, before this call. Xcp_DaqFreeAll
              * lowers it to zero only under DYNAMIC, which is what that assignment already says

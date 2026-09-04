@@ -29,8 +29,9 @@ static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
  * @brief resets every ODT entry of one DAQ list to its power-up state.
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.1: "For a configurable DAQ
  * list, all ODT entries will be reset to address=0, extension=0 and size=0 (if valid :
- * bit_offset = 0xFF)." Bounded by daqListNumber's own maxOdt/maxOdtEntries, not any other list's,
- * so clearing one list never touches another's entries.
+ * bit_offset = 0xFF)." Bounded by daqListNumber's own maxOdt and, within each ODT, that ODT's own
+ * entryCount -- not maxOdtEntries, which is the slice's width rather than what is in it, and not
+ * any other list's counts, so clearing one list never touches another's entries.
  * @note Despite living beside this file's other file-local helpers, this one has external
  * linkage and a declaration in Xcp_Internal.h: Xcp_Init (source/Xcp.c) calls it too. The
  * generated ODT entry arrays are module-level mutable statics (script/source_cfg.c.jinja2 emits
@@ -42,10 +43,10 @@ static Xcp_DaqListRtType *Xcp_DaqListRt(uint16 daqListNumber)
  * CanIf's receive context while the sampler walks the same array from a task or an interrupt --
  * including the sampler's own interrupt preempting a clear already in progress at task level, the
  * direction a lock taken only on the read side cannot help with. The inner loop below is wrapped
- * per ODT, not once for the whole nest, so each critical section is bounded by maxOdtEntries field
- * writes rather than maxOdt * maxOdtEntries: neither Xcp_Init (source/Xcp.c) nor
- * Xcp_DTOCmdDaqClearDaqList, this function's only callers, hold the area themselves, so nesting
- * across ODTs is not a concern either way.
+ * per ODT, not once for the whole nest, so each critical section is bounded by that ODT's
+ * entryCount field writes rather than by the sum of them over maxOdt: neither Xcp_Init
+ * (source/Xcp.c) nor Xcp_DTOCmdDaqClearDaqList, this function's only callers, hold the area
+ * themselves, so nesting across ODTs is not a concern either way.
  */
 void Xcp_DaqListClearEntries(uint16 daqListNumber)
 {
@@ -83,10 +84,9 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber)
  * fields to the same five values.
  * @note the entries are cleared BEFORE any caller zeroes the counts that describe them:
  * Xcp_DaqListClearEntries is bounded by this list's own maxOdt and per-ODT entryCount, so a
- * caller that zeroed those first would leave the entries themselves untouched. Xcp_Init has
- * exactly that shape in the other direction and is why a dynamic pool's entries are stale after
- * a re-initialisation that follows an allocation -- there maxOdt is already zero when the clear
- * runs. Xcp_DaqFreeAll below therefore clears first and zeroes second.
+ * caller that zeroed those first would leave the entries themselves untouched. Xcp_DaqFreeAll
+ * below therefore clears first and zeroes second, and Xcp_Init reaches this through that same
+ * function for the same reason.
  * @note the caller invalidates the DAQ pointer if it names this list, and calls
  * Xcp_DaqSessionStatusUpdate once it has reset every list it intends to -- DAQ_RUNNING is a
  * property of every list together (1.1/1.6.1.1.3), so recomputing it per list would be wrong for
@@ -374,12 +374,18 @@ void Xcp_DaqFreeAll(void)
      * DD30. The unwind order is the reverse of allocation and is not stylistic.
      * Xcp_TriggerEventChannel (source/Xcp_DaqRuntime.c) runs in interrupt context and reaches
      * entry storage by walking maxOdt, then each ODT's entryCount, so a count must never outlive
-     * the storage it describes -- the DD14 failure class. Stopping the lists first means no new
-     * sampling begins; clearing the entries while the counts still describe them means nothing is
-     * left behind (Xcp_DaqListReset's own note); zeroing the counts last means a trigger
-     * interleaved at any later point sees zero and samples nothing, rather than a stale count into
-     * released storage. Xcp_DaqListClearEntries, called through Xcp_DaqListReset, takes the DAQ
-     * exclusive area for the entry writes themselves, and the count writes below take it too.
+     * the storage it describes -- the DD14 failure class.
+     *
+     * The actual order, per list, is: entries cleared, then the list stopped (both inside
+     * Xcp_DaqListReset, in that order -- it calls Xcp_DaqListClearEntries before it writes
+     * mode = 0), then, in the second loop below, the counts zeroed. Clearing before stopping is
+     * not an oversight and is not the other way round: Xcp_DaqListClearEntries is bounded by
+     * maxOdt and each ODT's entryCount, so it must run while those counts still describe the
+     * storage, and a trigger interleaved between the clear and the stop finds entries whose
+     * length is already 0 and samples nothing from them. Zeroing the counts last means a trigger
+     * interleaved at any point after that sees zero and walks nothing at all, rather than a stale
+     * count into released storage. Xcp_DaqListClearEntries takes the DAQ exclusive area for the
+     * entry writes themselves, and the count writes below take it too.
      *
      * The loops are bounded by the configured pool, Xcp_Ptr->general->daqCount, rather than by
      * Xcp_Internal.allocated_daq_count. That is the range Xcp_TriggerEventChannel itself walks
@@ -746,8 +752,18 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
  *
  * @note `next` is a uint8, matching the field, and cannot wrap: Xcp_DTOCmdDaqAllocOdt refuses any
  * request that would take the total past XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFC), so the sum this
- * accumulates is at most 0xFC and every value written is at most 0xFB. The check is what makes
+ * accumulates is at most 0xFC and every value written is at most 0xFC. The check is what makes
  * the arithmetic here safe, not the other way round.
+ *
+ * 0xFC, not 0xFB: the bound on a *usable* absolute ODT number is 0xFB, because 0xFC..0xFF are the
+ * slave-to-master SERV, EV, ERR and RES codes, but a firstPid of exactly 0xFC is reachable and is
+ * written. With the total at 252 and an allocated-but-empty list after the full one, that list's
+ * prefix sum is 0xFC -- the state test_alloc_odt_refuses_to_exhaust_the_pid_space creates. It is
+ * harmless because it is the address of a first ODT that does not exist: that list's maxOdt is 0,
+ * so Xcp_TriggerEventChannel's ODT loop never runs for it and no frame can carry the value. It is
+ * still observable, in the FIRST_PID byte START_STOP_DAQ_LIST mode STOP returns for that list,
+ * which correctly names where its first ODT *would* begin. A master that then allocated an ODT
+ * there would be refused by the same 0xFC ceiling before the number could ever reach the wire.
  */
 static void Xcp_DaqRecomputeFirstPids(void)
 {
@@ -924,13 +940,22 @@ uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduIn
     }
     else
     {
-        /* Both writes under one exclusive area, because the sampler reads them together:
-         * Xcp_TriggerEventChannel walks maxOdt and Xcp_DaqWriteIdentificationField
-         * (source/Xcp_DaqRuntime.c) computes an ABSOLUTE field's PID as firstPid + ODT number, so
-         * a trigger interleaved between the two would transmit a frame whose PID belongs to the
-         * layout that is being replaced. This is the DD14 failure class, and the reason the
-         * recompute is inside the area rather than after it -- raising maxOdt is what makes the
-         * standing firstPid values wrong.
+        /* Both writes under one exclusive area, because a trigger interleaved between them would
+         * transmit a frame whose PID belongs to the layout being replaced: Xcp_TriggerEventChannel
+         * walks maxOdt and Xcp_DaqWriteIdentificationField (source/Xcp_DaqRuntime.c) computes an
+         * ABSOLUTE field's PID as firstPid + ODT number. This is the DD14 failure class, and the
+         * reason the recompute is inside the area rather than after it -- raising maxOdt is what
+         * makes the standing firstPid values wrong.
+         *
+         * The mechanism is interrupt suppression, not mutual exclusion, and the difference matters
+         * for anyone reasoning about it: the sampler does NOT take this area around its own reads.
+         * Xcp_TriggerEventChannel reads maxOdt and Xcp_DaqWriteIdentificationField reads firstPid
+         * with no area held (Xcp_DaqSampleOdt takes it only around the ODT-entry copy, DD14). What
+         * protects the pair is that the sampler runs in an interrupt this area suppresses on a
+         * target, so it cannot land between the two writes at all. On the test harness, where
+         * SchM_Enter_Xcp_DtoQueue suppresses nothing, an injected trigger inside the held area is
+         * a preemption the target cannot have -- which is why test/free_daq_test.py sweeps its
+         * interleavings from SchM_Exit's side effect rather than SchM_Enter's.
          *
          * Raised, not assigned: DD28 makes a repeat naming the same list accumulate. Rejected
          * whole above, never in part -- a partly applied allocation would leave the master
@@ -1070,8 +1095,9 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
      * Diagram 10), so enabling it shrinks that ODT's budget below the MAX_ODT_ENTRY_SIZE_DAQ that
      * GET_DAQ_RESOLUTION_INFO reports and WRITE_DAQ enforced when the entries were written. An ODT
      * 0 already filled past the reduced budget cannot carry one. 0xFFu as excludedEntry excludes
-     * nothing -- every configured slot is counted; no real index can equal it because the loop in
-     * Xcp_OdtUsedBytes bounds idx strictly below maxOdtEntries, itself a uint8.
+     * nothing -- every allocated slot is counted; no real index can equal it because the loop in
+     * Xcp_OdtUsedBytes bounds idx strictly below that ODT's entryCount, itself a uint8, so the
+     * largest index it ever reaches is 0xFE.
      *
      * maxOdt first, and short-circuited: a list configured with max_odt 0 has no ODT 0 at all, and
      * its generated Xcp_OdtType array is zero-length, so passing 0x00u to Xcp_OdtUsedBytes reads

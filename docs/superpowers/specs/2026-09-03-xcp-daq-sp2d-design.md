@@ -314,11 +314,23 @@ Bytes 2,3 are `DAQ_LIST_NUMBER`; byte 4 is `ODT_NUMBER`, relative within the lis
   keeps its allocation. Its behaviour is unchanged in both models.
 - **`SET_DAQ_PTR` and `WRITE_DAQ` against an unallocated list** are refused by the bounds checks
   that already exist, since `maxOdt` is zero.
-- **`PID_OFF` under DYNAMIC is available only while exactly one list is allocated.** All dynamic
-  lists share the configured `pdu_mapping`, so SP2b's rule applies unchanged:
-  `Xcp_DaqListTxPduIsExclusive` is true only while no other list shares that PDU. This is honest
-  rather than restrictive — with one CAN-ID and several lists, §1.1.2.1 identification genuinely
-  cannot be recovered without a PID.
+- **`PID_OFF` under DYNAMIC is available only in a pool configured with exactly one list.** All
+  dynamic lists share the configured `pdu_mapping`, so SP2b's rule applies unchanged:
+  `Xcp_DaqListTxPduIsExclusive` is true only while no other list shares that PDU. The
+  discriminator is the *configured* pool — that function walks `Xcp_Ptr->general->daqCount`, not
+  `allocatedDaqCount` — so a second pool slot refuses `PID_OFF` whether or not `ALLOC_DAQ` has
+  handed it out. That is the conservative direction and it is deliberate: reading the allocated
+  count here would make `PID_OFF` legal for a lone allocated list and then silently wrong the
+  moment the master allocated a second one, since nothing revisits a mode already set. This is
+  honest rather than restrictive — with one CAN-ID and several lists, §1.1.2.1 identification
+  genuinely cannot be recovered without a PID.
+- **`FREE_DAQ` does not flush the DTO ring.** Frames sampled before or during the unwind are still
+  transmitted after `FREE_DAQ` or `DISCONNECT` releases the lists that produced them. This is
+  correct rather than overlooked: those frames were validly sampled, their PIDs match the layout
+  that was in force at sample time, and §1.6.4.3.1.1 requires the command to clear and free DAQ
+  lists, not to discard data already acquired. `Xcp_DaqFreeAll` therefore touches the descriptors,
+  the entries and `Xcp_DaqListRt`, and leaves `Xcp_Rt[...].dtoQueue` alone. Recorded here so it is
+  read as a decision rather than rediscovered as a surprise.
 
 ---
 
@@ -389,6 +401,27 @@ strings are documentation for whoever reads the template.
 - **`PID_OFF` is effectively unavailable under DYNAMIC** beyond a single list (§6). The follow-up,
   if a project needs it, is a TX PDU pool in `daq_dynamic` rather than one `pdu_mapping`. Deferred:
   nothing in the specification requires it and it doubles the configuration surface.
+- **The `FIRST_PID` unreachability argument rests on two preconditions that are not visible where
+  it is stated.** The argument is that a *running* list's `FIRST_PID` can never move under it:
+  `Xcp_DaqRecomputeFirstPids` runs only from `ALLOC_ODT`, and `ALLOC_ODT` answers `ERR_SEQUENCE`
+  once the state has reached `XCP_DAQ_ALLOC_ODT_ENTRY`, which any list carrying an entry has
+  passed through. It holds only while both of these do, and either one can be removed without
+  breaking any other claim in this document:
+
+  1. **A refused `ALLOC_ODT_ENTRY`, `ALLOC_ODT` or `ALLOC_DAQ` must leave `daq_alloc_state` where
+     it found it.** Each handler assigns the state inside its `else`, after the error chain. Move
+     that assignment out to after the `if/else` and the state advances on a refusal: from
+     `ODT_ENTRY`, a refused `ALLOC_ODT` would set the state to `ODT`, the next `ALLOC_ODT` would
+     be accepted, and `FIRST_PID` would move under a list that is already running. Pinned by
+     `test_alloc_odt_entry_refusal_leaves_the_allocation_state_unadvanced` and its two siblings for
+     `ALLOC_ODT` and `ALLOC_DAQ`; all three exist for this reason and are not redundant with each
+     other.
+  2. **`Xcp_Init` and `DISCONNECT` must zero every ODT's `entryCount`.** The state machine's memory
+     of "this list has entries" is `daq_alloc_state`, which both paths reset to `FREE`. If the
+     counts survived while the state did not, a list would re-enter `ALLOC_ODT` carrying entries
+     from the previous session and the argument's premise — that state `ODT_ENTRY` covers every
+     list with an entry — would be false. `Xcp_DaqFreeAll` is what supplies this, from both call
+     sites.
 
 ---
 
@@ -448,9 +481,15 @@ invariant the suite relies on everywhere else. So it is not written.
 **One gap this exposed, since closed:** `Xcp_Init` reset `Xcp_Internal` and every `Xcp_DaqListRt`
 and cleared the ODT entries, but never reset the descriptor's own `maxOdt`, `firstPid` or per-ODT
 `entryCount` — which under DYNAMIC *are* the allocation. A re-initialised module therefore reported
-nothing allocated while the descriptor still described the previous session's lists, and its clear
-missed the entries too, being bounded by exactly the counts left behind. `Xcp_Init` now calls
-`Xcp_DaqFreeAll`, which is precisely the operation it was missing.
+nothing allocated while the descriptor still described the previous session's lists, and the
+surviving `entryCount`s break the `FIRST_PID` argument in §9. `Xcp_Init` now calls `Xcp_DaqFreeAll`,
+which is precisely the operation it was missing.
+
+The entries themselves were *not* left populated, and an earlier version of this paragraph said
+they were. `Xcp_DaqListClearEntries` is bounded by `maxOdt` and each ODT's `entryCount`, so counts
+surviving is exactly the condition under which the clear covers every allocated entry — the old
+clear was correct, and correct *because* the counts still stood. The call is kept for the two
+reasons above, not for that one.
 
 Generator guards are tested by asserting generation fails, not by matching the message.
 
