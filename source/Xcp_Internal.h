@@ -560,6 +560,27 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
 void Xcp_DaqFreeAll(void);
 
 /**
+ * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqAllocOdt: 0xD3 precedes 0xD4 in
+ * the PID table, and the allocation commands are kept together in that order.
+ * @note DD34: raises Xcp_OdtType.entryCount (interface/Xcp_Types.h), the per-ODT field that lets
+ * two ODTs of one list hold different numbers of entries -- daqList[n].maxOdtEntries cannot
+ * express that, and keeps its own DYNAMIC meaning unchanged: the cap any one ODT may reach
+ * (odt_entries_count).
+ * @note DD28: like its three siblings, a repeat naming the same ODT accumulates onto its
+ * entryCount rather than replacing it -- the specification forbids ALLOC_ODT_ENTRY only after
+ * FREE and DAQ, so a repeat from ODT or ODT_ENTRY is permitted, and a permitted repeat that
+ * merely replaced the previous grant would be indistinguishable from one that was refused.
+ * @note this is the step that closes the running-list FIRST_PID safety argument: starting a list
+ * (Xcp_DTOCmdDaqStartStopDaqList) requires Xcp_DaqListIsConfigured, which requires an ODT entry
+ * of non-zero length, which requires entryCount > 0 -- the field only this command raises under
+ * DYNAMIC. This command also leaves the state at XCP_DAQ_ALLOC_ODT_ENTRY, from which
+ * Xcp_DTOCmdDaqAllocOdt answers ERR_SEQUENCE, so once a list has an entry, only FREE_DAQ (which
+ * stops every running list first, DD30) can move its maxOdt, and so its FIRST_PID, again.
+ */
+uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief ALLOC_ODT, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.3.
  * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqAllocDaq: 0xD4 precedes 0xD5 in
  * the PID table, and the allocation commands are kept together in that order.

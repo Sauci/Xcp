@@ -340,7 +340,7 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xD0 */
     Xcp_CmdNotImplemented, /* 0xD1 */
     Xcp_CmdNotImplemented, /* 0xD2 */
-    Xcp_CmdNotImplemented, /* 0xD3, optional */
+    Xcp_DTOCmdDaqAllocOdtEntry, /* ALLOC_ODT_ENTRY 0xD3, optional */
     Xcp_DTOCmdDaqAllocOdt, /* ALLOC_ODT 0xD4, optional */
     Xcp_DTOCmdDaqAllocDaq, /* ALLOC_DAQ 0xD5, optional */
     Xcp_DTOCmdDaqFreeDaq, /* FREE_DAQ 0xD6, optional */

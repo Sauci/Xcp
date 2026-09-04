@@ -790,6 +790,94 @@ static uint16 Xcp_DaqAllocatedOdtCount(void)
     return total;
 }
 
+/**
+ * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.
+ * @details The refusals are ordered the same way Xcp_DTOCmdDaqAllocOdt's are: SEQUENCE, then
+ * OUT_OF_RANGE -- the list, then the ODT within it -- then MEMORY_OVERFLOW, each a narrower
+ * question than the one before.
+ *
+ * Unlike ALLOC_ODT and ALLOC_DAQ, there is no second, cross-list ceiling to check here: an ODT's
+ * entries live in that ODT's own slice of the pool (script/source_cfg.c.jinja2's
+ * Xcp_OdtEntryConfig, sliced odt_entries_count wide per ODT), so the one bound against
+ * Xcp_Ptr->general->odtEntriesCount -- read from the general configuration rather than from
+ * daqList[n].maxOdtEntries so the ceiling is stated once, even though DYNAMIC gives both the same
+ * value -- is everything there is to check.
+ * @note DD28: repeated calls naming the same ODT accumulate onto its entryCount rather than
+ * replacing it, for the same reason ALLOC_ODT and ALLOC_DAQ accumulate: the specification's
+ * ERR_SEQUENCE cases forbid ALLOC_ODT_ENTRY only after FREE and DAQ, so a repeat from ODT or
+ * ODT_ENTRY is permitted, and a permitted repeat that merely replaced the previous grant would be
+ * indistinguishable from one that was refused.
+ * @note the running sum is a uint16: entryCount and odt_entries_count are both uint8, and 255 +
+ * 255 would wrap a uint8 total back under most any ceiling worth checking against.
+ * @note DD34, and the closing step of the running-list FIRST_PID safety argument -- see this
+ * function's declaration in Xcp_Internal.h for the full chain.
+ */
+uint8 Xcp_DTOCmdDaqAllocOdtEntry(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 odt_number = pPduInfo->SduDataPtr[0x04u];
+    const uint8 odt_entries_count = pPduInfo->SduDataPtr[0x05u];
+    uint16 daq_list_number;
+    uint8 error = 0x00u;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
+
+    if ((Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_ODT) &&
+        (Xcp_Internal.daq_alloc_state != XCP_DAQ_ALLOC_ODT_ENTRY))
+    {
+        /* ERR_SEQUENCE for an ALLOC_ODT_ENTRY that has had no ALLOC_ODT before it -- unlike
+         * ALLOC_ODT, a bare ALLOC_DAQ is not enough -- or that follows a FREE_DAQ with nothing
+         * reallocated since. */
+        error = XCP_E_ASAM_SEQUENCE;
+    }
+    else if (Xcp_DaqListIsValid(daq_list_number) == FALSE)
+    {
+        /* DD32: valid means allocated, not merely inside the configured pool. */
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if (odt_number >= Xcp_Ptr->config->daqList[daq_list_number].maxOdt)
+    {
+        /* Bounded against this list's own maxOdt, the same way Xcp_DaqListIsValid bounds the list
+         * number against allocated_daq_count just above: an ODT ALLOC_ODT has not handed this
+         * list is "not available" either. */
+        error = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+    else if ((uint16)((uint16)Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount +
+                       (uint16)odt_entries_count) >
+             (uint16)Xcp_Ptr->general->odtEntriesCount)
+    {
+        error = XCP_E_ASAM_MEMORY_OVERFLOW;
+    }
+    else
+    {
+        /* Raised, not assigned: DD28 makes a repeat naming the same ODT accumulate. Rejected
+         * whole above, never in part -- a partly applied allocation would leave the master unaware
+         * of how much it actually has. */
+        SchM_Enter_Xcp_DtoQueue();
+
+        Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount =
+                (uint8)(Xcp_Ptr->config->daqList[daq_list_number].odt[odt_number].entryCount +
+                        odt_entries_count);
+
+        SchM_Exit_Xcp_DtoQueue();
+
+        Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_ODT_ENTRY;
+    }
+
+    if (error == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_FillErrorPacket(error, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 odt_count = pPduInfo->SduDataPtr[0x04u];
