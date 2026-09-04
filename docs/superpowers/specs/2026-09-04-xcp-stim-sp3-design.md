@@ -121,6 +121,9 @@ removes the field entirely, so it is listed here as a fifth case but is not a ty
 | `ABSOLUTE` | `[firstPid + odt]` | linear scan | 1 |
 | `PID_OFF` | — | the receiving PduId | 0 |
 
+**Plus the timestamp, on ODT 0 of a timestamped list** — see DD44. The offsets above are the
+identification field alone.
+
 The `ABSOLUTE` scan walks allocated lists for `firstPid <= pid < firstPid + maxOdt`. A 256-entry
 reverse table would be O(1) but must be rebuilt on every `ALLOC_ODT`, since SP2d recomputes the
 whole prefix sum there, and on every direction change — more coherence to maintain than the scan
@@ -157,6 +160,36 @@ All DAQ commands therefore stay under `MASK_DAQ`, and `MASK_STIM` remains what i
 resource `GET_SEED`/`UNLOCK` accept and a master can unlock, that gates nothing. This is
 pre-existing, but SP3 is the first sub-project where it is visibly incomplete rather than merely
 unused. Recorded as a follow-up in §8.
+
+**DD44 — a STIM DTO carries a timestamp when the list is in timestamped mode, and reception must
+skip it.** §1.1.2.2 is explicit: *"The TIMESTAMP flag can be used as well for DIRECTION = DAQ as
+for DIRECTION = STIM."*
+
+For STIM the direction of the timestamp reverses in an interesting way. The master *echoes* a
+value it received: *"the master device first receives a time stamped DTO(DAQ) from the slave and
+then echoes this current value of the slave device's clock in the DTO Packet for the first ODT of
+the DAQ cycle."* Its stated purpose is to let the slave *"check whether DTO(DAQ) and CTO(STIM)
+belong functionally together"* — a round-trip correlation for bypassing.
+
+Three consequences:
+
+- **It is present only on ODT 0 of the cycle**, exactly as on the DAQ side (Diagram 10), and only
+  while the list's stored `TIMESTAMP` mode bit is set. Reception adds
+  `Xcp_TimestampWireSize(timestampType)` to the payload offset in that case and no other.
+- **The slave knows its size from its own configuration.** *"The master has to use the same Type of
+  Timestamp Field when transferring STIM Packets to the slave"*, and the slave publishes it through
+  `TIMESTAMP_MODE`/`TIMESTAMP_TICKS` in `GET_DAQ_RESOLUTION_INFO`. There is nothing to negotiate and
+  nothing to infer from the frame.
+- **The value is parsed and discarded.** The correlation check the specification describes is a
+  possibility it offers the slave — *"gives the slave the possibility to check"* — not a
+  requirement. Implementing it needs a record of which clock value was sent with which DAQ cycle,
+  which is its own mechanism; §8 records it.
+
+This corrects an earlier draft of this document, which assumed STIM DTOs carry no timestamp on the
+reasoning that a master's timestamp is not something a slave can act on. That reasoning was wrong,
+and the failure it would have caused is the one the draft itself named: with the field present and
+unparsed, every applied value in ODT 0 would be shifted by one, two or four bytes. It was found by
+reading §1.1.2.2 rather than reasoning about it — the same correction that PR #9 needed.
 
 **DD42 — STIM has a lower PID ceiling than DAQ, checked where each model's type is decided.**
 §1.1.5.1 gives master-to-slave STIM ODT numbers `0x00..0xBF`; §1.1.5.2 gives slave-to-master DAQ
@@ -199,8 +232,12 @@ about, and `ALLOC_ODT` has no way to say which ODTs are stimulation-capable.
   §1.6.4.2.2.1's `DAQ_LIST_TYPE` table marks "Not allowed".
 - STIM slots are emitted only for receiving types — `daq_count × odt_count` under DYNAMIC, the sum
   over `DAQ_STIM` and `STIM` lists under STATIC — into a VAR section.
-- `XcpOdtEntrySizeStim` is generated from `MAX_DTO` less the identification field, replacing the
-  hard-coded `0x00u`.
+- `XcpOdtEntrySizeStim` is generated exactly as `XcpOdtEntrySizeDaq` is — `MAX_DTO` less the
+  identification field — replacing the hard-coded `0x00u`. The two are the same number in this
+  module, since master and slave use the same identification and timestamp types; they are
+  reported separately because the specification permits a slave where they differ. The ODT-0
+  timestamp reduction is applied at use, by the same arithmetic `Xcp_DaqOdtEntryBudget` already
+  performs for DAQ (DD44).
 - The `0xC0` ceiling guard for STIM-capable static lists (DD42).
 
 ---
@@ -229,6 +266,11 @@ that the slot holds it, tests the plumbing rather than the feature.
 payload offset, and a wrong offset applies the master's data shifted — silent, and destructive to
 whatever it overwrites. Each case decodes to a known list and ODT.
 
+**The timestamped offset gets its own case.** A list in timestamped mode receives a frame whose
+ODT 0 carries a timestamp and whose later ODTs do not, and both must apply to the right addresses.
+Getting this wrong is the failure DD44 describes, so the test asserts the applied *values*, not
+that the frame was accepted.
+
 **The latched policy needs its negative.** Deliver one frame, trigger twice, assert the variable is
 written both times. Under a one-shot implementation the second trigger writes nothing, so this
 pins DD35 rather than merely exercising it.
@@ -256,13 +298,10 @@ test that cannot fail is worth less here than anywhere else in the module.
 
 ## 7. Risks
 
-- **The timestamp field on reception is an assumption, not a finding.** This design takes STIM DTOs
-  to carry no timestamp: the field exists to tell the master when the slave sampled, and a master's
-  timestamp is not something the slave can act on. But §1.1.2.2 says any combination of
-  identification and timestamp field types is possible, and if a master sent one, the extra bytes
-  would shift the payload and every applied value would be wrong. **Confirm against the
-  specification during implementation.** This is the assumption most likely to be wrong, and it is
-  the same shape as the claim that produced the `DIRECTION` defect in PR #9.
+- **The ODT-0 timestamp offset is the highest-consequence detail here** (DD44). It is now settled
+  against §1.1.2.2 rather than assumed, but it remains the place where a mistake is silent and
+  destructive: a payload read one, two or four bytes off writes the master's data into the wrong
+  place, and nothing in the protocol reports it. The offset sweep in §6 exists for this.
 - **STIM writes to addresses the master chooses.** DAQ reads them; this writes. The rejection paths
   in DD39 are the whole of the protection, and DD41 means the `STIM` resource does not gate them.
 - **A latched buffer keeps stimulating after the master goes quiet** (DD35). That is the chosen
@@ -277,6 +316,9 @@ test that cannot fail is worth less here than anywhere else in the module.
 - Per-direction resource protection, which requires moving the protection check from the dispatcher
   into the handlers (DD41).
 - Distinct RX PDUs per dynamic STIM list, the receive-side twin of the TX PDU pool SP2d deferred.
+- The DAQ/STIM correlation check §1.1.2.2 offers: comparing the echoed timestamp against the clock
+  value the slave sent with the corresponding DAQ cycle, to confirm the two belong together (DD44).
+  Needs a record of what was sent when, which is its own mechanism.
 
 ---
 
