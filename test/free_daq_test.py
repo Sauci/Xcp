@@ -43,14 +43,16 @@ def allocate_directly(handle, daq_list_count=1, odt_count=1, entry_count=1, addr
     """What ALLOC_ODT, ALLOC_ODT_ENTRY and WRITE_DAQ will leave behind, written into the descriptor
     from the test instead of driven through the protocol.
 
-    ALLOC_DAQ (0xD5), ALLOC_ODT (0xD4) and ALLOC_ODT_ENTRY (0xD3) are not implemented yet -- they
-    still answer ERR_CMD_UNKNOWN -- so there is no protocol route to an allocated dynamic DAQ list
-    at the point FREE_DAQ is being written. Writing the descriptor directly is the house's existing
-    way of reaching module state a command cannot yet produce (test/daq_concurrency_test.py and
-    test/daq_identification_field_test.py both reach Xcp_Rt[...].dtoQueue the same way), and the
-    descriptor is exactly what the allocator will write: ALLOC_ODT raises maxOdt and recomputes
-    firstPid as a prefix sum (DD31), ALLOC_ODT_ENTRY raises the addressed ODT's entryCount (DD34),
-    and WRITE_DAQ fills the entries.
+    ALLOC_ODT_ENTRY (0xD3) is not implemented yet -- it still answers ERR_CMD_UNKNOWN -- so there
+    is still no protocol route to a dynamic DAQ list carrying ODT ENTRIES, which is what these
+    tests need FREE_DAQ to release. (ALLOC_DAQ and ALLOC_ODT have since arrived, and
+    test/alloc_odt_test.py drives the part of this that can now be driven; there is no reason to
+    rewrite the helper for half a sequence.) Writing the descriptor directly is the house's
+    existing way of reaching module state a command cannot yet produce
+    (test/daq_concurrency_test.py and test/daq_identification_field_test.py both reach
+    Xcp_Rt[...].dtoQueue the same way), and the descriptor is exactly what the allocator writes:
+    ALLOC_ODT raises maxOdt and recomputes firstPid as a prefix sum (DD31), ALLOC_ODT_ENTRY raises
+    the addressed ODT's entryCount (DD34), and WRITE_DAQ fills the entries.
 
     maxOdt is raised rather than assigned, because DD28 makes repeated ALLOC_ODT accumulate; a
     caller that allocates twice therefore models two ALLOC_ODT requests, not one.

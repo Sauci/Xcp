@@ -126,6 +126,21 @@ extern "C" {
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)
 #define XCP_SESSION_STATUS_MASK_DAQ_RUNNING (0x01u << 0x06u)
 
+/**
+ * @brief how many absolute ODT numbers exist, across every DAQ list together.
+ * @details An absolute ODT number IS the PID a DAQ DTO carries in an ABSOLUTE identification
+ * field (XCP part 2 - Protocol Layer Specification 1.1/1.1.4.1), so it is bounded by the PID
+ * space rather than by any configured dimension. The four highest slave-to-master PIDs are taken:
+ * 0xFC is SERV, 0xFD is EV (XCP_PID_EVENT), 0xFE is ERR (XCP_PID_ERROR) and 0xFF is RES
+ * (XCP_PID_RESPONSE). That leaves 0x00..0xFB, so the count is 0xFC -- the value below is both the
+ * number of usable absolute ODT numbers and the first PID that is not one.
+ * @note ALLOC_ODT enforces this at runtime, against what a master has actually allocated. The
+ * generator deliberately does NOT guard daq_count x odt_count against it for a DAQ_DYNAMIC
+ * configuration (DD31, script/source_cfg.c.jinja2): the pool's rectangle is an upper bound a
+ * master rarely reaches, so guarding it there would refuse configurations that work.
+ */
+#define XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFCu)
+
 /* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
  * Read off the specification's own bit table, which is identical in 1.0 and 1.1 except that 1.1
  * fills bit 0, which 1.0 left don't-care:
@@ -543,6 +558,20 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
  * the static model that SP2d is required not to make (DD25).
  */
 void Xcp_DaqFreeAll(void);
+
+/**
+ * @brief ALLOC_ODT, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.3.
+ * @details Defined in Xcp_Daq.c, immediately before Xcp_DTOCmdDaqAllocDaq: 0xD4 precedes 0xD5 in
+ * the PID table, and the allocation commands are kept together in that order.
+ * @note DD28: like ALLOC_DAQ, repeated calls naming the same DAQ list accumulate onto its maxOdt
+ * rather than replacing it -- the specification forbids ALLOC_ODT only after ALLOC_ODT_ENTRY, so
+ * a repeat from DAQ or ODT is permitted, and a permitted repeat that merely replaced the previous
+ * grant would be indistinguishable from one that was refused.
+ * @note DD31: this is the command that assigns FIRST_PID, and it assigns every list's, not just
+ * the addressed one's. See Xcp_DaqRecomputeFirstPids beside the definition for why a prefix sum
+ * over list index is the only assignment that survives the accumulate rule above.
+ */
+uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
  * @brief ALLOC_DAQ, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.2.
