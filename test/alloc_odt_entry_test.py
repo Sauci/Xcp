@@ -111,3 +111,22 @@ def test_alloc_odt_entry_refusal_leaves_the_allocation_state_unadvanced():
     exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
     assert exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x01, 0x01))[0:2] == (0xFE, 0x22)
     assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF
+
+
+def test_alloc_odt_entry_refused_memory_overflow_leaves_entrycount_unchanged():
+    """The sibling of test_alloc_odt_entry_refusal_leaves_the_allocation_state_unadvanced, for
+    entryCount rather than daq_alloc_state: a refused request must leave entryCount exactly where
+    it found it, not just the response bytes ERR_MEMORY_OVERFLOW already pins. This is the case
+    that matters most for entryCount specifically -- MEMORY_OVERFLOW is the one check whose entire
+    purpose is to keep entryCount from exceeding odt_entries_count, the actual width of that ODT's
+    slice of the generated entry pool (script/source_cfg.c.jinja2). A write hoisted above the
+    error chain would still run here: 2 (already granted by the first call below) + 3 (requested
+    by the refused second call) = 5, which already exceeds the odt_entries_count = 4 cap this
+    refusal exists to enforce -- precisely the out-of-bounds shape DD14/DD30 prevent elsewhere in
+    this design."""
+    handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=4)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
+    exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x02))
+    assert exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x03))[0:2] == (0xFE, 0x30)
+    assert handle.lib.Xcp_Ptr.config.daqList[0].odt[0].entryCount == 2
