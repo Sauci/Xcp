@@ -168,9 +168,26 @@ channel is a `Det` report. Rejecting a payload shorter than the ODT's configured
 reception means the apply path never reasons about partial data, and the failure is attributed to
 the frame that caused it rather than surfacing a cycle later.
 
-**DD40 — a `DAQ_STIM` list applies before it samples.** Both happen on one event, so the order must
-be fixed. Applying first means a list that stimulates and measures the same variable reports the
-value that was actually in effect, rather than the one the stimulus was about to replace.
+**DD40 — stimulation lists are applied before acquisition lists are sampled, and a list does one
+or the other, never both.** Corrected 2026-09-04, after Task 8's review; the original text had a
+`DAQ_STIM` list applying *and* sampling on the same event, which the specification contradicts.
+
+§1.6.4.1.1.3 is explicit: *"The DIRECTION flag sets the DAQ list into synchronized data acquisition
+**or** synchronized data stimulation mode."* `DAQ_STIM` is the list's *type* — what the
+configuration permits it to be — while `DIRECTION` is the mode it is in *now*. A list with
+`DIRECTION = STIM` acquires nothing.
+
+**Consequence: `Xcp_TriggerEventChannel`'s sampling loop must skip a list whose `DIRECTION` is
+STIM.** It currently gates on `RUNNING` alone, so a stimulating list transmits DAQ DTOs its master
+never requested — bus load, ring pressure, and a possible `EV_DAQ_OVERLOAD` from frames nobody
+wanted. That code is unchanged since SP2, but it was unreachable until Tasks 3 and 4 made
+`DIRECTION = STIM` grantable; SP3 is what turns a dormant omission into a live defect, so SP3
+fixes it.
+
+The ordering still matters, for a reason that survives the correction: one event channel can carry
+several lists, and one may stimulate a variable another measures. Applying every stimulation list
+before sampling any acquisition list means the measurement reports the value that was actually in
+effect, rather than the one the stimulus was about to replace.
 
 The order also keeps DD37's two areas apart: applying first means every `StimBuffer` section
 closes before the first `DtoQueue` section opens, so the two cannot nest.
