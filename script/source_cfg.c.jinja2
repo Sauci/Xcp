@@ -302,17 +302,11 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- endif %}
     {%- for daq in configuration.daqs | default([]) %}
         {%- set daq_index = loop.index0 %}
-        {#- A pure STIM list is refused rather than generated. source/Xcp_Daq.c's
-            Xcp_DTOCmdDaqGetDaqListInfo would answer DAQ_LIST_PROPERTIES with both type bits clear
-            for one -- the DAQ bit because the list is not DAQ-capable, the STIM bit because
-            stimulation is unimplemented -- and XCP part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table
-            marks that encoding "Not allowed". The alternatives were to emit a forbidden encoding
-            or to advertise a capability this module does not have; refusing a list that can do
-            nothing today is the honest third. DAQ_STIM stays accepted: it is DAQ-capable now and
-            its STIM half simply waits. SP3 lifts this guard when it implements the direction. #}
-        {%- if daq.type == 'STIM' %}
-{{ raise('DAQ list {} is configured as STIM, but data stimulation is not implemented; GET_DAQ_LIST_INFO would report DAQ_LIST_PROPERTIES with neither type bit set, which XCP part 2 1.1/1.6.4.2.2.1 marks "Not allowed". Use DAQ_STIM for a list that is DAQ-capable today'.format(daq.name)) }}
-        {%- endif %}
+        {#- A pure STIM list used to be refused here: SP3 implemented data stimulation, so
+            source/Xcp_Daq.c's Xcp_DTOCmdDaqGetDaqListInfo now sets DAQ_LIST_PROPERTIES' STIM bit
+            for one instead of leaving both type bits clear, which is the encoding XCP part 2
+            1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks "Not allowed" -- so the encoding this
+            guard used to prevent is no longer the one a pure STIM list produces. #}
         {%- for dto in daq.dtos %}
         {%- if dto.pid is defined and loop.index0 == 0 and dto.pid != first_pids[daq_index] %}
 {{ raise('DAQ list {} configures pid {} but its derived FIRST_PID is {}; FIRST_PID is assigned by the slave (XCP part 2 1.1/1.6.4.1.1.4)'.format(daq.name, dto.pid, first_pids[daq_index])) }}
@@ -358,7 +352,13 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % p
             rectangle at build time, so a list's base does not depend on how many ODTs the master
             actually allocates to it. #}
         {{'0x%04Xu' % (i * pool.odt_count if (pool.type | default('DAQ')) != 'DAQ' else 0)}}, /* stimSlotBase */
-        DAQ, /* XcpDaqListType */
+        {#- The pool's own declared type, not a bare DAQ: every slot of the pool shares one
+            direction (SET_DAQ_LIST_MODE has no way to pick a different one per list), and that
+            direction is what source/Xcp.c's Xcp_CanIfRxIndication reads to decide whether a
+            received PDU may stimulate this list at all. The same `pool.type | default('DAQ')`
+            expression as stimSlotBase above, so the two can never disagree about whether this
+            pool can receive. #}
+        {{pool.type | default('DAQ')}}, /* XcpDaqListType */
         0x00u, /* XcpMaxOdt, raised by ALLOC_ODT */
         {{'0x%02Xu' % pool.odt_entries_count}}, /* XcpMaxOdtEntries */
         &Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}[0x00u], /* reference to XcpDto */

@@ -15,6 +15,13 @@ def daq_list_info(handle, daq_list_number=0, byte_order='LITTLE_ENDIAN'):
     return handle.can_if_transmit.call_args[0][1].SduDataPtr
 
 
+def exchange(handle, request, length=8):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
 def test_get_daq_list_info_reports_the_configured_shape():
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1: MAX_ODT and MAX_ODT_ENTRIES echo
     this list's own configuration. Configured distinct from each other and both non-default --
@@ -99,6 +106,22 @@ def test_daq_list_properties_daq_bit_is_set_for_every_type_that_can_be_configure
 
     assert (properties & 0x04) == 0x04, 'DAQ'
     assert (properties & 0x08) == 0x00, 'STIM arrives in SP3'
+
+
+def test_get_daq_list_info_reports_stim_for_a_receiving_list():
+    """§4. The generator refuses a pure STIM list today, and its comment states its own expiry:
+    GET_DAQ_LIST_INFO would report both type bits clear, which 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE
+    table marks "Not allowed", because stimulation was unimplemented. It is implemented now.
+
+    DAQ_LIST_PROPERTIES bit 2 is DAQ, bit 3 is STIM."""
+    handle = XcpTest(stim_config(daq_count=1, odt_count=1, odt_entries_count=1))
+    connect(handle)
+    assert exchange(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF
+
+    properties = exchange(handle, (0xD8, 0x00, 0x00, 0x00))[1]
+
+    assert (properties & 0b00001000) != 0, 'DAQ_LIST_PROPERTIES must report STIM'
+    assert (properties & 0b00000100) != 0, 'a DAQ_STIM pool is DAQ-capable too'
 
 
 def test_get_daq_list_info_answers_out_of_range_for_an_unknown_list():

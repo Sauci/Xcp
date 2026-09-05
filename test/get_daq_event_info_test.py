@@ -117,6 +117,21 @@ def test_daq_event_properties_stim_bit_stays_clear_for_a_daq_stim_channel():
     assert frame[1] == 0x04, 'DAQ_EVENT_PROPERTIES -- DAQ set, STIM (0x08) stays clear until SP3'
 
 
+def test_get_daq_event_info_reports_stim_for_a_pure_stim_channel():
+    """The companion to test_get_daq_list_info_reports_stim_for_a_receiving_list
+    (get_daq_list_info_test.py). config/xcp.schema.json now permits events[].type == "STIM" --
+    Xcp_EventChannelTypeType already carried the enumerator -- and Xcp_DTOCmdDaqGetDaqEventInfo
+    reports it exactly as Xcp_DTOCmdDaqGetDaqListInfo reports DAQ_LIST_PROPERTIES for a pure STIM
+    list: DAQ (0x04) clear, STIM (0x08) set."""
+    handle = XcpTest(DefaultConfig(events=(event(name='EVT', type='STIM',
+                                                 triggered_daq_list_ref=['DAQ1']),)))
+    connect(handle)
+
+    frame = daq_event_info(handle)
+
+    assert frame[1] == 0x08, 'DAQ_EVENT_PROPERTIES -- STIM set, DAQ clear for a pure STIM channel'
+
+
 def test_the_event_channel_name_is_uploadable_from_the_mta_it_sets():
     """1.6.4.1.2.7: the command 'automatically sets the Memory Transfer Address (MTA) to the
     location from which the master device may upload the event channel name as ASCII text, using

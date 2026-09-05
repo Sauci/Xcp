@@ -1294,12 +1294,19 @@ uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType 
         uint8 properties = 0x00u;
 
         /* DAQ_EVENT_PROPERTIES: DAQ set for DAQ and DAQ_STIM, the same condition
-         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its DAQ bit. STIM
-         * stays clear even for a DAQ_STIM channel for the same reason that comment gives: data
-         * stimulation arrives in SP3. */
+         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its DAQ bit. */
         if ((p_channel->type == DAQ) || (p_channel->type == DAQ_STIM))
         {
             properties |= XCP_DAQ_EVENT_PROPERTIES_DAQ;
+        }
+
+        /* STIM set for STIM and DAQ_STIM, the equivalent condition
+         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its STIM bit. SP3
+         * implemented data stimulation and lifted the generation guard that used to keep a pure
+         * STIM channel from ever reaching this handler. */
+        if ((p_channel->type == STIM) || (p_channel->type == DAQ_STIM))
+        {
+            properties |= XCP_DAQ_EVENT_PROPERTIES_STIM;
         }
 
         properties |= Xcp_EventConsistencyBits(p_channel->consistency);
@@ -1380,21 +1387,23 @@ uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *
          * triggeredDaqListRef -- so the master can genuinely move a list between event channels,
          * which is exactly what EVENT_FIXED = 0 means. FIXED_EVENT below is therefore don't-care
          * and zero-filled.
-         * STIM stays clear even for a DAQ_STIM list: data stimulation arrives in SP3, matching
-         * the STIM granularity of 0 that Xcp_DTOCmdDaqGetDaqResolutionInfo (this file) already
-         * reports for the same reason.
-         *
-         * The false arm of the DAQ test below is unreachable today, and deliberately kept. Both
-         * type bits clear is what a pure STIM list would produce, and 1.6.4.2.2.1's DAQ_LIST_TYPE
-         * table marks that encoding "Not allowed" -- so script/source_cfg.c.jinja2 refuses
-         * daqs[].type == "STIM" outright, leaving DAQ and DAQ_STIM as the only types that reach
-         * here and both of them DAQ-capable. Do not simplify the condition to an unconditional
-         * set: SP3 lifts that generation guard when it implements the direction, and this is the
-         * expression that has to be right on the day it does. */
+         * DAQ and STIM are independent bits reporting the direction(s) this list was configured
+         * for. The false arm of the DAQ test below is reachable now: script/source_cfg.c.jinja2
+         * no longer refuses daqs[].type == "STIM" (SP3 implemented data stimulation), so a pure
+         * STIM list reaches this handler DAQ bit clear, STIM bit set below. */
         if ((Xcp_Ptr->config->daqList[daq_list_number].type == DAQ) ||
             (Xcp_Ptr->config->daqList[daq_list_number].type == DAQ_STIM))
         {
             properties |= XCP_DAQ_LIST_PROPERTIES_DAQ;
+        }
+
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1. Both bits clear is the
+         * encoding DAQ_LIST_TYPE marks "Not allowed", which is why a pure STIM list could not be
+         * generated before stimulation existed. */
+        if ((Xcp_Ptr->config->daqList[daq_list_number].type == STIM) ||
+            (Xcp_Ptr->config->daqList[daq_list_number].type == DAQ_STIM))
+        {
+            properties |= XCP_DAQ_LIST_PROPERTIES_STIM;
         }
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;

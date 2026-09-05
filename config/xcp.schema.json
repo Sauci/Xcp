@@ -89,7 +89,8 @@
                   "type": "string",
                   "enum": [
                     "DAQ",
-                    "DAQ_STIM"
+                    "DAQ_STIM",
+                    "STIM"
                   ],
                   "default": "DAQ"
                 },
