@@ -42,11 +42,32 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
     uint8 length;
 
     /* 1.1/1.1.2.1: with PID_OFF the packet carries no Identification Field at all, so the payload
-     * -- or the timestamp, when both are on -- starts at offset 0. SET_DAQ_LIST_MODE has already
-     * refused the bit for anything but an ABSOLUTE single-ODT list, so this cannot produce a frame
-     * the master is unable to identify. Xcp_DaqListRt (source/Xcp_Daq.c) has file-local linkage
-     * there, so the stored mode is read directly off Xcp_Rt here instead, the same way
-     * Xcp_DaqSampleOdt's own timestamp check further up this file already does. */
+     * -- or the timestamp, when both are on -- starts at offset 0.
+     *
+     * **The bit alone is not a guarantee that the master can still identify the frame, and this
+     * function does not check that it is.** Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) grants
+     * PID_OFF against three conditions -- ABSOLUTE identification, maxOdt == 1, and a TX PDU no
+     * other list shares -- but a grant is a statement about the moment that command ran. Two of
+     * the three cannot drift afterwards: identificationFieldType is fixed at build time, and
+     * Xcp_DaqListTxPduIsExclusive scans every CONFIGURED list (daqCount) rather than the allocated
+     * ones, so a later ALLOC_DAQ cannot change its answer. maxOdt is the one that does. Under
+     * DAQ_DYNAMIC, ALLOC_DAQ, ALLOC_ODT(list, 1), SET_DAQ_LIST_MODE(PID_OFF), ALLOC_ODT(list, 1)
+     * is a legal sequence -- SET_DAQ_LIST_MODE does not touch Xcp_Internal.daq_alloc_state, and
+     * DD28 makes the repeat ACCUMULATE -- and it leaves maxOdt at 2 with PID_OFF still set.
+     * Xcp_TriggerEventChannel then samples BOTH ODTs of that list, this function returns 0x00u for
+     * each of them, and two DTOs go out on one PDU with nothing on the wire to tell them apart.
+     *
+     * Xcp_DaqReadIdentificationField, further down this file, re-checks maxOdt for precisely that
+     * sequence and refuses the frame rather than trusting the grant. **The transmit side has no
+     * such guard.** An earlier revision of this comment claimed the opposite -- that
+     * SET_DAQ_LIST_MODE "has already refused the bit for anything but an ABSOLUTE single-ODT list,
+     * so this cannot produce a frame the master is unable to identify" -- and that is the sentence
+     * the receive-side fix disproved. Do not reintroduce it, here or at any other reader of this
+     * bit: it is what stands between a maintainer and re-deriving a drop already found once.
+     *
+     * Xcp_DaqListRt (source/Xcp_Daq.c) has file-local linkage there, so the stored mode is read
+     * directly off Xcp_Rt here instead, the same way Xcp_DaqSampleOdt's own timestamp check
+     * further down this file already does. */
     if ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode & XCP_DAQ_LIST_MODE_PID_OFF) != 0x00u)
     {
         return 0x00u;

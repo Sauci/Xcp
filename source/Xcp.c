@@ -1386,10 +1386,27 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                      * command -- 0xFF ran CONNECT, 0xFE ran DISCONNECT, with the rest of the
                      * payload read as that command's arguments.
                      *
-                     * The two PDUs are disjoint by construction: the scan above reaches the DAQ
-                     * lists only when rxPduId is NOT channel_rx_pdu_ref->id, so no frame can be
-                     * both, and this routes every frame to exactly one path for every
-                     * identification field type including PID_OFF.
+                     * **What routes every frame to exactly one path is the if/else above, and
+                     * that is the whole of it.** The CTO test runs first and the DAQ scan sits in
+                     * its else, so no rxPduId can take both arms: the dispatch is total and
+                     * exclusive for whatever ids the build ends up with, for every identification
+                     * field type including PID_OFF. That is a property of THIS CODE. It is not a
+                     * property of the configuration, and in particular it does not say the two
+                     * ids differ.
+                     *
+                     * Nothing says that, and nothing checks it. Both are build-system macros --
+                     * script/source_cfg.c.jinja2 emits channel_rx_pdu_ref and each DAQ list's
+                     * pdu_mapping verbatim behind #ifndef fallbacks (XCP_PDU_ID_CTO_RX and
+                     * XCP_PDU_ID_TRANSMIT in config/xcp.json) -- so the generator only ever
+                     * compares NAMES, never the numbers a preprocessor resolves them to, and
+                     * Xcp_Init never reads them either. Define a stimulating list's id to the CTO
+                     * id from the build system and the CTO test simply wins: every stimulation
+                     * frame for that list is dispatched as a command, the scan above never runs,
+                     * and nothing is reported to Det. Xcp_DaqListTxPduIsExclusive
+                     * (source/Xcp_Daq.c) is what such a check looks like -- it exists because the
+                     * identical argument applies between two DAQ lists' TX PDUs, and it is
+                     * evaluated against the BUILT configuration for exactly the reason the
+                     * generator could not answer it.
                      *
                      * This supersedes part of DD36, which said the CTO dispatch path stays
                      * unchanged. That still holds for everything a CTO does once it has been
@@ -1435,11 +1452,35 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  * side effect of fixing the PID_OFF routing.
                                  *
                                  * This test is also what keeps Xcp_PIDTable's 0x00..0xBF entries
-                                 * unreachable. They hold Xcp_DTODaqStimPacket, a no-op returning
-                                 * E_OK that was dead under the old split; without this condition a
-                                 * frame on the CTO PDU with a DTO-range first byte would reach it,
-                                 * return E_OK, and have successful_transmission_pending set --
-                                 * transmitting whatever stale bytes the response buffer held. */
+                                 * unreachable, and it is the ONLY thing that does: the generated
+                                 * ctoInfo sets `enable` for all 256 PIDs and Xcp_PIDToCmdGroupTable
+                                 * holds MASK_NONE across 0x00..0xBF, so neither the enable test
+                                 * above nor the protection gate below stops such a frame. Remove
+                                 * this condition and a frame on the CTO PDU whose first byte falls
+                                 * in the DTO range runs the whole dispatch body -- and THREE things
+                                 * happen there, not one:
+                                 *
+                                 * - Xcp_PIDTable[pid] resolves to Xcp_DTODaqStimPacket, a no-op
+                                 *   returning E_OK that was dead under the old split. E_OK sets
+                                 *   successful_transmission_pending, so whatever stale bytes the
+                                 *   response buffer still held are transmitted as a response.
+                                 * - `Xcp_Internal.last_pid = pid` runs on the way out, overwriting
+                                 *   the record of the previous command. Xcp_DTOCmdStdUnlock
+                                 *   (source/Xcp_Std.c) admits a key only when last_pid is GET_SEED
+                                 *   or UNLOCK, so one such frame between the two breaks the
+                                 *   seed-and-key sequence gate.
+                                 * - `Xcp_ClearProtectionStatus()` runs too, because the guard on it
+                                 *   is `pid != XCP_PID_CMD_UNLOCK` and no DTO-range PID is UNLOCK.
+                                 *   **That silently revokes an unlock the master already completed,
+                                 *   mid-session**, and it is the worst of the three: the master's
+                                 *   next protected command is answered ERR_ACCESS_LOCKED with
+                                 *   nothing to say why.
+                                 *
+                                 * Re-pointing those 192 table entries at Xcp_CmdNotImplemented
+                                 * would NOT make this safe, and that is the trap worth naming: the
+                                 * last two happen after the handler returns, whatever the handler
+                                 * was, so they run either way. The routing decision is the guard;
+                                 * the table's contents are not. */
                                 if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_IS_CTO_MASK) != 0x00u) {
                                     /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
                                      * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
