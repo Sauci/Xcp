@@ -85,30 +85,6 @@ def slot_state(handle, daq_list=0, odt=0):
     return one.length, tuple(one.data)
 
 
-def clear_slots(handle):
-    """Zeroes the whole slot pool, so every assertion below is about the frame this test delivered.
-
-    Nothing in the module resets a stimulation slot. Xcp_Init zeroes the DTO ring's indices and
-    calls Xcp_DaqFreeAll, which returns every DAQ list to power-up values, but neither touches the
-    slot pool: it is a generated static, zero at load and never written again except by
-    Xcp_DaqStoreStim. test/conftest.py compiles and dlopens ONE runtime per distinct generated
-    source and reuses it across every test that shares a configuration, so a slot really does carry
-    the previous test's payload into this one -- which is what the module would also do across an
-    Xcp_Init, a DISCONNECT or a FREE_DAQ on a target.
-
-    Establishing the precondition here keeps each test's evidence its own rather than making it
-    depend on execution order. Whether the module itself should clear the pool is a question about
-    the apply path (DD35 latches the last frame received, so a stale slot survives into the next
-    session and is applied there) and is recorded in the Task 7 report, not decided here.
-    """
-    runtime = handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef]
-
-    for index in range(runtime.stimSlotCount):
-        runtime.stimSlot[index].length = 0x00
-        for byte in range(len(runtime.stimSlot[index].data)):
-            runtime.stimSlot[index].data[byte] = 0x00
-
-
 def rejections(handle):
     """The Det reports Xcp_DaqStoreStim raised for dropped frames, filtered out of whatever else
     the setup commands reported."""
@@ -148,12 +124,11 @@ def test_a_received_frame_is_stored_in_its_odts_slot():
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
-    clear_slots(handle)
     handle.can_if_transmit.reset_mock()
 
     deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
 
-    assert slot_state(handle) == (ENTRY_SIZE, PAYLOAD + (0x00,) * (len(slot(handle).data) - ENTRY_SIZE))
+    assert (slot(handle).length, tuple(slot(handle).data[0:ENTRY_SIZE])) == (ENTRY_SIZE, PAYLOAD)
     assert handle.can_if_transmit.call_count == 0, 'a DTO is not a command; nothing answers one'
     assert rejections(handle) == [], 'the frame was accepted, so nothing is reported'
 
@@ -174,7 +149,7 @@ def test_the_payload_and_its_length_are_written_inside_the_exclusive_area():
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
-    clear_slots(handle)
+    before = slot_state(handle)
     observed = list()
     enter_bookkeeping = handle.sch_m_enter_xcp_stim_buffer.side_effect
     exit_bookkeeping = handle.sch_m_exit_xcp_stim_buffer.side_effect
@@ -192,10 +167,9 @@ def test_the_payload_and_its_length_are_written_inside_the_exclusive_area():
 
     deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
 
-    empty = (0x00, (0x00,) * len(slot(handle).data))
-    stored = (ENTRY_SIZE, PAYLOAD + (0x00,) * (len(slot(handle).data) - ENTRY_SIZE))
-    assert observed == [('enter', empty), ('exit', stored)], \
-        'the slot must go from empty to complete strictly between the enter and the exit'
+    stored = (ENTRY_SIZE, PAYLOAD + before[1][ENTRY_SIZE:])
+    assert observed == [('enter', before), ('exit', stored)], \
+        'the slot must go from untouched to complete strictly between the enter and the exit'
 
 
 def test_a_frame_for_a_list_that_cannot_receive_is_dropped():
@@ -222,7 +196,6 @@ def test_a_frame_for_a_list_that_cannot_receive_is_dropped():
     assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 1, \
         'only the receiving list reserves a slot, so any write at all lands in DAQ1\'s'
     handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[1].mode = 0x42
-    clear_slots(handle)
     before = slot_state(handle, daq_list=0)
 
     deliver(handle, (0x01,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
@@ -240,7 +213,6 @@ def test_a_frame_for_a_list_that_is_not_running_is_dropped():
     connect(handle)
     configure_one_entry(handle)
     set_daq_list_mode(handle, mode=0x02)
-    clear_slots(handle)
     before = slot_state(handle)
 
     deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
@@ -261,7 +233,6 @@ def test_a_frame_for_a_list_whose_direction_is_daq_is_dropped():
     running_stim_list(handle, mode=0x00)
     assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x42) == 0x40, \
         'RUNNING without DIRECTION is the premise'
-    clear_slots(handle)
     before = slot_state(handle)
 
     deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
@@ -283,7 +254,6 @@ def test_a_payload_shorter_than_the_odts_entries_is_dropped():
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
-    clear_slots(handle)
     before = slot_state(handle)
 
     deliver(handle, (0x00,) + PAYLOAD[:ENTRY_SIZE - 1], config.default_daq_dto_pdu_mapping)
@@ -301,7 +271,6 @@ def test_a_payload_exactly_as_long_as_the_odts_entries_is_stored():
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
-    clear_slots(handle)
 
     deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
 
@@ -323,7 +292,6 @@ def test_a_frame_longer_than_max_dto_is_dropped():
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
-    clear_slots(handle)
     max_dto = handle.lib.Xcp_Ptr.general.maxDto
     before = slot_state(handle)
 
@@ -341,7 +309,6 @@ def test_a_frame_the_decoder_cannot_resolve_is_dropped():
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
-    clear_slots(handle)
     before = slot_state(handle)
 
     deliver(handle, (0x01,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
@@ -396,13 +363,126 @@ def test_a_pid_off_frame_lands_only_in_the_list_whose_pdu_it_arrived_on(addresse
         # 0x22: PID_OFF (bit 5) and DIRECTION (bit 1). PID_OFF needs ABSOLUTE identification, a
         # single ODT and an unshared PDU, which this configuration gives both lists.
         running_stim_list(handle, daq_list=daq_list, mode=0x22, size=1)
-    clear_slots(handle)
     untouched = 1 - addressed
+    before = slot_state(handle, daq_list=untouched)
 
     deliver(handle, (PAYLOAD[0],), receiving_pdu(handle, addressed))
 
     assert slot(handle, daq_list=addressed).length == 1
     assert slot(handle, daq_list=addressed).data[0] == PAYLOAD[0]
-    assert slot_state(handle, daq_list=untouched) == \
-        (0x00, (0x00,) * len(slot(handle, daq_list=untouched).data)), \
+    assert slot_state(handle, daq_list=untouched) == before, \
         'the list the frame did not address must be untouched'
+
+
+# --------------------------------------------------------------------------------------------
+# Releasing a slot with the DAQ lists it belongs to.
+#
+# Xcp_DaqFreeAll (source/Xcp_Daq.c) is the single unwind all three paths share -- FREE_DAQ,
+# Xcp_Init, and DISCONNECT under DAQ_DYNAMIC -- so the invariant is established once and the three
+# tests below check the three doors into it rather than three implementations.
+#
+# It matters because DD35 makes a slot LATCHED: Xcp_DaqApplyStim re-applies the last payload
+# received on EVERY event until a new frame replaces it. A slot that outlived its session would
+# therefore not merely hold stale bytes, it would write them into an ECU variable at the first
+# trigger of the next session with no master having sent anything -- a write no command asked for
+# and no response reports. That is why each test below stores a payload first and asserts it was
+# really there: a test that only checked `length == 0` afterwards would pass against a slot that
+# had never been written at all.
+# --------------------------------------------------------------------------------------------
+
+
+def assert_payload_is_stored(handle, daq_list=0):
+    """Asserts the delivered payload really reached the slot, so the release assertion that
+    follows is about something that was demonstrably there rather than about a slot no frame ever
+    filled."""
+    assert slot(handle, daq_list=daq_list).length == ENTRY_SIZE, \
+        'the payload has to be in the slot before a release can be shown to remove it'
+
+
+def dynamic_stimulation_handle():
+    """A DAQ_DYNAMIC pool that can receive, with one list of one ODT of one entry allocated.
+
+    DYNAMIC rather than STATIC because FREE_DAQ and DISCONNECT's unwind are both reachable only
+    there: script/source_cfg.c.jinja2 refuses a STATIC configuration that enables any of the four
+    allocation APIs, and Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) gates its Xcp_DaqFreeAll call
+    on DAQ_DYNAMIC. The re-initialisation test below covers the static pool, which these two
+    cannot reach.
+    """
+    config = stim_config(daq_count=1, odt_count=1, odt_entries_count=1)
+    handle = XcpTest(config)
+    connect(handle)
+    assert response(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF, 'ALLOC_DAQ one list'
+    assert response(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF, 'ALLOC_ODT one ODT'
+    assert response(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF, 'ALLOC_ODT_ENTRY one entry'
+    running_stim_list(handle)
+    deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
+    assert_payload_is_stored(handle)
+    return handle
+
+
+def test_free_daq_clears_a_stored_stimulation_payload():
+    """1.1/1.6.4.3.1.1: FREE_DAQ 'clears all DAQ lists and frees all dynamically allocated DAQ
+    lists, ODTs and ODT entries'. A stimulation slot belongs to the ODT it was allocated for, so it
+    is one of the things being freed -- and leaving it behind is worse than leaving a descriptor
+    behind, because the next session's first trigger writes it into memory rather than merely
+    disagreeing with itself about what is allocated.
+
+    maxOdt is asserted too, so a FREE_DAQ that silently did nothing at all would fail on the half
+    that was already working rather than passing this test for the wrong reason."""
+    handle = dynamic_stimulation_handle()
+
+    assert response(handle, (0xD6,))[0] == 0xFF, 'FREE_DAQ'
+
+    assert handle.lib.Xcp_Ptr.config.daqList[0].maxOdt == 0, 'FREE_DAQ released the lists'
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlot[0].length == 0, \
+        'and the stimulation slot that was allocated with them'
+
+
+def test_disconnect_clears_a_stored_stimulation_payload():
+    """XCP part 1 - Overview 1.0/2.3: in DISCONNECTED state 'all DAQ lists ... are reset'.
+    Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) reaches that through the same Xcp_DaqFreeAll, so a
+    master that simply stops talking -- rather than politely running FREE_DAQ first -- must not
+    leave a payload behind for whoever connects next."""
+    handle = dynamic_stimulation_handle()
+
+    assert response(handle, (0xFE,))[0] == 0xFF, 'DISCONNECT'
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlot[0].length == 0
+
+
+def test_re_initialising_the_module_clears_a_stored_stimulation_payload():
+    """The third door into the same unwind, and the only one that reaches a STATIC pool: Xcp_Init
+    calls Xcp_DaqFreeAll to establish the start-up invariant, exactly as it resets the DTO ring's
+    indices two lines later.
+
+    The pool is a generated static with no initialiser of its own, so it is zero at load and this
+    is the ONLY thing standing between one session's stimulation data and the next one's -- the
+    same sentence free_daq_test.py's own re-initialisation test makes about the descriptor arrays.
+    A STATIC configuration cannot enable FREE_DAQ and its DISCONNECT does not unwind, so without
+    this test the static half of the fix would be unexercised."""
+    config = one_stimulation_list()
+    handle = XcpTest(config)
+    connect(handle)
+    running_stim_list(handle)
+    deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
+    assert_payload_is_stored(handle)
+
+    handle.lib.Xcp_Init(handle.ffi.cast('const Xcp_Type *', handle.config.lib.Xcp))
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlot[0].length == 0
+
+
+def test_a_daq_only_build_takes_no_exclusive_area_to_release_slots_it_never_reserved():
+    """The guard half of the fix. stimSlotCount is 0 exactly when stimSlot is NULL_PTR
+    (interface/Xcp_Types.h), so the release loop must run zero times rather than dereference the
+    null pointer or take an area for a pool that does not exist.
+
+    Counted rather than merely 'did not crash': the harness's exclusive-area bookkeeping would
+    catch an unbalanced area but not a balanced one taken pointlessly, and 'a DAQ-only build pays
+    nothing for stimulation' is a stated constraint of this sub-project, not just a nicety.
+    Xcp_Init has already run one full Xcp_DaqFreeAll by the time the mock is inspected."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ', max_odt=2, max_odt_entries=2),)))
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0, 'the premise'
+    assert handle.sch_m_enter_xcp_stim_buffer.call_count == 0, \
+        'a build with no stimulation pool must not enter the stimulation area at all'

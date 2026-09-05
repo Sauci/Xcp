@@ -367,6 +367,7 @@ static void Xcp_DaqSessionStatusUpdate(void)
 void Xcp_DaqFreeAll(void)
 {
     uint16 daq_idx;
+    uint16 slot_idx;
 
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1: "This command clears all DAQ
      * lists and frees all dynamically allocated DAQ lists, ODTs and ODT entries."
@@ -402,6 +403,45 @@ void Xcp_DaqFreeAll(void)
     for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
     {
         Xcp_DaqListReset(daq_idx);
+    }
+
+    /* SP3: the stimulation slots belong to the lists just released, so they are released with
+     * them. Nothing else ever clears one -- the pool is a generated static, zero at load and
+     * written only by Xcp_DaqStoreStim (source/Xcp_DaqRuntime.c) -- and DD35 makes a slot LATCHED:
+     * Xcp_DaqApplyStim re-applies the last payload received on every event until a new frame
+     * replaces it. Without this, a payload received in one session would survive DISCONNECT,
+     * survive the re-CONNECT and re-allocation after it, and be written into slave memory at the
+     * first trigger of the next session with no master having sent anything. That is the
+     * memory-writing twin of the descriptor state this function was extended to release, and it is
+     * worse: descriptors that outlive their session make the module disagree with itself, whereas
+     * this one silently writes an ECU variable.
+     *
+     * `length` alone, not the payload bytes behind it: length is what makes a slot readable at
+     * all, and Xcp_DaqApplyStim reads no byte past it. This is the rule Xcp_Init already applies
+     * to the DTO ring three lines from its own call to this function -- read, write and count
+     * reset, the queued frames left where they lie -- and it keeps this unwind's cost one byte per
+     * slot rather than XCP_MAX_DTO.
+     *
+     * After the reset loop above rather than before it, for the reason the entry clear runs before
+     * the counts are zeroed: every list is stopped by the time this runs, so a trigger interleaved
+     * here finds nothing to apply, whichever slots it has already passed.
+     *
+     * stimSlotCount is itself the guard a DAQ-only build needs: the generator sets it to 0 exactly
+     * when stimSlot is NULL_PTR (interface/Xcp_Types.h), so the loop runs zero times, takes no
+     * exclusive area and never dereferences the null pointer.
+     *
+     * The exclusive area is taken per slot even though a lone `length` store cannot tear on its
+     * own. It keeps "no field of a stimulation slot is ever written outside
+     * SchM_Enter_Xcp_StimBuffer" true without exception, which is the rule the next person to
+     * touch this loop will read it against -- and it is the same per-item granularity
+     * Xcp_DaqListClearEntries already uses for its own area inside Xcp_DaqListReset above. */
+    for (slot_idx = 0x0000u; slot_idx < Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlotCount; slot_idx++)
+    {
+        SchM_Enter_Xcp_StimBuffer();
+
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].length = 0x00u;
+
+        SchM_Exit_Xcp_StimBuffer();
     }
 
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)

@@ -91,6 +91,32 @@ protection-status clear. A STIM PDU is a different PduId and can preempt a CTO m
 a handler that touches only its own slot cannot corrupt anything the CTO path owns. **The CTO
 dispatch path is unchanged, and all 256 PID entries stay as they are.**
 
+**DD45 — the receive callback splits CTO from DTO by the receiving PduId, not by the frame's
+first byte.** Added 2026-09-04, after implementation found what the original split costs.
+
+`Xcp_CanIfRxIndication` took `pid = SduDataPtr[0]` and asked `ctoInfo[pid] & IS_CTO_MASK`. That is
+sound for every identification field type, because byte 0 is then an ODT number the `0xC0` ceiling
+(DD42) keeps out of the command range. **`PID_OFF` has no identification field at all**, so byte 0
+is payload — and a stimulation payload whose first byte falls in `0xC0..0xFF` and names an enabled
+command was dispatched as that command.
+
+The origin was already known and thrown away. `Xcp_CanIfRxIndication` matches
+`channel_rx_pdu_ref->id` in one branch and walks the DAQ lists' `dto2PduMapping.rxPdu.id` in
+another, then collapses both into a single `valid_pdu_id` boolean. Recording *which* matched, and
+splitting on that, is unambiguous for every identification type including `PID_OFF`, and it needs
+no information the function does not already have.
+
+**This supersedes part of DD36.** That decision said the CTO dispatch path stays unchanged, on the
+reasoning that reception touches nothing the CTO path owns — which remains true of the *stimulation
+handler*. What DD36 got wrong was treating the CTO/DTO split itself as part of the untouched path;
+it is the routing decision that precedes both, and leaving it keyed on payload bytes is what let a
+DTO reach a command handler. `Xcp_PIDTable`'s 256 entries and `Xcp_CTOErrorMatrix` are still
+untouched, and no handler gains a guard — the change is one branch condition and the flag it reads.
+
+Severity is bounded and worth stating so the fix is not mistaken for a security patch: the master
+is already connected and could send those commands directly, so this is a master's own data being
+misinterpreted, not a capability an unauthenticated party gains.
+
 **DD37 — a second exclusive area, `SchM_Enter_Xcp_StimBuffer`, guarding the slot only.** The slot
 is written by the receive callback and read by the trigger, each potentially interrupt context at
 a different priority. Held per ODT slot, not around the whole reception or the whole apply loop —
@@ -362,6 +388,7 @@ test that cannot fail is worth less here than anywhere else in the module.
 - A DAQ-only build generates no STIM storage and behaves exactly as it does today.
 - A pure `STIM` list is generatable, and reports the `DAQ_LIST_TYPE` encoding §1.6.4.2.2.1 allows.
 - The `0xC0` ceiling binds STIM-capable configurations and only those.
-- The CTO dispatch path is unchanged: no exclusive area was added to it, and no handler on it
-  gained a guard.
+- No exclusive area was added to the CTO dispatch path, no handler on it gained a guard, and
+  `Xcp_PIDTable`'s 256 entries and `Xcp_CTOErrorMatrix` are untouched. The CTO/DTO split itself is
+  by receiving PduId (DD45), so no frame on a DAQ list's PDU can reach a command handler.
 - The full suite passes, with the pytest filter confirmed empty for the final run.
