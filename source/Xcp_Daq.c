@@ -1788,9 +1788,33 @@ uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfo
      * master that trusts what this command reports can never have WRITE_DAQ refuse it. */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->odtEntrySizeDaq;
 
-    /* Data stimulation arrives in SP3; until then a STIM granularity of 0 says so, and there is
-     * no WRITE_DAQ-equivalent for STIM yet to disagree with it. */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+     * GRANULARITY_ODT_ENTRY_SIZE_STIM and MAX_ODT_ENTRY_SIZE_STIM, the DIRECTION = STIM twins of
+     * the two bytes above. In this module they carry the DAQ direction's own values, because there
+     * is one WRITE_DAQ for both directions: Xcp_DaqApplyOdtEntry enforces `size % granularity` and
+     * `size <= odtEntrySizeDaq` on every entry it writes, whatever direction the list it belongs to
+     * is later put into. So what this command advertises for STIM is exactly what that command
+     * enforces for STIM -- the same agreement MAX_ODT_ENTRY_SIZE_DAQ's own byte above exists to
+     * keep, and the reason these are not reported as an independent pair of limits.
+     *
+     * Both are zero for a configuration that cannot receive stimulation at all. That is what
+     * odtEntrySizeStim already means -- the generator emits odtEntrySizeDaq for a STIM-capable
+     * configuration and 0 for a DAQ-only one (script/source_cfg.c.jinja2, DD43) -- so the
+     * granularity is keyed off that same field rather than off a second capability test of its own,
+     * which is what keeps the two bytes from ever disagreeing about whether this slave stimulates.
+     * 0 is outside the {1,2,4,8} this section enumerates for GRANULARITY_ODT_ENTRY_SIZE_x, and
+     * deliberately so: it is the same thing MAX_ODT_ENTRY_SIZE_STIM has always said in a DAQ-only
+     * build, and the same thing the ASAP2 grammar says by making its "STIM" block optional. */
+    if (Xcp_Ptr->general->odtEntrySizeStim == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    }
+    else
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] =
+                Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    }
+
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->odtEntrySizeStim;
 
     if (Xcp_Ptr->general->timestampType == NO_TIME_STAMP)

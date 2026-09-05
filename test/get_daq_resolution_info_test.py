@@ -53,19 +53,65 @@ def test_max_odt_entry_size_is_what_a_dto_leaves_after_the_identification_field(
     assert info(handle)[2] == expected
 
 
-def test_stim_fields_are_zero_while_stimulation_is_out_of_scope():
-    """GRANULARITY_ODT_ENTRY_SIZE_STIM (byte 3) and MAX_ODT_ENTRY_SIZE_STIM (byte 4) are both hard
-    zeros in this phase -- STIM arrives in SP3. Not vacuous zero checks: connect(), called by
-    daq_handle() immediately before info(), leaves nonzero bytes at both of these exact buffer
-    offsets in Xcp_CTOCmdStdConnect's own response (source/Xcp_Std.c) -- MAX_CTO (0x08 by default)
-    at byte 3, and MAX_DTO's low byte (0x08 by default, little endian) at byte 4. Since
-    Xcp_FinalizeResPacket only fills bytes from its start index onward, a deleted assignment on
-    either byte would leave that 0x08 rather than 0x00, so both assertions are load-bearing under
-    the default configuration this test uses. Confirmed by mutation -- see task-14-report.md."""
+def test_stim_fields_are_zero_for_a_build_that_cannot_receive_stimulation():
+    """GRANULARITY_ODT_ENTRY_SIZE_STIM (byte 3) and MAX_ODT_ENTRY_SIZE_STIM (byte 4) are both zero
+    for a DAQ-only configuration. Not "not implemented yet" -- SP3 implements stimulation, and the
+    sibling test below is what this slave reports once a configuration can receive. Zero is what a
+    slave that stimulates nothing has to say about the size and granularity of a stimulation ODT
+    entry it will never accept, and it is what the ASAP2 grammar says by making its "STIM" block
+    optional (1.1/1.6.4.1.2.5, whose GRANULARITY_ODT_ENTRY_SIZE_x enumeration is {1,2,4,8}).
+
+    Not vacuous zero checks: connect(), called by daq_handle() immediately before info(), leaves
+    nonzero bytes at both of these exact buffer offsets in Xcp_CTOCmdStdConnect's own response
+    (source/Xcp_Std.c) -- MAX_CTO (0x08 by default) at byte 3, and MAX_DTO's low byte (0x08 by
+    default, little endian) at byte 4. Since Xcp_FinalizeResPacket only fills bytes from its start
+    index onward, a deleted assignment on either byte would leave that 0x08 rather than 0x00, so
+    both assertions are load-bearing under the default configuration this test uses. Confirmed by
+    mutation -- see task-14-report.md.
+
+    It is load-bearing a second way now, which the paragraph above does not cover: byte 3 is no
+    longer a constant, so a granularity reported unconditionally -- without asking whether this
+    configuration can receive at all -- would answer 1 here rather than 0. Also confirmed by
+    mutation; see task-9-report.md."""
     handle = daq_handle()
 
     assert info(handle)[3] == 0
     assert info(handle)[4] == 0
+
+
+@pytest.mark.parametrize('ag', address_granularities)
+def test_stim_fields_report_the_same_limits_write_daq_enforces_on_a_stim_entry(ag):
+    """The DIRECTION = STIM half of the two tests above, on a configuration that can receive.
+
+    1.1/1.6.4.1.2.5 reports the two directions as four separate bytes because it allows a slave
+    whose directions differ. This one's do not, and the reason is structural rather than a
+    coincidence worth reporting twice: there is one WRITE_DAQ for both directions, and
+    Xcp_DaqApplyOdtEntry (source/Xcp_Daq.c) refuses an entry whose size is not a multiple of the
+    address granularity or is larger than odtEntrySizeDaq, whatever direction the list it belongs
+    to is later put into by SET_DAQ_LIST_MODE. So a master that sizes its STIM ODT entries by what
+    this command reports can never have WRITE_DAQ refuse them -- which is the sentence
+    test_max_odt_entry_size_is_what_a_dto_leaves_after_the_identification_field makes about the DAQ
+    direction, and the only reason these bytes are worth reporting at all.
+
+    Asserted against the DAQ bytes of the same response rather than against fresh literals: the
+    claim is that the two directions agree, and two independently written literals would still
+    agree if the module had stopped deriving one from the other. The non-zero assertions are what
+    keep that from being satisfied by a slave that reported 0 for all four.
+
+    Swept over the address granularity for byte 3, exactly as the DAQ granularity test above is:
+    a hard-coded 1 would pass at BYTE and nowhere else.
+    """
+    handle = XcpTest(DefaultConfig(address_granularity=ag,
+                                   daqs=(daq(name='DAQ1', type='DAQ_STIM'),)))
+    connect(handle)
+
+    response = info(handle)
+
+    assert response[3] == element_size_from_address_granularity(ag)
+    assert response[3] == response[1], 'one WRITE_DAQ, one granularity, both directions'
+    assert response[4] == response[2], 'and one MAX_ODT_ENTRY_SIZE, for the same reason'
+    assert response[3] != 0 and response[4] != 0, \
+        'a configuration that can receive must not report a DAQ-only build\'s zeros'
 
 
 def test_timestamp_fields_are_invalid_because_timestamps_are_unsupported():
