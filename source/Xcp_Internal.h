@@ -173,22 +173,23 @@ extern "C" {
 
 /**
  * @brief every mode bit this implementation refuses outright, regardless of configuration.
- * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. TIMESTAMP is not in
- * this mask any more: Xcp_DTOCmdDaqSetDaqListMode decides that bit itself, depending on whether
- * this build has a clock configured and whether ODT 0 still has room for one. PID_OFF is not in
- * this mask either, for the same reason: Xcp_DTOCmdDaqSetDaqListMode decides it itself, depending
- * on whether the identification field type is absolute and the targeted DAQ list has exactly one
- * ODT (1.1/1.1.2.1). What remains here is refused unconditionally: DIRECTION selects STIM, out of
- * scope until SP3, and ALTERNATING pairs a DAQ list with a display event channel declared only in
- * the A2L file (DAQ_ALTERNATING_SUPPORTED), which this module does not emit -- and which 1.1
- * forbids combining with TIMESTAMP in any case.
+ * @details TIMESTAMP is not in this mask: Xcp_DTOCmdDaqSetDaqListMode decides that bit itself,
+ * depending on whether this build has a clock configured and whether ODT 0 still has room for
+ * one. PID_OFF is not in this mask either, for the same reason: Xcp_DTOCmdDaqSetDaqListMode
+ * decides it itself, depending on whether the identification field type is absolute and the
+ * targeted DAQ list has exactly one ODT (1.1/1.1.2.1). DIRECTION is not in this mask either, and
+ * for the same reason again: Xcp_DTOCmdDaqSetDaqListMode decides it itself, depending on whether
+ * the addressed list's configured type can receive (STIM or DAQ_STIM), refusing it with
+ * ERR_MODE_NOT_VALID otherwise. What remains here is refused unconditionally: ALTERNATING pairs a
+ * DAQ list with a display event channel declared only in the A2L file
+ * (DAQ_ALTERNATING_SUPPORTED), which this module does not emit -- and which 1.1 forbids combining
+ * with TIMESTAMP in any case.
  *
  * Bits 2, 3, 6 and 7 are don't-care in both versions and are tolerated. An earlier revision of
  * this mask refused 6 and 7 believing ALTERNATING lived there; it does not, and refusing bits the
  * specification marks don't-care is over-strict.
  */
-#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
-    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_ALTERNATING)
+#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (XCP_DAQ_LIST_MODE_REQ_ALTERNATING)
 
 /* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */
 #define XCP_DAQ_LIST_MODE_SELECTED (0x01u << 0x00u)

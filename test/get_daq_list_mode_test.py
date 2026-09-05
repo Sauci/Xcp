@@ -46,6 +46,24 @@ def test_get_daq_list_mode_reports_what_set_daq_list_mode_stored():
     assert get_mode(handle, daq_list=1)[4:6] == (0x01, 0x00), 'event channel, little endian'
 
 
+def test_get_daq_list_mode_reports_direction_for_a_receiving_list():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.6, the GET-side half of SP3's Task
+    4: SET_DAQ_LIST_MODE stores DIRECTION (bit 1) in the same layout GET_DAQ_LIST_MODE reads back,
+    so a stimulation-capable list that accepted DIRECTION = STIM must report it set here -- the
+    same round trip test_get_daq_list_mode_reports_what_set_daq_list_mode_stored above performs
+    for the event channel and prescaler. set_daq_list_mode_test.py's
+    test_set_daq_list_mode_accepts_stim_on_a_receiving_list drives the same round trip already, to
+    show SET accepted the request; this test gives GET_DAQ_LIST_MODE's own reporting contract a
+    home in the file that owns it, matching every other bit this file pins by name."""
+    handle = XcpTest(stim_config(daq_count=1, odt_count=1, odt_entries_count=1))
+    connect(handle)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
+    exchange(handle, (0xE0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))
+
+    assert (get_mode(handle)[1] & 0x02) != 0x00
+
+
 def test_get_daq_list_mode_reports_running_and_selected():
     handle = daq_handle()
     rt = handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef]

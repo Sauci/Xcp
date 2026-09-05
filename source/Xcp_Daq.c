@@ -1087,12 +1087,23 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         error = XCP_E_ASAM_DAQ_ACTIVE;
     }
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
-     * DIRECTION selects stimulation and PID_OFF a DTO without an identification field; 1.1 adds
-     * ALTERNATING somewhere in bits 6..7. None of these three is implemented, and 1.7.3.2.4 lists
+     * ALTERNATING pairs a DAQ list with a display event channel declared only in the A2L file
+     * (DAQ_ALTERNATING_SUPPORTED), which this module does not emit. 1.7.3.2.4 lists
      * ERR_MODE_NOT_VALID for this command, which is precisely what an unsupported mode is.
-     * TIMESTAMP is handled separately below: whether it is honoured depends on this build's
-     * configuration, not on a blanket refusal. */
+     * TIMESTAMP, PID_OFF and DIRECTION are handled separately below: whether each is honoured
+     * depends on this build's configuration, not on a blanket refusal. */
     else if ((mode & XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED) != 0x00u)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
+     * DIRECTION selects stimulation, which only a list whose configured type can receive (STIM or
+     * DAQ_STIM) is able to honour -- the same test Xcp_CanIfRxIndication (source/Xcp.c) applies
+     * before routing a stimulation frame to this list. DD9: an unsupported mode is what
+     * ERR_MODE_NOT_VALID means, and DIRECTION on a DAQ-only list is unsupported by that list. */
+    else if (((mode & XCP_DAQ_LIST_MODE_REQ_DIRECTION) != 0x00u) &&
+             (Xcp_Ptr->config->daqList[daq_list_number].type != STIM) &&
+             (Xcp_Ptr->config->daqList[daq_list_number].type != DAQ_STIM))
     {
         error = XCP_E_ASAM_MODE_NOT_VALID;
     }
@@ -1166,11 +1177,11 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         Xcp_DaqListRt(daq_list_number)->priority = priority;
 
         /* The stored mode uses the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6, which is not the
-         * layout this request arrives in -- TIMESTAMP and PID_OFF happen to sit at the same bit in
-         * both, but that is a coincidence, not a shortcut: do not be tempted to assign `mode`
-         * wholesale here when DIRECTION becomes supported too, as it sits at a different bit in
-         * each byte (request bit 0, stored bit 1). Xcp_DTOCmdDaqGetDaqListMode (below) reads these
-         * same bits back. */
+         * layout this request arrives in -- TIMESTAMP, PID_OFF and DIRECTION happen to sit at the
+         * same bit in both, but that is a coincidence, not a shortcut: do not assign `mode`
+         * wholesale here. SELECTED (stored bit 0) has no equivalent in the request byte, and
+         * ALTERNATING (request bit 0) is refused above and so never reaches here.
+         * Xcp_DTOCmdDaqGetDaqListMode (below) reads these same bits back. */
         if ((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u)
         {
             Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_TIMESTAMP;
@@ -1190,6 +1201,19 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         else
         {
             Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_PID_OFF);
+        }
+
+        /* Re-specified in full on every request, exactly as TIMESTAMP and PID_OFF are above: a
+         * master that turns DIRECTION back off (returning this list to DAQ) in a later
+         * SET_DAQ_LIST_MODE must see it actually cleared here. Reachable only when the type check
+         * above already let DIRECTION through, i.e. the addressed list is STIM or DAQ_STIM. */
+        if ((mode & XCP_DAQ_LIST_MODE_REQ_DIRECTION) != 0x00u)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_DIRECTION;
+        }
+        else
+        {
+            Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_DIRECTION);
         }
     }
 
