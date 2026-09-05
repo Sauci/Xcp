@@ -31,6 +31,12 @@ PAYLOAD = (0x11, 0x22, 0x33, 0x44)
 # payload length DD39 requires of a frame addressing it.
 ENTRY_SIZE = len(PAYLOAD)
 
+# A second frame, used only by the exclusive-area test, differing from PAYLOAD in every byte AND in
+# length. Both differences are load-bearing there; see that test's docstring. One byte longer than
+# the ODT needs, which DD39 accepts -- the requirement is a floor, not an equality -- and still
+# within MAX_DTO once the one-byte identification field is counted.
+SECOND_PAYLOAD = (0x77, 0x88, 0x99, 0xAA, 0xBB)
+
 
 def response(handle, request):
     """One CTO exchange, returning the first two response bytes."""
@@ -138,18 +144,35 @@ def test_the_payload_and_its_length_are_written_inside_the_exclusive_area():
     globally, after every test, that neither exclusive area was nested, unbalanced or leaked -- so
     a slot written OUTSIDE a correctly entered and exited area passes all of that silently.
 
-    This observes the slot from inside the area instead: once on entry, where it must still be
-    empty, and once on exit, where it must already hold the whole frame. Both the payload and the
-    length are checked at both points, because `length` paired with the buffer it describes is the
-    DD14 failure class -- writing one inside the area and the other outside it is exactly the
-    torn pair DD37 exists to prevent, and it would satisfy an assertion that looked only at the
-    bytes.
+    This observes the slot from inside the area instead: once on entry, where it must still hold
+    exactly what it held before the frame arrived, and once on exit, where it must already hold the
+    whole of the new one. Both the payload and the length are checked at both points, because
+    `length` paired with the buffer it describes is the DD14 failure class -- writing one inside the
+    area and the other outside it is the torn pair DD37 exists to prevent, and it would satisfy an
+    assertion that looked only at the bytes.
+
+    The slot is SEEDED with a first frame, and the second one differs from it in BOTH the payload
+    bytes and the length. Neither is decoration, and an earlier version of this test had only the
+    first:
+
+    - different bytes are what catch a payload copied before the area is entered. Against a slot
+      whose previous contents happened to equal the incoming payload, the entry snapshot would look
+      untouched under exactly that defect.
+    - a different LENGTH is what catches the length being written after the area is left. Two
+      frames of equal length leave `length` unchanged across the section, so the exit snapshot
+      would look complete whether or not the length was written inside it.
+
+    Seeding also makes the test independent of what the module does or does not clear at start-up:
+    the "before" state is established here, by a delivery, rather than inherited from a freshly
+    generated pool or from whatever ran previously in the same compiled runtime.
     """
     config = one_stimulation_list()
     handle = XcpTest(config)
     connect(handle)
     running_stim_list(handle)
+    deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
     before = slot_state(handle)
+    assert before[0] == ENTRY_SIZE, 'the seeding frame has to be in the slot for it to be a seed'
     observed = list()
     enter_bookkeeping = handle.sch_m_enter_xcp_stim_buffer.side_effect
     exit_bookkeeping = handle.sch_m_exit_xcp_stim_buffer.side_effect
@@ -165,11 +188,12 @@ def test_the_payload_and_its_length_are_written_inside_the_exclusive_area():
     handle.sch_m_enter_xcp_stim_buffer.side_effect = on_enter
     handle.sch_m_exit_xcp_stim_buffer.side_effect = on_exit
 
-    deliver(handle, (0x00,) + PAYLOAD, config.default_daq_dto_pdu_mapping)
+    deliver(handle, (0x00,) + SECOND_PAYLOAD, config.default_daq_dto_pdu_mapping)
 
-    stored = (ENTRY_SIZE, PAYLOAD + before[1][ENTRY_SIZE:])
+    stored = (len(SECOND_PAYLOAD), SECOND_PAYLOAD + before[1][len(SECOND_PAYLOAD):])
+    assert stored != before, 'the two frames must differ, or neither snapshot can discriminate'
     assert observed == [('enter', before), ('exit', stored)], \
-        'the slot must go from untouched to complete strictly between the enter and the exit'
+        'the slot must go from the seeded frame to the new one strictly between enter and exit'
 
 
 def test_a_frame_for_a_list_that_cannot_receive_is_dropped():
