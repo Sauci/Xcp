@@ -25,6 +25,21 @@ def test_exclusive_area_stub_is_linked_and_reaches_the_integrator_callback():
     handle.sch_m_exit_xcp_dto_queue.assert_called_once_with()
 
 
+def test_the_stimulation_exclusive_area_is_linked_and_reaches_the_integrator_callback():
+    """DD37. The second area guards one thing: a stimulation slot, written in the receive
+    callback's context and read in the event trigger's. It is separate from
+    SchM_Enter_Xcp_DtoQueue because a DAQ_STIM list applies and samples in one trigger, and one
+    area for both would risk nesting -- which conftest.py asserts against."""
+    handle = XcpTest(stim_config())
+    handle.sch_m_enter_xcp_stim_buffer.reset_mock()
+    handle.sch_m_exit_xcp_stim_buffer.reset_mock()
+
+    handle.lib.SchM_Enter_Xcp_StimBuffer()
+    handle.sch_m_enter_xcp_stim_buffer.assert_called_once_with()
+    handle.lib.SchM_Exit_Xcp_StimBuffer()
+    handle.sch_m_exit_xcp_stim_buffer.assert_called_once_with()
+
+
 def exchange(handle, request):
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
     handle.lib.Xcp_MainFunction()

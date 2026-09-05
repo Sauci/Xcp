@@ -287,6 +287,13 @@ class XcpTest(object):
         # dto_queue_area_violations is swept by the autouse fixture below.
         self.dto_queue_area_held = False
         self.dto_queue_area_violations = list()
+        # DD37: SchM_Enter_Xcp_StimBuffer / SchM_Exit_Xcp_StimBuffer is the second exclusive area,
+        # guarding a stimulation slot rather than the DTO ring. Modelled exactly like
+        # dto_queue_area_held/dto_queue_area_violations above -- a separate boolean and a separate
+        # violation list, not a shared one, because the two areas are independent and the harness
+        # must be able to tell a DtoQueue violation from a StimBuffer one.
+        self.stim_buffer_area_held = False
+        self.stim_buffer_area_violations = list()
         # CFFI swallows any exception raised inside an `extern "Python+C"` callback: it prints the
         # traceback to stderr and returns 0 to the C caller. E_OK is 0x00u, so a raising mock
         # reports SUCCESS to the module under test and a test can pass on an assertion that never
@@ -458,6 +465,8 @@ class XcpTest(object):
         self.xcp_get_daq_timestamp = MagicMock()
         self.sch_m_enter_xcp_dto_queue = MagicMock()
         self.sch_m_exit_xcp_dto_queue = MagicMock()
+        self.sch_m_enter_xcp_stim_buffer = MagicMock()
+        self.sch_m_exit_xcp_stim_buffer = MagicMock()
         self.xcp_user_cmd_function = MagicMock()
         self.config.ffi.def_extern('Xcp_UserCmdFunction')(
                 self._guarded_callback('Xcp_UserCmdFunction', self.xcp_user_cmd_function))
@@ -511,6 +520,21 @@ class XcpTest(object):
 
         self.sch_m_enter_xcp_dto_queue.side_effect = enter_dto_queue_area
         self.sch_m_exit_xcp_dto_queue.side_effect = exit_dto_queue_area
+
+        def enter_stim_buffer_area():
+            if self.stim_buffer_area_held:
+                self.stim_buffer_area_violations.append(
+                        'SchM_Enter_Xcp_StimBuffer called while already held (nested or double enter)')
+            self.stim_buffer_area_held = True
+
+        def exit_stim_buffer_area():
+            if not self.stim_buffer_area_held:
+                self.stim_buffer_area_violations.append(
+                        'SchM_Exit_Xcp_StimBuffer called while not held (exit without a matching enter)')
+            self.stim_buffer_area_held = False
+
+        self.sch_m_enter_xcp_stim_buffer.side_effect = enter_stim_buffer_area
+        self.sch_m_exit_xcp_stim_buffer.side_effect = exit_stim_buffer_area
 
         self.code.lib.Xcp_State = self.code.lib.XCP_UNINITIALIZED
         if initialize:
@@ -605,7 +629,8 @@ class XcpTest(object):
 @pytest.fixture(autouse=True)
 def _callback_invariants():
     """Checks, after every test, the two things the C/Python boundary cannot report on its own: an
-    exception raised inside a CFFI callback, and an imbalance in the DTO-queue exclusive area.
+    exception raised inside a CFFI callback, and an imbalance in either exclusive area -- the
+    DTO-queue one (DD5/DD14) or the stimulation-buffer one (DD37).
 
     Both exist for one reason. A callback registered with `extern "Python+C"` that raises has its
     traceback printed to stderr and swallowed at the boundary; the C caller is handed 0, which is
@@ -613,11 +638,14 @@ def _callback_invariants():
     can fail the test that is still executing C code several frames up. Recording both without
     raising, then asserting here once control is back in pure Python, sidesteps that entirely.
 
-    SchM_Enter/Exit_Xcp_DtoQueue's side effects (XcpTest.__init__ above) model the exclusive area as
-    a boolean, so a violation means a real nesting, ordering, or enter/exit imbalance was exercised
-    by the test that just ran -- not merely that the mocks were called an unexpected number of
-    times. A test that leaves the area HELD at teardown is caught too: an Enter with no matching
-    Exit is a leaked lock, which in a real integration means interrupts stay masked.
+    SchM_Enter/Exit_Xcp_DtoQueue's and SchM_Enter/Exit_Xcp_StimBuffer's side effects (XcpTest.__init__
+    above) each model their own area as a boolean, so a violation means a real nesting, ordering, or
+    enter/exit imbalance was exercised by the test that just ran -- not merely that the mocks were
+    called an unexpected number of times. The two areas are tracked independently (dto_queue_area_*
+    and stim_buffer_area_*), and this fixture is what joins them back into one pair of checks, so
+    a third area added later needs only to be folded into the two comprehensions below, not into a
+    third pair of asserts. A test that leaves either area HELD at teardown is caught too: an Enter
+    with no matching Exit is a leaked lock, which in a real integration means interrupts stay masked.
 
     Every test gets all of this for free -- the fixture is autouse and every XcpTest registers
     itself in XcpTest._instances.
@@ -628,8 +656,9 @@ def _callback_invariants():
 
     violations = [(instance, violation)
                   for instance in XcpTest._instances
-                  for violation in instance.dto_queue_area_violations]
-    leaked = [instance for instance in XcpTest._instances if instance.dto_queue_area_held]
+                  for violation in instance.dto_queue_area_violations + instance.stim_buffer_area_violations]
+    leaked = [instance for instance in XcpTest._instances
+              if instance.dto_queue_area_held or instance.stim_buffer_area_held]
     raised = [entry
               for instance in XcpTest._instances
               for entry in instance.callback_exceptions]
@@ -641,8 +670,8 @@ def _callback_invariants():
                 '\n'.join('{}:\n{}'.format(name, tb) for name, tb in raised))
 
     assert violations == [], \
-        'SchM_Enter_Xcp_DtoQueue/SchM_Exit_Xcp_DtoQueue nesting or imbalance: {}'.format(
+        'exclusive-area nesting or imbalance: {}'.format(
                 [v for _, v in violations])
     assert leaked == [], \
-        'SchM_Enter_Xcp_DtoQueue left the area held at teardown -- a leaked lock -- in {} instance(s)'.format(
+        'an exclusive area was left held at teardown -- a leaked lock -- in {} instance(s)'.format(
                 len(leaked))

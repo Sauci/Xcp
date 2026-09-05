@@ -478,6 +478,20 @@ void Xcp_ClearProtectionStatus(void);
 void Xcp_StartNextTransmission(void);
 
 /**
+ * @brief SchM_Enter_Xcp_StimBuffer / SchM_Exit_Xcp_StimBuffer (DD37): a second exclusive area,
+ * separate from SchM_Enter_Xcp_DtoQueue above -- see test/stub/SchM_Xcp.h for the declarations.
+ * @details Guards one Xcp_StimSlotType at a time: its `length` together with its payload, written
+ * by Xcp_DaqStoreStim in the receive callback's context and read by Xcp_DaqApplyStim in the event
+ * trigger's. A length paired with the buffer it describes is the DD14 class -- the same class
+ * Xcp_DaqListRtType's note (interface/Xcp_Types.h) says its own fields do NOT belong to, which is
+ * exactly why that argument does not excuse this structure from an area.
+ * @note Not folded into SchM_Enter_Xcp_DtoQueue: a DAQ_STIM list applies its slots and samples its
+ * DTO within the same trigger, so one shared area would risk the apply section nesting inside the
+ * sampler's DtoQueue section. test/conftest.py's exclusive-area bookkeeping asserts against
+ * nesting globally, on every test, so a violation here would not be confined to STIM tests.
+ */
+
+/**
  * @brief Hands back the PduIdType and PduInfoType of the frame at the head of the DTO ring.
  * @retval E_NOT_OK the ring is empty; *pTxPduId and *ppPduInfo are not written.
  * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive
