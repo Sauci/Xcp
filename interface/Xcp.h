@@ -407,6 +407,32 @@ void Xcp_MainFunction(void);
  */
 void Xcp_TriggerEventChannel(uint16 eventChannelNumber);
 
+#ifdef CFFI_ENABLE
+
+/**
+ * @brief Second, CFFI-only declaration of an internal function. The real one, with the
+ * documentation, is in source/Xcp_Internal.h; this is not part of the module's interface.
+ * @details test/conftest.py builds the CFFI cdef by preprocessing exactly this header
+ * (CMakeLists.txt passes --header interface/Xcp.h), and interface/Xcp.h never includes
+ * Xcp_Internal.h -- so a function declared only there cannot be reached from a test at all,
+ * however the compiled sources export it. Xcp_DaqReadIdentificationField computes the payload
+ * offset of a received stimulation frame, where an error of one, two or four bytes applies the
+ * master's data to the wrong addresses and nothing in the protocol reports it, so it is worth
+ * pinning directly (test/stim_decode_test.py) rather than only through its callers.
+ * @note Deliberately not `extern`: CFFIHeader (test/conftest.py) rewrites every `extern` function
+ * declaration it finds in this header into `extern "Python+C"` and wires it to a Python mock,
+ * which is right for an integrator callback and would displace this module's own definition.
+ * Xcp_Internal.h's copy is visible in every translation unit that defines or calls this
+ * (Xcp_Internal.h includes this header), so the compiler rejects any disagreement between the two.
+ */
+Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
+                                              PduIdType rxPduId,
+                                              uint16 *pDaqListNumber,
+                                              uint8 *pOdtNumber,
+                                              uint8 *pOffset);
+
+#endif /* #ifdef CFFI_ENABLE */
+
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 

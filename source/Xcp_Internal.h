@@ -492,6 +492,35 @@ void Xcp_StartNextTransmission(void);
  */
 
 /**
+ * @brief Decodes the identification field of a received stimulation frame.
+ * @param[in] pPduInfo the received frame. Must be non-NULL with a non-NULL SduDataPtr, which
+ * Xcp_CanIfRxIndication (Xcp.c) has already established before any DTO reaches here.
+ * @param[in] rxPduId the PDU the frame arrived on, which is what identifies the DAQ list when
+ * PID_OFF has removed the identification field (1.1/1.1.2.1).
+ * @param[out] pDaqListNumber the DAQ list the frame addresses.
+ * @param[out] pOdtNumber the ODT of that list the frame addresses, relative to the list.
+ * @param[out] pOffset index of the first payload byte, with the identification field and any
+ * timestamp already accounted for. Never larger than the frame's own SduLength, so a caller may
+ * subtract it from that length without underflow; equal to it for a frame carrying no payload.
+ * @retval E_OK the frame names a DAQ list and an ODT this slave has, and is long enough to hold
+ * the fields that precede its payload. The three out-parameters are written only in this case.
+ * @retval E_NOT_OK anything else -- an unallocated list, an ODT the list does not have, or a frame
+ * too short for the fields the configuration says precede its payload.
+ * @details Defined in Xcp_DaqRuntime.c, immediately after Xcp_DaqWriteIdentificationField, of
+ * which it is the exact inverse: the writer is the authority on each of the five layouts, and any
+ * disagreement between the two is a defect here. Whether the frame should be applied at all --
+ * that the list is STIM-capable, RUNNING, and directed at stimulation, and that its payload is
+ * long enough for the ODT's entries -- is DD39's, checked by the caller, not here.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1 (identification field) and
+ * 1.1/1.1.2.2 (timestamp field, DD44).
+ */
+Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
+                                              PduIdType rxPduId,
+                                              uint16 *pDaqListNumber,
+                                              uint8 *pOdtNumber,
+                                              uint8 *pOffset);
+
+/**
  * @brief Hands back the PduIdType and PduInfoType of the frame at the head of the DTO ring.
  * @retval E_NOT_OK the ring is empty; *pTxPduId and *ppPduInfo are not written.
  * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive

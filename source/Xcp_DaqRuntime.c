@@ -95,6 +95,84 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
 }
 
 /**
+ * @brief Finds the allocated DAQ list that receives on rxPduId and has PID_OFF in its stored mode.
+ * @retval TRUE *pDaqListNumber names that list; FALSE no allocated list satisfies both conditions,
+ * and *pDaqListNumber is not written.
+ * @details 1.1/1.1.2.1: once the Identification Field is turned off, "the unambiguous
+ * identification has to be done on the level of the Transport Layer" -- and the only handle this
+ * module's transport layer offers is the PDU the frame arrived on. So under PID_OFF the receiving
+ * PduId names the DAQ list, in place of a field that is not on the wire at all.
+ *
+ * At most one list can match, which is why the scan stops at the first: Xcp_DTOCmdDaqSetDaqListMode
+ * (source/Xcp_Daq.c) grants PID_OFF only to a list whose PDU no other list shares, and rejects it
+ * otherwise -- that is the whole purpose of Xcp_DaqListTxPduIsExclusive there. Uniqueness is
+ * therefore established when the bit is set, not re-derived here.
+ *
+ * dto[0x00u], the same element Xcp_DaqSampleOdt below and Xcp_DaqListTxPduIsExclusive both read:
+ * the exclusivity PID_OFF was granted on was decided on that element, so identification has to be
+ * read off the same one or the two could disagree. rxPdu rather than txPdu of that union -- the
+ * same bytes either way, since Xcp_RxPduType and Xcp_TxPduType have identical layouts, but this is
+ * the receive side and Xcp_CanIfRxIndication (Xcp.c) matches on the same member.
+ * @note The bound is Xcp_Internal.allocated_daq_count, which is what Xcp_DaqListIsValid
+ * (source/Xcp_Daq.c, file-local there) means by a list existing: equal to daqCount under a STATIC
+ * configuration, and raised from zero by ALLOC_DAQ under a DYNAMIC one.
+ */
+static boolean Xcp_DaqPidOffListForRxPdu(PduIdType rxPduId, uint16 *pDaqListNumber)
+{
+    boolean found = FALSE;
+    uint16 idx;
+
+    for (idx = 0x0000u; (idx < Xcp_Internal.allocated_daq_count) && (found == FALSE); idx++)
+    {
+        if (((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode & XCP_DAQ_LIST_MODE_PID_OFF) != 0x00u) &&
+            ((PduIdType)Xcp_Ptr->config->daqList[idx].dto[0x00u].dto2PduMapping.rxPdu.id == rxPduId))
+        {
+            *pDaqListNumber = idx;
+            found = TRUE;
+        }
+    }
+
+    return found;
+}
+
+/**
+ * @brief Reverses absolute_ODT_NUMBER = FIRST_PID(list) + relative ODT_NUMBER.
+ * @retval TRUE pid falls in some allocated list's range; *pDaqListNumber and *pOdtNumber name it.
+ * @retval FALSE no allocated list covers pid; neither output is written.
+ * @details 1.1/1.6.4.1.1.4. The ABSOLUTE identification field is the one form that does not carry
+ * the DAQ list number, so it has to be recovered -- the ranges [firstPid, firstPid + maxOdt) are
+ * disjoint and contiguous by construction (the generator assigns firstPid as a running sum of the
+ * preceding lists' maxOdt), so at most one list matches and a linear scan finds it.
+ *
+ * A 256-entry reverse table would answer in constant time but would have to be rebuilt on every
+ * ALLOC_ODT and every direction change; the scan is bounded by allocated_daq_count, itself capped
+ * at 255, against a frame rate the bus already bounds.
+ *
+ * A list with maxOdt 0x00u -- which config/xcp.schema.json permits -- yields an empty range and
+ * can never match, so it needs no case of its own.
+ */
+static boolean Xcp_DaqListForAbsolutePid(uint8 pid, uint16 *pDaqListNumber, uint8 *pOdtNumber)
+{
+    boolean found = FALSE;
+    uint16 idx;
+
+    for (idx = 0x0000u; (idx < Xcp_Internal.allocated_daq_count) && (found == FALSE); idx++)
+    {
+        const uint16 first_pid = (uint16)Xcp_Ptr->config->daqList[idx].firstPid;
+        const uint16 end_pid = (uint16)(first_pid + (uint16)Xcp_Ptr->config->daqList[idx].maxOdt);
+
+        if (((uint16)pid >= first_pid) && ((uint16)pid < end_pid))
+        {
+            *pDaqListNumber = idx;
+            *pOdtNumber = (uint8)((uint16)pid - first_pid);
+            found = TRUE;
+        }
+    }
+
+    return found;
+}
+
+/**
  * @brief Assembles one ODT into one DTO frame.
  * @return E_OK when the ODT held at least one written entry and pFrame was filled; E_NOT_OK when
  * every entry was empty, in which case pFrame must not be queued.
@@ -288,6 +366,156 @@ static Std_ReturnType Xcp_DaqQueuePush(const Xcp_DtoFrameType *pFrame)
 /*------------------------------------------------------------------------------------------------*/
 /* global function definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
+
+Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
+                                              PduIdType rxPduId,
+                                              uint16 *pDaqListNumber,
+                                              uint8 *pOdtNumber,
+                                              uint8 *pOffset)
+{
+    Std_ReturnType result = E_NOT_OK;
+    uint16 daq_list_number = 0x0000u;
+    uint8 odt_number = 0x00u;
+    uint8 offset = 0x00u;
+    boolean decoded;
+
+    /* PID_OFF first, and not as an arm of the switch below: it is a property of one DAQ list, not
+     * of the build's identificationFieldType, and it removes the very field the switch would read.
+     * There is no ordering hazard in asking about it before the field is decoded -- a list holding
+     * the bit owns its PDU exclusively (Xcp_DaqPidOffListForRxPdu above), so a frame arriving on
+     * some other list's PDU matches nothing here and falls through to the field. */
+    decoded = Xcp_DaqPidOffListForRxPdu(rxPduId, &daq_list_number);
+
+    if (decoded == TRUE)
+    {
+        /* 1.1/1.1.2.1: no Identification Field on the wire, so the payload -- or the timestamp,
+         * when both are on -- starts at byte 0. SET_DAQ_LIST_MODE grants PID_OFF only to a
+         * single-ODT list, so the ODT is 0 and there is nothing to read. Exactly what
+         * Xcp_DaqWriteIdentificationField returns 0x00u for on the transmit side. */
+        odt_number = 0x00u;
+        offset = 0x00u;
+    }
+    else
+    {
+        /* The arms below are Xcp_DaqWriteIdentificationField's, in its order and reading back
+         * precisely what each of them writes. That function is the authority on these layouts; a
+         * disagreement between the two is a defect here, not there. Each arm checks SduLength
+         * before indexing: the field it is about to read is as long as the configuration says, not
+         * as long as the master actually sent. */
+        switch (Xcp_Ptr->general->identificationFieldType)
+        {
+            case RELATIVE_BYTE:
+            {
+                if (pPduInfo->SduLength >= 0x02u)
+                {
+                    odt_number = pPduInfo->SduDataPtr[0x00u];
+                    daq_list_number = (uint16)pPduInfo->SduDataPtr[0x01u];
+                    offset = 0x02u;
+                    decoded = TRUE;
+                }
+
+                break;
+            }
+            case RELATIVE_WORD:
+            {
+                if (pPduInfo->SduLength >= 0x03u)
+                {
+                    odt_number = pPduInfo->SduDataPtr[0x00u];
+                    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x01u], &daq_list_number,
+                                           Xcp_Ptr->general->byteOrder);
+                    offset = 0x03u;
+                    decoded = TRUE;
+                }
+
+                break;
+            }
+            case RELATIVE_WORD_ALIGNED:
+            {
+                if (pPduInfo->SduLength >= 0x04u)
+                {
+                    odt_number = pPduInfo->SduDataPtr[0x00u];
+                    /* Byte 1 is the FILL byte, skipped: 1.1/1.1.2.1 gives it no defined value, so
+                     * nothing about it can be checked. */
+                    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number,
+                                           Xcp_Ptr->general->byteOrder);
+                    offset = 0x04u;
+                    decoded = TRUE;
+                }
+
+                break;
+            }
+            default:
+            {
+                /* ABSOLUTE. The one form carrying no DAQ list number, so the list is recovered
+                 * from the PID's own range rather than read. */
+                if (pPduInfo->SduLength >= 0x01u)
+                {
+                    decoded = Xcp_DaqListForAbsolutePid(pPduInfo->SduDataPtr[0x00u],
+                                                        &daq_list_number, &odt_number);
+                    offset = 0x01u;
+                }
+
+                break;
+            }
+        }
+    }
+
+    /* Both bounds, for every form: the ABSOLUTE scan establishes them on the way in, but the four
+     * other forms take the master's word for the list number, the ODT number, or both, and the
+     * caller indexes daqList[] and its odt[] with exactly these. */
+    if ((decoded == TRUE) &&
+        (daq_list_number < Xcp_Internal.allocated_daq_count) &&
+        (odt_number < Xcp_Ptr->config->daqList[daq_list_number].maxOdt))
+    {
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+        /* DD44. 1.1/1.1.2.2: "The TIMESTAMP flag can be used as well for DIRECTION = DAQ as for
+         * DIRECTION = STIM", and for stimulation the master "first receives a time stamped
+         * DTO(DAQ) from the slave and then echoes this current value of the slave device's clock
+         * in the DTO Packet for the first ODT of the DAQ cycle". So the field sits directly after
+         * the Identification Field, on ODT 0 alone -- Diagram 10's shape, in the other direction
+         * -- and this mirrors Xcp_DaqSampleOdt's own block above condition for condition.
+         *
+         * Skipped, not read into anything: the value is the slave's own clock coming back, and
+         * 1.1.2.2 offers the correlation it enables ("gives the slave the possibility to check
+         * whether DTO(DAQ) and CTO(STIM) belong functionally together") as a possibility, not a
+         * requirement. Acting on it needs a record of which clock value went out with which DAQ
+         * cycle, which is its own mechanism; the design document records it as a follow-up. This
+         * interface has nowhere to put the value, so reading it would only be a discarded load.
+         *
+         * Xcp_TimestampWireSize(timestampType), not XCP_DAQ_TIMESTAMP_SIZE, for the reason
+         * Xcp_DaqSampleOdt states at length: the macro is the maximum across every configuration
+         * in the build, right for compile-time sizing and #if gating, wrong as the byte count of
+         * the configuration actually running. It is also the size the specification obliges the
+         * master to use -- "The master has to use the same Type of Timestamp Field when
+         * transferring STIM Packets to the slave" as the slave published through
+         * GET_DAQ_RESOLUTION_INFO -- so there is nothing here to negotiate or infer from the
+         * frame. */
+        if ((odt_number == 0x00u) &&
+            ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_list_number].mode &
+              XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u))
+        {
+            offset = (uint8)(offset + Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType));
+        }
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
+
+        /* The frame has to be at least as long as the fields that precede its payload, timestamp
+         * included -- the per-arm checks above cover only the identification field, which is all
+         * they had decoded at that point. Equality is accepted: a frame that is exactly its own
+         * header carries an empty payload, which is a well-formed frame that DD39's payload-length
+         * check (the caller's) is what rejects. This also keeps SduLength - *pOffset defined for
+         * that caller, which is unsigned and would otherwise wrap. */
+        if ((uint32)pPduInfo->SduLength >= (uint32)offset)
+        {
+            *pDaqListNumber = daq_list_number;
+            *pOdtNumber = odt_number;
+            *pOffset = offset;
+
+            result = E_OK;
+        }
+    }
+
+    return result;
+}
 
 Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo)
 {
