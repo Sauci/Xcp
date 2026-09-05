@@ -433,8 +433,10 @@ def test_generation_accepts_a_pure_stim_list():
     stimulation and lifted the guard: Xcp_DTOCmdDaqGetDaqListInfo now sets the STIM bit for such a
     list instead of leaving both clear, which is the encoding the table marks "Not allowed"'s
     counterpart. This pins that the static list itself generates with the right type;
-    get_daq_list_info_test.py's test_get_daq_list_info_reports_stim_for_a_receiving_list pins the
-    resulting DAQ_LIST_PROPERTIES bits, for a dynamic pool's equivalent list."""
+    get_daq_list_info_test.py's test_get_daq_list_info_reports_stim_for_a_pure_stim_list pins the
+    resulting DAQ_LIST_PROPERTIES bits over a real GET_DAQ_LIST_INFO exchange.
+    test_get_daq_list_info_reports_stim_for_a_receiving_list in that file is not this list's
+    equivalent -- it configures a DAQ_STIM pool, not a pure STIM list."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),)))
 
     assert handle.config.lib.Xcp[0].config.daqList[0].type == handle.lib.STIM

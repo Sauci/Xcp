@@ -123,6 +123,23 @@ def test_get_daq_list_info_reports_stim_for_a_receiving_list():
     assert (properties & 0b00000100) != 0, 'a DAQ_STIM pool is DAQ-capable too'
 
 
+def test_get_daq_list_info_reports_stim_for_a_pure_stim_list():
+    """The companion to test_get_daq_event_info_reports_stim_for_a_pure_stim_channel
+    (get_daq_event_info_test.py). test_get_daq_list_info_reports_stim_for_a_receiving_list above
+    configures a DAQ_STIM pool, not a pure STIM list -- its own assertion says so ("a DAQ_STIM
+    pool is DAQ-capable too") -- so nothing exercises a real GET_DAQ_LIST_INFO exchange against a
+    list whose type is STIM alone. Xcp_DTOCmdDaqGetDaqListInfo now reports that encoding as XCP
+    part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table allows it: STIM (0x08) set, DAQ (0x04) clear --
+    the escape from the "Not allowed" both-bits-clear encoding the removed generation guard
+    existed to avoid, and the reason that guard existed at all."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),)))
+    connect(handle)
+
+    properties = daq_list_info(handle)[1]
+
+    assert properties == 0x08, 'DAQ_LIST_PROPERTIES -- STIM set, DAQ clear for a pure STIM list'
+
+
 def test_get_daq_list_info_answers_out_of_range_for_an_unknown_list():
     """1.1/1.6.4.2.2.1: "If the specified list is not available, ERR_OUT_OF_RANGE will be
     returned." Unlike the DAQ pointer's own predicate-free check (Task 9), the DAQ list has a real
