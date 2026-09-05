@@ -172,8 +172,16 @@ the frame that caused it rather than surfacing a cycle later.
 be fixed. Applying first means a list that stimulates and measures the same variable reports the
 value that was actually in effect, rather than the one the stimulus was about to replace.
 
-The order is also load-bearing for DD37: applying first means every `StimBuffer` section closes
-before the first `DtoQueue` section opens, so the two areas cannot nest. It is not a free choice.
+The order also keeps DD37's two areas apart: applying first means every `StimBuffer` section
+closes before the first `DtoQueue` section opens, so the two cannot nest.
+
+**But the harness does not enforce that, and an earlier revision of this document implied it
+would.** Implementation checked rather than assumed and found two reasons. `Xcp_DaqSampleOdt` and
+`Xcp_DaqQueuePush` each close their `DtoQueue` section before returning, so reversing the order
+creates no nesting to detect; and `test/conftest.py` tracks the two areas as independent booleans,
+so it can only observe an area nested *within itself*, never one held across the other. The global
+assertion is therefore silent on this ordering. DD40 needs its own test — the order is not a free
+choice, but neither is it self-enforcing.
 
 **DD41 — the `STIM` resource stays ungated, deliberately.** §1.5's resource table defines it as
 *"DAQ list commands (DIRECTION = STIM)"* — protection keyed on a list's direction. This module
