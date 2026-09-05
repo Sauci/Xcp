@@ -213,6 +213,18 @@ extern "C" {
  */
 #define XCP_E_INVALID_EVENT_CHANNEL (0x05u)
 
+/**
+ * @brief A received stimulation frame was dropped instead of being buffered.
+ * @details Raised by Xcp_DaqStoreStim for every frame it refuses (DD39): one it cannot resolve to
+ * a DAQ list and an ODT, one addressing a list that cannot receive, is not running or is not
+ * directed at stimulation, one whose payload is shorter than that ODT's entries need, and one
+ * longer than the running configuration's MAX_DTO.
+ * @note This error is not part of the specification, and Det is the only channel a rejection has:
+ * XCP part 2 - Protocol Layer Specification 1.1/1.1.4.2's DTO is not a command, so there is no
+ * error packet to answer it with and no master waiting on one.
+ */
+#define XCP_E_STIM_FRAME_REJECTED (0x06u)
+
 /** @} */
 
 /**

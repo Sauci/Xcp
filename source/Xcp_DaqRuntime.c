@@ -173,6 +173,71 @@ static boolean Xcp_DaqListForAbsolutePid(uint8 pid, uint16 *pDaqListNumber, uint
 }
 
 /**
+ * @brief Payload bytes one ODT's entries will consume when the trigger applies them.
+ * @return The sum over that ODT's entries, each rounded down to a whole number of elements.
+ * @details DD39's "long enough" is exactly this number, and it is computed the way
+ * Xcp_DaqSampleOdt's own read loop consumes the frame in the other direction -- entry.length
+ * divided by the address granularity's element size, times that size -- rather than as the raw
+ * sum of the lengths. The two differ only for an entry whose length is not a whole number of
+ * elements, which WRITE_DAQ (source/Xcp_Daq.c) does not accept today; writing it this way keeps
+ * the reception's requirement equal to the apply's consumption rather than merely equal today.
+ *
+ * An empty entry contributes zero, so the non-empty test Xcp_DaqSampleOdt applies before copying
+ * is not needed here; the sum is the same with or without it.
+ * @note The entry lengths are read without an exclusive area, which is deliberate and narrower
+ * than DD14's case: only `length` is read, never `address`, and nothing is dereferenced through
+ * either. A CLEAR_DAQ_LIST concurrent with this can therefore only make the requirement smaller
+ * or larger than the one the master computed, which costs at most one frame -- it cannot produce
+ * the stale-address dereference DD14 exists to prevent. Taking SchM_Enter_Xcp_DtoQueue here would
+ * put the DTO ring's area on the receive path to buy nothing.
+ */
+static uint8 Xcp_DaqStimOdtPayloadLength(uint16 daqListNumber, uint8 odtNumber)
+{
+    const Xcp_OdtType *p_odt = &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber];
+    const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    uint8 required = 0x00u;
+    uint8_least idx;
+
+    for (idx = 0x00u; idx < p_odt->entryCount; idx++)
+    {
+        required = (uint8)(required +
+                           (uint8)((p_odt->odtEntry[idx].length / element_size) * element_size));
+    }
+
+    return required;
+}
+
+/**
+ * @brief Answers whether the decoded frame may be stored in the addressed list's slot.
+ * @return TRUE the list is stimulation-capable, RUNNING, and directed at stimulation, and
+ * payloadLength covers what its ODT's entries need; FALSE otherwise, and the frame is dropped.
+ * @details DD39. The type test comes first and is not redundant with the DIRECTION test that
+ * follows it: DIRECTION is what the master asked for, type is what the configuration can honour,
+ * and only the type decides whether the generator reserved a slot for this list at all (DD43). A
+ * list whose type excludes STIM has stimSlotBase 0 -- the base of the FIRST receiving list -- so
+ * addressing a slot for it would write into some other list's buffer, which is why this is checked
+ * before stimSlotBase is ever read. Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) refuses
+ * DIRECTION on such a list, so the command set alone cannot reach that state; this stays as the
+ * second, independent guard on the one path that indexes the slot array.
+ * @note Reads the runtime mode without an exclusive area, as every other reader of it does. The
+ * argument is Xcp_DaqListRtType's own (interface/Xcp_Types.h): no field there is a pointer or a
+ * length paired with one, so a torn read costs at most one skewed cycle -- here, one frame stored
+ * or dropped against a mode the master was in the middle of changing.
+ */
+static boolean Xcp_DaqStimFrameIsApplicable(uint16 daqListNumber, uint8 odtNumber,
+                                            uint8 payloadLength)
+{
+    const uint8 mode = Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode;
+
+    return (boolean)((((Xcp_Ptr->config->daqList[daqListNumber].type == STIM) ||
+                       (Xcp_Ptr->config->daqList[daqListNumber].type == DAQ_STIM)) &&
+                      ((mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u) &&
+                      ((mode & XCP_DAQ_LIST_MODE_DIRECTION) != 0x00u) &&
+                      (payloadLength >= Xcp_DaqStimOdtPayloadLength(daqListNumber, odtNumber))) ?
+                     TRUE : FALSE);
+}
+
+/**
  * @brief Assembles one ODT into one DTO frame.
  * @return E_OK when the ODT held at least one written entry and pFrame was filled; E_NOT_OK when
  * every entry was empty, in which case pFrame must not be queued.
@@ -543,6 +608,89 @@ Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
     }
 
     return result;
+}
+
+void Xcp_DaqStoreStim(const PduInfoType *pPduInfo, PduIdType rxPduId)
+{
+    uint16 daq_list_number = 0x0000u;
+    uint8 odt_number = 0x00u;
+    uint8 offset = 0x00u;
+    boolean stored = FALSE;
+
+    /* MAX_DTO first, and short-circuited before the frame is decoded at all: 1.1/1.1.4.2 bounds a
+     * DTO packet at MAX_DTO, which the slave published in its CONNECT response, so a longer frame
+     * is one the master was told not to send. It is refused rather than truncated because
+     * Xcp_StimSlotType's buffer is XCP_MAX_DTO bytes and a payload past that end has nowhere to go
+     * that is not the next slot -- this check, together with Xcp_DaqReadIdentificationField's
+     * guarantee that *pOffset never exceeds SduLength, is the whole of what bounds the copy below.
+     *
+     * Xcp_Ptr->general->maxDto, not the XCP_MAX_DTO macro: the macro is the largest MAX_DTO across
+     * every configuration in the build, right for sizing the buffer and wrong as the bound of the
+     * configuration actually running -- the same distinction Xcp_DaqSampleOdt states for the
+     * timestamp width. maxDto <= XCP_MAX_DTO by construction (script/header_cfg.h.jinja2 folds the
+     * macro as the maximum over the same configurations), so this is the tighter of the two and
+     * the buffer stays safe.
+     *
+     * The decode that follows answers E_NOT_OK for a frame naming no allocated list, an ODT the
+     * list does not have, a PID_OFF list that no longer has exactly one ODT, or a frame too short
+     * for the fields the configuration says precede its payload. */
+    if (((uint32)pPduInfo->SduLength <= (uint32)Xcp_Ptr->general->maxDto) &&
+        (Xcp_DaqReadIdentificationField(pPduInfo, rxPduId, &daq_list_number, &odt_number,
+                                        &offset) == E_OK))
+    {
+        /* Defined without underflow: Xcp_DaqReadIdentificationField answers E_OK only for an
+         * offset its own SduLength covers. */
+        const uint8 payload_length = (uint8)((uint32)pPduInfo->SduLength - (uint32)offset);
+
+        if (Xcp_DaqStimFrameIsApplicable(daq_list_number, odt_number, payload_length) == TRUE)
+        {
+            /* stimSlot[stimSlotBase + odtNumber], the addressing rule of both configuration models
+             * (DD43, interface/Xcp_Types.h). In range by construction rather than by a check here:
+             * the decoder has already bounded daq_list_number by allocated_daq_count and
+             * odt_number by that list's maxOdt, the generator's prefix sum gives every receiving
+             * list a base whose block of maxOdt slots is its own, and under DAQ_DYNAMIC ALLOC_ODT
+             * bounds maxOdt by the pool's odtCount that same sum is rectangular in. The type test
+             * inside Xcp_DaqStimFrameIsApplicable is what keeps a non-receiving list -- whose base
+             * is 0 and reserves nothing -- from reaching this line at all. */
+            Xcp_StimSlotType *p_slot =
+                    &Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[
+                            Xcp_Ptr->config->daqList[daq_list_number].stimSlotBase + odt_number];
+            uint8_least idx;
+
+            /* DD37, held around this one slot and nothing else -- not around the decode above, and
+             * not around the whole reception. The payload and the `length` describing it are
+             * written inside the same section because that pair is the DD14 failure class:
+             * Xcp_DaqApplyStim reads both in the event trigger's context, and a length that had
+             * already been raised while the bytes it counts were still the previous frame's would
+             * apply data the master never sent.
+             *
+             * `length` last, after the bytes it describes, so the two are also consistent for any
+             * reader that this area does not in fact exclude -- an integrator's SchM that suspends
+             * less than test/stub/SchM_Xcp.h asks for still sees a length no larger than the bytes
+             * actually written, rather than the reverse. */
+            SchM_Enter_Xcp_StimBuffer();
+
+            for (idx = 0x00u; idx < (uint8_least)payload_length; idx++)
+            {
+                p_slot->data[idx] = pPduInfo->SduDataPtr[(uint8_least)offset + idx];
+            }
+
+            p_slot->length = payload_length;
+
+            SchM_Exit_Xcp_StimBuffer();
+
+            stored = TRUE;
+        }
+    }
+
+    if (stored == FALSE)
+    {
+        /* DD39: a DTO is not a command, so there is no error packet to answer it with and no
+         * master waiting on one. Det is the only channel a rejection has. Outside any exclusive
+         * area -- Det_ReportError is an external call, the same rule Xcp_TriggerEventChannel's own
+         * EV_DAQ_OVERLOAD report follows further down this file. */
+        Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_STIM_FRAME_REJECTED);
+    }
 }
 
 Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo)

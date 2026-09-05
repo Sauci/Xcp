@@ -970,6 +970,20 @@ uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduIn
          * a preemption the target cannot have -- which is why test/free_daq_test.py sweeps its
          * interleavings from SchM_Exit's side effect rather than SchM_Enter's.
          *
+         * SP3 added a SECOND unguarded reader of this pair, in a different context, and the
+         * argument above has to cover it explicitly rather than by analogy: Xcp_DaqStoreStim's
+         * decoder (Xcp_DaqReadIdentificationField, source/Xcp_DaqRuntime.c) reads firstPid, maxOdt
+         * and allocated_daq_count from CanIf's RECEIVE context, which source/Xcp.c's own note says
+         * may preempt a CTO mid-dispatch -- and a stimulation frame landing between these two
+         * writes would resolve its PID against a half-updated layout and be applied to the wrong
+         * DAQ list. It cannot land there for the same reason the sampler cannot: test/stub/
+         * SchM_Xcp.h requires this area to suspend "anything that can call into this module", which
+         * is every one of its entry points and so the receive indication too, not only the transmit
+         * interrupt that note names as the typical case. ALLOC_ODT is also not refused for a
+         * RUNNING list (Xcp_CTOErrorMatrix gives 0xD4 no ERR_DAQ_ACTIVE), so "the master allocates
+         * before it starts a list" is a convention and not what makes this safe. That header now
+         * says so outright; do not narrow this area to the transmit side.
+         *
          * Raised, not assigned: DD28 makes a repeat naming the same list accumulate. Rejected
          * whole above, never in part -- a partly applied allocation would leave the master
          * unaware of how much it actually has, and would put the prefix sum out of step with what

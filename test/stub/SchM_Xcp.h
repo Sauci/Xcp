@@ -18,6 +18,16 @@
  * the area must exclude the confirmation's execution context too, not just concurrent callers of
  * this module's other entry points. A primitive that does not -- a spinlock shared with a
  * confirmation handled on another core, for instance -- does not satisfy this.
+ *
+ * It also includes Xcp_CanIfRxIndication, and that is not merely a restatement once a
+ * configuration can receive stimulation. Xcp_DTOCmdDaqAllocOdt (source/Xcp_Daq.c) raises a list's
+ * maxOdt and recomputes every list's firstPid inside this area precisely because the two are
+ * inconsistent in between; both are read, with no area held, by Xcp_DaqSampleOdt in the transmit
+ * direction AND by Xcp_DaqReadIdentificationField in the receive one (source/Xcp_DaqRuntime.c).
+ * What keeps either from observing that window is that this area suspends the context it runs in
+ * -- the CAN transmit interrupt for the first, the CAN receive interrupt for the second. An
+ * integrator who suspends only the transmit side leaves a received stimulation frame able to
+ * resolve its PID against a half-updated layout and be applied to the wrong DAQ list.
  */
 
 #ifndef SCHM_XCP_H

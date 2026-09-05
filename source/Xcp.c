@@ -1326,15 +1326,23 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                 for (daq_idx = 0x00u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
                 {
                     /* Then, we check if the received PDU ID is one which has been configured for a DAQ stimulation. */
-                    /* SP3, read this before adding a stimulation handler here. SWS_Xcp_00813 makes
-                     * Xcp_<Lo>RxIndication "Reentrant for different PduIds. Non reentrant for the
-                     * same PduId." Every CTO arrives on channel_rx_pdu_ref->id, so CanIf itself
-                     * prevents a CTO from racing another CTO -- which is why nothing below guards
-                     * Xcp_Internal.cto_response, last_pid or the protection-status clear. A DAQ_STIM
-                     * PDU is a DIFFERENT PduId and may therefore preempt a CTO mid-dispatch. This
-                     * branch is safe only because it sets a local flag and touches no shared state.
-                     * A handler that writes the response buffer, the DAQ pointer, the runtime mode
-                     * bits or the DTO ring makes that race real. */
+                    /* DD36, and the reason nothing on the CTO path below takes an exclusive area.
+                     * SWS_Xcp_00813 makes Xcp_<Lo>RxIndication "Reentrant for different PduIds.
+                     * Non reentrant for the same PduId." Every CTO arrives on
+                     * channel_rx_pdu_ref->id, so CanIf itself prevents a CTO from racing another
+                     * CTO -- which is why nothing below guards Xcp_Internal.cto_response, last_pid
+                     * or the protection-status clear. A DAQ_STIM PDU is a DIFFERENT PduId and may
+                     * therefore preempt a CTO mid-dispatch.
+                     *
+                     * That preemption is harmless because of what the stimulation handler does,
+                     * not because of anything this function does about it: Xcp_DaqStoreStim
+                     * (source/Xcp_DaqRuntime.c) decodes the frame, copies its payload into that
+                     * ODT's own Xcp_StimSlotType under SchM_Enter_Xcp_StimBuffer, and returns. It
+                     * writes no slave memory -- the event trigger does that (DD36) -- and touches
+                     * neither the response buffer, nor the DAQ pointer, nor any runtime mode bit,
+                     * nor the DTO ring. A future handler on this branch that did any of those
+                     * makes the race real, and the fix would be to move that work to the trigger,
+                     * not to add a guard here. */
                     if ((Xcp_Ptr->config->daqList[daq_idx].type == STIM) ||
                         (Xcp_Ptr->config->daqList[daq_idx].type == DAQ_STIM))
                     {
@@ -1448,7 +1456,15 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                             }
                             else
                             {
-                                /* TODO: handle DTOs common code here... */
+                                /* A DTO, which for this module means a stimulation frame: the
+                                 * only master-to-slave DTO XCP defines (1.1/1.1.4.2). Buffered in
+                                 * its ODT's slot and applied at the event trigger; nothing is
+                                 * transmitted in answer, and response_expected stays untouched, so
+                                 * the successful_transmission_pending assignment the CTO arm makes
+                                 * is deliberately not mirrored here. A frame this refuses is
+                                 * dropped and reported through Det, which DD39 makes the only
+                                 * channel available: no master is waiting on a DTO. */
+                                Xcp_DaqStoreStim(pPduInfo, rxPduId);
                             }
                         }
                         else

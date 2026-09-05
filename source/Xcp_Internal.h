@@ -526,6 +526,35 @@ Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
                                               uint8 *pOffset);
 
 /**
+ * @brief Buffers one received stimulation frame in the slot of the ODT it addresses.
+ * @param[in] pPduInfo the received frame. Must be non-NULL with a non-NULL SduDataPtr and an
+ * SduLength of at least one, all of which Xcp_CanIfRxIndication (Xcp.c) has established before any
+ * DTO reaches here.
+ * @param[in] rxPduId the PDU the frame arrived on, passed straight to
+ * Xcp_DaqReadIdentificationField, which needs it to identify the list under PID_OFF.
+ * @details Defined in Xcp_DaqRuntime.c. DD36: this is the whole of what a stimulation frame does
+ * in the receive callback's context -- decode, check, copy into one slot, return. No memory is
+ * written through Xcp_WriteSlaveMemoryTable here; Xcp_DaqApplyStim does that at the event trigger.
+ *
+ * That division is what keeps SWS_Xcp_00813 satisfiable. It makes Xcp_<Lo>RxIndication "Reentrant
+ * for different PduIds. Non reentrant for the same PduId.", and every CTO arrives on one PduId --
+ * which is why nothing on the CTO dispatch path guards Xcp_Internal.cto_response, last_pid or the
+ * protection-status clear. A stimulation PDU is a DIFFERENT PduId and may preempt a CTO
+ * mid-dispatch. This function touches none of that state, so that preemption cannot corrupt it,
+ * and the CTO path needs no exclusive area of its own.
+ *
+ * DD39 gives the conditions a frame must meet, and there is no error response for one that does
+ * not: 1.1/1.1.4.2's DTO is not a command, so a rejection's only channel is
+ * Xcp_ReportError(XCP_E_STIM_FRAME_REJECTED) and the frame is dropped. A rejected frame leaves the
+ * slot exactly as it was -- it is never partially written -- so the previous cycle's data keeps
+ * being applied, which DD35 makes the defined behaviour when nothing new arrives.
+ * @note The slot write takes SchM_Enter_Xcp_StimBuffer (DD37), held around that one slot and
+ * nothing else: the payload and the `length` describing it are written together under it, because
+ * a length paired with its buffer is the DD14 failure class.
+ */
+void Xcp_DaqStoreStim(const PduInfoType *pPduInfo, PduIdType rxPduId);
+
+/**
  * @brief Hands back the PduIdType and PduInfoType of the frame at the head of the DTO ring.
  * @retval E_NOT_OK the ring is empty; *pTxPduId and *ppPduInfo are not written.
  * @details Defined in Xcp_DaqRuntime.c. The caller is expected to already hold the exclusive
