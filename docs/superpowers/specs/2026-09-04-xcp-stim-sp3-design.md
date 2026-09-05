@@ -162,14 +162,21 @@ pre-existing, but SP3 is the first sub-project where it is visibly incomplete ra
 unused. Recorded as a follow-up in §8.
 
 **DD44 — a STIM DTO carries a timestamp when the list is in timestamped mode, and reception must
-skip it.** §1.1.2.2 is explicit: *"The TIMESTAMP flag can be used as well for DIRECTION = DAQ as
-for DIRECTION = STIM."*
+skip it.** §1.1.2.2 is explicit, in 1.1: *"The TIMESTAMP flag can be used as well for
+DIRECTION = DAQ as for DIRECTION = STIM."* §1.6.4.1.1.3 repeats it and widens it — *"The TIMESTAMP
+and PID_OFF flags can be used as well for DIRECTION = DAQ as for DIRECTION = STIM"*.
 
-For STIM the direction of the timestamp reverses in an interesting way. The master *echoes* a
-value it received: *"the master device first receives a time stamped DTO(DAQ) from the slave and
-then echoes this current value of the slave device's clock in the DTO Packet for the first ODT of
-the DAQ cycle."* Its stated purpose is to let the slave *"check whether DTO(DAQ) and CTO(STIM)
-belong functionally together"* — a round-trip correlation for bypassing.
+**On provenance, because it matters here.** 1.0's §1.1.2.2 explains the mechanism: the master
+*echoes* a value it received — *"the master device first receives a time stamped DTO(DAQ) from the
+slave and then echoes this current value of the slave device's clock in the DTO Packet for the
+first ODT of the DAQ cycle"* — so the slave can *"check whether DTO(DAQ) and CTO(STIM) belong
+functionally together"*, a round-trip correlation for bypassing. **That passage was removed in
+1.1**, from both §1.1.2.2 and the `SET_DAQ_LIST_MODE` section, and appears in neither. Cite it as
+**1.0**/1.1.2.2. What 1.1 retains, and what this decision actually rests on, is the flag sentence
+above plus Diagram 10's "TS only in first DTO Packet of sample" and the master's obligation to use
+the slave's own Timestamp Field type. An earlier revision of this document quoted the 1.0-only
+passage under this document's 1.1 default, which would have sent a reader to a section that does
+not contain it.
 
 Three consequences:
 
