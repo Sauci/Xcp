@@ -91,6 +91,21 @@ protection-status clear. A STIM PDU is a different PduId and can preempt a CTO m
 a handler that touches only its own slot cannot corrupt anything the CTO path owns. **The CTO
 dispatch path is unchanged, and all 256 PID entries stay as they are.**
 
+**DD47 — `GRANULARITY_ODT_ENTRY_SIZE_STIM` reports the address granularity, not zero.** Added
+2026-09-04 during Task 9, which found the field still hard-zero under a "stimulation arrives in
+SP3" comment.
+
+`GET_DAQ_RESOLUTION_INFO`'s byte 3 tells a master the size quantum its STIM ODT entries must
+respect. The module has one `WRITE_DAQ` path and one entry-application routine, and that routine
+refuses `size % granularity != 0` (`source/Xcp_Daq.c`) without consulting the list's direction —
+an entry does not know, at the time it is written, which direction its list will run in. So the
+constraint binds STIM entries exactly as it binds DAQ ones, and reporting zero told a master there
+was no constraint where there is one.
+
+This is a protocol behaviour change rather than a reporting tidy-up, which is why it is a decision
+and not a footnote. A DAQ-only build is byte-identical: the field is reported only for a
+stimulation-capable configuration.
+
 **DD46 — the receive callback splits CTO from DTO by the receiving PduId, not by the frame's
 first byte.** Added 2026-09-04, after implementation found what the original split costs.
 
