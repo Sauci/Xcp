@@ -225,6 +225,30 @@ extern "C" {
  */
 #define XCP_E_STIM_FRAME_REJECTED (0x06u)
 
+/**
+ * @brief Buffered stimulation data was not written to memory at the event trigger.
+ * @details Raised by Xcp_DaqApplyStim (source/Xcp_DaqRuntime.c) for what it cannot honour, and for
+ * two reasons only:
+ *
+ * - one ODT entry names a non-zero address extension. Xcp_WriteSlaveMemoryTable has no parameter
+ *   for one, so the entry cannot be written where it says (DD45); it is skipped, its siblings
+ *   still apply, and this is raised once for it.
+ * - the whole ODT, when the slot holds fewer bytes than its entries consume. The frame was long
+ *   enough for the ODT when it arrived (DD39) and the ODT has been reconfigured since, so it is
+ *   refused whole rather than applied in part.
+ *
+ * Deliberately NOT raised for the everyday case of a slot no frame has filled yet: DD35 makes that
+ * a silent skip, and reporting it would fire on every event of every cycle until a master's first
+ * frame arrives.
+ * @note This error is not part of the specification, and Det is the only channel it has: the
+ * trigger is a vendor API answering no master, so there is no error packet and nobody waiting on
+ * one -- the same reasoning XCP_E_STIM_FRAME_REJECTED above records for the receive direction.
+ * Distinct from that code because this is a different API (XCP_TRIGGER_EVENT_CHANNEL_API_ID) at a
+ * different point in time: a frame this slave accepted and buffered, which it then could not
+ * apply.
+ */
+#define XCP_E_STIM_NOT_APPLIED (0x07u)
+
 /** @} */
 
 /**

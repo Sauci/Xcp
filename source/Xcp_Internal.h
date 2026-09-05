@@ -489,6 +489,17 @@ void Xcp_StartNextTransmission(void);
  * DTO within the same trigger, so one shared area would risk the apply section nesting inside the
  * sampler's DtoQueue section. test/conftest.py's exclusive-area bookkeeping asserts against
  * nesting globally, on every test, so a violation here would not be confined to STIM tests.
+ * @note Xcp_DaqApplyStim takes BOTH areas, one after the other and never one inside the other, and
+ * they guard two different things for two different reasons. This area covers the slot -- the
+ * payload and its length, against Xcp_DaqStoreStim in the receive context. SchM_Enter_Xcp_DtoQueue
+ * covers the ODT entries the payload is about to be written through, against CLEAR_DAQ_LIST in
+ * that same context (DD14): Xcp_DaqListClearEntries (source/Xcp_Daq.c) resets an entry's address
+ * to NULL_PTR and its length to 0 as separate writes under that area, the command is legal against
+ * a RUNNING list, and where Xcp_DaqSampleOdt would merely READ address 0 from a torn pair, the
+ * apply would WRITE to it. So the apply is a StimBuffer section, then a DtoQueue section, then the
+ * memory writes with neither held -- which is also the order that keeps DD40's claim literally
+ * true: every StimBuffer section of the trigger closes before the sampler's first DtoQueue section
+ * opens.
  */
 
 /**
