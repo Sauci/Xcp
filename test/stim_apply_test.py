@@ -333,6 +333,53 @@ def test_several_skipped_entries_in_one_odt_are_reported_once_between_them():
     assert len(not_applied(handle)) == 1, 'two skipped entries, one report'
 
 
+@pytest.mark.parametrize('address_granularity', address_granularities)
+def test_a_skipped_entry_advances_the_offset_by_its_own_elements(address_granularity):
+    """DD45's skip arm advances the running offset by `elements * element_size`, and every test
+    above runs at BYTE granularity, where `element_size` is 1 and that product is
+    indistinguishable from either of its factors alone. A mutation dropping the multiply changes
+    nothing a BYTE-only suite can observe -- on a sub-project whose stated principal risk (§7) is
+    exactly a shifted offset.
+
+    The skipped entry here is TWO elements wide and its sibling ONE, which makes the three
+    candidate advances three different numbers at WORD and at DWORD:
+
+    - `elements * element_size`, correct -- the sibling takes the payload's LAST element;
+    - `elements` alone -- the sibling would take the two bytes at offset 2 and what follows them;
+    - `element_size` alone -- it would take the payload's SECOND element.
+
+    Only the first puts the sibling's own element at its address. Two elements rather than one is
+    what separates the second and third of those; a one-element skipped entry would leave
+    `elements` and `element_size` producing the same advance and only half the gap closed.
+
+    MAX_DTO is 16 for the same reason the granularity sweep above raises it: three DWORD elements
+    and an identification byte do not fit in 8.
+    """
+    element_size = element_size_from_address_granularity(address_granularity)
+    config = stimulation_config(max_dto=16, address_granularity=address_granularity)
+    handle = XcpTest(config)
+    connect(handle)
+    running_stim_list(handle, ((2 * element_size, FIRST_ADDRESS, 0x01),
+                               (element_size, SECOND_ADDRESS, 0x00)))
+    payload = tuple(range(0xA0, 0xA0 + (3 * element_size)))
+    deliver(handle, (0x00,) + payload, config.default_daq_dto_pdu_mapping)
+    written = list()
+
+    def write_slave_memory(p_address, p_buffer):
+        written.append((int(handle.ffi.cast('uint32_t', p_address)),
+                        tuple(p_buffer[0:element_size])))
+
+    handle.xcp_write_slave_memory_u8.side_effect = write_slave_memory
+    handle.xcp_write_slave_memory_u16.side_effect = write_slave_memory
+    handle.xcp_write_slave_memory_u32.side_effect = write_slave_memory
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert written == [(SECOND_ADDRESS, payload[2 * element_size:])], \
+        'the sibling applies at the offset the skipped entry\'s two elements advanced past'
+    assert len(not_applied(handle)) == 1, 'one skipped entry, one report'
+
+
 def test_an_entry_widened_after_its_frame_arrived_applies_nothing_it_did_not_receive():
     """The slot is bytes plus a length, and the ODT it belongs to can be reconfigured after those
     bytes arrived. DD39 checks the payload against the ODT's entries at RECEPTION, which is the
