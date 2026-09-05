@@ -415,5 +415,5 @@ test that cannot fail is worth less here than anywhere else in the module.
 - The `0xC0` ceiling binds STIM-capable configurations and only those.
 - No exclusive area was added to the CTO dispatch path, no handler on it gained a guard, and
   `Xcp_PIDTable`'s 256 entries and `Xcp_CTOErrorMatrix` are untouched. The CTO/DTO split itself is
-  by receiving PduId (DD45), so no frame on a DAQ list's PDU can reach a command handler.
+  by receiving PduId (DD46), so no frame on a DAQ list's PDU can reach a command handler.
 - The full suite passes, with the pytest filter confirmed empty for the final run.

@@ -485,10 +485,18 @@ void Xcp_StartNextTransmission(void);
  * trigger's. A length paired with the buffer it describes is the DD14 class -- the same class
  * Xcp_DaqListRtType's note (interface/Xcp_Types.h) says its own fields do NOT belong to, which is
  * exactly why that argument does not excuse this structure from an area.
- * @note Not folded into SchM_Enter_Xcp_DtoQueue: a DAQ_STIM list applies its slots and samples its
- * DTO within the same trigger, so one shared area would risk the apply section nesting inside the
- * sampler's DtoQueue section. test/conftest.py's exclusive-area bookkeeping asserts against
- * nesting globally, on every test, so a violation here would not be confined to STIM tests.
+ * @note Not folded into SchM_Enter_Xcp_DtoQueue, and NOT for the reason this note used to give.
+ * It said one shared area would risk the apply section nesting inside the sampler's DtoQueue
+ * section, because a DAQ_STIM list applied its slots and sampled its DTO within the same trigger.
+ * That premise is gone: 1.1/1.6.4.1.1.3 makes DIRECTION a choice between synchronized data
+ * acquisition OR synchronized data stimulation, so a list does one or the other (DD40, as
+ * corrected), and Xcp_TriggerEventChannel's two passes run one after the other. Folding the two
+ * areas together would produce no nesting to risk.
+ * What survives is the reason in the note below -- they guard different data against different
+ * preemptors -- plus the cost of the fold. Xcp_DaqStoreStim touches nothing the DTO ring owns
+ * (DD36), so putting the slot under the ring's area would make every stimulation frame's ARRIVAL
+ * suspend the context that area exists to exclude, for the length of a payload copy, on a list
+ * that never queues a frame at all.
  * @note Xcp_DaqApplyStim takes BOTH areas, one after the other and never one inside the other, and
  * they guard two different things for two different reasons. This area covers the slot -- the
  * payload and its length, against Xcp_DaqStoreStim in the receive context. SchM_Enter_Xcp_DtoQueue

@@ -28,8 +28,14 @@ def test_exclusive_area_stub_is_linked_and_reaches_the_integrator_callback():
 def test_the_stimulation_exclusive_area_is_linked_and_reaches_the_integrator_callback():
     """DD37. The second area guards one thing: a stimulation slot, written in the receive
     callback's context and read in the event trigger's. It is separate from
-    SchM_Enter_Xcp_DtoQueue because a DAQ_STIM list applies and samples in one trigger, and one
-    area for both would risk nesting -- which conftest.py asserts against."""
+    SchM_Enter_Xcp_DtoQueue because the two guard different data against different preemptors --
+    the slot against the receive context, the ODT entries and the ring against CLEAR_DAQ_LIST in
+    that same context (source/Xcp_Internal.h states both halves).
+
+    An earlier revision of this docstring gave a different reason: that a DAQ_STIM list applies and
+    samples within one trigger, so one area for both would risk nesting. 1.1/1.6.4.1.1.3 makes
+    DIRECTION a choice between the two modes, so a list does one or the other and that premise is
+    gone (DD40, as corrected)."""
     handle = XcpTest(stim_config())
     handle.sch_m_enter_xcp_stim_buffer.reset_mock()
     handle.sch_m_exit_xcp_stim_buffer.reset_mock()
