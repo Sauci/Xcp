@@ -1062,9 +1062,13 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
          * triggeredDaqListRef, so the lists are scanned rather than the channel's reference list
          * walked, in both passes.
          *
-         * Xcp_DaqApplyStim is not handed the DIRECTION test that selected it here; it tests the
-         * configured TYPE, which is a memory-safety question the partition does not answer. See
-         * its own comment. */
+         * **Both passes test the configured TYPE on top of this partition**, for two different
+         * reasons, and neither test is implied by DIRECTION. Xcp_DaqApplyStim is not handed the
+         * DIRECTION test that selected it; its own type test is a memory-safety question -- a list
+         * that cannot receive has no stimulation slot to index. The acquisition pass's, written at
+         * the loop below, is a protocol one: a pure STIM list left with DIRECTION clear lands in
+         * that pass, and sampling it would transmit a DAQ DTO the master was told this list could
+         * never produce. See each of the two comments for the argument in full. */
         for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
         {
             if (Xcp_DaqListElapsedOnTrigger(&Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx],
@@ -1077,8 +1081,38 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
         for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
         {
             Xcp_DaqListRtType *p_rt = &Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx];
+            const Xcp_DaqListType *p_list = &Xcp_Ptr->config->daqList[daq_idx];
 
-            if (Xcp_DaqListElapsedOnTrigger(p_rt, eventChannelNumber, FALSE) == TRUE)
+            /* The configured TYPE, the mirror of the one Xcp_DaqApplyStim applies to the pass
+             * above, and it is policy here rather than memory safety: 1.1/1.6.4.2.2.1's
+             * DAQ_LIST_TYPE table gives STIM = 1, DAQ = 0 as "only DIRECTION = STIM supported",
+             * and Xcp_DTOCmdDaqGetDaqListInfo (source/Xcp_Daq.c) reports precisely that encoding
+             * for a pure STIM list. Sampling one would transmit a DAQ DTO for a list this slave
+             * has just told the master cannot acquire -- and on a stimulation-capable list's own
+             * PDU, which is the one the master stimulates THROUGH, since rxPdu and txPdu are one
+             * union member (interface/Xcp_Types.h).
+             *
+             * The DIRECTION partition does not already answer this, and that is the whole reason
+             * the test is here. DIRECTION is what the MASTER asked for; a pure STIM list that was
+             * started without SET_DAQ_LIST_MODE ever being sent keeps the DIRECTION bit
+             * Xcp_DaqListReset (source/Xcp_Daq.c) left clear, and so falls into this pass, not the
+             * one above. Xcp_DTOCmdDaqSetDaqListMode's refusal of DIRECTION on a DAQ-only list is
+             * the mirror image of this test and cannot stand in for it: it guards a command that
+             * such a master never sends.
+             *
+             * DAQ_STIM is included deliberately. A list that supports both directions and is
+             * running with DIRECTION clear is in acquisition mode and must sample -- correct,
+             * pre-existing behaviour, which a gate written as "a list that can receive does not
+             * acquire" would have broken silently.
+             *
+             * Xcp_DaqListElapsedOnTrigger is called FIRST and the type tested second, never the
+             * reverse: it mutates, and its own contract is that it runs exactly once per list per
+             * trigger. Short-circuiting past it for a pure STIM list would leave that list's
+             * prescaler counter frozen -- harmless today, since nothing else reads it, but it
+             * would make the one call site that skips it the exception to a rule the rest of this
+             * function relies on. */
+            if ((Xcp_DaqListElapsedOnTrigger(p_rt, eventChannelNumber, FALSE) == TRUE) &&
+                ((p_list->type == DAQ) || (p_list->type == DAQ_STIM)))
             {
                 uint8_least odt_idx;
                 uint32 timestamp = 0x00000000u;
@@ -1098,7 +1132,7 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
                 }
 #endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
-                for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+                for (odt_idx = 0x00u; odt_idx < p_list->maxOdt; odt_idx++)
                 {
                     Xcp_DtoFrameType frame;
 

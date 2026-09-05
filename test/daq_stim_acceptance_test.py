@@ -492,3 +492,87 @@ def test_a_frame_arriving_while_the_trigger_holds_no_area_applies_to_the_next_cy
     assert (memory.read(VARIABLE, 2), memory.read(SECOND_VARIABLE, 2)) == \
            (SECOND_PAYLOAD[0:2], SECOND_PAYLOAD[2:4]), \
         'and the frame that preempted it was stored, not dropped: the next cycle applies it'
+
+
+def acquiring_config(list_type):
+    """One STATIC DAQ list of the given type, ABSOLUTE identification.
+
+    STATIC rather than a dynamic pool, because `daqs[].type` is per-list only under DAQ_STATIC
+    (config/xcp.schema.json): a dynamic pool declares ONE type for every list it holds (DD43), so
+    the pure STIM list the first test below turns on cannot be expressed as a pool at all.
+    """
+    return DefaultConfig(identification_field_type='ABSOLUTE',
+                         daqs=(daq(name='DAQ1', type=list_type),))
+
+
+def test_a_pure_stim_list_acquires_nothing_when_it_is_started_with_direction_clear():
+    """A list whose configured type is STIM can only receive, and the trigger has to honour that
+    however the master left DIRECTION.
+
+    1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table gives STIM = 1, DAQ = 0 as "only DIRECTION = STIM
+    supported", and Xcp_DTOCmdDaqGetDaqListInfo reports exactly that encoding for this list. The
+    type is what the configuration can honour; DIRECTION is only what the master asked for.
+
+    **Nothing in this sequence asks for anything.** SET_DAQ_LIST_MODE is never sent:
+
+        SET_DAQ_PTR -> WRITE_DAQ -> START_STOP_DAQ_LIST(START) -> a trigger
+
+    so the stored mode keeps the DIRECTION bit Xcp_DaqListReset (source/Xcp_Daq.c) left clear, and
+    every earlier guard is bypassed rather than defeated. Xcp_DTOCmdDaqSetDaqListMode's refusal of
+    DIRECTION on a DAQ-only list is the mirror of this and cannot substitute for it: it fires on a
+    command this master never sends.
+
+    Two assertions, because the defect has two halves and either can hold without the other:
+
+    - **nothing was transmitted.** A DAQ DTO for this list would go out on the DAQ list's own PDU,
+      which for a stimulation-capable list is the PDU the master stimulates THROUGH -- rx and tx
+      are one union member in interface/Xcp_Types.h -- so the master would receive unrequested
+      frames on the id it sends on.
+    - **the entry's address was never dereferenced.** Sampling a STIM list reads ECU memory the
+      master never asked to measure; a gate that suppressed only the queue push would still do it.
+
+    The queue is read directly rather than through CanIf because a frame that was sampled and
+    pushed is already the failure, whether or not arbitration got round to transmitting it.
+    """
+    config = acquiring_config('STIM')
+    handle = XcpTest(config)
+    connect(handle)
+    memory = SlaveMemory(handle)
+    memory.seed(VARIABLE, SENTINEL)
+
+    configure_entry(handle, VARIABLE)
+    start_daq_list(handle)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert queued_frames(handle) == [], \
+        'a list that can only receive transmitted a DAQ DTO, on the PDU the master stimulates through'
+    assert handle.xcp_read_slave_memory_u8.call_args_list == [], \
+        'and it read ECU memory to build it'
+
+
+def test_a_daq_stim_list_acquires_normally_when_it_is_started_with_direction_clear():
+    """The other half of the gate above, and the reason it is written on the TYPE.
+
+    DAQ_STIM means the list supports both directions (1.1/1.6.4.2.2.1), so DIRECTION clear selects
+    acquisition -- which is precisely what this list must then do. The behaviour is correct and
+    pre-existing, and a gate phrased as "a list that can receive does not acquire" would have
+    broken it silently while passing the test above.
+
+    Nothing else in this sub-project starts a stimulation-capable list with DIRECTION clear: every
+    other stimulation test sets bit 1 first, which is what makes this the only case that would
+    notice.
+    """
+    config = acquiring_config('DAQ_STIM')
+    handle = XcpTest(config)
+    connect(handle)
+    memory = SlaveMemory(handle)
+    memory.seed(VARIABLE, SENTINEL)
+
+    configure_entry(handle, VARIABLE)
+    start_daq_list(handle)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert queued_frames(handle) == [(0x00,) + SENTINEL], \
+        'FIRST_PID + relative ODT 0, then the four bytes the entry names'
