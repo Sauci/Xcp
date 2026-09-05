@@ -510,3 +510,194 @@ def test_a_daq_only_build_takes_no_exclusive_area_to_release_slots_it_never_rese
     assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0, 'the premise'
     assert handle.sch_m_enter_xcp_stim_buffer.call_count == 0, \
         'a build with no stimulation pool must not enter the stimulation area at all'
+
+
+# --------------------------------------------------------------------------------------------
+# DD46 -- CTO or DTO is decided by the PDU the frame arrived on, never by its first byte.
+#
+# The four identification field types put an ODT number in byte 0, and DD42's 0xC0 ceiling keeps a
+# STIM-capable configuration's ODT numbers below the command range, so asking whether byte 0 named
+# a command happened to route those correctly. PID_OFF has no identification field at all
+# (1.1/1.1.2.1): byte 0 is the master's data. A payload whose first byte fell in 0xC0..0xFF naming
+# an enabled command was dispatched as that command, with the rest of the payload read as its
+# arguments.
+#
+# These tests are written as pairs on ONE configuration wherever they can be -- the same byte on
+# the two PDUs, with opposite outcomes -- because that is what says the PduId is doing the routing.
+# A test that only showed the stimulation frame being stored would also pass against a slave that
+# had stopped dispatching commands altogether.
+# --------------------------------------------------------------------------------------------
+
+
+def pid_off_stimulation_list():
+    """A single DAQ_STIM list under PID_OFF. One list, so its PDU is unshared and
+    Xcp_DaqListTxPduIsExclusive (source/Xcp_Daq.c) grants the bit; one ODT and ABSOLUTE
+    identification, which 1.1/1.1.2.1 also requires of it."""
+    return DefaultConfig(identification_field_type='ABSOLUTE',
+                         daqs=(daq(name='DAQ1', type='DAQ_STIM', max_odt=1, max_odt_entries=1),))
+
+
+def running_pid_off_list(handle):
+    """PID_OFF (bit 5) and DIRECTION (bit 1), one entry of one byte, started. Every frame this list
+    receives is therefore pure payload, and one byte is enough to satisfy DD39."""
+    running_stim_list(handle, mode=0x22, size=1)
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x22) == 0x22, \
+        'PID_OFF and DIRECTION both reached the stored mode'
+
+
+@pytest.mark.parametrize('command, name', ((0xFF, 'CONNECT'), (0xFE, 'DISCONNECT')))
+def test_a_pid_off_payload_whose_first_byte_names_a_command_is_stored_not_executed(command, name):
+    """DD46's discriminator, and the defect it fixes. Under the old split this frame ran the
+    command its first payload byte named: 0xFF connected, 0xFE disconnected, and the bytes after it
+    were read as that command's arguments.
+
+    Three assertions, because two of them alone would not be enough:
+
+    - the slot holds the byte, so the frame was handled as the stimulation data it is;
+    - nothing was transmitted, which is what says no command ran. Both CONNECT and DISCONNECT
+      answer, so a dispatched frame is visible here even though the slave was already connected
+      and CONNECT would not have changed the connection state it set;
+    - the session is still open, probed by sending a real DISCONNECT on the CTO PDU afterwards and
+      requiring a positive response. A disconnected slave processes no command except CONNECT
+      (part 1 - Overview 1.0/2.3), so that probe answers nothing at all if the 0xFE case had been
+      executed. This is the connection state read directly, through the command set.
+    """
+    config = pid_off_stimulation_list()
+    handle = XcpTest(config)
+    connect(handle)
+    running_pid_off_list(handle)
+    handle.can_if_transmit.reset_mock()
+
+    deliver(handle, (command,), config.default_daq_dto_pdu_mapping)
+
+    assert (slot(handle).length, slot(handle).data[0]) == (0x01, command), \
+        'the payload is stimulation data and belongs in the slot'
+    assert handle.can_if_transmit.call_count == 0, \
+        '{} answers the master, so a transmission here means the payload was dispatched'.format(name)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_count == 1, 'only a connected slave answers DISCONNECT'
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0x00] == 0xFF, \
+        'the session was still open, so the payload above changed no connection state'
+
+
+def test_the_same_byte_on_the_cto_pdu_is_still_the_command_it_names():
+    """The other half of the pair above, on the identical configuration and with the identical
+    byte: 0xFE on the CTO PDU is DISCONNECT and must still be dispatched.
+
+    This is what keeps the fix from being "stop dispatching commands". The two tests differ in one
+    thing only -- which PDU the frame arrived on -- and that is exactly the claim DD46 makes."""
+    config = pid_off_stimulation_list()
+    handle = XcpTest(config)
+    connect(handle)
+    running_pid_off_list(handle)
+    before = slot_state(handle)
+    handle.can_if_transmit.reset_mock()
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0x00] == 0xFF, 'DISCONNECT was dispatched'
+    assert slot_state(handle) == before, 'and was not mistaken for stimulation data'
+
+
+def test_no_first_byte_at_all_turns_a_stimulation_frame_into_a_command():
+    """Exhaustive over the range that was dangerous. 0x00..0xBF was always safe -- those PIDs carry
+    IS_CTO clear -- so the defect lived entirely in 0xC0..0xFF, which is where every command PID
+    sits (1.1/1.1.5.1 gives master-to-slave command PIDs that range). Every one of the 64 is
+    delivered on the stimulation PDU and must be stored rather than run.
+
+    Swept in one test rather than parametrised: each case is one CanIf call against the same
+    slave, and 64 XcpTest constructions to make the same point would cost seconds for nothing. The
+    slave is re-checked as still connected at the end, so a disconnect anywhere in the sweep -- the
+    one outcome that would silently make every later iteration meaningless, since a disconnected
+    slave drops frames rather than dispatching them -- fails the test.
+    """
+    config = pid_off_stimulation_list()
+    handle = XcpTest(config)
+    connect(handle)
+    running_pid_off_list(handle)
+    handle.can_if_transmit.reset_mock()
+
+    for command in range(0xC0, 0x100):
+        deliver(handle, (command,), config.default_daq_dto_pdu_mapping)
+
+        assert (slot(handle).length, slot(handle).data[0]) == (0x01, command), \
+            'payload byte 0x{:02X} was not stored'.format(command)
+        assert handle.can_if_transmit.call_count == 0, \
+            'payload byte 0x{:02X} was dispatched as a command'.format(command)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0x00] == 0xFF, \
+        'the sweep left the session open, so every iteration above was really dispatchable'
+
+
+def test_a_dto_pid_arriving_on_the_cto_pdu_is_not_stimulation_data():
+    """The mirror of the defect: DD46 routes by PduId in BOTH directions, so the command channel
+    stops carrying stimulation just as the stimulation channel stops carrying commands.
+
+    Under the old split a frame on the CTO PDU whose first byte was a DTO PID took the DTO arm, so
+    once Task 7 gave that arm a handler, byte 0x00 resolving through an ABSOLUTE identification
+    field to a running STIM list meant a master could stimulate over the COMMAND channel -- which
+    no part of the specification describes. Now the PduId routes it to the CTO path, where
+    1.1/1.1.5.1 says a first byte below 0xC0 names no command.
+
+    The answer stays SILENCE, which is what test/cmd_unknown_test.py::
+    test_identifiers_below_the_command_range_are_answered_with_silence already pins and what that
+    test warns is one `else` away from becoming an answer. This test is its companion in the one
+    configuration it cannot use: a STIM-CAPABLE one, where the frame previously had somewhere to
+    go. Both halves are asserted, because either alone is satisfied by the defect -- silence alone
+    was already true while the frame was being stored, and an untouched slot alone would be true of
+    a slave that answered.
+    """
+    config = one_stimulation_list()
+    handle = XcpTest(config)
+    connect(handle)
+    running_stim_list(handle)
+    before = slot_state(handle)
+    handle.can_if_transmit.reset_mock()
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0x00,) + PAYLOAD))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_count == 0, 'a DTO PID names no command, so nothing answers'
+    assert slot_state(handle) == before, 'and the command channel does not carry stimulation data'
+
+
+def test_a_stimulation_frame_arriving_while_disconnected_is_dropped():
+    """XCP part 1 - Overview 1.0/2.3: in DISCONNECTED state "there's no XCP communication" and
+    "DAQ list transfer is inactive". A stimulation frame arriving then is not buffered.
+
+    This is behaviour DD46 preserved rather than introduced, and it needs a test of its own because
+    of HOW it used to be spelled. The connection test used to sit above the CTO/DTO split and read
+    the frame's first byte, so under PID_OFF whether a disconnected slave dropped a stimulation
+    frame depended on that byte: a payload beginning 0xFF passed the test (it looked like CONNECT)
+    while one beginning 0x11 did not. DD46 gives the DTO path its own connection test, reading no
+    payload byte at all, so the answer is the same for every payload -- which is what the two
+    parametrised frames here assert.
+
+    A STATIC configuration on purpose. Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) gates its
+    Xcp_DaqFreeAll call on DAQ_DYNAMIC, so here the list is still RUNNING with DIRECTION set after
+    the disconnect and its slot still holds the previous session's payload -- the invariant
+    recorded at that gate. Everything DD39 asks of the frame therefore still holds, and the
+    connection state is the only thing left that can refuse it.
+    """
+    config = pid_off_stimulation_list()
+    handle = XcpTest(config)
+    connect(handle)
+    running_pid_off_list(handle)
+    deliver(handle, (PAYLOAD[0],), config.default_daq_dto_pdu_mapping)
+    assert response(handle, (0xFE,))[0] == 0xFF, 'DISCONNECT'
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x42) == 0x42, \
+        'a STATIC list stays running across a disconnect, so DD39 is not what refuses the frames'
+    before = slot_state(handle)
+
+    for first_byte in (PAYLOAD[1], 0xFF):
+        deliver(handle, (first_byte,), config.default_daq_dto_pdu_mapping)
+
+        assert slot_state(handle) == before, \
+            'payload byte 0x{:02X} was buffered while disconnected'.format(first_byte)

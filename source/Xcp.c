@@ -1313,6 +1313,11 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
     boolean valid_pdu_id = FALSE;
 
+    /* DD46: which of the two PDUs below matched, kept rather than collapsed into valid_pdu_id.
+     * That distinction is what routes the frame further down -- see the comment above the
+     * CTO/DTO split -- and it is information this function already computes and used to discard. */
+    boolean received_on_cto_pdu = FALSE;
+
     if (Xcp_State == XCP_INITIALIZED)
     {
         if (pPduInfo != NULL_PTR)
@@ -1320,6 +1325,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
             /* First we check if the received PDU ID is the one which has been configured for CTO reception. */
             if (rxPduId == Xcp_Ptr->config->communicationChannel->channel_rx_pdu_ref->id) {
                 valid_pdu_id = TRUE;
+                received_on_cto_pdu = TRUE;
             }
             else
             {
@@ -1370,118 +1376,177 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
             if (valid_pdu_id == TRUE) {
                 if ((pPduInfo->SduLength >= 0x01u) && (pPduInfo->SduDataPtr != NULL_PTR)) {
 
-                    pid = pPduInfo->SduDataPtr[0x00u];
+                    /* DD46: CTO or DTO is decided by the PDU the frame arrived on, never by its
+                     * first byte. This used to ask (ctoInfo[SduDataPtr[0]] & IS_CTO_MASK), which is
+                     * sound for all four identification field types -- byte 0 is then an ODT
+                     * number, and DD42's 0xC0 ceiling keeps a STIM-capable configuration's ODT
+                     * numbers out of the command range. PID_OFF has no identification field at all
+                     * (1.1/1.1.2.1), so byte 0 is PAYLOAD, and a stimulation payload whose first
+                     * byte fell in 0xC0..0xFF naming an enabled command was dispatched as that
+                     * command -- 0xFF ran CONNECT, 0xFE ran DISCONNECT, with the rest of the
+                     * payload read as that command's arguments.
+                     *
+                     * The two PDUs are disjoint by construction: the scan above reaches the DAQ
+                     * lists only when rxPduId is NOT channel_rx_pdu_ref->id, so no frame can be
+                     * both, and this routes every frame to exactly one path for every
+                     * identification field type including PID_OFF.
+                     *
+                     * This supersedes part of DD36, which said the CTO dispatch path stays
+                     * unchanged. That still holds for everything a CTO does once it has been
+                     * IDENTIFIED as one -- Xcp_PIDTable's 256 entries, Xcp_CTOErrorMatrix, every
+                     * error precedence and every handler below are untouched, and none of them
+                     * gains a guard or an exclusive area. What DD36 got wrong was counting the
+                     * routing decision itself as part of that path; it precedes both paths, and
+                     * keying it on payload bytes is what let a DTO reach a command handler.
+                     *
+                     * Severity was bounded, and saying so is not an excuse for leaving it: the
+                     * master is already connected and could send those commands directly, so this
+                     * was a master's own data being misinterpreted, not a capability an
+                     * unauthenticated party gained. */
+                    if (received_on_cto_pdu == TRUE) {
 
-                    /* XCP part 1 - Overview 1.0/2.3
-                     * In “DISCONNECTED” state, there’s no XCP communication. The session status,
-                     * all DAQ lists and the protection status bits are reset, which means that DAQ
-                     * list transfer is inactive and the seed and key procedure is necessary for all
-                     * protected functions.
-                     * In “DISCONNECTED” state, the slave processes no XCP commands except for
-                     * CONNECT. */
-                    if ((pid == XCP_PID_CMD_CONNECT) || (Xcp_Internal.connection_status != XCP_CONNECTION_STATE_DISCONNECTED)) {
+                        pid = pPduInfo->SduDataPtr[0x00u];
 
-                        /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
-                         * Check if the received Command/Transfer object is activated/allowed. If it is not the case, return an error packet with the
-                         * error code ERR_CMD_UNKNOWN. */
-                        if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u)
-                        {
-                            /* Check if a CTO has been received, as the handling of such kind of
-                             * packets is different from DTO packets. In the above lines, we handle all the behavior which is common for all CTOs.
-                             */
-                            if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_IS_CTO_MASK) != 0x00u) {
-                                /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
-                                 * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
-                                 * return an error packet with the error code ERR_CMD_BUSY. */
-                                if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) == 0x00u) ||
-                                    (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) != 0x00u) && (Xcp_Internal.cto_response.successful_transmission_pending == FALSE)))
-                                {
+                        /* XCP part 1 - Overview 1.0/2.3
+                         * In “DISCONNECTED” state, there’s no XCP communication. The session status,
+                         * all DAQ lists and the protection status bits are reset, which means that DAQ
+                         * list transfer is inactive and the seed and key procedure is necessary for all
+                         * protected functions.
+                         * In “DISCONNECTED” state, the slave processes no XCP commands except for
+                         * CONNECT. */
+                        if ((pid == XCP_PID_CMD_CONNECT) || (Xcp_Internal.connection_status != XCP_CONNECTION_STATE_DISCONNECTED)) {
+
+                            /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
+                             * Check if the received Command/Transfer object is activated/allowed. If it is not the case, return an error packet with the
+                             * error code ERR_CMD_UNKNOWN. */
+                            if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_ENABLED_MASK) != 0x00u)
+                            {
+                                /* 1.1/1.1.5.1 gives master-to-slave 0x00..0xBF as an absolute or
+                                 * relative ODT number and 0xC0..0xFF as the command identifiers, so a
+                                 * first byte with IS_CTO clear names no command and there is nothing
+                                 * to answer. Silence, and deliberately no else: that is what this
+                                 * branch did before DD46, and test/cmd_unknown_test.py::
+                                 * test_identifiers_below_the_command_range_are_answered_with_silence
+                                 * pins it. DD46 moved the CTO/DTO ROUTING to the receiving PduId; it
+                                 * did not make such a frame an unknown command. Answering
+                                 * ERR_CMD_UNKNOWN here would also foreclose 1.1.5.1's own reading,
+                                 * on which a transport sharing one Id between CTO and DTO tells the
+                                 * two apart by exactly this byte -- not something to decide as a
+                                 * side effect of fixing the PID_OFF routing.
+                                 *
+                                 * This test is also what keeps Xcp_PIDTable's 0x00..0xBF entries
+                                 * unreachable. They hold Xcp_DTODaqStimPacket, a no-op returning
+                                 * E_OK that was dead under the old split; without this condition a
+                                 * frame on the CTO PDU with a DTO-range first byte would reach it,
+                                 * return E_OK, and have successful_transmission_pending set --
+                                 * transmitting whatever stale bytes the response buffer held. */
+                                if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_IS_CTO_MASK) != 0x00u) {
                                     /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
-                                     * Check if the received CTO reacts to ERR_CMD_SYNTAX error. If so, check if the received PDU size is at least the
-                                     * minimum size of the request. We are not using an equality operator, as some payload might vary depending on the
-                                     * static configuration. For those cases, the additional checks are performed within the CTO handler function. */
-                                    if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_SYNTAX) == 0x00u) ||
-                                        (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_SYNTAX) != 0x00u) &&
-                                         (pPduInfo->SduLength >= (Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_MIN_REQUEST_SIZE_MASK))))
+                                     * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
+                                     * return an error packet with the error code ERR_CMD_BUSY. */
+                                    if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) == 0x00u) ||
+                                        (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) != 0x00u) && (Xcp_Internal.cto_response.successful_transmission_pending == FALSE)))
                                     {
                                         /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
-                                         * Check if the received CTO reacts to ERR_PGM_ACTIVE error. If so, check if there is an ongoing
-                                         * calibration/DAQ storing/DAQ clearing process in the session. If so, we return an error packet with the
-                                         * error code ERR_PGM_ACTIVE. */
-                                        if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_PGM_ACTIVE) == 0x00u) ||
-                                            (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_PGM_ACTIVE) != 0x00u) &&
-                                             ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_CAL_REQ) == 0x00u) &&
-                                             ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) == 0x00u) &&
-                                             ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) == 0x00u)))
+                                         * Check if the received CTO reacts to ERR_CMD_SYNTAX error. If so, check if the received PDU size is at least the
+                                         * minimum size of the request. We are not using an equality operator, as some payload might vary depending on the
+                                         * static configuration. For those cases, the additional checks are performed within the CTO handler function. */
+                                        if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_SYNTAX) == 0x00u) ||
+                                            (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_SYNTAX) != 0x00u) &&
+                                             (pPduInfo->SduLength >= (Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_MIN_REQUEST_SIZE_MASK))))
                                         {
-                                            if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
-                                                ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))
+                                            /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
+                                             * Check if the received CTO reacts to ERR_PGM_ACTIVE error. If so, check if there is an ongoing
+                                             * calibration/DAQ storing/DAQ clearing process in the session. If so, we return an error packet with the
+                                             * error code ERR_PGM_ACTIVE. */
+                                            if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_PGM_ACTIVE) == 0x00u) ||
+                                                (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_PGM_ACTIVE) != 0x00u) &&
+                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_CAL_REQ) == 0x00u) &&
+                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) == 0x00u) &&
+                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) == 0x00u)))
                                             {
-                                                result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
+                                                if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
+                                                    ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))
+                                                {
+                                                    result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
 
-                                                Xcp_Internal.last_pid = pid;
+                                                    Xcp_Internal.last_pid = pid;
 
-                                                if (pid != XCP_PID_CMD_UNLOCK) {
-                                                    Xcp_ClearProtectionStatus();
+                                                    if (pid != XCP_PID_CMD_UNLOCK) {
+                                                        Xcp_ClearProtectionStatus();
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
+                                                     * A command addressing a protected resource that has not been
+                                                     * unlocked answers ERR_ACCESS_LOCKED. Without this branch the
+                                                     * response buffer keeps whatever the previous command left in
+                                                     * it and is transmitted anyway, so the master reads a stale
+                                                     * positive response to a command the slave refused to run. */
+                                                    Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_LOCKED,
+                                                                        &Xcp_Internal.cto_response.pdu_info);
                                                 }
                                             }
                                             else
                                             {
-                                                /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
-                                                 * A command addressing a protected resource that has not been
-                                                 * unlocked answers ERR_ACCESS_LOCKED. Without this branch the
-                                                 * response buffer keeps whatever the previous command left in
-                                                 * it and is transmitted anyway, so the master reads a stale
-                                                 * positive response to a command the slave refused to run. */
-                                                Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_LOCKED,
-                                                                    &Xcp_Internal.cto_response.pdu_info);
+                                                Xcp_FillErrorPacket(XCP_E_ASAM_PGM_ACTIVE, &Xcp_Internal.cto_response.pdu_info);
                                             }
                                         }
                                         else
                                         {
-                                            Xcp_FillErrorPacket(XCP_E_ASAM_PGM_ACTIVE, &Xcp_Internal.cto_response.pdu_info);
+                                            Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
                                         }
                                     }
                                     else
                                     {
-                                        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
+                                        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
                                     }
-                                }
-                                else
-                                {
-                                    Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
-                                }
 
-                                Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                    Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                }
                             }
                             else
                             {
-                                /* A DTO, which for this module means a stimulation frame: the
-                                 * only master-to-slave DTO XCP defines (1.1/1.1.4.2). Buffered in
-                                 * its ODT's slot and applied at the event trigger; nothing is
-                                 * transmitted in answer, and response_expected stays untouched, so
-                                 * the successful_transmission_pending assignment the CTO arm makes
-                                 * is deliberately not mirrored here. A frame this refuses is
-                                 * dropped and reported through Det, which DD39 makes the only
-                                 * channel available: no master is waiting on a DTO. */
-                                Xcp_DaqStoreStim(pPduInfo, rxPduId);
+                                /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1: the error packet
+                                 * filled above must actually reach the master. Its sibling branch (a CTO
+                                 * that was dispatched, above) sets this flag once for every outcome
+                                 * (busy/syntax/pgm_active/dispatched) right after the if/else that fills
+                                 * the response; a disabled command must do the same, or Xcp_MainFunction
+                                 * never transmits the packet it just filled. */
+                                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
+                                Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
                             }
                         }
-                        else
-                        {
-                            /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1: the error packet
-                             * filled above must actually reach the master. Its sibling branch (a CTO
-                             * that was dispatched, above) sets this flag once for every outcome
-                             * (busy/syntax/pgm_active/dispatched) right after the if/else that fills
-                             * the response; a disabled command must do the same, or Xcp_MainFunction
-                             * never transmits the packet it just filled. */
-                            Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
-                            Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+
+                        if (result != E_OK) {
+                            Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, result);
                         }
                     }
-
-                    if (result != E_OK) {
-                        Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, result);
+                    else if (Xcp_Internal.connection_status != XCP_CONNECTION_STATE_DISCONNECTED)
+                    {
+                        /* A DTO, which for this module means a stimulation frame: the only
+                         * master-to-slave DTO XCP defines (1.1/1.1.4.2). Buffered in its ODT's slot
+                         * and applied at the event trigger; nothing is transmitted in answer, and
+                         * response_expected stays untouched, so the
+                         * successful_transmission_pending assignment the CTO arm makes is
+                         * deliberately not mirrored here. A frame this refuses is dropped and
+                         * reported through Det, which DD39 makes the only channel available: no
+                         * master is waiting on a DTO.
+                         *
+                         * Nothing here reads SduDataPtr[0] as a PID, which is the whole of DD46:
+                         * under PID_OFF that byte is the master's data, and the identification
+                         * field, where there is one, is Xcp_DaqReadIdentificationField's to decode.
+                         *
+                         * The connection test is the DTO half of the one the CTO arm applies to
+                         * itself, and it is a test this frame was already subject to before DD46 --
+                         * it just used to be spelled with the payload's first byte in it. XCP part
+                         * 1 - Overview 1.0/2.3: in DISCONNECTED state "there's no XCP
+                         * communication" and "DAQ list transfer is inactive", so a stimulation
+                         * frame arriving then is dropped. Silently, with no Det report: unlike
+                         * DD39's rejections this is not a frame the slave failed to honour, it is
+                         * one that arrived when the slave was not in a session at all. */
+                        Xcp_DaqStoreStim(pPduInfo, rxPduId);
                     }
                 }
             } else {
