@@ -21,6 +21,27 @@ def daq_handle(**kwargs):
     return handle
 
 
+def exchange(handle, request, length=2):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
+def write_daq(handle, size, address=0x1000):
+    """SET_DAQ_PTR to (list 0, ODT 0, entry 0) and one WRITE_DAQ of `size` bytes, returning the
+    response's first two bytes.
+
+    The pointer is repositioned before every attempt rather than once for the sequence: WRITE_DAQ
+    post-increments it on success and the list has one entry, so a later attempt without a fresh
+    SET_DAQ_PTR would be refused for pointer validity -- with the same ERR_OUT_OF_RANGE the size
+    checks answer, and for a reason that has nothing to do with the size under test."""
+    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0] == 0xFF, \
+        'SET_DAQ_PTR was refused'
+    return exchange(handle, (0xE1, 0xFF, size, 0x00) +
+                    tuple(u32_to_array(address, 'LITTLE_ENDIAN')))
+
+
 @pytest.mark.parametrize('ag', address_granularities)
 def test_granularity_is_the_address_granularity_element_size(ag):
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5: the possible values for
@@ -85,13 +106,39 @@ def test_stim_fields_report_the_same_limits_write_daq_enforces_on_a_stim_entry(a
 
     1.1/1.6.4.1.2.5 reports the two directions as four separate bytes because it allows a slave
     whose directions differ. This one's do not, and the reason is structural rather than a
-    coincidence worth reporting twice: there is one WRITE_DAQ for both directions, and
-    Xcp_DaqApplyOdtEntry (source/Xcp_Daq.c) refuses an entry whose size is not a multiple of the
-    address granularity or is larger than odtEntrySizeDaq, whatever direction the list it belongs
-    to is later put into by SET_DAQ_LIST_MODE. So a master that sizes its STIM ODT entries by what
-    this command reports can never have WRITE_DAQ refuse them -- which is the sentence
-    test_max_odt_entry_size_is_what_a_dto_leaves_after_the_identification_field makes about the DAQ
-    direction, and the only reason these bytes are worth reporting at all.
+    coincidence worth reporting twice (DD47): WRITE_DAQ and WRITE_DAQ_MULTIPLE share one
+    entry-application routine, Xcp_DaqApplyOdtEntry (source/Xcp_Daq.c), and it refuses an entry
+    whose size is not a multiple of the address granularity or is larger than odtEntrySizeDaq
+    without consulting the list's direction at all -- an entry does not know, when it is written,
+    which direction SET_DAQ_LIST_MODE will later put its list into.
+
+    **The last two assertions are what make that demonstrated rather than inferred.** The first
+    three compare byte 3 against byte 1 and byte 4 against byte 2, which says the two directions
+    agree but leans on the DAQ half being pinned by a test that runs on a DAQ-only list -- sound,
+    since the routine takes no direction, but a transitive argument. So this list, which is
+    DAQ_STIM, is offered the two entry sizes its own reported bytes forbid and the one they permit:
+
+    - a size one past the reported granularity is refused, **at the two granularities where that
+      constraint has content**. At BYTE there is no such size -- every integer is a multiple of 1
+      -- so the refusal is asserted for WORD and DWORD, and the acceptance below covers all three.
+      Both refused sizes stay well under MAX_ODT_ENTRY_SIZE_STIM (3 and 5, against 7), so the
+      granularity check is unambiguously what answers them.
+    - a size one past the reported maximum is refused at every granularity: 8 is a multiple of 1,
+      2 and 4 alike, so only the size check can be refusing it.
+    - a size of exactly the reported granularity is accepted, which keeps the two refusals from
+      being satisfied by a slave that had simply stopped accepting entries.
+
+    ERR_OUT_OF_RANGE (0x22) is pinned rather than "some error": 1.7.3.2.4 gives its prescribed
+    master action as "retry other parameter", which is the honest answer to a size this slave
+    cannot take, and the neighbouring refusals in this routine answer ERR_DAQ_ACTIVE,
+    ERR_WRITE_PROTECTED and ERR_DAQ_CONFIG instead.
+
+    daq_acceptance_test.py::test_write_daq_accepts_exactly_what_get_daq_resolution_info_promises is
+    the DAQ direction's version of these three, sweeping MAX_DTO and the identification field type
+    as well. This is deliberately the narrower twin rather than a second sweep: what is new here is
+    that the list is DAQ_STIM and the bytes being honoured are 3 and 4, not that the routine's
+    arithmetic works -- which that test already establishes across a far wider space than a STIM
+    list adds anything to.
 
     Asserted against the DAQ bytes of the same response rather than against fresh literals: the
     claim is that the two directions agree, and two independently written literals would still
@@ -108,10 +155,19 @@ def test_stim_fields_report_the_same_limits_write_daq_enforces_on_a_stim_entry(a
     response = info(handle)
 
     assert response[3] == element_size_from_address_granularity(ag)
-    assert response[3] == response[1], 'one WRITE_DAQ, one granularity, both directions'
+    assert response[3] == response[1], \
+        'one entry-application routine, one granularity, both directions'
     assert response[4] == response[2], 'and one MAX_ODT_ENTRY_SIZE, for the same reason'
     assert response[3] != 0 and response[4] != 0, \
         'a configuration that can receive must not report a DAQ-only build\'s zeros'
+
+    if response[3] > 1:
+        assert write_daq(handle, response[3] + 1) == (0xFE, 0x22), \
+            'a STIM entry whose size is not a multiple of the reported granularity is refused'
+    assert write_daq(handle, response[4] + 1) == (0xFE, 0x22), \
+        'a STIM entry larger than the reported MAX_ODT_ENTRY_SIZE_STIM is refused'
+    assert write_daq(handle, response[3])[0] == 0xFF, \
+        'and one of exactly the reported granularity is accepted'
 
 
 def test_timestamp_fields_are_invalid_because_timestamps_are_unsupported():

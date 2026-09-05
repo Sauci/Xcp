@@ -436,6 +436,16 @@ def test_a_frame_arriving_while_the_trigger_holds_no_area_applies_to_the_next_cy
     entries rather than about a single copy. The area bookkeeping is asserted directly as well:
     the injected reception takes the area itself, and that it did so without nesting is what says
     the release point really was outside it.
+
+    **This test is the only thing in the tree that holds the snapshot, and it is not "just a
+    concurrency test".** Verified by mutation, and confirmed independently by Task 9's reviewer
+    against every candidate injection point: an apply that wrote from `p_slot->data` directly --
+    reading the slot live as it walks the entries, instead of the copy it took under the area --
+    passes every test in stim_apply_test.py, stim_reception_test.py and stim_decode_test.py.
+    stim_apply_test.py::test_the_payload_is_copied_under_the_area_and_memory_written_outside_it
+    comes closest and still does not catch it: it counts the area's entries and asserts memory is
+    written with it released, but never that the copy's CONTENTS are what get written. Do not trim
+    this test on the strength of a green run.
     """
     config = DefaultConfig(identification_field_type='ABSOLUTE',
                            daqs=(daq(name='DAQ1', type='DAQ_STIM', max_odt=1, max_odt_entries=2),))
