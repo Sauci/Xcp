@@ -228,14 +228,59 @@ choice, but neither is it self-enforcing.
 **DD41 — the `STIM` resource stays ungated, deliberately.** §1.5's resource table defines it as
 *"DAQ list commands (DIRECTION = STIM)"* — protection keyed on a list's direction. This module
 checks protection in `Xcp_CanIfRxIndication` from `Xcp_PIDToCmdGroupTable`, keyed on the **PID,
-before dispatch**, where no list number has been parsed and no direction is known. Expressing the
-specification's rule means moving the protection check into the handlers that know which list they
-address — a change to the protection model for every command, not a change to STIM.
+before dispatch**, where no list number has been parsed and no direction is known.
+
+**Two concrete obstacles, not a general reluctance.** An earlier revision of this decision gave the
+reason as "a change to the protection model for every command", which overstates it — a handler-side
+check could be added to the DAQ commands alone. What actually blocks it is narrower and harder:
+
+- **`Xcp_PIDToCmdGroupTable` cannot express the rule.** It is a per-PID OR mask, one byte per
+  command identifier, consulted before any argument is parsed. §1.5's resource is *"DAQ list
+  commands (DIRECTION = STIM)"* — a predicate on one command's **argument**, not on the command.
+  No assignment of masks to PIDs encodes "`SET_DAQ_LIST_MODE`, but only when its `DIRECTION` bit is
+  set". The table is the wrong shape, so the check has to move, not be re-tabulated.
+- **`SET_DAQ_LIST_MODE` has no `ERR_ACCESS_LOCKED` in its error set** (§1.7.3.2.4). A handler-side
+  refusal would therefore have to answer with an error code the specification does not list for
+  that command — the same objection Task 6 honoured when it declined to invent one for `ALLOC_ODT`,
+  and it applies unchanged here.
+
+Together those make per-direction protection its own design, not a line in this sub-project.
 
 All DAQ commands therefore stay under `MASK_DAQ`, and `MASK_STIM` remains what it already is: a
 resource `GET_SEED`/`UNLOCK` accept and a master can unlock, that gates nothing. This is
 pre-existing, but SP3 is the first sub-project where it is visibly incomplete rather than merely
-unused. Recorded as a follow-up in §8.
+unused. Recorded as a follow-up in §8 — and, until that follow-up lands, the one configuration in
+which the gap is an active lie is refused at generation by **DD48**.
+
+**DD48 — a stimulation-capable configuration may not claim the `STIM` resource.** `data_stimulation`
+in `config/xcp.schema.json` sets bit 3 of `protectedResource`; `GET_STATUS` reports it as a
+protected resource and `GET_SEED`/`UNLOCK` accept `MASK_STIM` against it. DD41 is why nothing then
+keys on it.
+
+Before SP3 that was inert: no configuration could stimulate, so the flag advertised protection over
+a capability that did not exist. SP3 makes it advertise protection over **this sub-project's central
+capability**. `data_stimulation: true, data_acquisition: false` would tell a master that stimulation
+is protected while leaving `SET_DAQ_LIST_MODE(DIRECTION = STIM)`, `WRITE_DAQ` against any address it
+names, and `START_STOP_DAQ_LIST` reachable with nothing unlocked — arbitrary memory writes behind an
+advertised lock that does not exist.
+
+**The refusal is at generation**, in the shape of DD42's ceiling guard, and it is conditioned on the
+**conjunction**:
+
+- *stimulation-capable* — `daqs[].type != 'DAQ'` for any list under STATIC, or
+  `daq_dynamic.type != 'DAQ'` under DYNAMIC. This is the `stim.capable` flag
+  `script/source_cfg.c.jinja2` already computes for `XcpOdtEntrySizeStim`, reused rather than
+  restated.
+- *and* `apis.resource_protection.data_stimulation` set.
+
+A DAQ-only build may still set the flag: it advertises a resource nothing in the build can reach,
+which is inert rather than false, and refusing it would break a configuration that promises nothing
+wrong. A stimulation-capable build that leaves the flag clear is likewise untouched — it makes no
+claim about protecting stimulation. **Only the conjunction is a lie, and only the conjunction is
+refused.**
+
+This is not the protection rework. When the DD41 follow-up lands and `MASK_STIM` actually gates
+something, this guard is what should be removed.
 
 **DD44 — a STIM DTO carries a timestamp when the list is in timestamped mode, and reception must
 skip it.** §1.1.2.2 is explicit, in 1.1: *"The TIMESTAMP flag can be used as well for
@@ -345,6 +390,8 @@ about, and `ALLOC_ODT` has no way to say which ODTs are stimulation-capable.
   timestamp reduction is applied at use, by the same arithmetic `Xcp_DaqOdtEntryBudget` already
   performs for DAQ (DD44).
 - The `0xC0` ceiling guard for STIM-capable static lists (DD42).
+- The refusal of `resource_protection.data_stimulation` on a stimulation-capable configuration
+  (DD48).
 
 ---
 
@@ -410,6 +457,9 @@ test that cannot fail is worth less here than anywhere else in the module.
   place, and nothing in the protocol reports it. The offset sweep in §6 exists for this.
 - **STIM writes to addresses the master chooses.** DAQ reads them; this writes. The rejection paths
   in DD39 are the whole of the protection, and DD41 means the `STIM` resource does not gate them.
+  DD48 keeps a configuration from *claiming* that it does, which bounds the risk to what is
+  honestly advertised; it does not reduce it. A build that wants stimulation locked behind seed and
+  key still cannot have it until the DD41 follow-up lands.
 - **A latched buffer keeps stimulating after the master goes quiet** (DD35). That is the chosen
   behaviour, but it means losing the master mid-session leaves the ECU under stimulus until the
   list is stopped. `EV_STIM_TIMEOUT` is what would report it.
@@ -419,8 +469,11 @@ test that cannot fail is worth less here than anywhere else in the module.
 ## 8. Follow-ups
 
 - `BIT_STIM`, and `EV_STIM_TIMEOUT` with a timeout policy (§1).
-- Per-direction resource protection, which requires moving the protection check from the dispatcher
-  into the handlers (DD41).
+- Per-direction resource protection (DD41). Two obstacles, both recorded there: the per-PID
+  `Xcp_PIDToCmdGroupTable` cannot express a predicate on a command's `DIRECTION` argument, and
+  `SET_DAQ_LIST_MODE`'s error set has no `ERR_ACCESS_LOCKED` to refuse with. Until it lands, DD48
+  refuses the one configuration that would advertise the missing protection. **Removing DD48's
+  generation guard is part of this follow-up**, not a separate cleanup.
 - Distinct RX PDUs per dynamic STIM list, the receive-side twin of the TX PDU pool SP2d deferred.
 - Widening `Xcp_WriteSlaveMemoryTable` to carry the address extension, so a STIM entry naming a
   non-zero segment can be applied rather than skipped (DD45). Integrator-facing: it changes a
