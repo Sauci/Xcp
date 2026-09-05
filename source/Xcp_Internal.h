@@ -504,15 +504,20 @@ void Xcp_StartNextTransmission(void);
  * subtract it from that length without underflow; equal to it for a frame carrying no payload.
  * @retval E_OK the frame names a DAQ list and an ODT this slave has, and is long enough to hold
  * the fields that precede its payload. The three out-parameters are written only in this case.
- * @retval E_NOT_OK anything else -- an unallocated list, an ODT the list does not have, or a frame
- * too short for the fields the configuration says precede its payload.
- * @details Defined in Xcp_DaqRuntime.c, immediately after Xcp_DaqWriteIdentificationField, of
- * which it is the exact inverse: the writer is the authority on each of the five layouts, and any
- * disagreement between the two is a defect here. Whether the frame should be applied at all --
- * that the list is STIM-capable, RUNNING, and directed at stimulation, and that its payload is
- * long enough for the ODT's entries -- is DD39's, checked by the caller, not here.
- * @note XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1 (identification field) and
- * 1.1/1.1.2.2 (timestamp field, DD44).
+ * @retval E_NOT_OK anything else -- an unallocated list, an ODT the list does not have, a PID_OFF
+ * list that no longer has exactly one ODT, or a frame too short for the fields the configuration
+ * says precede its payload.
+ * @details Defined in Xcp_DaqRuntime.c, in the global section; its two file-local helpers,
+ * Xcp_DaqPidOffListForRxPdu and Xcp_DaqListForAbsolutePid, sit directly after
+ * Xcp_DaqWriteIdentificationField, of which this is the exact inverse. That writer is the
+ * authority on each of the five layouts, and any disagreement between the two is a defect here.
+ * Whether the frame should be applied at all -- that the list is STIM-capable, RUNNING, and
+ * directed at stimulation, and that its payload is long enough for the ODT's entries -- is DD39's,
+ * checked by the caller, not here.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1 (identification field, and the
+ * single-ODT condition PID_OFF carries), 1.1/1.1.2.2 (timestamp field, DD44) and 1.1/1.6.4.1.1.3,
+ * whose "The TIMESTAMP and PID_OFF flags can be used as well for DIRECTION = DAQ as for
+ * DIRECTION = STIM" is what makes both flags reachable on the receive side at all.
  */
 Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
                                               PduIdType rxPduId,

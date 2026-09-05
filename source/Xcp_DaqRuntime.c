@@ -377,23 +377,39 @@ Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
     uint16 daq_list_number = 0x0000u;
     uint8 odt_number = 0x00u;
     uint8 offset = 0x00u;
-    boolean decoded;
+    boolean decoded = FALSE;
 
     /* PID_OFF first, and not as an arm of the switch below: it is a property of one DAQ list, not
      * of the build's identificationFieldType, and it removes the very field the switch would read.
      * There is no ordering hazard in asking about it before the field is decoded -- a list holding
      * the bit owns its PDU exclusively (Xcp_DaqPidOffListForRxPdu above), so a frame arriving on
      * some other list's PDU matches nothing here and falls through to the field. */
-    decoded = Xcp_DaqPidOffListForRxPdu(rxPduId, &daq_list_number);
-
-    if (decoded == TRUE)
+    if (Xcp_DaqPidOffListForRxPdu(rxPduId, &daq_list_number) == TRUE)
     {
         /* 1.1/1.1.2.1: no Identification Field on the wire, so the payload -- or the timestamp,
-         * when both are on -- starts at byte 0. SET_DAQ_LIST_MODE grants PID_OFF only to a
-         * single-ODT list, so the ODT is 0 and there is nothing to read. Exactly what
-         * Xcp_DaqWriteIdentificationField returns 0x00u for on the transmit side. */
+         * when both are on -- starts at byte 0, and there is no ODT number to read. Exactly what
+         * Xcp_DaqWriteIdentificationField returns 0x00u for on the transmit side.
+         *
+         * maxOdt is re-checked here rather than taken on trust from the moment the bit was granted,
+         * and that is not belt-and-braces: the two can drift apart. 1.1/1.1.2.1 makes the transport
+         * layer responsible for identifying a DTO once the field is gone and states the condition
+         * as "separate CAN-Ids for each DAQ list and only one ODT for each DAQ list";
+         * Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) enforces both when it grants PID_OFF, but
+         * it does not touch Xcp_Internal.daq_alloc_state, so under DAQ_DYNAMIC a master can run
+         * ALLOC_DAQ, ALLOC_ODT(list, 1), SET_DAQ_LIST_MODE(PID_OFF) -- granted, one ODT -- and then
+         * ALLOC_ODT(list, 1) again, which that state still accepts and which DD28 makes ACCUMULATE.
+         * maxOdt becomes 2 while PID_OFF stays set, and every subsequent frame on that PDU would
+         * otherwise decode to ODT 0 and be applied to ODT 0's addresses whichever ODT the master
+         * meant. That is the silent misapplication this whole decoder exists to avoid, so the
+         * frame is refused instead.
+         *
+         * Refused, not fallen through to the switch: the master believes the field is off, so
+         * byte 0 is payload. Reading it as an absolute PID would resolve some unrelated
+         * (list, ODT) and apply the frame there -- strictly worse than dropping it. */
         odt_number = 0x00u;
         offset = 0x00u;
+        decoded = (boolean)((Xcp_Ptr->config->daqList[daq_list_number].maxOdt == 0x01u) ?
+                            TRUE : FALSE);
     }
     else
     {
@@ -468,19 +484,31 @@ Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
         (odt_number < Xcp_Ptr->config->daqList[daq_list_number].maxOdt))
     {
 #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
-        /* DD44. 1.1/1.1.2.2: "The TIMESTAMP flag can be used as well for DIRECTION = DAQ as for
-         * DIRECTION = STIM", and for stimulation the master "first receives a time stamped
-         * DTO(DAQ) from the slave and then echoes this current value of the slave device's clock
-         * in the DTO Packet for the first ODT of the DAQ cycle". So the field sits directly after
-         * the Identification Field, on ODT 0 alone -- Diagram 10's shape, in the other direction
-         * -- and this mirrors Xcp_DaqSampleOdt's own block above condition for condition.
+        /* DD44. That a STIM DTO carries a timestamp at all is 1.1/1.1.2.2: "The TIMESTAMP flag can
+         * be used as well for DIRECTION = DAQ as for DIRECTION = STIM", which 1.1/1.6.4.1.1.3
+         * repeats and widens -- "The TIMESTAMP and PID_OFF flags can be used as well for
+         * DIRECTION = DAQ as for DIRECTION = STIM". That it sits directly after the Identification
+         * Field, in the first ODT of the cycle and no other, is 1.1/1.1.2.2's Diagram 10 ("TS only
+         * in first DTO Packet of sample") together with 1.1/1.6.4.1.1.3's "the slave device
+         * transmits the current value of its clock in the first ODT of the DAQ cycle". So this
+         * mirrors Xcp_DaqSampleOdt's own block above, condition for condition, in the other
+         * direction.
          *
-         * Skipped, not read into anything: the value is the slave's own clock coming back, and
-         * 1.1.2.2 offers the correlation it enables ("gives the slave the possibility to check
-         * whether DTO(DAQ) and CTO(STIM) belong functionally together") as a possibility, not a
-         * requirement. Acting on it needs a record of which clock value went out with which DAQ
-         * cycle, which is its own mechanism; the design document records it as a follow-up. This
+         * Skipped, not read into anything. What the master puts there is the slave's own clock
+         * coming back: 1.0/1.1.2.2 -- 1.0, deliberately, this paragraph was REMOVED in 1.1 and
+         * appears in neither 1.1/1.1.2.2 nor 1.1/1.6.4.1.1.3 -- says that for DIRECTION = STIM the
+         * master "first receives a time stamped DTO(DAQ) from the slave and then echoes this
+         * current value of the slave device's clock in the DTO Packet for the first ODT of the DAQ
+         * cycle", so that the "time stamp" can be used as a counter that "gives the slave the
+         * possibility to check whether DTO(DAQ) and CTO(STIM) belong functionally together". That
+         * is a possibility the specification offers, not a requirement, and 1.1 dropped even the
+         * offer. Acting on it needs a record of which clock value went out with which DAQ cycle,
+         * which is its own mechanism; the design document records it as a follow-up. This
          * interface has nowhere to put the value, so reading it would only be a discarded load.
+         *
+         * None of the arithmetic depends on the removed paragraph -- 1.1's own flag sentence and
+         * Diagram 10 are what put the field on ODT 0 -- but it is why the field is there at all,
+         * so it is cited to the version that still contains it.
          *
          * Xcp_TimestampWireSize(timestampType), not XCP_DAQ_TIMESTAMP_SIZE, for the reason
          * Xcp_DaqSampleOdt states at length: the macro is the maximum across every configuration

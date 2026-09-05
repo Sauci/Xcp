@@ -48,19 +48,28 @@ def decode(handle, frame, rx_pdu_id):
     return result, daq_list_number[0], odt_number[0], offset[0]
 
 
+def command(handle, request):
+    """One CTO exchange, returning the first response byte (0xFF positive, 0xFE error)."""
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return handle.can_if_transmit.call_args[0][1].SduDataPtr[0x00]
+
+
 def set_daq_list_mode(handle, daq_list=0, mode=0x00, channel=0, prescaler=1, priority=0,
                       byte_order='LITTLE_ENDIAN'):
     """SET_DAQ_LIST_MODE, asserting the slave accepted it. The stored mode bits are what the
     decoder reads for PID_OFF and TIMESTAMP, so a refused request must not be mistaken for a
     configured one."""
-    handle.lib.Xcp_CanIfRxIndication(
-            0x0001, handle.get_pdu_info((0xE0, mode) + tuple(u16_to_array(daq_list, byte_order)) +
-                                        tuple(u16_to_array(channel, byte_order)) +
-                                        (prescaler, priority)))
-    handle.lib.Xcp_MainFunction()
-    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
-    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0x00] == 0xFF, \
+    assert command(handle, (0xE0, mode) + tuple(u16_to_array(daq_list, byte_order)) +
+                   tuple(u16_to_array(channel, byte_order)) + (prescaler, priority)) == 0xFF, \
         'SET_DAQ_LIST_MODE was refused, so the stored mode is not what this test assumes'
+
+
+def stored_mode(handle, daq_list=0):
+    """The runtime mode byte in the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6 -- the one the
+    decoder reads, not the one SET_DAQ_LIST_MODE arrives in."""
+    return handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[daq_list].mode
 
 
 def two_stimulation_lists(identification_field_type='ABSOLUTE'):
@@ -237,16 +246,72 @@ def test_the_same_frame_without_pid_off_is_read_as_an_identification_field():
     assert result == handle.define('E_NOT_OK')
 
 
+def test_pid_off_is_refused_once_alloc_odt_has_grown_the_list_past_one_odt():
+    """1.1/1.1.2.1 makes the transport layer responsible for identifying a DTO once the field is
+    gone, and states the condition as 'separate CAN-Ids for each DAQ list and only one ODT for each
+    DAQ list'. Xcp_DTOCmdDaqSetDaqListMode enforces that when it GRANTS the bit -- but the grant and
+    the ODT count can drift apart afterwards, which is why the decoder re-checks rather than trusts.
+
+    The drift is reachable through the published command set alone, with no misuse: ALLOC_ODT is
+    accepted from state XCP_DAQ_ALLOC_ODT as well as XCP_DAQ_ALLOC_DAQ, SET_DAQ_LIST_MODE does not
+    touch Xcp_Internal.daq_alloc_state, and DD28 makes a repeat naming the same list ACCUMULATE. So
+    the second ALLOC_ODT below is a legal command in a legal state, and it takes maxOdt to 2 while
+    PID_OFF stays set.
+
+    Both halves are asserted, on the identical frame, and the middle one matters most: it decodes
+    to (0, 0, 0) BEFORE the second allocation, so the refusal afterwards is attributable to the ODT
+    count and not to the configuration having been unusable all along. maxOdt and the stored mode
+    bit are read back directly, so a future ALLOC_ODT that cleared PID_OFF would fail this test
+    loudly here rather than turn it into one that passes for the wrong reason.
+
+    The frame's first byte is 0x01 on purpose. After the second allocation the list spans absolute
+    ODT numbers 0..1, so 0x01 is a VALID absolute PID for it -- which is what makes this test
+    distinguish the two ways of handling the drift. Refusing gives E_NOT_OK; falling through to the
+    identification-field switch instead would decode (list 0, ODT 1, offset 1) and return E_OK,
+    applying a payload byte the master never meant as a PID to a second ODT's addresses. Only the
+    refusal passes.
+    """
+    config = stim_config(daq_count=1, odt_count=2, odt_entries_count=1)
+    handle = XcpTest(config)
+    connect(handle)
+    assert command(handle, (0xD5, 0x00, 0x01, 0x00)) == 0xFF, 'ALLOC_DAQ one list'
+    assert command(handle, (0xD4, 0x00, 0x00, 0x00, 0x01)) == 0xFF, 'ALLOC_ODT list 0, one ODT'
+    set_daq_list_mode(handle, mode=0x20)
+    frame = (0x01, PAYLOAD, TRAILER)
+
+    assert decode(handle, frame, config.default_daq_dto_pdu_mapping) == \
+        (handle.define('E_OK'), 0, 0, 0), 'the one-ODT list decodes before the second allocation'
+
+    assert command(handle, (0xD4, 0x00, 0x00, 0x00, 0x01)) == 0xFF, 'ALLOC_ODT accumulates (DD28)'
+
+    assert handle.lib.Xcp_Ptr.config.daqList[0].maxOdt == 2, 'the list now has two ODTs'
+    assert (stored_mode(handle) & 0x20) != 0x00, 'and PID_OFF is still set on it'
+
+    result, _, _, _ = decode(handle, frame, config.default_daq_dto_pdu_mapping)
+
+    assert result == handle.define('E_NOT_OK'), \
+        'a PID_OFF list with two ODTs cannot identify a frame, so it must be refused -- not ' \
+        'decoded to ODT 0, and not fallen through to reading the payload as an absolute PID'
+
+
 def timestamped_config(size, identification_field_type='ABSOLUTE'):
     return DefaultConfig(timestamp=timestamp(size=size),
                          identification_field_type=identification_field_type,
                          daqs=(daq(name='DAQ1', type='DAQ_STIM', max_odt=2, max_odt_entries=1),))
 
 
-# DD44. 1.1/1.1.2.2: 'The TIMESTAMP flag can be used as well for DIRECTION = DAQ as for
-# DIRECTION = STIM', and for stimulation the master echoes back the slave's own clock value 'in
-# the DTO Packet for the first ODT of the DAQ cycle' -- so the field is present on ODT 0 and on no
-# other ODT, exactly as Diagram 10 shows for the acquisition direction.
+# DD44. That a STIM DTO carries a timestamp at all is 1.1/1.1.2.2 -- 'The TIMESTAMP flag can be
+# used as well for DIRECTION = DAQ as for DIRECTION = STIM' -- which 1.1/1.6.4.1.1.3 repeats and
+# widens to 'The TIMESTAMP and PID_OFF flags can be used as well for DIRECTION = DAQ as for
+# DIRECTION = STIM'. That it sits on the first ODT of the cycle and no other is 1.1/1.1.2.2's
+# Diagram 10, 'TS only in first DTO Packet of sample', together with 1.1/1.6.4.1.1.3's 'the slave
+# device transmits the current value of its clock in the first ODT of the DAQ cycle'.
+#
+# The reason the master puts one there -- it echoes back the slave's own clock so the slave may
+# check that the DAQ and STIM frames 'belong functionally together' -- is 1.0/1.1.2.2 and NOT
+# 1.1/1.1.2.2: that paragraph was removed in 1.1, which carries neither 'echoes' nor 'functionally
+# together' anywhere. None of the arithmetic below depends on it; it is cited to 1.0 because that
+# is where it can be looked up.
 #
 # The two tests below are a pair, on one configuration, and it is the pair that pins DD44: ODT 0
 # carrying a timestamp and ODT 1 not carrying one. Either alone is satisfied by an implementation
@@ -297,6 +362,34 @@ def test_no_timestamp_is_counted_into_a_later_odts_payload_offset(size, width):
     assert result == handle.define('E_OK')
     assert (daq_list_number, odt_number, offset) == (0, 1, 1)
     assert frame[offset] == PAYLOAD, 'ODT 1 skips the identification field only'
+
+
+@pytest.mark.parametrize('size, width', _timestamp_widths)
+def test_pid_off_and_timestamp_together_leave_the_timestamp_at_offset_zero(size, width):
+    """1.1/1.6.4.1.1.3: 'The TIMESTAMP and PID_OFF flags can be used as well for DIRECTION = DAQ as
+    for DIRECTION = STIM' -- both, so the combination is a configuration a master may really ask
+    for, not a corner this decoder invented.
+
+    It is the one case where the two mechanisms interact: PID_OFF removes the identification field
+    entirely, so the timestamp is the FIRST thing in the frame and the payload begins at the
+    timestamp width alone. On the transmit side this is Xcp_DaqWriteIdentificationField returning
+    0x00u and Xcp_DaqSampleOdt then writing the timestamp at offset 0; a decoder that returned
+    early on PID_OFF, before reaching its timestamp block, would answer 0 here and shift every
+    applied byte by the whole width."""
+    config = DefaultConfig(timestamp=timestamp(size=size), identification_field_type='ABSOLUTE',
+                           daqs=(daq(name='DAQ1', type='DAQ_STIM', max_odt=1, max_odt_entries=1),))
+    handle = XcpTest(config)
+    connect(handle)
+    set_daq_list_mode(handle, mode=0x30)
+    assert (stored_mode(handle) & 0x30) == 0x30, 'both bits reached the stored mode'
+    frame = (FILLER,) * width + (PAYLOAD, TRAILER)
+
+    result, daq_list_number, odt_number, offset = decode(handle, frame,
+                                                         config.default_daq_dto_pdu_mapping)
+
+    assert result == handle.define('E_OK')
+    assert (daq_list_number, odt_number, offset) == (0, 0, width)
+    assert frame[offset] == PAYLOAD, 'no identification field, so the timestamp starts at byte 0'
 
 
 def test_no_timestamp_is_skipped_when_the_mode_bit_is_off():
