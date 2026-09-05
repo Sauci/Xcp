@@ -423,6 +423,29 @@ def test_generation_fails_when_a_stim_capable_list_exceeds_the_stim_pid_ceiling(
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM', max_odt=193),)))
 
 
+def test_generation_accepts_a_daq_list_past_the_stim_ceiling_when_it_cannot_receive():
+    """DD42, the STATIC sibling of test_alloc_odt_keeps_the_full_daq_ceiling_for_a_daq_only_pool:
+    script/source_cfg.c.jinja2's `daq.type != 'DAQ'` filter is what lets a DAQ list keep the wider
+    0xFB range while a list that can receive is held to 0xC0, and nothing above exercises the
+    DAQ-only half of that filter. test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling
+    cannot: its two DAQ lists total 253, which trips the pre-existing `pid.next > 252` guard before
+    the 0xC0 loop is ever reached, so its `pytest.raises(UndefinedError)` cannot tell a correctly
+    scoped 0xC0 guard from one that also caught DAQ lists -- dropping `!= 'DAQ'` entirely (or
+    inverting it) would pass every test above just as well as the real filter does.
+
+    DAQ2 here sits in the one window that discriminates the two: its absolute ODT numbers run
+    100..249 -- past 192 (0xC0), so an over-broad guard refuses it, but at or under 252 (0xFB + 1),
+    so it is clear of the `pid.next` guard and only the type filter decides the outcome. DAQ1 is
+    DAQ_STIM and stays under its own 192 ceiling (0..99), so this one configuration exercises both
+    guards without either tripping incorrectly."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM', max_odt=100),
+                                          daq(name='DAQ2', type='DAQ', max_odt=150))))
+
+    assert handle.config.lib.Xcp[0].config.daqList[1].type == handle.lib.DAQ
+    assert handle.config.lib.Xcp[0].config.daqList[1].firstPid == 100
+    assert handle.config.lib.Xcp[0].config.daqList[1].maxOdt == 150
+
+
 def test_generation_fails_when_odt_entry_size_daq_exceeds_the_uint8_field():
     """odtEntrySizeDaq is emitted as one byte into Xcp_GeneralType's uint8 XcpOdtEntrySizeDaq, but
     it is derived from max_dto, whose schema maximum is 65535. It sat two lines below the
