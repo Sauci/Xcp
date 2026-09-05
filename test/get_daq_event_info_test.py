@@ -102,19 +102,23 @@ def test_get_daq_event_info_honours_byte_order_when_decoding_the_channel_number(
     assert frame[6] == 42, "PRIORITY -- proves this is channel 1's data, not channel 0's"
 
 
-def test_daq_event_properties_stim_bit_stays_clear_for_a_daq_stim_channel():
-    """DAQ_EVENT_PROPERTIES' STIM bit (0x08) stays clear even for a DAQ_STIM channel, the same
-    policy Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES applies for the identical reason
-    (get_daq_list_info_test.py, test_daq_list_properties_daq_bit_follows_the_configured_type):
-    data stimulation arrives in SP3. Nothing pinned this in this file until now -- the DAQ bit
-    (0x04, set because DAQ_STIM is DAQ-capable) was the only properties bit any test here observed."""
+def test_daq_event_properties_stim_bit_is_set_for_a_daq_stim_channel():
+    """DAQ_EVENT_PROPERTIES' STIM bit (0x08) is set for a DAQ_STIM channel, the same policy
+    Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES applies for the identical reason
+    (get_daq_list_info_test.py,
+    test_daq_list_properties_daq_bit_is_set_for_every_type_that_can_be_configured): SP3
+    implemented data stimulation, so Xcp_DTOCmdDaqGetDaqEventInfo now reports STIM alongside DAQ
+    (0x04, set because DAQ_STIM is DAQ-capable) for any channel whose type carries stimulation.
+    Nothing pinned this in this file until now -- the DAQ bit was the only properties bit any test
+    here observed before. test_get_daq_event_info_reports_stim_for_a_pure_stim_channel below
+    covers the STIM-only channel that is this OR's other half."""
     handle = XcpTest(DefaultConfig(events=(event(name='EVT', type='DAQ_STIM',
                                                  triggered_daq_list_ref=['DAQ1']),)))
     connect(handle)
 
     frame = daq_event_info(handle)
 
-    assert frame[1] == 0x04, 'DAQ_EVENT_PROPERTIES -- DAQ set, STIM (0x08) stays clear until SP3'
+    assert frame[1] == 0x0C, 'DAQ_EVENT_PROPERTIES -- DAQ (0x04) and STIM (0x08) both set'
 
 
 def test_get_daq_event_info_reports_stim_for_a_pure_stim_channel():

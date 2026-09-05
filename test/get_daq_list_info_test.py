@@ -81,31 +81,30 @@ def test_daq_list_properties_report_a_configurable_list_on_a_movable_event():
     assert (properties & 0x08) == 0x00, 'STIM arrives in SP3'
 
 
-@pytest.mark.parametrize('daq_type', ('DAQ', 'DAQ_STIM'))
-def test_daq_list_properties_daq_bit_is_set_for_every_type_that_can_be_configured(daq_type):
+@pytest.mark.parametrize('daq_type, stim_bit_set', (('DAQ', False), ('DAQ_STIM', True)))
+def test_daq_list_properties_daq_bit_is_set_for_every_type_that_can_be_configured(daq_type, stim_bit_set):
     """The DAQ bit (0x04) is set for both DAQ and DAQ_STIM lists -- the same two types
     Xcp_CanIfRxIndication (source/Xcp.c) already treats as DAQ-capable when routing a stimulation
-    PDU. STIM (0x08) stays clear for both: stimulation support arrives in SP3, matching the STIM
-    granularity of 0 GET_DAQ_RESOLUTION_INFO already reports for the same reason
-    (test_stim_fields_are_zero_while_stimulation_is_out_of_scope,
-    get_daq_resolution_info_test.py).
+    PDU. The STIM bit (0x08) follows the type instead of staying clear for both: SP3 implemented
+    data stimulation, so Xcp_DTOCmdDaqGetDaqListInfo now sets STIM for any type that carries
+    stimulation capability -- DAQ_STIM here, and STIM alone in
+    test_generation_accepts_a_pure_stim_list (daq_configuration_test.py) and
+    test_get_daq_list_info_reports_stim_for_a_receiving_list below, a dynamic pool's equivalent.
 
     This used to carry a third case, `('STIM', False)`, and claimed to pin the OR in
-    Xcp_DTOCmdDaqGetDaqListInfo against a coincidence. It no longer can, and says so rather than
-    pretending: a pure STIM list is now refused at generation
-    (test_generation_fails_when_a_daq_list_is_configured_as_stim, daq_configuration_test.py),
-    because DAQ_LIST_PROPERTIES for one would have both type bits clear, an encoding
-    1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks "Not allowed". Every type that can reach this
-    handler is DAQ-capable, so the OR's false arm is unreachable until SP3 implements the
-    direction and lifts the guard. What is left here is still worth asserting -- DAQ_STIM reaches
-    the same bit as DAQ, and neither sets STIM -- it is just not a test of the OR."""
+    Xcp_DTOCmdDaqGetDaqListInfo against a coincidence, back when a pure STIM list was refused at
+    generation (data stimulation was unimplemented) and DAQ_STIM was the only configurable type
+    whose STIM bit this test could observe -- always clear, so the case proved nothing about the
+    OR's STIM half. SP3 lifted that refusal (script/source_cfg.c.jinja2) and DAQ_STIM now sets
+    STIM as specified, so this test discriminates DAQ from DAQ_STIM instead: the DAQ bit stays set
+    across both, the STIM bit does not."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type=daq_type),)))
     connect(handle)
 
     properties = daq_list_info(handle)[1]
 
     assert (properties & 0x04) == 0x04, 'DAQ'
-    assert (properties & 0x08) == 0x00, 'STIM arrives in SP3'
+    assert (properties & 0x08) == (0x08 if stim_bit_set else 0x00), 'STIM'
 
 
 def test_get_daq_list_info_reports_stim_for_a_receiving_list():
