@@ -764,8 +764,14 @@ def test_a_stim_capable_pool_reserves_a_slot_for_every_odt():
     assert rt.stimSlotCount == 2 * 3
 
     for daq_idx in range(2):
+        # The pool is rectangular and every list in it can receive, so the prefix sum
+        # stimSlotBase carries collapses to daq_idx * odt_count here. Asserted rather than
+        # assumed, because it is the closed form that does NOT survive the static model --
+        # see test_a_static_list_that_can_receive_starts_where_its_own_slots_do.
+        assert handle.lib.Xcp_Ptr.config.daqList[daq_idx].stimSlotBase == daq_idx * 3
+
         for odt_idx in range(3):
-            slot = rt.stimSlot[(daq_idx * 3) + odt_idx]
+            slot = rt.stimSlot[handle.lib.Xcp_Ptr.config.daqList[daq_idx].stimSlotBase + odt_idx]
             assert slot.length == 0, 'a freshly generated slot holds nothing'
 
 
@@ -785,6 +791,37 @@ def test_a_daq_only_pool_reserves_no_stim_slots():
     handle = XcpTest(config)
 
     assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0
+
+
+def test_a_static_list_that_can_receive_starts_where_its_own_slots_do():
+    """DD43. The case with no closed form, and the reason Xcp_DaqListType carries stimSlotBase at
+    all rather than the addressing being computed from the list number.
+
+    A static configuration reserves slots for its RECEIVING lists only, so a DAQ list advances the
+    base by nothing however many ODTs it owns. Here list 0 is a DAQ list with two ODTs, and the two
+    receiving lists that follow it start at 0 and 3 -- not at 2 and 5, which is where summing over
+    every list would put them, and not at 1 * odt_count and 2 * odt_count, which is where the
+    rectangular rule a dynamic pool obeys would. Both wrong answers are indistinguishable from the
+    right one under a dynamic pool, which is why this case is pinned separately.
+
+    A DAQ list's own base is 0 and is never read: nothing addresses a stimulation slot for a list
+    whose direction excludes STIM."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ', max_odt=2),
+                                         daq(name='DAQ2', type='DAQ_STIM', max_odt=3),
+                                         daq(name='DAQ3', type='DAQ_STIM', max_odt=4)),
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
+    daq_list = handle.lib.Xcp_Ptr.config.daqList
+
+    assert daq_list[0].stimSlotBase == 0, 'a DAQ list reserves nothing, so it starts nowhere'
+    assert daq_list[1].stimSlotBase == 0, 'the first receiving list starts at the front'
+    assert daq_list[2].stimSlotBase == 3, "after the first receiving list's three ODTs"
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 3 + 4
+
+    # The last slot the last list addresses is the last slot reserved: base plus its own ODTs
+    # accounts for the array exactly, with nothing over-run and nothing stranded.
+    assert daq_list[2].stimSlotBase + daq_list[2].maxOdt == \
+        handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount
 
 
 def test_odt_entry_size_stim_is_reported_for_a_stim_capable_build():

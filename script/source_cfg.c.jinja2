@@ -264,6 +264,28 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- if first_pids.append(pid.next) %}{% endif %}
     {%- set pid.next = pid.next + daq.max_odt %}
     {%- endfor %}
+    {#- stimSlotBase (DD43), built exactly as first_pids above and for the same reason: a flat array
+        addressed by a per-list base plus the ODT number. A reader who follows one follows the
+        other. The only difference is what the sum runs over. first_pids sums every list's max_odt,
+        because every list has ODTs to number; this sums only the lists that can RECEIVE, because
+        script/source_rt.c.jinja2 reserves a slot only for those. So a DAQ list between two
+        receiving ones advances the base by nothing, and the second receiving list starts where the
+        first one ended rather than where its own list number would put it -- there is no closed
+        form in terms of the list number, which is the whole reason this is generated rather than
+        computed at the point of use. A non-receiving list gets 0, which is never read.
+
+        The dynamic branch does not use this list: its pool is rectangular and every list can
+        receive, so the same sum collapses to i * odt_count and is emitted that way below. #}
+    {%- set stim_slot_bases = [] %}
+    {%- set stim_base = namespace(next=0) %}
+    {%- for daq in configuration.daqs | default([]) %}
+    {%- if daq.type != 'DAQ' %}
+    {%- if stim_slot_bases.append(stim_base.next) %}{% endif %}
+    {%- set stim_base.next = stim_base.next + daq.max_odt %}
+    {%- else %}
+    {%- if stim_slot_bases.append(0) %}{% endif %}
+    {%- endif %}
+    {%- endfor %}
     {#- `raise(...)` here, and at every other call site in this file, is not a registered Jinja
         global: bsw_code_gen builds a bare jinja2.Environment with no such name, and this pinned,
         external dependency gives no hook to add one. Referencing the undefined name aborts
@@ -329,6 +351,13 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % p
     {
         {{'0x%04Xu' % i}}, /* XcpDaqListNumber */
         0x00u, /* FIRST_PID, assigned by ALLOC_ODT */
+        {#- The prefix sum of the comment beside stim_slot_bases above, in closed form: this pool is
+            rectangular and, when it can receive at all, every list in it can, so list i's slots
+            start i * odt_count into the flat array script/source_rt.c.jinja2 reserves. Unlike
+            FIRST_PID this is NOT assigned by ALLOC_ODT -- the slots are reserved for the whole
+            rectangle at build time, so a list's base does not depend on how many ODTs the master
+            actually allocates to it. #}
+        {{'0x%04Xu' % (i * pool.odt_count if (pool.type | default('DAQ')) != 'DAQ' else 0)}}, /* stimSlotBase */
         DAQ, /* XcpDaqListType */
         0x00u, /* XcpMaxOdt, raised by ALLOC_ODT */
         {{'0x%02Xu' % pool.odt_entries_count}}, /* XcpMaxOdtEntries */
@@ -350,6 +379,7 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
     {
         {{'0x%04Xu' % loop.index0}}, /* XcpDaqListNumber */
         {{'0x%02Xu' % first_pids[loop.index0]}}, /* FIRST_PID, derived */
+        {{'0x%04Xu' % stim_slot_bases[loop.index0]}}, /* stimSlotBase, derived */
         {{daq.type}}, /* XcpDaqListType */
         {{'0x%02Xu' % daq.max_odt}}, /* XcpMaxOdt */
         {{'0x%02Xu' % daq.max_odt_entries}}, /* XcpMaxOdtEntries */
