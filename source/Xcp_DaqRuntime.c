@@ -450,6 +450,10 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
  * and the running offset STILL ADVANCES past its bytes: the master laid the frame out from the
  * whole ODT, so those bytes are on the wire whether this slave can honour them or not, and a skip
  * that also skipped the advance would shift every following entry by the width of the one refused.
+ * The report is one per call, whatever the number of entries skipped -- Xcp_ReportError has no
+ * parameter that could name the entry, so repeating it says nothing a single report does not, and
+ * this list may be triggered at a raster rate. Xcp_TriggerEventChannel's own EV_DAQ_OVERLOAD, at
+ * the end of this file, aggregates over a whole trigger for the same reason.
  * @note bitOffset is not copied and not consulted, the same omission Xcp_DaqSampleOdt documents:
  * BIT_STIM is a separate feature (GET_DAQ_PROCESSOR_INFO's own bit, and this module does not claim
  * it), so an entry's bit offset changes nothing about what is written here.
@@ -532,6 +536,14 @@ static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
         }
         else
         {
+            /* Accumulated across every entry of this ODT and reported once at the end, not per
+             * entry: Xcp_ReportError takes (instanceId, apiId, errorId) and has no parameter that
+             * could say WHICH entry was skipped, so n identical parameter-free reports carry
+             * exactly what one carries, at n times the cost on a list that triggers at a raster
+             * rate. It is the shape EV_DAQ_OVERLOAD already uses further down this file -- one
+             * event for the whole trigger, however many pushes failed inside it. */
+            boolean skipped = FALSE;
+
             for (idx = 0x00u; idx < (uint8_least)copied; idx++)
             {
                 /* The element count Xcp_DaqSampleOdt's own inner loop uses, computed once here
@@ -554,11 +566,15 @@ static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
                 }
                 else
                 {
-                    Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID,
-                                    XCP_E_STIM_NOT_APPLIED);
+                    skipped = TRUE;
 
                     offset = (uint8)(offset + (uint8)(elements * element_size));
                 }
+            }
+
+            if (skipped == TRUE)
+            {
+                Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID, XCP_E_STIM_NOT_APPLIED);
             }
         }
     }
@@ -567,28 +583,31 @@ static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
 /**
  * @brief Applies every ODT of one DAQ list's buffered stimulation data at the event trigger.
  * @details DD36: this is where a stimulation frame finally reaches memory, in the trigger's
- * context and never in the receive callback's. Called from Xcp_TriggerEventChannel below, for a
- * list the trigger has already established is RUNNING, bound to this event channel and past its
- * prescaler -- so none of those three is re-checked here.
+ * context and never in the receive callback's. Called from Xcp_TriggerEventChannel's stimulation
+ * pass below, for a list that pass has already established is RUNNING, bound to this event
+ * channel, past its prescaler and DIRECTED AT STIMULATION -- so none of those four is re-checked
+ * here.
  *
- * The two conditions that ARE checked are not re-litigations of what DD39 established when the
- * frame arrived; they are properties of the list right now, and reception cannot speak for now:
+ * DIRECTION lives in that caller rather than here, and the placement is the corrected DD40's:
+ * 1.1/1.6.4.1.1.3 makes DIRECTION a choice between two modes for the whole list, so it is what
+ * partitions the trigger's two passes, and asking it a second time here would be a branch nothing
+ * could ever take -- untestable by construction, which is the state the type test below nearly
+ * shipped in. It is still asked at exactly one point in time later than DD39's own check, which is
+ * what matters: DD35 latches the slot, and STOP, SET_DAQ_LIST_MODE with DIRECTION clear and START
+ * is three legal commands that leave a list the master has returned to measurement RUNNING with a
+ * stimulation payload still behind it.
  *
- * - the configured type, and this one is load-bearing for memory safety rather than for policy. A
- *   list whose type excludes STIM has no slot at all -- the generator reserves them only for lists
- *   that can receive, so such a list's stimSlotBase is 0 and Xcp_Rt[...].stimSlot is NULL_PTR
- *   outright in a build whose every list is DAQ (interface/Xcp_Types.h, DD43). Indexing the slot
- *   array for one would dereference that null pointer, or in a build that does have a pool, read
- *   the FIRST receiving list's slot and stimulate through this list's addresses. It is the same
- *   guard, for the same reason, that Xcp_DaqStimFrameIsApplicable applies before the receive path
- *   indexes the array.
- * - DIRECTION, because DD35 latches the slot and the master can change its mind in between.
- *   SET_DAQ_LIST_MODE answers ERR_DAQ_ACTIVE on a running list, but STOP, SET_DAQ_LIST_MODE with
- *   DIRECTION clear and START is three legal commands and clears none of them the slot, so a list
- *   the master has explicitly returned to measurement can be RUNNING with a stimulation payload
- *   still behind it. Applying it would write memory the master asked only to read -- the same
- *   sentence Xcp_DaqStimFrameIsApplicable makes about a frame arriving for such a list, at the
- *   only other point in time where it can be asked.
+ * The ONE condition checked here is the configured type, and it is load-bearing for memory safety
+ * rather than for policy. A list whose type excludes STIM has no slot at all -- the generator
+ * reserves them only for lists that can receive, so such a list's stimSlotBase is 0 and
+ * Xcp_Rt[...].stimSlot is NULL_PTR outright in a build whose every list is DAQ
+ * (interface/Xcp_Types.h, DD43). Indexing the slot array for one would dereference that null
+ * pointer, or in a build that does have a pool, read the FIRST receiving list's slot and stimulate
+ * through this list's addresses. It is the same guard, for the same reason, that
+ * Xcp_DaqStimFrameIsApplicable applies before the receive path indexes the array -- and it is NOT
+ * implied by the caller's DIRECTION filter: SET_DAQ_LIST_MODE refuses DIRECTION to a DAQ-typed
+ * list, but that refusal is a command-set property, not a runtime invariant this function may
+ * assume of a mode field written elsewhere.
  * @note maxOdt, not the pool's odtCount: it is what the trigger's own sampling loop is bounded by,
  * and under DAQ_DYNAMIC it is exactly the number of ODTs ALLOC_ODT handed this list. The slot for
  * ODT i is stimSlot[stimSlotBase + i], and the generator's prefix sum gives every receiving list a
@@ -598,9 +617,7 @@ static void Xcp_DaqApplyStim(uint16 daqListNumber)
 {
     const Xcp_DaqListType *p_list = &Xcp_Ptr->config->daqList[daqListNumber];
 
-    if (((p_list->type == STIM) || (p_list->type == DAQ_STIM)) &&
-        ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode &
-          XCP_DAQ_LIST_MODE_DIRECTION) != 0x00u))
+    if ((p_list->type == STIM) || (p_list->type == DAQ_STIM))
     {
         uint8_least odt_idx;
 
@@ -609,6 +626,53 @@ static void Xcp_DaqApplyStim(uint16 daqListNumber)
             Xcp_DaqApplyStimOdt(daqListNumber, (uint8)odt_idx);
         }
     }
+}
+
+/**
+ * @brief Answers whether one DAQ list owes this trigger a cycle, in the given direction.
+ * @param[in,out] pRt the list's runtime state; its prescalerCounter IS ADVANCED by this call.
+ * @param[in] eventChannelNumber the channel being triggered.
+ * @param[in] stimulating TRUE selects lists whose DIRECTION is STIM, FALSE those whose is DAQ.
+ * @retval TRUE the list is RUNNING on this channel, matches `stimulating`, and its prescaler has
+ * just elapsed -- the counter has been reset and the caller owes it one cycle.
+ * @details The gate Xcp_TriggerEventChannel's two passes share, factored out so the two cannot
+ * drift: the ordering the corrected DD40 requires is only worth anything if both passes agree on
+ * which lists are due.
+ *
+ * **It mutates, so it must be called exactly once per list per trigger.** What guarantees that is
+ * the DIRECTION partition itself: 1.1/1.6.4.1.1.3 makes DIRECTION a choice between two modes, so
+ * every list matches exactly one of the two passes and neither advances the other's counters. Do
+ * not add a third pass, or a caller that asks twice to "check first and act later".
+ *
+ * The one interleaving that could advance a counter twice needs a preemption between the passes
+ * that STOPS the list (SET_DAQ_LIST_MODE answers ERR_DAQ_ACTIVE otherwise), flips DIRECTION and
+ * STARTS it again -- and START resets prescalerCounter to 0x00u before setting RUNNING
+ * (Xcp_DTOCmdDaqStartStopDaqList, source/Xcp_Daq.c), so the second pass would advance it from
+ * zero rather than corrupt a count. Nothing is left inconsistent by it.
+ * @note 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." A list is due when
+ * the counter REACHES the prescaler, so 1 means every trigger.
+ */
+static boolean Xcp_DaqListElapsedOnTrigger(Xcp_DaqListRtType *pRt, uint16 eventChannelNumber,
+                                           boolean stimulating)
+{
+    const boolean is_stimulating =
+            (boolean)(((pRt->mode & XCP_DAQ_LIST_MODE_DIRECTION) != 0x00u) ? TRUE : FALSE);
+    boolean elapsed = FALSE;
+
+    if (((pRt->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u) &&
+        (pRt->eventChannelNumber == eventChannelNumber) &&
+        (is_stimulating == stimulating))
+    {
+        pRt->prescalerCounter++;
+
+        if (pRt->prescalerCounter >= pRt->prescaler)
+        {
+            pRt->prescalerCounter = 0x00u;
+            elapsed = TRUE;
+        }
+    }
+
+    return elapsed;
 }
 
 /**
@@ -964,63 +1028,85 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
          * for the whole trigger, however many individual pushes failed within it. */
         boolean overloaded = FALSE;
 
-        /* DD11: the authoritative binding of a DAQ list to an event channel is the one
-         * SET_DAQ_LIST_MODE wrote at runtime (Xcp_Rt[...].daqList[...].eventChannelNumber), not
-         * the configured triggeredDaqListRef, so the lists are scanned rather than the channel's
-         * reference list walked. */
+        /* DD40, as corrected: DIRECTION selects a MODE, not a capability. 1.1/1.6.4.1.1.3 --
+         * "The DIRECTION flag sets the DAQ list into synchronized data acquisition OR synchronized
+         * data stimulation mode". DAQ_STIM is the list's TYPE, what the configuration permits it
+         * to be; DIRECTION is what it is doing now. A list with DIRECTION = STIM acquires nothing,
+         * so the two passes below partition this channel's lists rather than visiting each twice.
+         *
+         * TWO passes over the lists, not one pass doing both per list, and that is the whole point
+         * of the shape. One event channel can carry several lists, and one may stimulate a
+         * variable another measures; DD40's guarantee is that EVERY stimulating list has applied
+         * before ANY acquiring list is sampled, so the measurement reports the value that was
+         * actually in effect rather than the one the stimulus was about to replace. A single
+         * interleaved pass would give that only when the stimulating list happens to hold the
+         * lower index -- an accident of configuration order, not a guarantee.
+         *
+         * It also keeps DD37's two exclusive areas apart: every SchM_Enter_Xcp_StimBuffer section
+         * of pass 1 closes before Xcp_DaqSampleOdt opens the first SchM_Enter_Xcp_DtoQueue section
+         * of pass 2, so the two never nest.
+         *
+         * **The suite is NOT the backstop for that**, and this is the line at which somebody would
+         * assume it is. test/conftest.py tracks the two areas as independent booleans, so it
+         * detects an area nested within ITSELF and cannot see one held across the other; and
+         * swapping these two passes produces no nesting to detect in the first place, because
+         * Xcp_DaqSampleOdt and Xcp_DaqQueuePush each close their section before returning.
+         * Verified by mutation, not assumed. What holds this order is
+         * test/stim_apply_test.py::test_the_apply_precedes_the_sampling_loop, and nothing else --
+         * do not swap these two passes on the strength of a green run.
+         *
+         * The second scan is a real cost paid deliberately: this function is documented callable
+         * from an interrupt, and daqCount is bounded at 255 with a cheap early-out per list
+         * (Xcp_DaqListElapsedOnTrigger). There is no channel-to-list index to walk instead --
+         * DD11 makes the runtime eventChannelNumber authoritative over the configured
+         * triggeredDaqListRef, so the lists are scanned rather than the channel's reference list
+         * walked, in both passes.
+         *
+         * Xcp_DaqApplyStim is not handed the DIRECTION test that selected it here; it tests the
+         * configured TYPE, which is a memory-safety question the partition does not answer. See
+         * its own comment. */
+        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+        {
+            if (Xcp_DaqListElapsedOnTrigger(&Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx],
+                                            eventChannelNumber, TRUE) == TRUE)
+            {
+                Xcp_DaqApplyStim(daq_idx);
+            }
+        }
+
         for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
         {
             Xcp_DaqListRtType *p_rt = &Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx];
 
-            if (((p_rt->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u) &&
-                (p_rt->eventChannelNumber == eventChannelNumber))
+            if (Xcp_DaqListElapsedOnTrigger(p_rt, eventChannelNumber, FALSE) == TRUE)
             {
-                p_rt->prescalerCounter++;
-
-                /* 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." */
-                if (p_rt->prescalerCounter >= p_rt->prescaler)
-                {
-                    uint8_least odt_idx;
-                    uint32 timestamp = 0x00000000u;
-
-                    p_rt->prescalerCounter = 0x00u;
+                uint8_least odt_idx;
+                uint32 timestamp = 0x00000000u;
 
 #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
-                    /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
-                     * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps
-                     * and would call integrator code once per ODT instead of once per cycle. */
-                    if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
-                    {
-                        timestamp = Xcp_GetDaqTimestamp();
-                    }
+                /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
+                 * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps and
+                 * would call integrator code once per ODT instead of once per cycle.
+                 *
+                 * In the acquisition pass because nothing else reads it: a STIM DTO's timestamp is
+                 * the master's to send and this slave skips it without storing it (DD44), so a
+                 * stimulating list would otherwise call the integrator's clock once per cycle for
+                 * a value it then discards. */
+                if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
+                {
+                    timestamp = Xcp_GetDaqTimestamp();
+                }
 #endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
-                    /* DD40: the apply precedes the sampling loop, and the order is load-bearing
-                     * rather than stylistic. A DAQ_STIM list does both on this one event, so a
-                     * list that stimulates and measures the same variable reports the value that
-                     * was actually in effect rather than the one the stimulus was about to
-                     * replace. It is also what keeps the two exclusive areas apart: applying first
-                     * means every SchM_Enter_Xcp_StimBuffer section this list opens has closed
-                     * before Xcp_DaqSampleOdt opens the first SchM_Enter_Xcp_DtoQueue section of
-                     * the sampling loop, so the two can never nest -- and test/conftest.py's
-                     * bookkeeping asserts against nesting globally, on every test in the suite.
-                     *
-                     * Inside the prescaler block, not outside it: the prescaler reduces the event
-                     * channel's raster FOR THIS LIST (1.1/1.6.4.1.1.3), and a list that
-                     * stimulated on every trigger while sampling every n-th would run its two
-                     * directions at different rates. */
-                    Xcp_DaqApplyStim(daq_idx);
+                for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+                {
+                    Xcp_DtoFrameType frame;
 
-                    for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+                    if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
                     {
-                        Xcp_DtoFrameType frame;
-
-                        if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
+                        if (Xcp_DaqQueuePush(&frame) != E_OK)
                         {
-                            if (Xcp_DaqQueuePush(&frame) != E_OK)
-                            {
-                                overloaded = TRUE;
-                            }
+                            overloaded = TRUE;
                         }
                     }
                 }

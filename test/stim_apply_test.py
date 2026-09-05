@@ -302,6 +302,37 @@ def test_an_entry_naming_a_non_zero_address_extension_is_skipped_while_its_sibli
         'the trigger raised it, not the receive callback'
 
 
+def test_several_skipped_entries_in_one_odt_are_reported_once_between_them():
+    """DD45's report is aggregated per ODT, the shape EV_DAQ_OVERLOAD already uses three hundred
+    lines below in the same file: one event for the whole trigger, however many pushes failed
+    inside it.
+
+    Xcp_ReportError takes (instanceId, apiId, errorId) and has no parameter that could name the
+    entry, so a second identical report carries nothing the first did not -- while a list triggered
+    at a raster rate would raise one per skipped entry per millisecond, for as long as the ODT stays
+    configured that way. An earlier revision of this code reported per entry; this test is what says
+    it no longer does.
+
+    Two skipped entries and one applying sibling, so the aggregation is pinned WITHOUT weakening
+    what the test above establishes: the sibling still takes PAYLOAD[2:4], which is its slice after
+    BOTH skipped entries advanced the running offset past their own bytes.
+    """
+    config = stimulation_config(max_odt_entries=3)
+    handle = XcpTest(config)
+    connect(handle)
+    running_stim_list(handle, ((1, FIRST_ADDRESS, 0x01),
+                               (1, FIRST_ADDRESS + 1, 0x02),
+                               (2, SECOND_ADDRESS, 0x00)))
+    deliver(handle, (0x00,) + PAYLOAD[:4], config.default_daq_dto_pdu_mapping)
+    written = capture_writes(handle)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert written == expected(SECOND_ADDRESS, PAYLOAD[2:4]), \
+        'the sibling applies at the offset both skipped entries advanced past'
+    assert len(not_applied(handle)) == 1, 'two skipped entries, one report'
+
+
 def test_an_entry_widened_after_its_frame_arrived_applies_nothing_it_did_not_receive():
     """The slot is bytes plus a length, and the ODT it belongs to can be reconfigured after those
     bytes arrived. DD39 checks the payload against the ODT's entries at RECEPTION, which is the
@@ -591,26 +622,56 @@ def test_a_clear_arriving_between_two_entry_writes_does_not_redirect_the_second(
         'and no write was ever handed the cleared address 0'
 
 
-def test_the_apply_precedes_the_sampling_loop():
-    """DD40, and it is load-bearing rather than stylistic.
+def one_acquiring_and_one_stimulating_list():
+    """Two lists on one event channel, and the ORDER OF THE INDICES is the whole point.
 
-    A DAQ_STIM list applies and samples on the same event. Applying first is what makes a list that
-    stimulates and measures the same variable report the value that was actually in effect, rather
-    than the one the stimulus was about to overwrite -- and it is what keeps every StimBuffer
-    section closed before the sampler's first DtoQueue section opens, so the two areas can never
-    nest.
+    DAQ1, index 0, is the ACQUIRING list; DAQ2, index 1, is the STIMULATING one. That way round
+    deliberately: DD40 requires every stimulating list to apply before ANY acquiring list samples,
+    and an implementation that walked the lists once, applying or sampling each as it came, would
+    satisfy that only when the stimulating list happened to hold the lower index. Putting it second
+    is what turns "we got lucky on this configuration" into a real assertion.
+
+    ABSOLUTE identification, so DAQ1 owns absolute PID 0 and DAQ2 owns absolute PID 1 -- which is
+    the byte a stimulation frame for DAQ2's only ODT carries.
+    """
+    return DefaultConfig(identification_field_type='ABSOLUTE',
+                         daqs=(daq(name='DAQ1', type='DAQ', max_odt=1, max_odt_entries=1),
+                               daq(name='DAQ2', type='DAQ_STIM', max_odt=1, max_odt_entries=1)),
+                         events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),))
+
+
+def test_the_apply_precedes_the_sampling_loop():
+    """DD40, as corrected, and it is load-bearing rather than stylistic.
+
+    The original form of this test had one DAQ_STIM list applying and sampling on the same event.
+    That state is not reachable: 1.1/1.6.4.1.1.3 makes DIRECTION a choice between synchronized data
+    acquisition **or** synchronized data stimulation, so a list does one or the other. The ordering
+    survives in the form that actually matters -- one event channel carrying several lists, one of
+    which stimulates a variable another measures -- and this is that form.
+
+    Two lists on channel 0, the stimulating one at the HIGHER index, so the assertion fails against
+    a single interleaved pass and passes only against one that applies every stimulating list
+    before sampling any acquiring list.
 
     Observed as the ORDER of the two memory callbacks within one trigger: the apply writes through
     Xcp_WriteSlaveMemoryTable, the sampler reads through Xcp_ReadSlaveMemoryTable, and every write
-    of the cycle must precede every read of it. Ordering is asserted directly rather than through
+    of the trigger must precede every read of it. Ordering is asserted directly rather than through
     the sampled DTO's contents, because the harness's read callback does not model memory -- the
     end-to-end version, where the sampled frame carries the stimulated value, is Task 9's.
+
+    This test is also the ONLY thing holding the order. The harness's exclusive-area bookkeeping
+    does not: it tracks the two areas as independent booleans, so it sees an area nested within
+    itself and never one held across the other, and swapping the two passes creates no nesting to
+    detect anyway. Verified by mutation.
     """
-    config = stimulation_config(max_odt_entries=1)
+    config = one_acquiring_and_one_stimulating_list()
     handle = XcpTest(config)
     connect(handle)
-    running_stim_list(handle, ((4, FIRST_ADDRESS, 0x00),))
-    deliver(handle, (0x00,) + PAYLOAD[:4], config.default_daq_dto_pdu_mapping)
+    configure_entries(handle, ((4, FIRST_ADDRESS, 0x00),), daq_list=0)
+    set_daq_list_mode(handle, daq_list=0, mode=0x00)
+    start_daq_list(handle, daq_list=0)
+    running_stim_list(handle, ((4, SECOND_ADDRESS, 0x00),), daq_list=1)
+    deliver(handle, (0x01,) + PAYLOAD[:4], config.default_daq_dto_pdu_mapping)
     order = list()
 
     handle.xcp_write_slave_memory_u8.side_effect = lambda _a, _b: order.append('apply')
@@ -619,7 +680,78 @@ def test_the_apply_precedes_the_sampling_loop():
     handle.lib.Xcp_TriggerEventChannel(0)
 
     assert order == ['apply'] * 4 + ['sample'] * 4, \
-        'the whole apply completes before the sampling loop reads anything'
+        'DAQ2 stimulates before DAQ1 measures, though DAQ1 is the lower-numbered list'
+
+
+@pytest.mark.parametrize('mode, direction, cycles', ((0x00, 'DAQ', 1), (0x02, 'STIM', 0)))
+def test_a_lists_direction_decides_whether_its_event_acquires_at_all(mode, direction, cycles):
+    """DD40's correction, and the live defect it names. 1.1/1.6.4.1.1.3: "The DIRECTION flag sets
+    the DAQ list into synchronized data acquisition **or** synchronized data stimulation mode."
+    DAQ_STIM is the list's TYPE, what the configuration permits; DIRECTION is the mode it is in
+    now. A stimulating list acquires nothing and must transmit nothing.
+
+    The sampling loop gated on RUNNING alone and never read DIRECTION. That code is unchanged since
+    SP2 and was harmless there, because no list could hold DIRECTION = STIM until Tasks 3 and 4
+    made it grantable -- SP3 turns a dormant omission into a reachable one, and a stimulating list
+    would otherwise put DAQ DTOs on the bus that its master never requested, with ring pressure and
+    a possible EV_DAQ_OVERLOAD behind them.
+
+    **Invisible from the stimulation side**, which is why it needs its own test: the apply works
+    correctly either way, so every other test in this file passes against the defect.
+
+    Written as a pair on ONE configuration with ONE bit different, so the two halves are each
+    other's control. Without the DAQ case, an implementation that had simply stopped sampling
+    altogether would pass the STIM case; without the STIM case there is nothing to catch here at
+    all. Three assertions per case, because the frame has three observable fates -- memory read,
+    ring occupancy, and the wire -- and an implementation that sampled but failed to queue, or
+    queued but failed to transmit, is a different defect from one that correctly did neither.
+    """
+    config = stimulation_config(max_odt_entries=1)
+    handle = XcpTest(config)
+    connect(handle)
+    running_stim_list(handle, ((4, FIRST_ADDRESS, 0x00),), mode=mode)
+    assert (handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].daqList[0].mode & 0x42) == 0x40 | mode, \
+        'RUNNING with DIRECTION = {} is the premise'.format(direction)
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_read_slave_memory_u8.reset_mock()
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert handle.xcp_read_slave_memory_u8.call_count == cycles * 4, \
+        'a {} list samples its entries exactly {} time(s)'.format(direction, cycles)
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].dtoQueue.count == cycles
+    assert handle.can_if_transmit.call_count == cycles
+
+
+def test_a_lists_prescaler_advances_exactly_once_per_trigger():
+    """The invariant the two-pass shape rests on, asserted directly rather than inferred from a
+    rate.
+
+    Xcp_DaqListElapsedOnTrigger MUTATES prescalerCounter, and the trigger calls it once per list in
+    each of its two passes. What keeps a list from being counted twice is that DIRECTION partitions
+    the lists between the passes, so every list matches exactly one of them -- a property of the
+    partition, not of the loops.
+
+    It needs its own test because the rate test below cannot see its loss. Verified: with the
+    partition dropped, a prescaler-3 list is advanced twice per trigger and still applies on 3 of 9
+    triggers, because doubling the advance and halving the elapse interval cancel out over that
+    span. The counter itself is where the defect is visible, so the counter is what this reads --
+    one trigger, one increment, on both a stimulating list and an acquiring one.
+    """
+    config = one_acquiring_and_one_stimulating_list()
+    handle = XcpTest(config)
+    connect(handle)
+    for daq_list, entry_mode in ((0, 0x00), (1, 0x02)):
+        configure_entries(handle, ((4, FIRST_ADDRESS + (0x100 * daq_list), 0x00),), daq_list=daq_list)
+        assert response(handle, (0xE0, entry_mode) + tuple(u16_to_array(daq_list, 'LITTLE_ENDIAN')) +
+                        (0x00, 0x00, 0x03, 0x00))[0] == 0xFF, 'SET_DAQ_LIST_MODE at prescaler 3'
+        start_daq_list(handle, daq_list=daq_list)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    rt = handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef]
+    assert (rt.daqList[0].prescalerCounter, rt.daqList[1].prescalerCounter) == (1, 1), \
+        'one trigger advances each list once, whichever pass claimed it'
 
 
 def test_the_prescaler_divides_the_apply_rate_as_it_divides_the_sample_rate():

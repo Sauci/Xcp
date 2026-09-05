@@ -230,9 +230,11 @@ extern "C" {
  * @details Raised by Xcp_DaqApplyStim (source/Xcp_DaqRuntime.c) for what it cannot honour, and for
  * two reasons only:
  *
- * - one ODT entry names a non-zero address extension. Xcp_WriteSlaveMemoryTable has no parameter
- *   for one, so the entry cannot be written where it says (DD45); it is skipped, its siblings
- *   still apply, and this is raised once for it.
+ * - one or more ODT entries name a non-zero address extension. Xcp_WriteSlaveMemoryTable has no
+ *   parameter for one, so such an entry cannot be written where it says (DD45); it is skipped and
+ *   its siblings still apply. Raised once for the ODT, however many of its entries were skipped:
+ *   this error carries no parameter that could say which one, so repeating it says nothing a
+ *   single report does not, at a raster rate.
  * - the whole ODT, when the slot holds fewer bytes than its entries consume. The frame was long
  *   enough for the ODT when it arrived (DD39) and the ODT has been reconfigured since, so it is
  *   refused whole rather than applied in part.
