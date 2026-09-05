@@ -409,6 +409,20 @@ def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=53))))
 
 
+def test_generation_fails_when_a_stim_capable_list_exceeds_the_stim_pid_ceiling():
+    """DD42. XCP part 2 - Protocol Layer Specification 1.1/1.1.5.1 caps a STIM PID at 0xBF, tighter
+    than the 0xFB ceiling test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling above
+    checks: a list that can receive is addressed in that direction too, so its absolute ODT numbers
+    -- FIRST_PID is fixed at generation for a STATIC list -- must not reach 0xC0.
+
+    193 is the smallest total that violates it, the same reasoning the 252/253 pair above uses for
+    the wider ceiling. A DAQ list of the same size is untouched by this guard (it keeps the 0xFB
+    range), which is the generation-time half of proving the two ceilings are distinguished rather
+    than both clamped low -- test/alloc_odt_test.py proves the runtime half."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM', max_odt=193),)))
+
+
 def test_generation_fails_when_odt_entry_size_daq_exceeds_the_uint8_field():
     """odtEntrySizeDaq is emitted as one byte into Xcp_GeneralType's uint8 XcpOdtEntrySizeDaq, but
     it is derived from max_dto, whose schema maximum is 65535. It sat two lines below the

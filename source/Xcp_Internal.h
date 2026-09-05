@@ -141,6 +141,23 @@ extern "C" {
  */
 #define XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFCu)
 
+/**
+ * @brief how many absolute ODT numbers a STIM-capable list may use, across every DAQ list
+ * together.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.1.5.1. Master-to-slave STIM ODT
+ * numbers run 0x00..0xBF, where slave-to-master DAQ numbers (1.1.5.2) run 0x00..0xFB -- 0xFC..0xFF
+ * being SERV, EV, ERR and RES. A STIM-capable list whose absolute ODT numbers reach 0xC0 cannot be
+ * addressed at all, so a configuration that can receive is held to the lower ceiling.
+ * @note Same construction as XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX above, and the same inclusive
+ * convention: a total of exactly 0xC0 is legal (it lands on 0x00..0xBF exactly), and only a total
+ * past it reaches the illegal value 0xC0 itself. Xcp_DTOCmdDaqAllocOdt (source/Xcp_Daq.c) chooses
+ * between the two ceilings from the list's own declared type, since under DAQ_DYNAMIC every list
+ * in the pool shares it; script/source_cfg.c.jinja2 applies the same 0xC0 bound to a STATIC
+ * configuration's non-DAQ lists at generation time instead, since their FIRST_PID values are fixed
+ * before this module ever runs.
+ */
+#define XCP_STIM_ABSOLUTE_ODT_COUNT_MAX (0xC0u)
+
 /* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
  * Read off the specification's own bit table, which is identical in 1.0 and 1.1 except that 1.1
  * fills bit 0, which 1.0 left don't-care:

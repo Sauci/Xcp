@@ -300,6 +300,22 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- if (not daq_dynamic) and pid.next > 252 %}
 {{ raise('{} ODTs across {} DAQ lists exceed the 0xFB PID ceiling of XCP part 2 1.1/1.1.4.1'.format(pid.next, configuration.daqs|length)) }}
     {%- endif %}
+    {#- DD42, the tighter half of the guard above. STATIC only, for the same reason: a non-DAQ
+        list's FIRST_PID is fixed by the prefix sum at generation time, so first_pids[i] +
+        daq.max_odt is exactly the absolute ODT number one past this list's last -- known now,
+        needing no runtime re-evaluation. XCP part 2 1.1/1.1.5.1 holds master-to-slave STIM ODT
+        numbers to 0x00..0xBF, tighter than the 0x00..0xFB every list is held to above, because a
+        list that can receive is addressed in that direction too (source/Xcp_Internal.h's
+        XCP_STIM_ABSOLUTE_ODT_COUNT_MAX carries the full citation). A DAQ list is exempt: nothing
+        ever addresses it as STIM, so it keeps the wider 0xFB range the loop above already checked.
+        This loop cannot fire under DAQ_DYNAMIC: `daqs` is empty there (config/xcp.schema.json), so
+        the check ALLOC_ODT applies at runtime against Xcp_DaqAllocatedOdtCount() is the only one
+        that ever runs for a dynamic pool -- exactly as for the 0xFB guard above. #}
+    {%- for daq in configuration.daqs | default([]) %}
+    {%- if (daq.type != 'DAQ') and ((first_pids[loop.index0] + daq.max_odt) > 192) %}
+{{ raise('DAQ list {} can receive and its absolute ODT numbers {}..{} reach {}, past the 0xC0 STIM ceiling of XCP part 2 1.1/1.1.5.1'.format(daq.name, first_pids[loop.index0], first_pids[loop.index0] + daq.max_odt - 1, first_pids[loop.index0] + daq.max_odt)) }}
+    {%- endif %}
+    {%- endfor %}
     {%- for daq in configuration.daqs | default([]) %}
         {%- set daq_index = loop.index0 %}
         {#- A pure STIM list used to be refused here: SP3 implemented data stimulation, so

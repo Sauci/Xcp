@@ -932,10 +932,23 @@ uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduIn
         error = XCP_E_ASAM_MEMORY_OVERFLOW;
     }
     else if ((uint16)(Xcp_DaqAllocatedOdtCount() + (uint16)odt_count) >
-             (uint16)XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX)
+             (uint16)((Xcp_Ptr->config->daqList[daq_list_number].type != DAQ) ?
+                      XCP_STIM_ABSOLUTE_ODT_COUNT_MAX : XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX))
     {
         /* A second, independent ceiling: the per-list slice above says nothing about the total,
-         * and absolute ODT numbers are drawn from one PID space shared by every list. */
+         * and absolute ODT numbers are drawn from one PID space shared by every list.
+         *
+         * DD42. The bound itself depends on whether this configuration can receive: XCP part 2
+         * 1.1/1.1.5.1 holds master-to-slave STIM ODT numbers to 0x00..0xBF, tighter than the
+         * 0x00..0xFB slave-to-master DAQ range 1.1.5.2 gives (source/Xcp_Internal.h). Read off
+         * daqList[daq_list_number].type rather than off list 0 or some pool-level field: under
+         * DAQ_DYNAMIC every list in the pool shares one direction (SET_DAQ_LIST_MODE has no way to
+         * pick a different one per list, and script/source_cfg.c.jinja2 emits the pool's declared
+         * type for every slot), so the list actually being allocated into always carries the
+         * answer for the whole pool. This is reachable only under DAQ_DYNAMIC in the first place --
+         * a STATIC configuration refuses all four ALLOC APIs -- where script/source_cfg.c.jinja2
+         * applies the same 0xC0 bound to each non-DAQ list's fixed FIRST_PID at generation time
+         * instead, since there the total is known before this module ever runs. */
         error = XCP_E_ASAM_MEMORY_OVERFLOW;
     }
     else
