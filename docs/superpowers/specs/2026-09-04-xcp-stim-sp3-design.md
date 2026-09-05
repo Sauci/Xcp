@@ -91,7 +91,7 @@ protection-status clear. A STIM PDU is a different PduId and can preempt a CTO m
 a handler that touches only its own slot cannot corrupt anything the CTO path owns. **The CTO
 dispatch path is unchanged, and all 256 PID entries stay as they are.**
 
-**DD45 — the receive callback splits CTO from DTO by the receiving PduId, not by the frame's
+**DD46 — the receive callback splits CTO from DTO by the receiving PduId, not by the frame's
 first byte.** Added 2026-09-04, after implementation found what the original split costs.
 
 `Xcp_CanIfRxIndication` took `pid = SduDataPtr[0]` and asked `ctoInfo[pid] & IS_CTO_MASK`. That is
