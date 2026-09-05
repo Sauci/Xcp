@@ -96,7 +96,7 @@ dispatch path is unchanged, and all 256 PID entries stay as they are.**
 SP3" comment.
 
 `GET_DAQ_RESOLUTION_INFO`'s byte 3 tells a master the size quantum its STIM ODT entries must
-respect. The module has one `WRITE_DAQ` path and one entry-application routine, and that routine
+respect. `WRITE_DAQ` and `WRITE_DAQ_MULTIPLE` share one entry-application routine, and that routine
 refuses `size % granularity != 0` (`source/Xcp_Daq.c`) without consulting the list's direction —
 an entry does not know, at the time it is written, which direction its list will run in. So the
 constraint binds STIM entries exactly as it binds DAQ ones, and reporting zero told a master there
@@ -144,9 +144,19 @@ costs at most a skewed cycle. The STIM slot does not qualify for that argument, 
 say so, because the next person to extend this will read that paragraph and reasonably conclude no
 area is needed.
 
-Reusing `SchM_Enter_Xcp_DtoQueue` was rejected: a `DAQ_STIM` list applies and samples in one
-trigger, so one area risks nesting, which the harness asserts against. Guarding the whole dispatch
-was rejected as paying a lock on every CTO to solve a problem CTOs do not have.
+Reusing `SchM_Enter_Xcp_DtoQueue` was rejected. **The reason originally given here was wrong
+twice over**, and is corrected rather than deleted because the conclusion survives and the
+reasoning should not be re-derived from the wreckage. It said a `DAQ_STIM` list applies and samples
+in one trigger so one area risks nesting, which the harness asserts against. DD40 overturns the
+first half — `DIRECTION` selects a mode, so a list does one or the other — and DD40's closing
+paragraph overturns the second: `test/conftest.py` tracks the two areas as independent booleans and
+cannot see one held across the other.
+
+The conclusion stands on a different footing. Two areas keep the receive path and the transmit ring
+independent: a stimulation frame arriving while the sampler holds `DtoQueue` must not wait on it,
+and the apply's snapshot must not be serialised behind a queue push it has nothing to do with. One
+area would couple two paths that share no state. Guarding the whole dispatch was rejected as paying
+a lock on every CTO to solve a problem CTOs do not have.
 
 **DD38 — reception is the inverse of `Xcp_DaqWriteIdentificationField`, and only `ABSOLUTE` needs
 a lookup.**
