@@ -53,10 +53,24 @@ extern void SchM_Exit_Xcp_DtoQueue(void);
  * @details A length paired with the buffer it describes is the DD14 class: a write or a read torn
  * by the other context would leave the two disagreeing about how much of the buffer is valid.
  *
- * Deliberately not SchM_Enter_Xcp_DtoQueue: a DAQ_STIM list applies its slots and samples its DTO
+ * Deliberately not SchM_Enter_Xcp_DtoQueue -- and the reason this note used to give was wrong
+ * twice over (DD37, as corrected). It said a DAQ_STIM list applies its slots and samples its DTO
  * within the same trigger, so sharing one area would risk the apply section nesting inside the
- * sampler's DtoQueue section -- and test/conftest.py's exclusive-area bookkeeping asserts against
- * nesting globally, on every test, not only this module's own.
+ * sampler's, which test/conftest.py asserts against. DD40 overturns the first half:
+ * 1.1/1.6.4.1.1.3 makes DIRECTION a choice between synchronized data acquisition OR synchronized
+ * data stimulation, so a list does one or the other. DD40's closing paragraph overturns the
+ * second: conftest.py tracks the two areas as independent booleans, so it sees an area nested
+ * within ITSELF and never one held across the other.
+ *
+ * The conclusion stands on a different footing, and it is the one an integrator implementing these
+ * four functions needs. **Two areas keep the receive path and the transmit ring independent**: a
+ * stimulation frame arriving while the sampler holds DtoQueue must not wait on it, and the apply's
+ * snapshot must not be serialised behind a queue push it has nothing to do with. One area would
+ * couple two paths that share no state.
+ *
+ * So implementing both with one primitive is still CORRECT -- the two never nest, in either order
+ * -- but it reimposes exactly the coupling the separation exists to remove, and on a list that
+ * only receives it makes every frame's arrival wait on a ring that list never pushes to.
  */
 extern void SchM_Enter_Xcp_StimBuffer(void);
 extern void SchM_Exit_Xcp_StimBuffer(void);

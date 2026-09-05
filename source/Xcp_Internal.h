@@ -492,11 +492,12 @@ void Xcp_StartNextTransmission(void);
  * acquisition OR synchronized data stimulation, so a list does one or the other (DD40, as
  * corrected), and Xcp_TriggerEventChannel's two passes run one after the other. Folding the two
  * areas together would produce no nesting to risk.
- * What survives is the reason in the note below -- they guard different data against different
- * preemptors -- plus the cost of the fold. Xcp_DaqStoreStim touches nothing the DTO ring owns
- * (DD36), so putting the slot under the ring's area would make every stimulation frame's ARRIVAL
- * suspend the context that area exists to exclude, for the length of a payload copy, on a list
- * that never queues a frame at all.
+ * What survives is DD37's corrected footing, which the design document now states rather than
+ * leaving it to be re-derived: two areas keep the receive path and the transmit ring INDEPENDENT
+ * -- a stimulation frame arriving while the sampler holds DtoQueue must not wait on it, and the
+ * apply's snapshot must not be serialised behind a queue push it has nothing to do with. One area
+ * would couple two paths that share no state, which is the note below restated from the other
+ * side: they guard different data against different preemptors.
  * @note Xcp_DaqApplyStim takes BOTH areas, one after the other and never one inside the other, and
  * they guard two different things for two different reasons. This area covers the slot -- the
  * payload and its length, against Xcp_DaqStoreStim in the receive context. SchM_Enter_Xcp_DtoQueue
