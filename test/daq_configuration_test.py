@@ -487,6 +487,86 @@ def test_generation_accepts_a_daq_stim_list():
     assert handle.config.lib.Xcp[0].config.daqList[0].type == handle.lib.DAQ_STIM
 
 
+#: The three shapes a stimulation-capable configuration comes in, one per branch of the
+#: `stim.capable` computation script/source_cfg.c.jinja2 shares with the guard below: two static
+#: types, and the dynamic pool's one declared type (DD43). A guard written against only one of the
+#: two configuration models would pass the other two.
+STIMULATION_CAPABLE_CONFIGURATIONS = (
+    pytest.param(lambda: DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),),
+                                       resource_protection_data_stimulation=True),
+                 id='STATIC, a pure STIM list'),
+    pytest.param(lambda: DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM'),),
+                                       resource_protection_data_stimulation=True),
+                 id='STATIC, a DAQ_STIM list'),
+    pytest.param(lambda: stim_config(resource_protection_data_stimulation=True),
+                 id='DYNAMIC, a receiving pool'),
+)
+
+
+@pytest.mark.parametrize('build', STIMULATION_CAPABLE_CONFIGURATIONS)
+def test_generation_refuses_the_stim_resource_on_a_configuration_that_can_stimulate(build):
+    """DD48. `resource_protection.data_stimulation` sets bit 3 of protectedResource -- the STIM
+    resource of XCP part 2 1.1/1.5 -- and CONNECT's RESOURCE byte, GET_STATUS and GET_SEED/UNLOCK
+    all honour it. **Nothing keys on it.** Xcp_PIDToCmdGroupTable (source/Xcp.c) is the only map
+    from a command to a resource and every DAQ command in it carries MASK_DAQ, so
+    `data_stimulation: true, data_acquisition: false` advertises a protected stimulation resource
+    to a master that has to unlock nothing: SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ against
+    any address it names, and START_STOP_DAQ_LIST are all reachable, which is the whole of
+    stimulation.
+
+    That was inert before SP3 -- no configuration could stimulate, so the flag gated a capability
+    that did not exist. SP3 makes it gate the sub-project's central one, so the combination is
+    refused at generation.
+
+    Refused there rather than in a handler, and 1.1/1.5 is why: it defines the resource as "DAQ
+    list commands (DIRECTION = STIM)", protection keyed on an ARGUMENT of one command, while
+    Xcp_PIDToCmdGroupTable is a per-PID OR mask that cannot express it -- and SET_DAQ_LIST_MODE's
+    error set (1.7.3.2.4) has no ERR_ACCESS_LOCKED, so a handler-side refusal would invent an error
+    code. That is the objection Task 6 honoured for ALLOC_ODT, and it applies unchanged here.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(build())
+
+
+def test_generation_accepts_the_stim_resource_on_a_configuration_that_cannot_stimulate():
+    """The other half of DD48's condition, and what makes the guard a statement about a LIE rather
+    than about the flag.
+
+    A DAQ-only build that sets `data_stimulation` advertises a resource nothing in the build can
+    reach. No command exists for a master to be wrongly let through to, so the flag is inert --
+    exactly what it was for every configuration before SP3 -- and the configuration still
+    generates, with bit 3 of protectedResource set.
+
+    Without this test the guard above passes just as well when written as "refuse
+    data_stimulation", full stop, which would refuse a configuration that is not lying about
+    anything.
+    """
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ'),),
+                                   resource_protection_data_stimulation=True))
+
+    # Bit 3, STIM, in the resource layout of XCP part 2 1.1/1.5 -- written as the shift
+    # script/source_cfg.c.jinja2 emits rather than as a name, because
+    # XCP_RESOURCE_PROTECTION_STATUS_MASK_STIM lives in source/Xcp_Internal.h, which the harness
+    # does not parse for defines. test/connect_test.py reads the same bit the same way.
+    assert handle.config.lib.Xcp[0].general.protectedResource == (0x01 << 0x03)
+
+
+def test_generation_accepts_a_stimulation_capable_configuration_that_does_not_claim_the_resource():
+    """The second discriminator DD48's guard needs: it is the CONJUNCTION that is refused.
+
+    A configuration that can stimulate and leaves `data_stimulation` clear promises the master
+    nothing about protecting stimulation, so there is nothing for it to be wrong about. A guard
+    written as "refuse a stimulation-capable configuration" would pass the two tests above and fail
+    here -- and would refuse every other stimulation test in this suite along with it.
+    """
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),),
+                                   resource_protection_data_acquisition=True))
+
+    # Bit 2, DAQ, in the same 1.1/1.5 layout. A protected resource is still set here, so this
+    # cannot pass by the configuration simply protecting nothing.
+    assert handle.config.lib.Xcp[0].general.protectedResource == (0x01 << 0x02)
+
+
 def test_generation_accepts_the_largest_odt_entry_size_the_uint8_field_can_hold():
     """The boundary the guard above is placed at, from the accepting side: 255 is representable and
     must stay accepted, so the guard is `> 255` and not `>= 255` or a rounder cut."""

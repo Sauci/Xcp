@@ -984,6 +984,29 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
     {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
     {{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}, /* eventQueueSize */
+{#- DD48. Bit 3 below is the STIM resource of XCP part 2 1.1/1.5, and CONNECT's RESOURCE byte,
+    GET_STATUS and GET_SEED/UNLOCK all honour it -- but NOTHING IN THE MODULE KEYS ON IT.
+    Xcp_PIDToCmdGroupTable (source/Xcp.c) is the only thing that maps a command to a resource, and
+    every DAQ command in it carries MASK_DAQ. So `data_stimulation: true, data_acquisition: false`
+    would advertise a protected stimulation resource to a master that then needs to unlock nothing
+    at all: SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ against any address it likes, and
+    START_STOP_DAQ_LIST are all reachable, which is the whole of stimulation. Inert before SP3,
+    because no configuration could stimulate; refused here now that one can.
+
+    Refused at generation rather than gated in a handler, and that is DD41's two obstacles, not a
+    preference. 1.1/1.5 defines the resource as "DAQ list commands (DIRECTION = STIM)" --
+    protection keyed on an ARGUMENT of one command -- while Xcp_PIDToCmdGroupTable is a per-PID OR
+    mask that structurally cannot say "this command when its DIRECTION bit is set"; and
+    SET_DAQ_LIST_MODE's error set (1.7.3.2.4) contains no ERR_ACCESS_LOCKED, so a handler-side
+    refusal would have to invent an error code. Expressing the specification's rule is a change to
+    the protection model, and it needs its own design.
+
+    Conditioned on `stim.capable` above, not on the flag alone: a DAQ-only build may still set it.
+    That advertises a resource nothing in the build can reach, which is inert -- the combination
+    refused here is the one where the advertised protection is a lie. #}
+{%- if stim.capable and configuration.apis.resource_protection.data_stimulation %}
+{{ raise('resource_protection.data_stimulation is set and this configuration can stimulate, but no command is gated on the STIM resource: Xcp_PIDToCmdGroupTable (source/Xcp.c) maps every DAQ command to MASK_DAQ, so CONNECT and GET_STATUS would advertise a protection the slave does not enforce and SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ and START_STOP_DAQ_LIST would stay reachable with nothing unlocked (XCP part 2 1.1/1.5; DD41 and DD48 in docs/superpowers/specs/2026-09-04-xcp-stim-sp3-design.md)') }}
+{%- endif %}
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
