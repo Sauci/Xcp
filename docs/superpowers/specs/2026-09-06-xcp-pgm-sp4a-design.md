@@ -314,16 +314,22 @@ is discarded rather than transmitted; and the slot is released only when the cal
 far as the master is concerned and not yet over as far as the flash is concerned, and those are
 genuinely different facts.
 
-**Abandoning returns `pgm_state` to `IDLE` only for a `PROGRAM_START`, and this sentence used to
-say so carelessly.** It read "`pgm_state` returns to `IDLE`" without qualification, which is right
-for the command it was written about — a `PROGRAM_START` abandoned while still in the transient
-`XCP_PGM_STARTING` state, which never established a session — and wrong for every other. A
-deferred command issued *inside* an established session leaves `pgm_state` at `XCP_PGM_ACTIVE`
-while it is pending, so resetting on abandon would silently end that session: DD51's gate would
-stop firing for the remaining 38 commands, a second `PROGRAM_START` would be accepted where DD49
-requires `ERR_SEQUENCE`, and the master would be told nothing. `PROGRAM_PREPARE` reaches exactly
-that state, being legal from `ACTIVE` for a second code block. The reset is therefore conditioned
-on the abandoned command being `PROGRAM_START`.
+**Abandoning does not touch `pgm_state` at all, and reaching that took two corrections.** This
+paragraph first read "`pgm_state` returns to `IDLE`" without qualification. That was right for the
+command it was written about — a `PROGRAM_START` abandoned while still in the transient
+`XCP_PGM_STARTING` state DD49 then specified, which never established a session — and wrong for
+every other: a command deferred *inside* an established session leaves `pgm_state` at
+`XCP_PGM_ACTIVE` while pending, so resetting on abandon silently ended that session. DD51's gate
+stopped firing for the remaining 38 commands and a second `PROGRAM_START` was accepted where it
+must be refused. `PROGRAM_PREPARE` reaches exactly that state, being legal from `ACTIVE` for a
+second code block. The reset was therefore conditioned on the abandoned command being
+`PROGRAM_START`.
+
+Deleting `XCP_PGM_STARTING` (DD49) then removed the need for the condition and for the reset
+itself. Without that third state a deferring `PROGRAM_START` leaves `pgm_state` at `XCP_PGM_IDLE`,
+the handler accepting only from `IDLE`, so there is nothing for an abandon to restore — and a
+mid-session command must not be reset either way. Abandoning therefore writes nothing: both arms of
+the old condition collapse into no code at all.
 
 ### DD56 — Programming-mode communication parameters are the live ones
 
@@ -387,6 +393,23 @@ it disproved the reasoning twice over, both measured:
 So `PROGRAM_RESET`'s completion builds its response and then calls the same internal unwind
 `Xcp_CTOCmdStdDisconnect` calls, which is shared between them precisely so the two doors cannot
 diverge again.
+
+**Two deliberate deviations from §1.7.3.2.5's row for this command.** The row lists
+`ERR_CMD_BUSY`, `ERR_PGM_ACTIVE`, `ERR_CMD_SYNTAX`, `ERR_SEQUENCE` and `ERR_ACCESS_LOCKED`.
+`ERR_PGM_ACTIVE` is *dropped*: §1.6.5.1.1 requires `PROGRAM_RESET` to remain available during a
+programming sequence, so honouring the row would make a session unendable — DD51's gate and this
+row cannot both be obeyed. `ERR_GENERIC` is *added*, because the integrator's `Xcp_ProgramReset`
+can report failure and §1.6.5.1.1 names that error for a slave not in a state which permits
+programming. A comment in `source/Xcp_Pgm.c` claimed the section listed no errors for this command;
+it lists five.
+
+**DD50's fix cost this decision its mutation, and the reset is kept regardless.** Once
+`Xcp_CTOCmdStdConnect` also resets `pgm_state`, deleting the reset here leaves every test passing:
+`PROGRAM_RESET` disconnects and `CONNECT` is the only way back, so the two writers sit on one path
+in that order and nothing wire-visible separates them. It stays because it is a real
+`ACTIVE`→`IDLE` transition this function owns, which merely happens to be shadowed downstream —
+unlike the write DD49's deletion left in `PROGRAM_START`'s failure path, which stored a value the
+field already held and was removed. §9's criterion 7 records both as documented exceptions.
 
 `PROGRAM_RESET` is legal from `XCP_PGM_IDLE` as well as `XCP_PGM_ACTIVE`. §1.6.5.1.4: "This command
 may be used to force a slave device reset for other purposes." It is therefore not gated on a
@@ -546,8 +569,8 @@ survives-its-own-deletion conjuncts across SP2d and SP3.
 - The response appears on the `Xcp_MainFunction` where the callback first returns `E_OK`, and
   carries the values of DD56 read back from the configuration.
 - `pStatusCode` non-zero yields `ERR_GENERIC` and leaves `pgm_state` at `IDLE` — asserted on the
-  state, not only on the wire, since a slave that answered correctly but stayed `STARTING` would
-  refuse every subsequent `PROGRAM_START`.
+  state, not only on the wire, since a slave that answered correctly but left `pgm_state` wrong
+  would refuse every subsequent `PROGRAM_START`.
 - Exactly one `EV_CMD_PENDING` is outstanding across many busy polls (DD54), and a second appears
   only after the first is confirmed.
 - `pStatusCode` is not read while the callback returns `E_NOT_OK` — the stub writes a poison value
@@ -555,7 +578,7 @@ survives-its-own-deletion conjuncts across SP2d and SP3.
 
 **The session gate** (`test/pgm_session_test.py`, new)
 
-- `PROGRAM_START` from `ACTIVE` → `ERR_SEQUENCE`.
+- `PROGRAM_START` from `ACTIVE` → `ERR_GENERIC` (DD49; its §1.7.3.2.5 row lists no `ERR_SEQUENCE`).
 - A command mid-operation → `ERR_CMD_BUSY` (DD55), and the pending response still arrives intact
   afterwards. The second assertion is the one that matters: `ERR_CMD_BUSY` alone would also be
   produced by a module that discarded the pending command.
@@ -569,7 +592,10 @@ survives-its-own-deletion conjuncts across SP2d and SP3.
 
 **Configuration and the two defects** (extending `test/connect_test.py`; new `test/pgm_configuration_test.py`)
 
-- DD60's rewritten `CONNECT` sweep: each of the three keys is the sole disabled one in its own case.
+- DD60's rewritten `CONNECT` sweep, per-conjunct rather than per-outcome. **Superseded during the
+  final review**: enabling those three commands while they are unimplemented is what makes `CONNECT`
+  advertise a group answering `ERR_CMD_UNKNOWN` — D10 returning — so generation now refuses that
+  combination and the sweep is replaced by a test of the refusal. SP4b restores it.
 - With `XCP_FLASH_PROGRAMMING_ENABLED` off, `CONNECT`'s PGM bit is 0 and all three commands answer
   `ERR_CMD_UNKNOWN` — D10, pinned so it cannot return.
 - A DAQ-only build is byte-for-byte unchanged with the gate off.
@@ -644,5 +670,15 @@ survives-its-own-deletion conjuncts across SP2d and SP3.
    refusal.
 5. A command arriving mid-operation is answered `ERR_CMD_BUSY` and the pending response still
    arrives.
-6. Each of the three `CONNECT` PGM conjuncts is independently observable in a test.
-7. Every new compound condition has a per-term test that fails under the mutation deleting its term.
+6. ~~Each of the three `CONNECT` PGM conjuncts is independently observable in a test.~~
+   **Unmeetable, by this design's own choice.** Generation refuses `programming.enabled` together
+   with any of the three commands `CONNECT` reads, because they do not exist until SP4b and
+   enabling them reinstates D10. That makes the resource bit unreachable in every buildable SP4a
+   configuration, so no test can observe the conjuncts. The line is correct and stays; SP4b restores
+   its coverage. See §8.
+7. Every new compound condition has a per-term test that fails under the mutation deleting its term,
+   **with three documented exceptions**, each a defensive guard whose invariant is stated in place:
+   `Xcp_MainFunction`'s `pending_command.active` test, masked by `Xcp_PgmPollPendingCommand`'s
+   `default` arm; the same test before `Xcp_PgmAbandonPendingCommand`, masked by a released slot
+   holding `pid == 0`; and DD57's `pgm_state` reset, shadowed by `CONNECT`'s. Each is kept
+   deliberately — a later change to a masking layer would activate a defect no test could see.
