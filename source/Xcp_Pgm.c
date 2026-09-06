@@ -248,25 +248,6 @@ void Xcp_PgmAbandonPendingCommand(void)
     Xcp_Internal.pgm_state = XCP_PGM_IDLE;
 }
 
-void Xcp_PgmDisconnectIfPending(void)
-{
-    if (Xcp_Internal.pgm_reset_disconnect_pending == TRUE)
-    {
-        Xcp_Internal.pgm_reset_disconnect_pending = FALSE;
-
-        /* DD57 + SWS_Xcp_00856/DD50: the connection goes down now, once PROGRAM_RESET's own
-         * positive response is confirmed -- disconnecting any earlier would discard the response
-         * buffer along with the session before CanIf ever had a chance to send it (called from
-         * Xcp_CanIfTxConfirmation, Xcp.c). pgm_state returns to IDLE in the same step: nothing
-         * else ever resets it once a session reaches XCP_PGM_ACTIVE --
-         * Xcp_CTOCmdStdConnect/Xcp_CTOCmdStdDisconnect (Xcp_Std.c) do not touch it -- and ending
-         * that session is this command's entire purpose. No device reset is performed here or
-         * anywhere else in this module: DD50. */
-        Xcp_Internal.pgm_state = XCP_PGM_IDLE;
-        Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
-    }
-}
-
 /*------------------------------------------------------------------------------------------------*/
 /* local function definitions (static).                                                           */
 /*------------------------------------------------------------------------------------------------*/
@@ -332,12 +313,26 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
 
         Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
 
-        /* DD57: the disconnect itself does not happen here. Disconnecting before this response is
-         * confirmed would discard the response buffer along with the session before CanIf ever
-         * had a chance to send it -- Xcp_PgmDisconnectIfPending, called from
-         * Xcp_CanIfTxConfirmation (Xcp.c) once THIS exact response is confirmed, is where it
-         * actually takes effect. */
-        Xcp_Internal.pgm_reset_disconnect_pending = TRUE;
+        /* DD57 (fix round 1): the disconnect happens here, in the completion, immediately after
+         * the response is built -- not deferred to the response's confirmation. That deferred form
+         * was tried first and broke twice over, both measured on the shipped tree: nothing can bind
+         * a later confirmation to THIS specific response, since cto_response.pdu_info is one shared
+         * buffer and Xcp_MainFunction is aperiodic, so any command arriving before the next poll
+         * silently replaced the response and the slave disconnected on THAT frame's confirmation
+         * instead -- and it skipped the DAQ_DYNAMIC unwind entirely, leaking an allocation into the
+         * next session. Xcp_DisconnectSession (Xcp_Std.c) is the identical unwind
+         * Xcp_CTOCmdStdDisconnect calls, shared so the two doors cannot diverge again; the
+         * in-handler ordering is immune to the first problem for the same reason DISCONNECT's own
+         * answer already is -- Xcp_CanIfRxIndication's disconnected-state gate (Xcp.c) drops any
+         * further command before it can touch the buffer, once connection_status is set below.
+         *
+         * pgm_state returns to IDLE here too, which Xcp_DisconnectSession does not do on its own
+         * (plain DISCONNECT has no programming session to end): nothing else ever resets it once a
+         * session reaches XCP_PGM_ACTIVE, and leaving it ACTIVE would refuse a later, genuinely new
+         * session's own PROGRAM_START with ERR_SEQUENCE. No device reset is performed here or
+         * anywhere else in this module: DD50. */
+        Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+        Xcp_DisconnectSession();
     }
     else
     {

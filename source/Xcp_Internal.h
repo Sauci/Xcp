@@ -420,18 +420,6 @@ typedef struct {
         boolean abandoned;
         boolean event_outstanding;
     } pending_command; /* DD52 */
-
-    /**
-     * @brief TRUE once PROGRAM_RESET's positive response has been built and is waiting to be
-     * confirmed; the connection goes down when it is.
-     * @details Set by Xcp_PgmCompleteProgramReset (Xcp_Pgm.c) in the same step it builds that
-     * response, whether that happens synchronously in the handler (an instantaneous
-     * Xcp_ProgramReset) or later from Xcp_PgmCompletePendingCommand. Consulted and cleared by
-     * Xcp_PgmDisconnectIfPending, called from Xcp_CanIfTxConfirmation (Xcp.c) once an ordinary CTO
-     * response is confirmed. DD57: disconnecting any earlier would discard the response buffer
-     * along with the session before CanIf ever had a chance to send it.
-     */
-    boolean pgm_reset_disconnect_pending;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 
@@ -887,20 +875,22 @@ void Xcp_PgmRequestPending(void);
  */
 void Xcp_PgmAbandonPendingCommand(void);
 
-/**
- * @brief Disconnects the session once PROGRAM_RESET's own positive response has been confirmed
- * (DD57).
- * @details Defined in Xcp_Pgm.c and called from Xcp_CanIfTxConfirmation (Xcp.c) whenever an
- * ordinary (non-block-transfer) CTO response is confirmed -- the same place DD53 already reaches
- * into Xcp_Pgm.c from, so Xcp_CanIfTxConfirmation gains no knowledge of PROGRAM_RESET itself. A
- * no-op unless Xcp_PgmCompleteProgramReset set Xcp_Internal.pgm_reset_disconnect_pending while
- * building that exact response; harmless to call on every confirmation, including one that has
- * nothing to do with PROGRAM_RESET at all.
- */
-void Xcp_PgmDisconnectIfPending(void);
-
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief Tears down the session: disconnects, and under DAQ_DYNAMIC releases whatever allocation
+ * the previous master leaves standing.
+ * @details Defined in Xcp_Std.c, factored out of Xcp_CTOCmdStdDisconnect below so PROGRAM_RESET's
+ * completion (Xcp_PgmCompleteProgramReset, Xcp_Pgm.c, DD57) can call the identical unwind rather
+ * than risk a second, divergent door to XCP_CONNECTION_STATE_DISCONNECTED -- fix round 1 finding 2
+ * measured exactly that divergence when PROGRAM_RESET set connection_status on its own without
+ * this call, leaking a DAQ_DYNAMIC allocation into the next session. Does not touch pgm_state:
+ * that is PROGRAM_RESET-specific bookkeeping this function, called from plain DISCONNECT too, has
+ * no business with.
+ */
+void Xcp_DisconnectSession(void);
+
 uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CmdNotImplemented(boolean *responseExpected, const PduInfoType *pPduInfo);

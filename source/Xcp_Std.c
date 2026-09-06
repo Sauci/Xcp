@@ -1136,16 +1136,8 @@ uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduI
     return E_OK;
 }
 
-uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo)
+void Xcp_DisconnectSession(void)
 {
-    (void)pPduInfo;
-
-    *responseExpected = TRUE;
-
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-
-    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
-
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
 
     /* Release a dynamic allocation the disconnecting master never freed, so it cannot leak into
@@ -1169,11 +1161,29 @@ uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPdu
      * that model already has for its DAQ direction, where DISCONNECT leaves a running list running
      * and sampling. Stimulation inherits that behaviour rather than adding a class of its own, and
      * closing it means answering the Overview 2.3 question above for the whole static model, not
-     * for the slot alone. */
+     * for the slot alone.
+     *
+     * Shared with PROGRAM_RESET (Xcp_Pgm.c, DD57): factored out of Xcp_CTOCmdStdDisconnect below
+     * because a second door to XCP_CONNECTION_STATE_DISCONNECTED is a second place to forget this
+     * unwind -- which is exactly what happened before this function existed, fix round 1 finding
+     * 2. Sharing it is what makes the two doors structurally incapable of diverging again. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         Xcp_DaqFreeAll();
     }
+}
+
+uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+
+    Xcp_DisconnectSession();
 
     return E_OK;
 }

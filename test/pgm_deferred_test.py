@@ -531,9 +531,10 @@ def test_a_failing_program_reset_yields_err_generic_and_does_not_disconnect():
     test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed above, PROGRAM_START's
     own equivalent.
 
-    The disconnect must NOT happen on this path -- DD57's ordering is 'answer positively, then
-    disconnect once THAT confirms', and there is no positive response here to hang a disconnect
-    off of. xcp_get_seed's call_count is the witness, exactly as in
+    The disconnect must NOT happen on this path -- DD57 has PROGRAM_RESET disconnect only in the
+    success branch of its completion, immediately after building a positive response, and there is
+    no positive response here to hang a disconnect off of. xcp_get_seed's call_count is the
+    witness, exactly as in
     pgm_session_test.test_program_reset_disconnects_once_the_response_is_confirmed: a module that
     already believes itself disconnected drops a non-CONNECT CTO with no dispatch at all
     (source/Xcp.c's disconnected-state gate), so a module that wrongly disconnects even on FAILURE
