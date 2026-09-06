@@ -1398,7 +1398,18 @@ void Xcp_MainFunction(void)
      * way to buy a cycle. Deferring the whole block costs at most one Xcp_MainFunction cycle --
      * bounded by SWS_Xcp_00859's one-frame-at-a-time confirmation, not by this module's period,
      * which Xcp_MainFunction may never depend on -- and keeps the poll loop's own contract intact:
-     * once polled to E_OK, it is completed on that same call, never re-polled first. */
+     * once polled to E_OK, it is completed on that same call, never re-polled first.
+     *
+     * Design §9 criterion 7 asks for a per-term mutation test on every new compound condition. The
+     * SECOND conjunct has one (Task 3 finding 3). The FIRST does not, and cannot: deleting
+     * `pending_command.active == TRUE` is behaviour-neutral today, because a poll with no pending
+     * command lands on Xcp_PgmPollPendingCommand's `default` case, which returns E_OK
+     * (source/Xcp_Pgm.c), and Xcp_PgmCompletePendingCommand's `default` then does nothing -- a
+     * silent no-op rather than an observable defect. It is kept as defence in depth, and the
+     * invariant it rests on is stated here rather than left to be rediscovered: it is safe to
+     * delete only while BOTH of those `default` cases stay inert. Change either -- to E_NOT_OK, say,
+     * which would turn every idle Xcp_MainFunction into an EV_CMD_PENDING push -- and this guard
+     * becomes load-bearing with no test to notice it was ever removed. Final-review finding 7. */
     if ((Xcp_Internal.pending_command.active == TRUE) &&
         (Xcp_Internal.cto_response.successful_transmission_pending == FALSE))
     {
@@ -1660,7 +1671,10 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                      * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
                                      * return an error packet with the error code ERR_CMD_BUSY. */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
-                                    /* DD55. 1.1/1.7.3.2.4 lists ERR_CMD_BUSY (action "wait t7,
+                                    /* DD55. 1.1/1.7.3.2.5 -- the PGM error-handling matrix;
+                                     * §1.7.3.2.4 is DAQ's, and this citation said .4 until the
+                                     * final review corrected the numbering across the sub-project
+                                     * -- lists ERR_CMD_BUSY (action "wait t7,
                                      * repeat infinitely times") for every PGM command; this extends
                                      * it to every command, while pending_command.active is TRUE,
                                      * regardless of that command's own Xcp_CTOErrorMatrix entry.
@@ -1717,7 +1731,27 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                          * the CTO receive path DD55's own risk note says must not
                                          * pay for a feature most builds compile out, and it invited
                                          * a reader to conclude this branch is reachable with
-                                         * pid != XCP_PID_CMD_SYNCH, which it is not. */
+                                         * pid != XCP_PID_CMD_SYNCH, which it is not.
+                                         *
+                                         * Final-review finding 7, the second of the two guards it
+                                         * names: this `active == TRUE` test is itself not
+                                         * mutation-testable, and design §9 criterion 7 records it
+                                         * here as a documented exception rather than leaving the
+                                         * criterion quietly unmet. Deleting it is behaviour-neutral
+                                         * because Xcp_PgmAbandonPendingCommand (Xcp_Pgm.c) now does
+                                         * one thing, `abandoned = TRUE`, and every handler that
+                                         * defers sets `abandoned = FALSE` as it fills the slot
+                                         * (Xcp_Pgm.c), so a stray TRUE written with nothing pending
+                                         * is overwritten before anything can read it --
+                                         * Xcp_PgmCompletePendingCommand is the only reader and runs
+                                         * only for a slot a handler filled. That is the invariant
+                                         * this guard rests on: it is safe to omit only while
+                                         * abandoning stays a single idempotent write that every
+                                         * deferring handler re-initialises. Give
+                                         * Xcp_PgmAbandonPendingCommand any other side effect --
+                                         * touching pgm_state again, say, as two earlier versions of
+                                         * it did -- and this guard becomes load-bearing on a path
+                                         * no test can reach. */
                                         if (Xcp_Internal.pending_command.active == TRUE)
                                         {
                                             Xcp_PgmAbandonPendingCommand();

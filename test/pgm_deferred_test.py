@@ -9,7 +9,24 @@ from .download_test import connect
 
 
 def pgm_handle(**kwargs):
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, programming_enabled=True, **kwargs))
+    """A connected slave with the flash-programming gate on.
+
+    The three keys forced False below are PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX -- the three
+    Xcp_CTOCmdStdConnect reads for CONNECT's RESOURCE bit 4, none of them implemented before SP4b.
+    script/source_cfg.c.jinja2 refuses their combination with `programming.enabled` outright
+    (final-review finding 3: the advertisement would be D10 again, one flag away), so this is not a
+    preference but the only gate-on configuration that generates at all. Passing them here rather
+    than changing DefaultConfig's own defaults keeps the gate-OFF tests -- which still exercise
+    those keys, and for which they are harmless -- reading exactly as they did.
+
+    They are also spelled out rather than left to the schema so that SP4b, which will enable them
+    for real, finds one place to change."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   programming_enabled=True,
+                                   xcp_program_clear_api_enable=False,
+                                   xcp_program_api_enable=False,
+                                   xcp_program_max_api_enable=False,
+                                   **kwargs))
     connect(handle)
     return handle
 
@@ -183,10 +200,10 @@ def test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed()
     pgm_state is not reachable from this CFFI harness: test/conftest.py builds its cdef from
     interface/Xcp.h alone, which does not include Xcp_Internal.h. test/clear_daq_list_test.py:80-92
     documents the same limitation and the same workaround. So the claim that matters -- a module
-    that answered correctly but stayed in XCP_PGM_STARTING would refuse every later PROGRAM_START
-    with ERR_SEQUENCE, and no wire assertion on THIS exchange alone would notice -- is checked by
-    actually sending that later PROGRAM_START and requiring it to be accepted rather than answered
-    ERR_SEQUENCE (0x29)."""
+    that answered correctly but left pgm_state at XCP_PGM_ACTIVE would refuse every later
+    PROGRAM_START with ERR_GENERIC, and no wire assertion on THIS exchange alone would notice -- is
+    checked by actually sending that later PROGRAM_START and requiring it to be accepted rather
+    than answered ERR_GENERIC (0x31)."""
     handle = pgm_handle()
     busy_then(handle, 0x01, busy_calls=1)
     handle.can_if_transmit.reset_mock()
@@ -207,7 +224,7 @@ def test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed()
 
     assert transmitted(handle)[0] == 0xFF, \
         'pgm_state must be back at XCP_PGM_IDLE, or this second PROGRAM_START would be refused ' \
-        'with ERR_SEQUENCE instead of accepted'
+        'with ERR_GENERIC instead of accepted'
 
 
 def test_the_status_code_is_not_read_while_the_callback_is_busy():

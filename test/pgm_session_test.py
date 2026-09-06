@@ -133,36 +133,33 @@ def test_synch_is_exempt_and_abandons_without_clearing_the_slot():
 
 def test_a_pgm_command_is_still_refused_while_an_abandoned_operation_finishes():
     """The state DD55 creates, which has no name on the wire: the operation is over as far as the
-    master is concerned (Xcp_PgmAbandonPendingCommand returns pgm_state to XCP_PGM_IDLE) and not
-    over as far as the flash is concerned (pending_command.active stays TRUE). Both facts are real
-    and they are different, which is why one flag cannot carry them.
+    master is concerned (the response is discarded, and no session was ever opened) and not over as
+    far as the flash is concerned (pending_command.active stays TRUE, so the integrator is still
+    being polled). Both facts are real and they are different, which is why one flag cannot carry
+    them.
 
-    That first fact is not independently asserted by reading state -- Xcp_Internal is not
-    reachable from this CFFI harness (interface/Xcp.h does not include Xcp_Internal.h --
-    test/clear_daq_list_test.py:80-92) -- but IS wire-observable once the abandoned operation
-    actually finishes and releases the slot: Fix round 1, finding 1 found that the window this
-    test used to stop at (still busy, active TRUE) never reaches PROGRAM_START's own sequence
-    check (source/Xcp_Pgm.c:40, `if (pgm_state != XCP_PGM_IDLE)`) at all, so deleting the
-    Xcp_PgmAbandonPendingCommand line that resets pgm_state passed every test in this file
-    unnoticed -- the reset is invisible exactly as long as ERR_CMD_BUSY keeps refusing new
-    commands, and becomes wire-visible the moment it stops. This test now covers both halves: busy
-    while active, sequence-clean once it is not.
+    Neither is assertable by reading state -- Xcp_Internal is not reachable from this CFFI harness
+    (interface/Xcp.h does not include Xcp_Internal.h -- test/clear_daq_list_test.py:80-92) -- so
+    both halves are read off the wire instead: refused ERR_CMD_BUSY while active, and accepted once
+    it is not.
 
-    While busy (PROGRAM_START as interloper, not GET_STATUS): a busy gate mistakenly written
-    against pgm_state instead of pending_command.active would still pass
-    test_a_command_arriving_mid_operation_is_answered_err_cmd_busy unchanged, because that test's
-    whole window sits before any SYNCH, while pgm_state is still XCP_PGM_STARTING (not
-    XCP_PGM_IDLE) either way -- a pgm_state-based gate and an active-based gate agree there. Only
-    here, after SYNCH has put pgm_state back at XCP_PGM_IDLE while active stays TRUE, would such a
-    mutant wrongly admit this second PROGRAM_START -- reaching the handler's own sequence check,
-    finding pgm_state == XCP_PGM_IDLE, and starting a second flash operation on top of the first,
-    still-running one.
+    While busy, the interloper is a second PROGRAM_START rather than GET_STATUS. A busy gate
+    mistakenly written against pgm_state instead of pending_command.active would still pass
+    test_a_command_arriving_mid_operation_is_answered_err_cmd_busy unchanged; here it would wave
+    this second PROGRAM_START through to the handler, which -- pgm_state being XCP_PGM_IDLE
+    throughout a deferral -- would accept it and start a second flash operation on top of the
+    first, still-running one.
 
-    After completion: if Xcp_PgmAbandonPendingCommand never reset pgm_state, it would still read
-    XCP_PGM_STARTING once active finally goes FALSE, and a fresh PROGRAM_START would be refused
-    ERR_SEQUENCE (0xFE, 0x29) instead of accepted -- permanently, since nothing else ever writes
-    pgm_state back to IDLE on an abandoned path (Xcp_PgmCompleteProgramStart, the only other
-    writer, is skipped precisely because the command was abandoned)."""
+    After completion, the fresh PROGRAM_START must be ACCEPTED, and that is a statement about
+    Xcp_PgmCompletePendingCommand's `abandoned == FALSE` guard (source/Xcp_Pgm.c): the abandoned
+    operation's completion is discarded, so Xcp_PgmCompleteProgramStart never runs and pgm_state is
+    never moved to XCP_PGM_ACTIVE. Delete that guard and the abandoned sequence opens a session the
+    master was never told about, and this second PROGRAM_START is refused ERR_GENERIC (0xFE, 0x31).
+
+    An earlier version of this docstring credited the acceptance to Xcp_PgmAbandonPendingCommand
+    resetting pgm_state from a transient XCP_PGM_STARTING. Final-review finding 6 removed both: the
+    transient state was written and never read, so PROGRAM_START now leaves pgm_state at
+    XCP_PGM_IDLE for the whole deferral and abandoning it has nothing to undo."""
     handle = pgm_handle()
     state = busy_then(handle, 0x00, busy_calls=2)
     program_start(handle)
@@ -188,17 +185,17 @@ def test_a_pgm_command_is_still_refused_while_an_abandoned_operation_finishes():
 
     assert transmitted(handle) is None, 'the abandoned operation still answers nobody on completion'
 
-    # Now genuinely idle on both counts (active FALSE, pgm_state reset). A fresh PROGRAM_START
-    # against an instantaneous integrator must be accepted, not refused ERR_SEQUENCE.
+    # Now genuinely idle on both counts (active FALSE, and no session ever opened). A fresh
+    # PROGRAM_START against an instantaneous integrator must be accepted, not refused ERR_GENERIC.
     busy_then(handle, 0x00, busy_calls=0)
     handle.can_if_transmit.reset_mock()
     program_start(handle)
     handle.lib.Xcp_MainFunction()
 
     assert transmitted(handle)[0] == 0xFF, \
-        'pgm_state must have been reset to XCP_PGM_IDLE by the abandoned operation, or this ' \
-        'PROGRAM_START is refused ERR_SEQUENCE instead of accepted -- permanently, since nothing ' \
-        'else would ever write it back'
+        'the abandoned operation must not have opened a session, or this PROGRAM_START is ' \
+        'refused ERR_GENERIC instead of accepted -- permanently, since only PROGRAM_RESET or a ' \
+        'reconnect would ever clear it'
 
 
 def test_a_completing_poll_does_not_clobber_an_unconfirmed_err_cmd_busy():
@@ -263,7 +260,7 @@ def test_program_reset_is_accepted_from_xcp_pgm_idle():
     pgm_handle() connects but never sends PROGRAM_START, so pgm_state is XCP_PGM_IDLE here by
     construction. Mutation: gating the handler on XCP_PGM_ACTIVE (the mirror image of
     PROGRAM_START's own `if (pgm_state != XCP_PGM_IDLE)` check in source/Xcp_Pgm.c) answers
-    ERR_SEQUENCE instead of 0xFF, which this test catches directly."""
+    ERR_GENERIC instead of 0xFF, which this test catches directly."""
     handle = pgm_handle()
     handle.can_if_transmit.reset_mock()
 
@@ -277,9 +274,9 @@ def test_program_reset_is_also_accepted_from_xcp_pgm_active():
     """The complement of the test above, guarding the other direction DD57 requires: PROGRAM_RESET
     is not merely tolerated from IDLE, it must keep working from XCP_PGM_ACTIVE too, since ending an
     active session is this command's entire purpose. Mutation: copying PROGRAM_START's own
-    `if (pgm_state != XCP_PGM_IDLE) ERR_SEQUENCE` gate into Xcp_DTOCmdPgmProgramReset -- the natural
-    mistake a reviewer reaching for that handler as a template could make -- answers ERR_SEQUENCE
-    (0xFE, 0x29) here instead of 0xFF, while leaving test_program_reset_is_accepted_from_xcp_pgm_idle
+    `if (pgm_state != XCP_PGM_IDLE) ERR_GENERIC` gate into Xcp_DTOCmdPgmProgramReset -- the natural
+    mistake a reviewer reaching for that handler as a template could make -- answers ERR_GENERIC
+    (0xFE, 0x31) here instead of 0xFF, while leaving test_program_reset_is_accepted_from_xcp_pgm_idle
     passing (pgm_state IS XCP_PGM_IDLE there); verified by hand (see the task report).
 
     Xcp_CTOErrorMatrix[0xCF] (source/Xcp.c) also carries no XCP_INTERNAL_ERR_PGM_ACTIVE, for the
@@ -416,25 +413,26 @@ def test_program_reset_calls_no_reset_api_and_exposes_none():
 
 
 def test_program_reset_leaves_pgm_state_ready_for_a_new_session():
-    """Not one of the five requirements handed down for this task, but a direct consequence of
-    them: Xcp_PgmCompleteProgramReset's success branch (Xcp_Pgm.c) resets Xcp_Internal.pgm_state to
-    XCP_PGM_IDLE itself, before calling Xcp_DisconnectSession (Xcp_Std.c, shared with plain
-    DISCONNECT) -- that shared function does not and must not touch pgm_state, since plain
-    DISCONNECT has no programming session to end. Nothing else ever resets pgm_state once a session
-    reaches XCP_PGM_ACTIVE -- Xcp_CTOCmdStdConnect and Xcp_CTOCmdStdDisconnect (Xcp_Std.c) do not
-    touch it, and it is otherwise reset only by Xcp_Init. Without PROGRAM_RESET's own reset, a
-    session that reached XCP_PGM_ACTIVE and was properly ended would leave pgm_state stuck at
-    XCP_PGM_ACTIVE forever, silently, since disconnecting says nothing on the wire about it.
+    """The end-to-end property, and the one that matters to a master: after a completed
+    PROGRAM_RESET, reconnecting and starting an entirely new programming session must work. A
+    module that leaked the old XCP_PGM_ACTIVE into the new session refuses this second
+    PROGRAM_START with ERR_GENERIC (0xFE, 0x31) by its own `if (pgm_state != XCP_PGM_IDLE)` check
+    (source/Xcp_Pgm.c) -- which is all this can be read off the wire, since Xcp_Internal is not
+    reachable from this CFFI harness (test/clear_daq_list_test.py:80-92).
 
-    The wire-observable consequence, since Xcp_Internal is not reachable from this CFFI harness
-    (test/clear_daq_list_test.py:80-92): a master that reconnects after a completed PROGRAM_RESET
-    and starts an entirely new session must be accepted, not refused ERR_SEQUENCE (0xFE, 0x29) by
-    PROGRAM_START's own `if (pgm_state != XCP_PGM_IDLE)` check (source/Xcp_Pgm.c) -- which is
-    exactly what a module that leaked the old ACTIVE state into the new session would do.
+    **It no longer says WHICH writer did it, and that is a deliberate consequence of final-review
+    finding 1 rather than an oversight.** It used to: Xcp_PgmCompleteProgramReset's success branch
+    (Xcp_Pgm.c) was the only writer clearing an ACTIVE pgm_state, so deleting that one line failed
+    this test. Finding 1 gave Xcp_CTOCmdStdConnect (Xcp_Std.c) the same reset -- necessary, because
+    a master that dies mid-sequence never sends a PROGRAM_RESET at all and DISCONNECT is refused --
+    and CONNECT is the only way back from the disconnected state PROGRAM_RESET leaves behind. So
+    the two writers are now on the same path, in that order, and deleting DD57's leaves this test
+    passing (measured while applying finding 1). DD57's reset is kept regardless, as documented
+    defence in depth; source/Xcp_Pgm.c states the invariant it rests on.
 
-    Mutation: deleting `Xcp_Internal.pgm_state = XCP_PGM_IDLE;` from
-    Xcp_PgmCompleteProgramReset's success branch (Xcp_Pgm.c) leaves this second PROGRAM_START
-    refused ERR_SEQUENCE instead of accepted -- verified by hand (see the task report)."""
+    What replaced the discrimination: test_a_reconnect_ends_an_abandoned_programming_session below
+    pins CONNECT's reset directly, on a session PROGRAM_RESET never ended, where no other writer
+    can account for the result."""
     handle = pgm_handle()
     busy_then(handle, 0x00, busy_calls=0)
     program_start(handle)
@@ -455,7 +453,7 @@ def test_program_reset_leaves_pgm_state_ready_for_a_new_session():
 
     assert transmitted(handle)[0] == 0xFF, \
         'pgm_state must have been reset to XCP_PGM_IDLE by PROGRAM_RESET, or this new session\'s ' \
-        'own PROGRAM_START is refused ERR_SEQUENCE instead of accepted'
+        'own PROGRAM_START is refused ERR_GENERIC instead of accepted'
 
 
 def test_program_reset_frees_a_dynamic_allocation_so_the_next_session_does_not_inherit_it():
@@ -480,7 +478,15 @@ def test_program_reset_frees_a_dynamic_allocation_so_the_next_session_does_not_i
     reverting Xcp_PgmCompleteProgramReset to set connection_status/pgm_state directly instead of
     calling Xcp_DisconnectSession reproduces the review's own measurement here (maxOdt == 3,
     odt[1].entryCount == 1) -- verified by hand (see the task report)."""
-    handle = dynamic_handle(programming_enabled=True, daq_count=2, odt_count=4, odt_entries_count=2)
+    # The three keys forced off are pgm_handle()'s own -- PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX,
+    # which final-review finding 3 refuses at generation alongside `programming.enabled` -- spelled
+    # out here because this is the one PGM test that cannot use pgm_handle(): it needs a DYNAMIC
+    # DAQ configuration, which only free_daq_test.dynamic_handle builds.
+    handle = dynamic_handle(programming_enabled=True,
+                            xcp_program_clear_api_enable=False,
+                            xcp_program_api_enable=False,
+                            xcp_program_max_api_enable=False,
+                            daq_count=2, odt_count=4, odt_entries_count=2)
     allocate_directly(handle, odt_count=2, address=0x1000)
 
     assert handle.lib.Xcp_Ptr.config.daqList[0].maxOdt == 2, 'the setup itself did not allocate'
@@ -639,7 +645,7 @@ def test_program_prepare_is_also_accepted_from_xcp_pgm_active():
     it off once XCP_PGM_ACTIVE, and an integrator downloading a second block of code mid-session
     still needs it. Mutation: gating the handler on `pgm_state != XCP_PGM_IDLE` (PROGRAM_START's
     own check, the natural mistake a reviewer reusing that handler as a template could make)
-    answers ERR_SEQUENCE (0xFE, 0x29) here instead of 0xFF, while leaving
+    answers ERR_GENERIC (0xFE, 0x31) here instead of 0xFF, while leaving
     test_program_prepare_is_accepted_from_xcp_pgm_idle passing (pgm_state IS XCP_PGM_IDLE there).
 
     A real, completed PROGRAM_START reaches XCP_PGM_ACTIVE -- not merely asserted, since
@@ -703,17 +709,23 @@ def test_a_mid_session_synch_does_not_end_the_programming_session():
     """Review fix round 1, finding 1. Design doc DD55, corrected.
 
     Xcp_PgmAbandonPendingCommand (source/Xcp_Pgm.c) used to reset Xcp_Internal.pgm_state to
-    XCP_PGM_IDLE unconditionally whenever a pending PGM command was abandoned by SYNCH. That is
-    right for PROGRAM_START abandoned while still in the transient XCP_PGM_STARTING state (its own
-    handler sets that state before deferring, and undoing it is the whole point), and wrong for
+    XCP_PGM_IDLE whenever a pending PGM command was abandoned by SYNCH. That is wrong for
     PROGRAM_PREPARE, which can legally be pending while pgm_state is XCP_PGM_ACTIVE -- a real,
-    already-established session, not a transient one -- since 1.1/1.6.5.2.3 allows it from ACTIVE
-    too (test_program_prepare_is_also_accepted_from_xcp_pgm_active above; a second code block
-    mid-session is the natural reason a master would send it there). The unconditional reset ended
-    such a session silently on any ordinary SYNCH, which 1.1/1.7.1.1 requires to stay available
-    throughout one: DD51's new pgm_state disjunct would stop firing for the rest of the session,
-    a second PROGRAM_START would be accepted where DD49 requires ERR_SEQUENCE, and the master
-    would be told nothing on the wire to suggest either.
+    already-established session -- since 1.1/1.6.5.2.3 allows it from ACTIVE too
+    (test_program_prepare_is_also_accepted_from_xcp_pgm_active above; a second code block
+    mid-session is the natural reason a master would send it there). The reset ended such a session
+    silently on any ordinary SYNCH, which 1.1/1.7.1.1 requires to stay available throughout one:
+    DD51's new pgm_state disjunct would stop firing for the rest of the session, a second
+    PROGRAM_START would be accepted where DD49 requires a refusal, and the master would be told
+    nothing on the wire to suggest either.
+
+    The first correction narrowed that reset to a pending PROGRAM_START, on the premise that
+    PROGRAM_START's handler entered a transient XCP_PGM_STARTING before deferring. Final-review
+    finding 6 deleted the transient state (written, never read) and with it the last reason for
+    this function to touch pgm_state at all -- so what this test now pins is that abandoning does
+    not touch it, full stop. The mutation is the same one it always was: make
+    Xcp_PgmAbandonPendingCommand write `Xcp_Internal.pgm_state = XCP_PGM_IDLE;` and this test
+    fails, whether that write is conditional or not.
 
     Sequence: PROGRAM_START completes (pgm_state -> ACTIVE); PROGRAM_PREPARE defers, leaving
     pending_command.active TRUE with pgm_state still ACTIVE; SYNCH arrives and DD55's own
@@ -726,9 +738,9 @@ def test_a_mid_session_synch_does_not_end_the_programming_session():
     Checked through two wire consequences, since Xcp_Internal is not reachable from this CFFI
     harness (test/clear_daq_list_test.py:80-92): GET_SEED (0xF8, carrying
     XCP_INTERNAL_ERR_PGM_ACTIVE in its own matrix entry, same as the gate-fire test above) must
-    still be refused ERR_PGM_ACTIVE, and a second PROGRAM_START must still be refused ERR_SEQUENCE
+    still be refused ERR_PGM_ACTIVE, and a second PROGRAM_START must still be refused ERR_GENERIC
     by its own handler's `if (pgm_state != XCP_PGM_IDLE)` check (source/Xcp_Pgm.c) -- both false
-    unless pgm_state is still XCP_PGM_ACTIVE. A module with the reverted, unconditional reset would
+    unless pgm_state is still XCP_PGM_ACTIVE. A module that reset pgm_state on abandonment would
     instead dispatch GET_SEED normally and accept the second PROGRAM_START (0xFF, since
     xcp_program_start's stub still returns E_OK immediately), silently opening a second session on
     top of the first."""
@@ -779,8 +791,8 @@ def test_a_mid_session_synch_does_not_end_the_programming_session():
         'the session must still be ACTIVE: GET_SEED must still be refused ERR_PGM_ACTIVE'
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
 
-    assert send(handle, (0xD2,))[0:2] == (0xFE, 0x29), \
-        'a second PROGRAM_START must still be refused ERR_SEQUENCE -- the session never ended'
+    assert send(handle, (0xD2,))[0:2] == (0xFE, 0x31), \
+        'a second PROGRAM_START must still be refused ERR_GENERIC -- the session never ended'
 
 
 @pytest.mark.parametrize('pid, name, payload', (
@@ -822,3 +834,129 @@ def test_the_commands_required_during_programming_are_not_pgm_active_gated(pid, 
 
     assert send(handle, payload)[0:2] != (0xFE, 0x12), \
         '%s must stay available during a programming sequence' % name
+
+
+def open_a_session(handle):
+    """A completed PROGRAM_START against an instantaneous integrator: pgm_state -> XCP_PGM_ACTIVE,
+    asserted rather than assumed, and its response confirmed so the one-frame transmit pipeline
+    (SWS_Xcp_00859) is free for whatever the caller sends next."""
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+
+def test_an_active_session_cannot_be_ended_by_disconnect():
+    """The half of final-review finding 1 that is NOT a defect, established first so the next test
+    is about the right thing.
+
+    DISCONNECT carries XCP_INTERNAL_ERR_PGM_ACTIVE in its own Xcp_CTOErrorMatrix row (source/Xcp.c)
+    -- pre-existing, and 1.1/1.7.3.2.1 does list it with the action "wait t7, repeat infinitely
+    times" -- so DD51's new ACTIVE-session trigger refuses it. That refusal is conformant and stays.
+
+    What follows from it is the defect: Xcp_DisconnectSession (source/Xcp_Std.c) is never reached
+    with a session open from this door, so it is not the place that can clear one, and a master
+    that walks away leaves the session standing. The next test is about the door that IS always
+    open."""
+    handle = pgm_handle()
+    open_a_session(handle)
+
+    assert send(handle, (0xFE,))[0:2] == (0xFE, 0x12), \
+        'DISCONNECT during a programming session is refused ERR_PGM_ACTIVE'
+
+
+def test_a_reconnect_ends_an_abandoned_programming_session():
+    """Final-review finding 1. A master that dies mid-sequence used to strand the slave for good.
+
+    Measured on this branch before the fix: PROGRAM_START -> 0xFF, DISCONNECT -> (0xFE, 0x12),
+    CONNECT -> 0xFF, and then every command carrying XCP_INTERNAL_ERR_PGM_ACTIVE -- all of CAL, all
+    of DAQ, GET_SEED, SET_REQUEST, some 38 in total -- answered (0xFE, 0x12) in the NEW session,
+    forever, because the only writer that cleared an ACTIVE pgm_state was a successful
+    PROGRAM_RESET and no reachable command could produce one. Two configurations reach the same
+    dead end with no master dying at all: xcp_program_reset_api_enable disabled (DD59 makes each
+    PGM command independently configurable), and an Xcp_ProgramReset that reports failure.
+
+    Xcp_CTOCmdStdConnect (source/Xcp_Std.c) now resets pgm_state to XCP_PGM_IDLE, which is what XCP
+    part 1 - Overview 1.0/2.3 requires of a new session -- 'the session status, all DAQ lists and
+    the protection status bits are reset' -- and what Xcp_Init already did for the same reason.
+
+    Both consequences are asserted, because either alone is weaker than the pair: a gated command
+    must be answered normally (the 38-command lockout is gone), and a second PROGRAM_START must be
+    ACCEPTED (the session itself is gone, not merely its gate). A module that cleared the gate
+    without clearing the state would pass the first and fail the second.
+
+    Mutation: deleting the reset from Xcp_CTOCmdStdConnect answers (0xFE, 0x12) to the GET_SEED
+    below and (0xFE, 0x31) to the second PROGRAM_START."""
+    handle = pgm_handle()
+    open_a_session(handle)
+
+    # The master vanishes. Its DISCONNECT is refused (the test above), so the session is still open
+    # when the next master -- or the same one, restarted -- connects.
+    assert send(handle, (0xFE,))[0:2] == (0xFE, 0x12), 'setup: DISCONNECT is refused while ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xFF, 0x00))[0] == 0xFF, 'CONNECT is always accepted'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    # GET_SEED is the probe for DD51's gate, exactly as in
+    # test_an_active_programming_session_makes_the_pgm_active_gate_fire above: its own
+    # Xcp_CTOErrorMatrix entry carries XCP_INTERNAL_ERR_PGM_ACTIVE, so it is refused (0xFE, 0x12)
+    # while a session is open and dispatched normally once it is not.
+    assert send(handle, (0xF8, 0x00, 0x01))[0:2] != (0xFE, 0x12), \
+        'the new session must not inherit the previous one\'s ERR_PGM_ACTIVE lockout'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    busy_then(handle, 0x00, busy_calls=0)
+    assert send(handle, (0xD2,))[0] == 0xFF, \
+        'and a genuinely new programming session must be accepted, not refused ERR_GENERIC'
+
+
+def test_a_reconnect_during_a_session_that_program_reset_cannot_end_is_the_only_way_out():
+    """The configuration half of finding 1, and the one no master behaviour can avoid: DD59 makes
+    every PGM command independently configurable and nothing couples xcp_program_start_api_enable
+    to xcp_program_reset_api_enable, so `PROGRAM_START` enabled with `PROGRAM_RESET` disabled is a
+    configuration the schema accepts and generation permits. Before the fix it was a permanent
+    brick -- measured: PROGRAM_START -> 0xFF, PROGRAM_RESET -> (0xFE, 0x20) ERR_CMD_UNKNOWN,
+    DISCONNECT -> (0xFE, 0x12), and nothing left to try.
+
+    Kept separate from the test above rather than folded into it: that one is about a master that
+    disappears, this one about a build that cannot end a session at all, and only this one proves
+    the fix does not secretly depend on PROGRAM_RESET being available."""
+    handle = pgm_handle(xcp_program_reset_api_enable=False)
+    open_a_session(handle)
+
+    assert send(handle, (0xCF,))[0:2] == (0xFE, 0x20), \
+        'setup: PROGRAM_RESET is not built into this configuration'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xFF, 0x00))[0] == 0xFF, 'CONNECT is still accepted'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xF8, 0x00, 0x01))[0:2] != (0xFE, 0x12), \
+        'a reconnect must end a session even where no PROGRAM_RESET exists to end it'
+
+
+def test_connect_does_not_end_a_session_it_did_not_interrupt():
+    """The discriminator for the reset above: it clears the PREVIOUS session, and there is no
+    ordering in which it damages a live one.
+
+    CONNECT is accepted from the connected state too (source/Xcp.c admits it unconditionally), so a
+    master that re-sends one mid-sequence -- a retry after a lost response, say -- genuinely does
+    end its own programming session and has to start over. That is the specification's answer, not
+    an accident of this fix: 1.0/2.3 makes a new session a clean slate, and a master cannot ask for
+    one and keep half of the old. What must NOT happen is the reset firing while a PROGRAM_START is
+    still pending, which would leave the integrator running with the module believing itself idle.
+    It cannot: DD55's ERR_CMD_BUSY gate (source/Xcp.c) refuses every command but SYNCH while
+    pending_command.active is TRUE, CONNECT included, so the reset is unreachable during a
+    deferral.
+
+    Asserted here rather than reasoned about in a comment, because that gate and this reset were
+    written by different tasks and nothing else pins their interaction."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=20)
+    program_start(handle)
+
+    assert send(handle, (0xFF, 0x00))[0:2] == (0xFE, 0x10), \
+        'CONNECT must be refused ERR_CMD_BUSY while a PROGRAM_START is still pending'

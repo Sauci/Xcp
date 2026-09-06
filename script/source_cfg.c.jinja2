@@ -918,6 +918,35 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC5 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC6 */
         ({% if configuration.apis.xcp_write_daq_multiple_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_write_daq_multiple_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x02u, /* WRITE_DAQ_MULTIPLE 0xC7, optional */
+{#- Final-review finding 3. PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and PROGRAM_MAX (0xC9) are exactly
+    the three commands Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads to decide CONNECT's RESOURCE
+    bit 4, because 1.0/1.6.1.1.1 defines that bit by naming them: "1 = Flash programming available.
+    The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are available." None of the three is
+    implemented until SP4b -- Xcp_PIDTable (source/Xcp.c) routes all three to
+    Xcp_CmdNotImplemented -- so enabling their keys in a build with the feature gated on makes
+    CONNECT advertise flash programming while all three answer ERR_CMD_UNKNOWN.
+
+    That is defect D10 verbatim, the defect this sub-project exists to close, one configuration
+    flag away. DD58 closes it "by construction" for the DEFAULT build only, where the gate is off
+    and every PGM row generates disabled; the moment programming.enabled is true these three rows
+    follow their own keys, which config/xcp.json used to ship enabled. It is also DD59's own stated
+    principle -- "a command whose handler is not compiled must not be advertised as enabled" --
+    applied to the three rows that are visible on the wire.
+
+    Refused rather than merely defaulted false, because a default is a trap for whoever flips it:
+    the keys stay in the schema for SP4b, and an integrator who sets one gets an explanation here
+    instead of a slave that lies to its master. Self-removing -- SP4b deletes each command's term
+    from this condition as it implements it, and the condition disappears with the last one.
+
+    The other five PGM rows (PROGRAM_VERIFY 0xC8, PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB,
+    GET_SECTOR_INFO 0xCD, GET_PGM_PROCESSOR_INFO 0xCE) are equally unimplemented and are NOT
+    refused here, deliberately: they have no configuration key of their own, nothing reads their
+    ctoInfo bit except the dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN for an enabled
+    row pointing at Xcp_CmdNotImplemented exactly as it does for a disabled one. No master is told
+    anything untrue about them. It is the CONNECT advertisement that makes these three different. #}
+{%- if configuration.programming.enabled | default(false) and (configuration.apis.xcp_program_clear_api_enable.enabled or configuration.apis.xcp_program_api_enable.enabled or configuration.apis.xcp_program_max_api_enable.enabled) %}
+{{ raise('programming.enabled is true and at least one of xcp_program_clear_api_enable, xcp_program_api_enable and xcp_program_max_api_enable is enabled, but none of PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and PROGRAM_MAX (0xC9) is implemented before SP4b -- Xcp_PIDTable (source/Xcp.c) routes all three to Xcp_CmdNotImplemented, while Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads exactly these three ctoInfo entries to set CONNECT\'s RESOURCE bit 4, so the slave would advertise "Flash programming available" (XCP part 2 1.0/1.6.1.1.1) and then answer ERR_CMD_UNKNOWN to all three; set the three keys to false until SP4b implements the commands (defect D10; final-review finding 3 in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/final-review.md)') }}
+{%- endif %}
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_max_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* PROGRAM_MAX 0xC9, optional */
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* PROGRAM_NEXT 0xCA, optional */
@@ -1006,6 +1035,41 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     refused here is the one where the advertised protection is a lie. #}
 {%- if stim.capable and configuration.apis.resource_protection.data_stimulation %}
 {{ raise('resource_protection.data_stimulation is set and this configuration can stimulate, but no command is gated on the STIM resource: Xcp_PIDToCmdGroupTable (source/Xcp.c) maps every DAQ command to MASK_DAQ, so CONNECT and GET_STATUS would advertise a protection the slave does not enforce and SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ and START_STOP_DAQ_LIST would stay reachable with nothing unlocked (XCP part 2 1.1/1.5; DD41 and DD48 in docs/superpowers/specs/2026-09-04-xcp-stim-sp3-design.md)') }}
+{%- endif %}
+{#- Final-review finding 2, and the exact analogue of DD48 immediately above: bit 4 below is the
+    PGM resource of XCP part 2 1.1/1.5, and this time the module DOES enforce it -- which is what
+    makes the combination unusable rather than merely decorative.
+
+    An unlock is spent by ONE command. Xcp_SetProtectionStatus (source/Xcp.c) copies the requested
+    resource into protection_status on a successful UNLOCK, and the dispatch loop in
+    Xcp_CanIfRxIndication clears it again after EVERY dispatched command whose PID is not UNLOCK --
+    including commands that are not protected at all, so an interposed GET_STATUS spends it too.
+    That is pre-existing, documented in README.md under *Key lifetime*, and identical for CAL_PAG
+    and DAQ. For those two it is merely unpleasant: §1.7.3.2.x's action for ERR_ACCESS_LOCKED is
+    "unlock slave, repeat 2 times", so a conformant master re-unlocks and carries on.
+
+    For PGM it is fatal, and the composition is what is fatal, not any one refusal. Once
+    PROGRAM_START has been dispatched -- spending the unlock that admitted it -- the session is
+    XCP_PGM_ACTIVE, and the only door out of it is PROGRAM_RESET, which is a PGM-group command and
+    therefore locked again. Re-unlocking is impossible, and conformantly so: GET_SEED and UNLOCK
+    both carry XCP_INTERNAL_ERR_PGM_ACTIVE in Xcp_CTOErrorMatrix (source/Xcp.c) and are refused
+    ERR_PGM_ACTIVE by DD51's gate, exactly as §1.7.3.2.1/§1.7.3.2.5 provide. DISCONNECT is refused
+    the same way. Every answer is correct; the master retries into silence and the slave cannot
+    leave the state short of Xcp_Init. Measured on a build of this branch, not reasoned:
+    PROGRAM_RESET after the sequence answers ERR_ACCESS_LOCKED (0xFE 0x25), GET_SEED and UNLOCK
+    answer ERR_PGM_ACTIVE (0xFE 0x12).
+
+    So the configuration is refused here rather than shipped. Removing this guard needs the unlock
+    LIFETIME fixed (a cross-group change to the protection model, out of this sub-project's scope)
+    or the GET_SEED/UNLOCK-vs-ERR_PGM_ACTIVE interaction resolved -- not merely SP4b landing the
+    remaining PGM commands, which inherits the group unchanged and makes the trap larger.
+
+    Conditioned on `programming.enabled` as well as on the flag, for DD48's own reason: a build
+    with the feature compiled out has no PGM command to lock, so the flag advertises a resource
+    nothing in the build can reach and is inert. The refused combination is the one that can be
+    driven into the dead end. #}
+{%- if configuration.programming.enabled | default(false) and configuration.apis.resource_protection.programming %}
+{{ raise('resource_protection.programming is set and programming.enabled is true, but a protected PGM resource cannot conduct a programming sequence: an UNLOCK is spent by the single command that follows it (source/Xcp.c, README.md "Key lifetime"), so PROGRAM_START consumes it, and once the session is XCP_PGM_ACTIVE the only command that ends it -- PROGRAM_RESET -- is locked again while GET_SEED and UNLOCK are themselves refused ERR_PGM_ACTIVE (XCP part 2 1.1/1.7.3.2.1 and 1.7.3.2.5), leaving the slave unable to leave the programming session at all; leave resource_protection.programming false until the unlock lifetime is fixed (final-review finding 2 in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/final-review.md)') }}
 {%- endif %}
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |

@@ -53,19 +53,42 @@ uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pP
     *responseExpected = TRUE;
 
     /* 1.1/1.6.5.1.1: the sequence is opened once and closed by PROGRAM_RESET. A second
-     * PROGRAM_START inside an open session is out of sequence, and 1.1/1.7.3.2.4 lists
-     * ERR_SEQUENCE for the programming commands. */
+     * PROGRAM_START inside an open session is refused ERR_GENERIC (0x31), not ERR_SEQUENCE.
+     *
+     * Final-review finding 4 corrected this, and the correction is a statement about THIS command's
+     * own row: §1.7.3.2.5 -- the PGM error-handling matrix; §1.7.3.2.4 is DAQ's, and every citation
+     * of it for a PGM row in this sub-project was a numbering mistake -- lists ERR_CMD_BUSY,
+     * ERR_DAQ_ACTIVE, ERR_CMD_SYNTAX, ERR_ACCESS_LOCKED and ERR_GENERIC for PROGRAM_START and
+     * nothing else. Xcp_CTOErrorMatrix[0xD2] (source/Xcp.c) agrees: it carries no
+     * XCP_INTERNAL_ERR_SEQUENCE. §1.6.5.1.1 then names the code for exactly this condition -- "If
+     * the slave device is not in a state which permits programming, a ERR_GENERIC will be returned"
+     * -- whose prescribed master action, "restart session", is also the only recovery available to
+     * a master that has lost track of a sequence it left open.
+     *
+     * ERR_SEQUENCE, which DD49 originally chose, is right for a different thing: §1.7.3.2.5 does
+     * list it for PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX, so it is the code for the gate those
+     * commands will meet in SP4b when they are asked to run outside a session. It is not this
+     * command's own refusal, and the two must not be conflated again. */
     if (Xcp_Internal.pgm_state != XCP_PGM_IDLE)
     {
-        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {
         uint8 status_code = 0x00u;
 
-        Xcp_Internal.pgm_state = XCP_PGM_STARTING;
-
-        /* The FIRST call happens here, not on the next Xcp_MainFunction, and it is what makes the
+        /* No transient state is entered here before deferring, and Xcp_PgmStateType consequently
+         * has two values rather than three (source/Xcp_Internal.h). DD49 gave the third one,
+         * XCP_PGM_STARTING, the job of telling Xcp_MainFunction whether a finished PROGRAM_START
+         * should move to ACTIVE or back to IDLE; Xcp_PgmCompleteProgramStart below decides that
+         * from statusCode alone and never reads pgm_state, and no other reader could distinguish
+         * STARTING from IDLE either -- Xcp.c's DD51 gate tests != XCP_PGM_ACTIVE, and this
+         * handler's own != XCP_PGM_IDLE test above is unreachable throughout the deferral because
+         * DD55's ERR_CMD_BUSY gate refuses every command but SYNCH while pending_command.active is
+         * TRUE. It was written and never read (final-review finding 6), so the enumerator is gone
+         * and pgm_state stays XCP_PGM_IDLE until the operation actually succeeds.
+         *
+         * The FIRST call happens here, not on the next Xcp_MainFunction, and it is what makes the
          * deferral optional rather than mandatory: an integrator whose work is instantaneous
          * returns E_OK from it and the master is answered on this very exchange, with no
          * main-function cycle and no EV_CMD_PENDING in between. Spec §4. */
@@ -302,30 +325,31 @@ void Xcp_PgmAbandonPendingCommand(void)
      * running. `abandoned` alone tells Xcp_PgmCompletePendingCommand to discard the response
      * instead of transmitting it once polling finally reaches E_OK.
      *
-     * pgm_state is reset to XCP_PGM_IDLE ONLY when the abandoned command is PROGRAM_START (DD55,
-     * corrected by Task 5's review). PROGRAM_START is the one command whose handler sets a
-     * TRANSIENT state (XCP_PGM_STARTING, Xcp_DTOCmdPgmProgramStart above) before deferring, and
-     * undoing exactly that transient state is what this reset means -- as far as the master is
-     * concerned, the sequence it started never happened. PROGRAM_RESET and PROGRAM_PREPARE set no
-     * such transient state before deferring: both can be pending while pgm_state is
-     * XCP_PGM_ACTIVE, a real, already-established session (PROGRAM_RESET legally from ACTIVE per
-     * DD57; PROGRAM_PREPARE legally from ACTIVE too, e.g. a second code block mid-session). An
-     * earlier, unconditional version of this reset ended such a session silently on any ordinary
-     * SYNCH, which 1.1/1.7.1.1 requires to stay available throughout one: DD51's gate stopped
-     * firing for the rest of the session, and a second PROGRAM_START was then accepted where DD49
-     * requires ERR_SEQUENCE, with the master told nothing. The design doc's own DD55 text
-     * previously read "pgm_state returns to IDLE" with no such qualification; both the code and
-     * that sentence are corrected together here.
+     * pgm_state is deliberately NOT touched here, and that is a correction to DD55 as written.
+     * Two earlier forms of this function did touch it. The first reset it unconditionally, which
+     * silently ended an established session on any ordinary SYNCH -- 1.1/1.7.1.1 requires SYNCH to
+     * stay available throughout one -- because PROGRAM_RESET and PROGRAM_PREPARE can both be
+     * pending while pgm_state is XCP_PGM_ACTIVE (PROGRAM_RESET legally from ACTIVE per DD57;
+     * PROGRAM_PREPARE legally too, e.g. a second code block mid-session). The second reset it only
+     * for a pending PROGRAM_START, on the premise that PROGRAM_START's handler had entered a
+     * TRANSIENT XCP_PGM_STARTING before deferring and that this undid exactly that. Final-review
+     * finding 6 removed that transient state, because nothing ever read it: Xcp_DTOCmdPgmProgramStart
+     * above now leaves pgm_state at XCP_PGM_IDLE for the whole deferral, so a PROGRAM_START
+     * abandoned here has no state to undo and the write became a provable no-op rather than a
+     * guard. It is deleted rather than kept as one, so no later reader mistakes it for something a
+     * test could reach.
+     *
+     * The invariant that replaces it: an abandoned PROGRAM_START never reaches
+     * Xcp_PgmCompleteProgramStart at all (Xcp_PgmCompletePendingCommand's `abandoned == FALSE`
+     * guard above), and that function is this module's only writer of XCP_PGM_ACTIVE -- so the
+     * session the master walked away from is never opened, which is what the old reset was reaching
+     * for. Should a future command's handler ever move pgm_state before deferring, that handler
+     * owns the unwind and this function has to be revisited alongside it.
      *
      * pending_command.active staying TRUE regardless of which command it is is what still refuses
      * a new one with ERR_CMD_BUSY (DD55 in Xcp.c), because that gate reads active, not pgm_state;
      * the two facts are real and different, and deliberately not merged into one flag. */
     Xcp_Internal.pending_command.abandoned = TRUE;
-
-    if (Xcp_Internal.pending_command.pid == XCP_PID_CMD_PROGRAM_START)
-    {
-        Xcp_Internal.pgm_state = XCP_PGM_IDLE;
-    }
 }
 
 /*------------------------------------------------------------------------------------------------*/
@@ -387,8 +411,26 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
     if (statusCode == 0x00u)
     {
         /* 1.1/1.6.5.1.4's response is PID only -- no COMM_MODE_PGM/MAX_CTO_PGM/etc. the way
-         * PROGRAM_START's is, and no error table of its own either (§1.7.3.2.4 lists none for this
-         * command), so success is simply this one byte. */
+         * PROGRAM_START's is -- so success is simply this one byte.
+         *
+         * An earlier version of this comment added "and no error table of its own either
+         * (§1.7.3.2.4 lists none for this command)". Both halves were wrong, and final-review
+         * finding 5 replaced them with what the specification actually says. The PGM error matrix
+         * is §1.7.3.2.5 (§1.7.3.2.4 is DAQ's), and PROGRAM_RESET's row there lists five codes:
+         * ERR_CMD_BUSY, ERR_PGM_ACTIVE, ERR_CMD_SYNTAX and ERR_SEQUENCE in 1.0, plus
+         * ERR_ACCESS_LOCKED and ERR_RES_TEMP_NOT_ACCESSIBLE in 1.1. Xcp_CTOErrorMatrix[0xCF]
+         * (source/Xcp.c) deviates from that row in two directions, both deliberate:
+         *
+         *  - It DROPS XCP_INTERNAL_ERR_PGM_ACTIVE, and must. DD51 makes an ACTIVE session fire the
+         *    generic ERR_PGM_ACTIVE gate (Xcp_CanIfRxIndication, Xcp.c), so a row carrying that bit
+         *    would refuse the one command whose entire purpose is to leave the state -- the same
+         *    unrecoverable session final-review finding 1 closed from the other end. Dropping
+         *    XCP_INTERNAL_ERR_SEQUENCE alongside it is cosmetic: no code path produces it here.
+         *  - It ADDS XCP_INTERNAL_ERR_GENERIC, which neither revision lists for this command. The
+         *    else branch below needs a code for an integrator that reports failure, and of the
+         *    listed five only ERR_SEQUENCE could be pressed into service -- a worse fit, since
+         *    nothing about the request is out of sequence. ERR_GENERIC is kept as the recorded
+         *    deviation (DD57) rather than exchanged for a listed code that would mislead. */
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
         Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
@@ -406,15 +448,32 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
          * answer already is -- Xcp_CanIfRxIndication's disconnected-state gate (Xcp.c) drops any
          * further command before it can touch the buffer, once connection_status is set below.
          *
-         * pgm_state returns to IDLE here too, which Xcp_DisconnectSession does not do on its own
-         * (plain DISCONNECT has no programming session to end). The only other writer of pgm_state
-         * while a session is ACTIVE is Xcp_PgmAbandonPendingCommand (DD55), and it is conditioned
-         * to touch pgm_state only when the abandoned command is PROGRAM_START -- which can only be
-         * pending while pgm_state is XCP_PGM_STARTING, never XCP_PGM_ACTIVE, since
-         * Xcp_DTOCmdPgmProgramStart refuses a second PROGRAM_START with ERR_SEQUENCE before ever
-         * reaching ACTIVE. So nothing else resets an ACTIVE pgm_state, and leaving it ACTIVE here
-         * would refuse a later, genuinely new session's own PROGRAM_START with ERR_SEQUENCE. No
-         * device reset is performed here or anywhere else in this module: DD50. */
+         * pgm_state returns to IDLE here too, which Xcp_DisconnectSession does not do on its own.
+         * The reason given for that used to be "plain DISCONNECT has no programming session to
+         * end", and it was simply false: a plain DISCONNECT arriving during a session is refused
+         * ERR_PGM_ACTIVE by DD51's gate and never reaches that unwind at all, so the sentence
+         * described a case that cannot happen while claiming it as the justification (final-review
+         * finding 1). The real reason is ownership: this is the command that ENDS a sequence, so
+         * this is where the sequence's own state is cleared, and Xcp_DisconnectSession stays the
+         * connection-level unwind DISCONNECT and PROGRAM_RESET genuinely share. The session state
+         * that a master abandoning its connection would otherwise leak into the next session is
+         * cleared by Xcp_CTOCmdStdConnect (Xcp_Std.c) instead, on the one door that is always
+         * reachable.
+         *
+         * Xcp_PgmAbandonPendingCommand (DD55) no longer writes pgm_state at all (final-review
+         * finding 6), so this and Xcp_CTOCmdStdConnect are its two writers outside Xcp_Init -- and
+         * the honest consequence of that pair is that THIS write is no longer observable. A
+         * successful PROGRAM_RESET disconnects on the next line; the disconnected-state gate
+         * (Xcp_CanIfRxIndication, Xcp.c) then admits nothing but CONNECT; and CONNECT resets
+         * pgm_state itself. Deleting this line therefore changes no wire behaviour and fails no
+         * test -- measured, not assumed. It is kept anyway, as documented defence in depth beside
+         * the two guards in Xcp.c (design §9 criterion 7): the command that ends a programming
+         * sequence is where that sequence's state belongs, and the alternative would leave this
+         * function correct only by virtue of a line in Xcp_Std.c. The invariant it rests on is
+         * that CONNECT is the only way back from the disconnected state; a change that let any
+         * other command through would make this line load-bearing again, with no test to notice.
+         *
+         * No device reset is performed here or anywhere else in this module: DD50. */
         Xcp_Internal.pgm_state = XCP_PGM_IDLE;
         Xcp_DisconnectSession();
     }

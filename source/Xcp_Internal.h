@@ -309,15 +309,24 @@ typedef enum {
 
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
 /**
- * @brief State of the non-volatile memory programming session.
- * @details XCP_PGM_STARTING exists so that Xcp_MainFunction knows, when a polled PROGRAM_START
- * completes, whether to move to ACTIVE or back to IDLE -- a property of the state it came from.
- * It also answers 1.1/1.6.5.1.1's gate correctly on its own: a master sending PROGRAM_CLEAR
- * mid-poll has not had a successful PROGRAM_START.
+ * @brief State of the non-volatile memory programming session: open, or not.
+ * @details Two values, not three. DD49 specified a third, XCP_PGM_STARTING, entered by
+ * Xcp_DTOCmdPgmProgramStart before it defers, so that "Xcp_MainFunction knows, when a polled
+ * PROGRAM_START completes, whether to move to ACTIVE or back to IDLE -- a property of the state it
+ * came from". The implementation never worked that way and could not: Xcp_PgmCompleteProgramStart
+ * (Xcp_Pgm.c) decides from statusCode alone and never reads pgm_state, source/Xcp.c's DD51 gate
+ * tests only `!= XCP_PGM_ACTIVE`, and Xcp_DTOCmdPgmProgramStart's own `!= XCP_PGM_IDLE` test cannot
+ * be reached during the deferral because DD55's ERR_CMD_BUSY gate refuses every command but SYNCH
+ * while pending_command.active is TRUE. The value was written and never read (final-review finding
+ * 6); replacing it with XCP_PGM_IDLE changed no behaviour and no test, so it is gone.
+ *
+ * What distinguishes a deferred PROGRAM_START from an idle module is pending_command.active
+ * (DD52), which is a different fact and is read in several places. What distinguishes an open
+ * session is XCP_PGM_ACTIVE, written only by Xcp_PgmCompleteProgramStart on success and cleared
+ * only by Xcp_PgmCompleteProgramReset, Xcp_CTOCmdStdConnect (Xcp_Std.c) and Xcp_Init.
  */
 typedef enum {
     XCP_PGM_IDLE = 0x00u,
-    XCP_PGM_STARTING,
     XCP_PGM_ACTIVE
 } Xcp_PgmStateType;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */

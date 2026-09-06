@@ -471,7 +471,14 @@ extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
  * @brief Prepares non-volatile memory programming by declaring a code download's target and size.
  * @param [in] address The current MTA (set by SET_MTA), which points to the volatile memory
  * location where the code about to be downloaded will be stored.
- * @param [in] codeSize The request's Codesize: the size of the code that will be downloaded.
+ * @param [in] codeSize The request's Codesize: the size of the code that will be downloaded,
+ * expressed in BYTE, WORD or DWORD elements according to this slave's address granularity, NOT in
+ * bytes unconditionally. XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.3 says so in as many
+ * words -- "Codesize is expressed in BYTE, WORD or DWORD depending upon AG" -- and this module
+ * passes the wire value through verbatim rather than converting it, so an integrator on a WORD or
+ * DWORD granularity multiplies by the element size itself. AG is a configuration property
+ * (`protocol_layer.address_granularity`), constant for the build, and is also what CONNECT reports
+ * in COMM_MODE_BASIC bits 2:1.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
  * for success, non-zero if the target memory area is not available.
  * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
