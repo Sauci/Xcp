@@ -291,9 +291,20 @@ does.
 
 So `SYNCH` sets `pending_command.abandoned` instead. Polling continues to completion; the response
 is discarded rather than transmitted; and the slot is released only when the callback returns
-`E_OK`. Until then `pgm_state` returns to `IDLE` but a new PGM command is still answered
-`ERR_CMD_BUSY` — the operation is over as far as the master is concerned and not yet over as far as
-the flash is concerned, and those are genuinely different facts.
+`E_OK`. Until then a new PGM command is still answered `ERR_CMD_BUSY` — the operation is over as
+far as the master is concerned and not yet over as far as the flash is concerned, and those are
+genuinely different facts.
+
+**Abandoning returns `pgm_state` to `IDLE` only for a `PROGRAM_START`, and this sentence used to
+say so carelessly.** It read "`pgm_state` returns to `IDLE`" without qualification, which is right
+for the command it was written about — a `PROGRAM_START` abandoned while still in the transient
+`XCP_PGM_STARTING` state, which never established a session — and wrong for every other. A
+deferred command issued *inside* an established session leaves `pgm_state` at `XCP_PGM_ACTIVE`
+while it is pending, so resetting on abandon would silently end that session: DD51's gate would
+stop firing for the remaining 38 commands, a second `PROGRAM_START` would be accepted where DD49
+requires `ERR_SEQUENCE`, and the master would be told nothing. `PROGRAM_PREPARE` reaches exactly
+that state, being legal from `ACTIVE` for a second code block. The reset is therefore conditioned
+on the abandoned command being `PROGRAM_START`.
 
 ### DD56 — Programming-mode communication parameters are the live ones
 
