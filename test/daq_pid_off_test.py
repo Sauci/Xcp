@@ -219,3 +219,140 @@ def test_pid_off_supported_is_advertised_only_for_absolute_identification(identi
     handle.lib.Xcp_MainFunction()
 
     assert (handle.can_if_transmit.call_args[0][1].SduDataPtr[0x01] & 0x20) == expected
+
+
+def queued_frames(handle):
+    """Every frame currently in the ring, oldest first, as bytes. Read directly out of
+    Xcp_Rt[...].dtoQueue, as test/daq_dynamic_acceptance_test.py and four other files do; the
+    transmit path is asserted here rather than through can_if_transmit because a list that must
+    not be sampled produces NO call, and `call_args` on a mock that was never called after the
+    setup commands still holds whatever the last setup response left there."""
+    queue = handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].dtoQueue
+    frames = list()
+    index = queue.read
+    for _ in range(queue.count):
+        frame = queue.frame[index]
+        frames.append(bytes(frame.data[0:frame.length]))
+        index = (index + 1) % queue.depth
+    return frames
+
+
+def not_identifiable(handle):
+    """The Det reports Xcp_TriggerEventChannel raised for lists it would not sample, filtered out
+    of whatever else the setup commands reported."""
+    return [call for call in handle.det_report_error.call_args_list
+            if call[0][3] == handle.define('XCP_E_DAQ_LIST_NOT_IDENTIFIABLE')]
+
+
+def drifted_handle(mode=0x20, entries=True):
+    """A dynamic pool of one list, granted `mode` while it held a single ODT and then grown to two.
+
+    daq_count=1 is required, not incidental: Xcp_DaqListTxPduIsExclusive walks the CONFIGURED pool,
+    so a second slot -- even unallocated -- would make SET_DAQ_LIST_MODE refuse PID_OFF outright
+    (test_pid_off_under_dynamic_follows_the_shared_tx_pdu_rule) and the drift could never be set up.
+
+    The allocations all precede the ODT entries because 1.1/1.6.4.2.1.3 answers ERR_SEQUENCE to an
+    ALLOC_ODT that follows an ALLOC_ODT_ENTRY; the second ALLOC_ODT is legal exactly where it sits,
+    after another ALLOC_ODT and after SET_DAQ_LIST_MODE, neither of which is an enumerated case."""
+    handle = XcpTest(dynamic_config(daq_count=1, odt_count=2, odt_entries_count=1,
+                                    identification_field_type='ABSOLUTE'))
+    connect(handle)
+    handle.xcp_read_slave_memory_u8.side_effect = lambda a, e, b: b.__setitem__(0, 0xA5)
+
+    assert response(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF, 'ALLOC_DAQ(1)'
+    assert response(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF, 'ALLOC_ODT(list 0, 1)'
+    assert response(handle, (0xE0, mode, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF, \
+        'SET_DAQ_LIST_MODE is granted while the list still holds exactly one ODT'
+    assert response(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF, 'ALLOC_ODT accumulates'
+    assert handle.lib.Xcp_Ptr.config.daqList[0].maxOdt == 2, 'the list now has two ODTs'
+    assert (daq_list_mode(handle) & mode) == mode, 'and the granted mode is still set on it'
+
+    if entries:
+        for odt in (0x00, 0x01):
+            assert response(handle, (0xD3, 0x00, 0x00, 0x00, odt, 0x01))[0] == 0xFF
+            assert response(handle, (0xE2, 0x00, 0x00, 0x00, odt, 0x00))[0] == 0xFF
+            assert response(handle, (0xE1, 0xFF, 0x01, 0x00) +
+                            tuple(u32_to_array(0x1000 + odt, 'LITTLE_ENDIAN')))[0] == 0xFF
+        # Last, and only once the entries are in place: SET_DAQ_LIST_MODE answers ERR_DAQ_ACTIVE
+        # for a running list, so nothing above could follow a START. A list left stopped would make
+        # every caller below pass by sampling nothing at all, for a reason that has nothing to do
+        # with PID_OFF.
+        assert response(handle, (0xDE, 0x01, 0x00, 0x00))[0] == 0xFF, 'START_STOP_DAQ_LIST(START)'
+    return handle
+
+
+def test_a_pid_off_list_grown_past_one_odt_is_not_sampled():
+    """The transmit-side twin of stim_decode_test.py's
+    test_pid_off_is_refused_once_alloc_odt_has_grown_the_list_past_one_odt. Both directions face the
+    same drifted list; the receive side cannot attribute an arriving frame to an ODT and drops it,
+    and this side must not create the frames that would be unattributable.
+
+    Sampling this list would queue two DTOs, each with no identification field, onto the one PDU the
+    pool shares -- and 1.1/1.1.2.1 leaves the master nothing else to tell them apart with, since
+    every ODT of a list goes out on the same CAN-Id. Asserting the ring is empty rather than
+    asserting one frame is deliberate: emitting ODT 0 alone would still be wrong, because the master
+    was promised the list's whole cycle and would silently receive half of it.
+
+    The Det report is asserted as well as the silence. Without it this test would pass just as well
+    against a module that skipped the list for some unrelated reason -- a broken elapsed check, a
+    list that never actually started -- and drifted lists would vanish with no trace an integrator
+    could see."""
+    handle = drifted_handle()
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert queued_frames(handle) == [], \
+        'a PID_OFF list with two ODTs cannot be identified on the wire, so it must not be sampled'
+    assert len(not_identifiable(handle)) == 1, 'and the skip is reported once for the list'
+    assert not_identifiable(handle)[0][0][2] == \
+        handle.define('XCP_TRIGGER_EVENT_CHANNEL_API_ID')
+
+
+def test_the_same_list_transmits_both_odts_once_pid_off_is_cleared():
+    """The PID_OFF term of the skip condition, isolated. Same pool, same two ALLOC_ODTs, same
+    entries -- only the granted mode differs -- so a guard that had been written against maxOdt
+    alone, or against dynamic allocation, would fail here by refusing a perfectly ordinary two-ODT
+    list. Two frames, not merely 'some', because a guard that skipped ODT 1 while emitting ODT 0
+    would satisfy a weaker assertion.
+
+    The absolute ODT numbers are pinned as well: with the identification field back, the two frames
+    must be distinguishable, which is the property whose absence justifies the skip in the first
+    test."""
+    handle = drifted_handle(mode=0x00)
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    frames = queued_frames(handle)
+    assert len(frames) == 2, 'two ODTs, each with one entry, sample to two frames'
+    first_pid = handle.lib.Xcp_Ptr.config.daqList[0].firstPid
+    assert [frame[0] for frame in frames] == [first_pid, first_pid + 1], \
+        'and each carries its own absolute ODT number'
+    assert not_identifiable(handle) == [], 'nothing was skipped, so nothing was reported'
+
+
+def test_a_single_odt_pid_off_list_still_transmits():
+    """The maxOdt term of the skip condition, isolated. The identical dynamic pool and the identical
+    PID_OFF grant, without the second ALLOC_ODT: a guard that keyed on PID_OFF alone would silence
+    this list too, and PID_OFF would become a bit that turns transmission off rather than the
+    identification field.
+
+    SduLength is asserted because the payload byte alone does not say the identification field is
+    absent -- one byte total is what says it."""
+    handle = XcpTest(dynamic_config(daq_count=1, odt_count=2, odt_entries_count=1,
+                                    identification_field_type='ABSOLUTE'))
+    connect(handle)
+    handle.xcp_read_slave_memory_u8.side_effect = lambda a, e, b: b.__setitem__(0, 0xA5)
+    assert response(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF
+    assert response(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF
+    assert response(handle, (0xE0, 0x20, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF
+    assert response(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF
+    assert response(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0] == 0xFF
+    assert response(handle, (0xE1, 0xFF, 0x01, 0x00) +
+                    tuple(u32_to_array(0x1000, 'LITTLE_ENDIAN')))[0] == 0xFF
+    assert response(handle, (0xDE, 0x01, 0x00, 0x00))[0] == 0xFF
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+
+    assert queued_frames(handle) == [bytes((0xA5,))], \
+        'one ODT, one entry, and no identification field in front of it'
+    assert not_identifiable(handle) == []

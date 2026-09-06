@@ -307,6 +307,13 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
 - The `GET_SLAVE_ID` command (CTO = `TRANSPORT_LAYER_CMD`, sub-command = `0xFF`) returns the PDU ID of the 
   **CMD**/**STIM** communication channel rather than the CAN identifier itself, to avoid a dependency on the PDU 
   mapping table in this module.
+- `SET_DAQ_ID` (CTO = `TRANSPORT_LAYER_CMD`, sub-command = `0xFD`) is **deliberately not implemented** and
+  answers `ERR_CMD_UNKNOWN`. AUTOSAR SWS XCP R4.3.1 §4.1 *Limitations* puts it out of scope in so many words —
+  "The SET_DAQ_ID command according to the XCP CAN Transport Layer Specification is not part of the AUTOSAR XCP
+  module" — so this is conformance with the SWS this module tracks, not an unfinished feature. Implementing it
+  would also require `CanIf_SetDynamicTxId` (SWS_CANIF_00189) and an integrator guarantee that every DAQ transmit
+  PDU is configured as a *dynamic* L-PDU, neither of which this module can verify. `GET_DAQ_ID` (`0xFE`)
+  consequently reports the identifier as fixed, which is the truthful answer for a slave that cannot change it.
 - The `GET_ID` command only supports the request identification type 0 (*ASCII text*).
 - `SHORT_DOWNLOAD` can transfer no data at all when `MAX_CTO` is 8, as it is for XCP on CAN, because the command's
   own header fills the whole frame. The specification notes this. The stack still accepts the command, and rejects any
@@ -318,9 +325,10 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
   integrator who enables the API without also raising `max_cto` to at least 10 gets a code-generation failure,
   and one who raises `max_cto` to exactly 10 gets a frame no CAN network carries.
 - No `ALTERNATING` and no DAQ list prioritisation — both SP2c: a priority above 0 is refused with
-  `ERR_OUT_OF_RANGE`, which §1.6.4.1.1.3 requires of a slave that does not support it. No STIM direction (SP3).
-- DAQ list configuration is static only (SP2d). `FREE_DAQ` and the three `ALLOC_*` commands (`ALLOC_DAQ`,
-  `ALLOC_ODT`, `ALLOC_ODT_ENTRY`) answer `ERR_CMD_UNKNOWN`.
+  `ERR_OUT_OF_RANGE`, which §1.6.4.1.1.3 requires of a slave that does not support it.
+- Synchronous data stimulation is implemented (SP3), less `BIT_STIM` and `EV_STIM_TIMEOUT`, and less runtime
+  protection of the `STIM` resource — a configuration that is stimulation-capable *and* declares `STIM` protected
+  is refused at generation rather than shipped with a gate that does nothing.
 - At most one DTO frame is in flight at a time (SP2c): `Xcp_StartNextTransmission` arbitrates a single transmit
   slot across command responses, event packets and DAQ frames alike, and starts the next one only once the
   current one is confirmed. This is mandatory rather than a simplification, not merely a design choice this
@@ -340,4 +348,4 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
   transmit arbitration state (`Xcp_Internal.ongoing_transmit_type`) and the event queue are now covered by the
   exclusive area described under *Data acquisition*; everything else the module holds across contexts is not.
 - Use pre-processor to enable/disable optional APIs.
-- Implement sub-command `SET_DAQ_LIST_CAN_IDENTIFIER` for CTO `TRANSPORT_LAYER_CMD`.
+- Implement `BIT_STIM` and `EV_STIM_TIMEOUT`, and gate the `STIM` resource at runtime (all deferred from SP3).

@@ -92,8 +92,10 @@ def test_the_daq_resource_bit_clears_without_a_mandatory_daq_command():
     assert resource(handle) & 0x04 == 0
 
 
-# "STIM" is absent because a pure STIM DAQ list is refused at generation -- see
-# test_generation_fails_when_a_daq_list_is_configured_as_stim in daq_configuration_test.py.
+# "STIM" is absent because this parametrization predates SP3, when a pure STIM DAQ list was
+# refused at generation. SP3 lifted that refusal (commit 3659d24), so the named test no longer
+# exists; the sweep is left at DAQ and DAQ_STIM because those are what it needs, not because STIM
+# is unbuildable.
 # DAQ_STIM still distinguishes the bit from the DAQ case, which is all this test needs.
 @pytest.mark.parametrize('resource_stim_bit, daq_type', ((0, "DAQ"), (1, "DAQ_STIM")))
 def test_connect_sets_the_resource_stim_bit_according_to_enabled_apis(resource_stim_bit, daq_type):
