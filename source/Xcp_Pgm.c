@@ -395,10 +395,13 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
     else
     {
         /* 1.1/1.6.5.1.1 names ERR_GENERIC for a slave "not in a state which permits programming".
-         * pgm_state returns to IDLE, not STARTING: a module that stayed STARTING here would refuse
-         * every later PROGRAM_START with ERR_SEQUENCE instead of letting the master retry. */
-        Xcp_Internal.pgm_state = XCP_PGM_IDLE;
-
+         *
+         * pgm_state is NOT written here, and the absence is deliberate. A revision of this branch
+         * assigned XCP_PGM_IDLE, justified by a third enumerator XCP_PGM_STARTING that a deferring
+         * PROGRAM_START used to enter -- with that gone, the handler only accepts from IDLE and
+         * nothing writes the field in between, so the assignment stored a value the field already
+         * held. Deleted rather than left as a comment describing a module that no longer exists,
+         * the same way Xcp_PgmAbandonPendingCommand's equivalent was. */
         Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
     }
 

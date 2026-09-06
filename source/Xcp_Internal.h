@@ -323,7 +323,9 @@ typedef enum {
  * What distinguishes a deferred PROGRAM_START from an idle module is pending_command.active
  * (DD52), which is a different fact and is read in several places. What distinguishes an open
  * session is XCP_PGM_ACTIVE, written only by Xcp_PgmCompleteProgramStart on success and cleared
- * only by Xcp_PgmCompleteProgramReset, Xcp_CTOCmdStdConnect (Xcp_Std.c) and Xcp_Init.
+ * only by Xcp_PgmCompleteProgramReset, Xcp_CTOCmdStdConnect (Xcp_Std.c) and Xcp_Init. Those four
+ * are the complete set of writers; PROGRAM_START's failure path deliberately writes nothing,
+ * because the handler accepts only from IDLE and nothing changes the field while it defers.
  */
 typedef enum {
     XCP_PGM_IDLE = 0x00u,
