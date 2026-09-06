@@ -439,11 +439,13 @@ the flash programming (PGM)") and SWS_Xcp_00856, and `XcpFlashProgrammingEnabled
 Eleven commands, a deferred-response model and a flash sector configuration model are more than
 one design can carry, so SP4 is **three sub-projects**:
 
-- **SP4a — programming session and deferred responses.** `PROGRAM_START` (0xD2), `PROGRAM_RESET`
-  (0xCF), `PROGRAM_PREPARE` (0xCC); the session state machine and the gate that refuses
-  clear/program commands before `PROGRAM_START`; the pending-command slot, the polled integrator
-  callbacks and `EV_CMD_PENDING`; the `XCP_FLASH_PROGRAMMING_ENABLED` compile gate; and defects
-  D10 and D11. Design: `2026-09-06-xcp-pgm-sp4a-design.md` (DD49–DD61).
+- **SP4a — programming session and deferred responses — complete.** `PROGRAM_START` (0xD2),
+  `PROGRAM_RESET` (0xCF), `PROGRAM_PREPARE` (0xCC); the session state machine and the gate that
+  refuses clear/program commands before `PROGRAM_START`; the pending-command slot, the polled
+  integrator callbacks and `EV_CMD_PENDING`; the `XCP_FLASH_PROGRAMMING_ENABLED` compile gate; and
+  defects D10 and D11, now fixed (below). Design: `2026-09-06-xcp-pgm-sp4a-design.md` (DD49–DD61).
+  `test/pgm_acceptance_test.py` walks `CONNECT` through `PROGRAM_RESET` against a deliberately
+  slow integrator, composing what each task's own tests had only verified in isolation.
 - **SP4b — clear and program, absolute access mode.** `PROGRAM_CLEAR` (0xD1), `PROGRAM` (0xD0),
   `PROGRAM_MAX` (0xC9), `PROGRAM_NEXT` (0xCA), `GET_PGM_PROCESSOR_INFO` (0xCE). The first slice
   where flash contents change, and the first where `CONNECT` may legitimately advertise PGM.
@@ -454,17 +456,33 @@ one design can carry, so SP4 is **three sub-projects**:
 **D10 — `CONNECT` advertises flash programming that answers `ERR_CMD_UNKNOWN`.** With the shipped
 `config/xcp.json`, `CONNECT` returns resource byte `0x15`, setting the PGM bit (§1.6.1.1.1), while
 all eleven PGM PIDs dispatch to `Xcp_CmdNotImplemented`. Measured against a default handle, not
-inferred. Same class as SP3's advertised-but-ungated `STIM` resource. Fixed by SP4a's DD58: the
-compile gate defaults off, so the default configuration stops making the claim.
+inferred. Same class as SP3's advertised-but-ungated `STIM` resource.
+
+> **Fixed, commit `83cb11d`.** DD58's compile gate defaults off, so the default configuration
+> stops making the claim. Confirmed at the generated constant, not only on the wire, because the
+> wire cannot tell the difference: `Xcp_CmdNotImplemented` and a disabled `ctoInfo` entry both
+> answer `ERR_CMD_UNKNOWN` identically (source/Xcp.c), which is the reason this defect could ship
+> unnoticed in the first place. `test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off`
+> (test/pgm_configuration_test.py, added in Task 6) reads all eleven `ctoInfo` enable bits out of
+> the generated source directly and pins the ten that used to be hard-coded `0x01u` regardless of
+> configuration.
 
 **D11 — two of the three PGM API configuration keys are dead.** `script/source_cfg.c.jinja2`
 hard-codes the `ctoInfo` enable bit for the whole PGM block except `xcp_program_max_api_enable`,
 so `xcp_program_api_enable` and `xcp_program_clear_api_enable` are accepted and ignored.
 `Xcp_CTOCmdStdConnect` tests all three, making its three-term conjunction one term in practice —
 and `test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis` passes all four of its
-cases on that one term, so it would not notice the other two being deleted. Fixed by SP4a's DD59
-and DD60, which have to land together: after the generator fix those same four cases would still
-pass.
+cases on that one term, so it would not notice the other two being deleted.
+
+> **Fixed, commit `83cb11d`.** DD59 templates all eleven `ctoInfo` enable bits on their own
+> configuration key instead of a hard-coded constant, and DD60 rewrites the `CONNECT` sweep in the
+> same commit to hold two of the three keys enabled and vary the third, so each conjunct is the
+> sole cause of a zero in exactly one case. Landing the fix and the test that can see it together
+> mattered: DD59 alone would still have passed the old four-case sweep unchanged, on
+> `xcp_program_max_api_enable` alone, the same way the defect did.
+> `test_the_gate_touches_only_the_eleven_pgm_ctoinfo_rows` (test/pgm_configuration_test.py, Task 6)
+> additionally confirms the generator fix changes exactly those eleven rows and nothing else in
+> the generated source.
 
 ### SP5 — Protocol completion
 

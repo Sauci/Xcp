@@ -1,7 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import os
+
 import pytest
+
+from bsw_code_gen import BSWCodeGen
 
 from .parameter import *
 from .conftest import XcpTest
@@ -93,3 +97,79 @@ def test_the_gate_overrides_the_api_keys():
     connect(handle)
 
     assert (handle.can_if_transmit.call_args[0][1].SduDataPtr[0x01] & 0x10) == 0x00
+
+
+def _generated_source(config):
+    """The Xcp_Cfg.c `config` generates, as text -- mirrors daq_configuration_test.py's own
+    _generated_source helper (same name, same one-line body), needed here for the identical
+    reason: some claims are about the GENERATED CONSTANT, not about anything a compiled, running
+    module can be made to reveal on the wire."""
+    return BSWCodeGen(config, os.environ['script_directory']).source_cfg
+
+
+def test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off():
+    """Design doc §9, acceptance criterion 1: 'A default build...is byte-for-byte identical to
+    today's.' Task 6's own gate-off comparison (task-6-report.md) needs this at the level the wire
+    cannot reach: D10 was a defect where the WIRE behaviour (ERR_CMD_UNKNOWN) was already correct,
+    for the wrong reason. source/Xcp.c's own dispatcher treats 'ctoInfo disabled' and 'ctoInfo
+    enabled but Xcp_PIDTable points at Xcp_CmdNotImplemented' identically -- both answer
+    ERR_CMD_UNKNOWN (the commit titled 'fix: return ERR_CMD_UNKNOWN for unimplemented and disabled
+    commands' made that unification deliberate) -- so test_the_default_configuration_does_not_
+    advertise_flash_programming above, however many PIDs it sweeps, cannot tell a disabled entry
+    apart from an enabled-but-unimplemented one. Reading the generated constant directly is the
+    only way to pin which of the two this actually is.
+
+    Confirmed against history rather than merely asserted (task-6-report.md carries the full
+    diff): extracting script/source_cfg.c.jinja2, config/xcp.schema.json and config/xcp.json as
+    they stood at 018116556c282df9fb0df7ef6691c3856f071398 -- the commit immediately before Task
+    1's generator fix, 83cb11d967feffda21ebefc8b05fc7e51075b554 -- and running them through the
+    same generator shows all ten of these bits (every PGM PID except PROGRAM_MAX, D11's one live
+    term) read enabled (0x01u) unconditionally there, regardless of configuration. This test is
+    what a regression back to that state would fail."""
+    source = _generated_source(DefaultConfig())
+
+    for pid, name in PGM_PIDS:
+        marker = '%s 0x%02X' % (name, pid)
+        matches = [line for line in source.splitlines() if marker in line]
+        assert len(matches) == 1, \
+            '%s must appear exactly once in the generated ctoInfo table' % marker
+        assert '(0x00u << 0x07u) /* enable */' in matches[0], \
+            '%s must generate disabled with the gate off: %r' % (marker, matches[0])
+
+
+def test_the_gate_touches_only_the_eleven_pgm_ctoinfo_rows():
+    """The other half of acceptance criterion 1: not merely that the disabled state above is
+    correct, but that turning the gate on touches NOTHING else. A generator defect that shifted
+    some unrelated byte whenever 'programming.enabled' flipped would pass every wire-level test in
+    this suite -- all of it runs with the gate off -- and still violate 'byte-for-byte identical',
+    which is a claim about the whole file, not about the eleven rows this sub-project added.
+
+    Diffs the current generator's own output for the gate on vs off, rather than reaching back
+    into git history for the comparison: script/source_cfg.c.jinja2 has not changed since Task 1
+    (confirmed by inspection -- git log shows exactly one commit touching it on this branch,
+    83cb11d967feffda21ebefc8b05fc7e51075b554), so this in-tree, git-independent diff already
+    answers the same question a historical one would, without asking every future test run to
+    depend on git history being present and unrewritten -- something no other test in this suite
+    does. task-6-report.md also carries the historical diff directly, run by hand once, for the
+    record."""
+    off = _generated_source(DefaultConfig())
+    on = _generated_source(DefaultConfig(programming_enabled=True,
+                                         xcp_program_clear_api_enable=True,
+                                         xcp_program_api_enable=True,
+                                         xcp_program_max_api_enable=True,
+                                         xcp_program_start_api_enable=True,
+                                         xcp_program_reset_api_enable=True,
+                                         xcp_program_prepare_api_enable=True))
+
+    off_lines = off.splitlines()
+    on_lines = on.splitlines()
+    assert len(off_lines) == len(on_lines), 'the gate must not add or remove any generated line'
+
+    pgm_markers = ['%s 0x%02X' % (name, pid) for pid, name in PGM_PIDS]
+    differing = [i for i, (o, n) in enumerate(zip(off_lines, on_lines)) if o != n]
+
+    assert len(differing) == len(PGM_PIDS), \
+        'the gate must change exactly the eleven PGM ctoInfo rows, nothing more and nothing fewer'
+    for i in differing:
+        assert any(marker in off_lines[i] for marker in pgm_markers), \
+            'line %d differs but names no PGM PID: %r' % (i, off_lines[i])
