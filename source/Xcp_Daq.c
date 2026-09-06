@@ -482,15 +482,6 @@ void Xcp_DaqFreeAll(void)
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
 
-uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo)
-{
-    (void)pPduInfo;
-
-    *responseExpected = TRUE;
-
-    return E_OK;
-}
-
 uint8 Xcp_DTOCmdDaqSetDaqPtr(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     const uint8 odt_number = pPduInfo->SduDataPtr[0x04u];

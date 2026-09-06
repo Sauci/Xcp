@@ -53,17 +53,21 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
      * ones, so a later ALLOC_DAQ cannot change its answer. maxOdt is the one that does. Under
      * DAQ_DYNAMIC, ALLOC_DAQ, ALLOC_ODT(list, 1), SET_DAQ_LIST_MODE(PID_OFF), ALLOC_ODT(list, 1)
      * is a legal sequence -- SET_DAQ_LIST_MODE does not touch Xcp_Internal.daq_alloc_state, and
-     * DD28 makes the repeat ACCUMULATE -- and it leaves maxOdt at 2 with PID_OFF still set.
-     * Xcp_TriggerEventChannel then samples BOTH ODTs of that list, this function returns 0x00u for
-     * each of them, and two DTOs go out on one PDU with nothing on the wire to tell them apart.
+     * DD28 makes the repeat ACCUMULATE -- and it leaves maxOdt at 2 with PID_OFF still set. Both
+     * ODTs of that list would then be sampled, this function would return 0x00u for each, and two
+     * DTOs would go out on one PDU with nothing on the wire to tell them apart.
      *
-     * Xcp_DaqReadIdentificationField, further down this file, re-checks maxOdt for precisely that
-     * sequence and refuses the frame rather than trusting the grant. **The transmit side has no
-     * such guard.** An earlier revision of this comment claimed the opposite -- that
-     * SET_DAQ_LIST_MODE "has already refused the bit for anything but an ABSOLUTE single-ODT list,
-     * so this cannot produce a frame the master is unable to identify" -- and that is the sentence
-     * the receive-side fix disproved. Do not reintroduce it, here or at any other reader of this
-     * bit: it is what stands between a maintainer and re-deriving a drop already found once.
+     * Both directions guard against that sequence, and NEITHER guard is in this function.
+     * Xcp_DaqReadIdentificationField, further down this file, re-checks maxOdt and refuses the
+     * frame rather than trusting the grant. Xcp_TriggerEventChannel, also further down, re-checks
+     * it before sampling and skips the whole list with XCP_E_DAQ_LIST_NOT_IDENTIFIABLE. This
+     * function is reached only for a list that already passed that check, which is why it may
+     * treat the bit as final -- an obligation of its caller, not a property of the bit. An earlier
+     * revision of this comment justified the same silence differently, claiming SET_DAQ_LIST_MODE
+     * "has already refused the bit for anything but an ABSOLUTE single-ODT list, so this cannot
+     * produce a frame the master is unable to identify". That sentence was false for the drifted
+     * list, and it is the one the two guards above were written to replace. Do not reintroduce it,
+     * here or at any other reader of this bit: a grant is not an invariant.
      *
      * Xcp_DaqListRt (source/Xcp_Daq.c) has file-local linkage there, so the stored mode is read
      * directly off Xcp_Rt here instead, the same way Xcp_DaqSampleOdt's own timestamp check
@@ -1135,33 +1139,73 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
             if ((Xcp_DaqListElapsedOnTrigger(p_rt, eventChannelNumber, FALSE) == TRUE) &&
                 ((p_list->type == DAQ) || (p_list->type == DAQ_STIM)))
             {
-                uint8_least odt_idx;
-                uint32 timestamp = 0x00000000u;
+                /* PID_OFF plus more than one ODT is unrepresentable on this transport, so the
+                 * list is skipped whole rather than transmitted unidentifiably.
+                 *
+                 * Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) never grants that combination --
+                 * it requires ABSOLUTE identification, a single ODT, and a TX PDU no other list
+                 * shares -- but a grant is a statement about the moment that command ran. Under
+                 * DAQ_DYNAMIC the master may allocate more ODTs afterwards: ALLOC_ODT is legal
+                 * after ALLOC_ODT (source/Xcp_Daq.c, daq_alloc_state) and 1.1/1.6.4.2.1.3's
+                 * ERR_SEQUENCE rules forbid only ALLOC_DAQ and ALLOC_ODT_ENTRY regressions, so
+                 * ALLOC_DAQ, ALLOC_ODT(list, 1), SET_DAQ_LIST_MODE(PID_OFF), ALLOC_ODT(list, 1)
+                 * is a conformant sequence that leaves maxOdt at 2 with PID_OFF still set. Without
+                 * this test the loop below samples both ODTs, Xcp_DaqWriteIdentificationField
+                 * returns 0 for each, and two DTOs go out on one PDU with nothing to tell them
+                 * apart -- the transmit-side twin of the frame Xcp_DaqStoreStim drops on receive.
+                 *
+                 * The specification does not dictate this remedy; it is this module holding its
+                 * own grant rule true at the moment of use. 1.1/1.1.2.1 requires only that PID_OFF
+                 * accompany ABSOLUTE identification and leaves the rest to the transport -- "the
+                 * unambiguous identification has to be done on the level of the Transport Layer",
+                 * of which one CAN-Id and one ODT per list is the example it gives, not a rule it
+                 * imposes. This module adopts that example because on CAN every ODT of a list
+                 * shares one TX PDU, so there is nothing for the transport to disambiguate with.
+                 *
+                 * Tested on p_list->maxOdt, the same field the sampling loop below walks, so the
+                 * skip cannot disagree with what would have been transmitted. Nested inside the
+                 * elapsed test rather than added to it as a conjunct: Xcp_DaqListElapsedOnTrigger
+                 * mutates and must run exactly once per list per trigger, and a list held back
+                 * here has still had its cycle. Pure STIM lists never reach this point and need no
+                 * report -- they transmit nothing to be misread. */
+                if (((p_rt->mode & XCP_DAQ_LIST_MODE_PID_OFF) != 0x00u) &&
+                    (p_list->maxOdt != 0x01u))
+                {
+                    /* Outside every exclusive area, as Xcp_ReportError is an external call. */
+                    Xcp_ReportError(0x00u,
+                                    XCP_TRIGGER_EVENT_CHANNEL_API_ID,
+                                    XCP_E_DAQ_LIST_NOT_IDENTIFIABLE);
+                }
+                else
+                {
+                    uint8_least odt_idx;
+                    uint32 timestamp = 0x00000000u;
 
 #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
-                /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
-                 * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps and
-                 * would call integrator code once per ODT instead of once per cycle.
-                 *
-                 * In the acquisition pass because nothing else reads it: a STIM DTO's timestamp is
-                 * the master's to send and this slave skips it without storing it (DD44), so a
-                 * stimulating list would otherwise call the integrator's clock once per cycle for
-                 * a value it then discards. */
-                if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
-                {
-                    timestamp = Xcp_GetDaqTimestamp();
-                }
+                    /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
+                     * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps and
+                     * would call integrator code once per ODT instead of once per cycle.
+                     *
+                     * In the acquisition pass because nothing else reads it: a STIM DTO's timestamp is
+                     * the master's to send and this slave skips it without storing it (DD44), so a
+                     * stimulating list would otherwise call the integrator's clock once per cycle for
+                     * a value it then discards. */
+                    if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
+                    {
+                        timestamp = Xcp_GetDaqTimestamp();
+                    }
 #endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
-                for (odt_idx = 0x00u; odt_idx < p_list->maxOdt; odt_idx++)
-                {
-                    Xcp_DtoFrameType frame;
-
-                    if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
+                    for (odt_idx = 0x00u; odt_idx < p_list->maxOdt; odt_idx++)
                     {
-                        if (Xcp_DaqQueuePush(&frame) != E_OK)
+                        Xcp_DtoFrameType frame;
+
+                        if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
                         {
-                            overloaded = TRUE;
+                            if (Xcp_DaqQueuePush(&frame) != E_OK)
+                            {
+                                overloaded = TRUE;
+                            }
                         }
                     }
                 }

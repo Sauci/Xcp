@@ -78,7 +78,7 @@ positive response without doing anything, which was defect D2, fixed in SP1.
 | 0xF5 | UPLOAD | done — D1 fixed in SP1 |
 | 0xF4 | SHORT_UPLOAD | done |
 | 0xF3 | BUILD_CHECKSUM | done |
-| 0xF2 | TRANSPORT_LAYER_CMD | partial — `GET_SLAVE_ID` only; `SET_DAQ_LIST_CAN_ID` absent |
+| 0xF2 | TRANSPORT_LAYER_CMD | done — `GET_SLAVE_ID` and `GET_DAQ_ID`; `SET_DAQ_ID` excluded by SWS_Xcp §4.1 |
 | 0xF1 | USER_CMD | done |
 
 ### 2.2 Calibration commands (§1.4.2, §1.6.2)
@@ -148,9 +148,10 @@ triggering a DAQ event, and ECUC_Xcp_00014 states the module does not require it
 function period, so a module-driven raster could not have been built on anything the
 configuration is allowed to know.
 
-The timestamp field (§1.1.2.2) and `PID_OFF` landed in SP2b. Still absent from the runtime:
-`ALTERNATING`, DAQ list prioritisation and more than one outstanding DTO frame — all SP2c — and
-STIM reception in `Xcp_CanIfRxIndication`, which remains SP3.
+The timestamp field (§1.1.2.2) and `PID_OFF` landed in SP2b; STIM reception in
+`Xcp_CanIfRxIndication` landed in SP3. Still absent from the runtime: `ALTERNATING`, DAQ list
+prioritisation and more than one outstanding DTO frame — all SP2c — and, from SP3, `BIT_STIM` and
+`EV_STIM_TIMEOUT`.
 
 ### 2.5 Non-volatile memory programming (§1.4.5, §1.6.5)
 
@@ -393,24 +394,38 @@ then command surface, then runtime. That was rejected when the design was writte
 is independently shippable, since configured lists that never transmit have no value to a
 master.
 
-### SP3 — Synchronous data stimulation (STIM)
+### SP3 — Synchronous data stimulation (STIM) — **complete**
 
-STIM reception in `Xcp_CanIfRxIndication`, `DAQ_STIM` and `STIM` event channel types.
-Depends on SP2 for the DAQ list infrastructure it reuses wholesale.
+STIM reception in `Xcp_CanIfRxIndication`, `DAQ_STIM` and `STIM` DAQ list types. Depends on SP2 for
+the DAQ list infrastructure it reuses wholesale.
 
-**Concurrency question SP3 must answer, found in SP2b.** SWS_Xcp_00813 specifies
-`Xcp_<Lo>RxIndication` as *"Reentrant for different PduIds. Non reentrant for the same PduId."*
-Every CTO command reaches the module on one PduId — `channel_rx_pdu_ref->id` — so CanIf's own
-contract prevents a CTO from racing itself, and no exclusive area guards `cto_response`, `last_pid`
-or the protection-status clear today.
+Design: `2026-09-04-xcp-stim-sp3-design.md` (DD35–DD48).
 
-**STIM breaks that.** DAQ_STIM receive PDUs are *different* PduIds, so a stimulation indication may
-preempt a CTO command mid-dispatch. The branch that will host it already exists in
-`Xcp_CanIfRxIndication` and today only sets `valid_pdu_id`, touching nothing shared. The moment
-SP3's handler touches the response buffer, the DAQ pointer, the runtime mode bits or the DTO ring,
-the race is real and needs an exclusive area around the busy-check/dispatch/set-flag sequence —
-which affects all 256 PID entries and is a design decision, not an implementation detail.
-Settle it in SP3's design; do not discover it in review.
+**The concurrency question this sub-project had to answer, found in SP2b, and how it was answered.**
+SWS_Xcp_00813 specifies `Xcp_<Lo>RxIndication` as *"Reentrant for different PduIds. Non reentrant
+for the same PduId."* Every CTO command reaches the module on one PduId — `channel_rx_pdu_ref->id`
+— so CanIf's own contract prevents a CTO from racing itself, and no exclusive area guards
+`cto_response`, `last_pid` or the protection-status clear. DAQ_STIM receive PDUs are *different*
+PduIds, so a stimulation indication may preempt a CTO command mid-dispatch, and the fear was that
+guarding it would need an exclusive area around the whole busy-check/dispatch/set-flag sequence.
+
+It did not. **DD36** keeps the receive path off everything the dispatch touches: reception copies
+the frame into a per-ODT slot and returns, and the event trigger — not the receive context — writes
+ECU memory. The slot is guarded by its own exclusive area, `SchM_Enter_Xcp_StimBuffer` (**DD37**),
+which is disjoint from the DTO ring's. Nothing was added to the CTO dispatch path, and a DAQ-only
+build is byte-for-byte unchanged.
+
+**DD46** settled the routing that the original note did not anticipate: CTO and DTO are told apart
+by the *receiving PduId*, not by the frame's first byte. Splitting on the byte would have let a
+`PID_OFF` stimulation payload whose first byte fell in `0xC0..0xFF` be dispatched as a command —
+which, past the handler, also clears the protection status and so silently revokes a completed
+seed-and-key unlock.
+
+**Deferred out of SP3, each needing its own design:** `BIT_STIM`, `EV_STIM_TIMEOUT`, and runtime
+protection of the STIM resource (**DD41** — `Xcp_PIDToCmdGroupTable` is a per-PID mask that cannot
+express a predicate on a command's argument, and `SET_DAQ_LIST_MODE` has no `ERR_ACCESS_LOCKED` in
+its error set). Until that lands, **DD48** makes generation refuse the one configuration where the
+gap would be visible: stimulation-capable *and* declaring the STIM resource protected.
 
 ### SP4 — Non-volatile memory programming (PGM)
 
@@ -454,8 +469,17 @@ pass.
 ### SP5 — Protocol completion
 
 The residue: the interleaved communication model (§1.7.2.3), `EV_CMD_PENDING` (§1.7.2.4.2),
-RESUME mode, `GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2),
-`SET_DAQ_LIST_CAN_ID`, the remaining `EV_*` event codes and the `SERV_*` service request codes.
+RESUME mode, `GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2), the remaining `EV_*` event
+codes and the `SERV_*` service request codes.
+
+`SET_DAQ_ID` was listed here and has been **removed from the roadmap rather than deferred within
+it**. AUTOSAR SWS XCP R4.3.1 §4.1 puts it out of scope — "The SET_DAQ_ID command according to the
+XCP CAN Transport Layer Specification is not part of the AUTOSAR XCP module" — and this module
+tracks that SWS. Two things would have to be settled before revisiting it: its normative definition
+lives in the XCP CAN Transport Layer specification, which is not in `docs/external`, and changing a
+transmit identifier at runtime needs `CanIf_SetDynamicTxId` (SWS_CANIF_00189) plus an integrator
+guarantee that every DAQ transmit PDU is a dynamic L-PDU. The slave answers `ERR_CMD_UNKNOWN`,
+which §1.4 prescribes, and `GET_DAQ_ID` reports the identifier as fixed.
 
 Note that time-out handling itself is *not* here: §1.7.2 places the t1…t6 timers entirely on
 the master. `EV_CMD_PENDING` and the interleaved request queue are the slave's whole share
@@ -491,7 +515,7 @@ Three things this must get right, all of them discovered by D9:
   module's advertisement and its refusals are currently consistent; changing one without the
   others is what would make it incoherent.
 
-**Dependencies.** `SET_DAQ_LIST_CAN_ID` and SP5-NV both depend on SP2 — RESUME is a
+**Dependencies.** RESUME and SP5-NV both depend on SP2 — RESUME is a
 `SET_DAQ_LIST_MODE` bit backed by `STORE_DAQ_REQ` persistence, and the session configuration
 id is persisted and cleared through the same DAQ storage mechanism. Only the interleaved
 model, `EV_CMD_PENDING`, `GET_ID` types and the `SERV_*` codes are genuinely independent and

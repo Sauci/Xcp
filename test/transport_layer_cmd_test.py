@@ -74,7 +74,11 @@ def test_transport_layer_cmd_sub_command_get_daq_list_can_identifier_returns_exp
     # check packet ID.
     assert raw_data[0] == 0xFF
 
-    # check CAN ID fixed.
+    # CAN_ID_FIXED, and 0x01 is the permanent answer rather than a placeholder: SET_DAQ_ID (0xFD)
+    # is deliberately not implemented (see the test below), so this slave genuinely cannot change a
+    # DAQ list's transmit identifier. The polarity -- 1 meaning fixed -- is the CAN Transport Layer
+    # specification's, which is not held in docs/external; what this assertion pins independently
+    # of that is that the byte does not drift while SET_DAQ_ID stays refused.
     assert raw_data[1] == 0x01
 
     # check reserved bytes.
@@ -122,6 +126,16 @@ def test_get_daq_id_answers_each_allocated_dynamic_list_by_its_own_number():
 
 
 def test_transport_layer_cmd_sub_cmd_set_daq_list_can_identifier_returns_err_cmd_unknown():
+    """SET_DAQ_ID is refused BY DESIGN, so this test pins a decision rather than marking a gap.
+
+    AUTOSAR SWS XCP R4.3.1 §4.1 Limitations: "The SET_DAQ_ID command according to the XCP CAN
+    Transport Layer Specification is not part of the AUTOSAR XCP module". ERR_CMD_UNKNOWN (0x20) is
+    what 1.1/1.4 prescribes for an optional command a slave does not implement, so the refusal is
+    conformant in both directions at once.
+
+    The request here is eight bytes, which matters: the handler length-checks before it refuses, so
+    a shorter frame is answered ERR_CMD_SYNTAX instead and would pass an assertion written only
+    against "some error". See test/asam_error_matrix_test.py for that half."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     # CONNECT
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))

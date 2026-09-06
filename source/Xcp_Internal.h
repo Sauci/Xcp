@@ -604,7 +604,6 @@ Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetI
 extern void(* const Xcp_ReadSlaveMemoryTable[])(void *address, uint8 extension, uint8 *pBuffer);
 extern void(* const Xcp_WriteSlaveMemoryTable[])(void *address, uint8 *pBuffer);
 
-uint8 Xcp_DTODaqStimPacket(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdCalShortDownload(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdCalDownloadMax(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_DTOCmdCalDownloadNext(boolean *responseExpected, const PduInfoType *pPduInfo);

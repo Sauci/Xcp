@@ -129,198 +129,198 @@ static void Xcp_TransmitOneFrame(void);
 #include "Xcp_MemMap.h"
 
 static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const PduInfoType *pPduInfo) = {
-    Xcp_DTODaqStimPacket, /* 0x00 */
-    Xcp_DTODaqStimPacket, /* 0x01 */
-    Xcp_DTODaqStimPacket, /* 0x02 */
-    Xcp_DTODaqStimPacket, /* 0x03 */
-    Xcp_DTODaqStimPacket, /* 0x04 */
-    Xcp_DTODaqStimPacket, /* 0x05 */
-    Xcp_DTODaqStimPacket, /* 0x06 */
-    Xcp_DTODaqStimPacket, /* 0x07 */
-    Xcp_DTODaqStimPacket, /* 0x08 */
-    Xcp_DTODaqStimPacket, /* 0x09 */
-    Xcp_DTODaqStimPacket, /* 0x0A */
-    Xcp_DTODaqStimPacket, /* 0x0B */
-    Xcp_DTODaqStimPacket, /* 0x0C */
-    Xcp_DTODaqStimPacket, /* 0x0D */
-    Xcp_DTODaqStimPacket, /* 0x0E */
-    Xcp_DTODaqStimPacket, /* 0x0F */
-    Xcp_DTODaqStimPacket, /* 0x10 */
-    Xcp_DTODaqStimPacket, /* 0x11 */
-    Xcp_DTODaqStimPacket, /* 0x12 */
-    Xcp_DTODaqStimPacket, /* 0x13 */
-    Xcp_DTODaqStimPacket, /* 0x14 */
-    Xcp_DTODaqStimPacket, /* 0x15 */
-    Xcp_DTODaqStimPacket, /* 0x16 */
-    Xcp_DTODaqStimPacket, /* 0x17 */
-    Xcp_DTODaqStimPacket, /* 0x18 */
-    Xcp_DTODaqStimPacket, /* 0x19 */
-    Xcp_DTODaqStimPacket, /* 0x1A */
-    Xcp_DTODaqStimPacket, /* 0x1B */
-    Xcp_DTODaqStimPacket, /* 0x1C */
-    Xcp_DTODaqStimPacket, /* 0x1D */
-    Xcp_DTODaqStimPacket, /* 0x1E */
-    Xcp_DTODaqStimPacket, /* 0x1F */
-    Xcp_DTODaqStimPacket, /* 0x20 */
-    Xcp_DTODaqStimPacket, /* 0x21 */
-    Xcp_DTODaqStimPacket, /* 0x22 */
-    Xcp_DTODaqStimPacket, /* 0x23 */
-    Xcp_DTODaqStimPacket, /* 0x24 */
-    Xcp_DTODaqStimPacket, /* 0x25 */
-    Xcp_DTODaqStimPacket, /* 0x26 */
-    Xcp_DTODaqStimPacket, /* 0x27 */
-    Xcp_DTODaqStimPacket, /* 0x28 */
-    Xcp_DTODaqStimPacket, /* 0x29 */
-    Xcp_DTODaqStimPacket, /* 0x2A */
-    Xcp_DTODaqStimPacket, /* 0x2B */
-    Xcp_DTODaqStimPacket, /* 0x2C */
-    Xcp_DTODaqStimPacket, /* 0x2D */
-    Xcp_DTODaqStimPacket, /* 0x2E */
-    Xcp_DTODaqStimPacket, /* 0x2F */
-    Xcp_DTODaqStimPacket, /* 0x30 */
-    Xcp_DTODaqStimPacket, /* 0x31 */
-    Xcp_DTODaqStimPacket, /* 0x32 */
-    Xcp_DTODaqStimPacket, /* 0x33 */
-    Xcp_DTODaqStimPacket, /* 0x34 */
-    Xcp_DTODaqStimPacket, /* 0x35 */
-    Xcp_DTODaqStimPacket, /* 0x36 */
-    Xcp_DTODaqStimPacket, /* 0x37 */
-    Xcp_DTODaqStimPacket, /* 0x38 */
-    Xcp_DTODaqStimPacket, /* 0x39 */
-    Xcp_DTODaqStimPacket, /* 0x3A */
-    Xcp_DTODaqStimPacket, /* 0x3B */
-    Xcp_DTODaqStimPacket, /* 0x3C */
-    Xcp_DTODaqStimPacket, /* 0x3D */
-    Xcp_DTODaqStimPacket, /* 0x3E */
-    Xcp_DTODaqStimPacket, /* 0x3F */
-    Xcp_DTODaqStimPacket, /* 0x40 */
-    Xcp_DTODaqStimPacket, /* 0x41 */
-    Xcp_DTODaqStimPacket, /* 0x42 */
-    Xcp_DTODaqStimPacket, /* 0x43 */
-    Xcp_DTODaqStimPacket, /* 0x44 */
-    Xcp_DTODaqStimPacket, /* 0x45 */
-    Xcp_DTODaqStimPacket, /* 0x46 */
-    Xcp_DTODaqStimPacket, /* 0x47 */
-    Xcp_DTODaqStimPacket, /* 0x48 */
-    Xcp_DTODaqStimPacket, /* 0x49 */
-    Xcp_DTODaqStimPacket, /* 0x4A */
-    Xcp_DTODaqStimPacket, /* 0x4B */
-    Xcp_DTODaqStimPacket, /* 0x4C */
-    Xcp_DTODaqStimPacket, /* 0x4D */
-    Xcp_DTODaqStimPacket, /* 0x4E */
-    Xcp_DTODaqStimPacket, /* 0x4F */
-    Xcp_DTODaqStimPacket, /* 0x50 */
-    Xcp_DTODaqStimPacket, /* 0x51 */
-    Xcp_DTODaqStimPacket, /* 0x52 */
-    Xcp_DTODaqStimPacket, /* 0x53 */
-    Xcp_DTODaqStimPacket, /* 0x54 */
-    Xcp_DTODaqStimPacket, /* 0x55 */
-    Xcp_DTODaqStimPacket, /* 0x56 */
-    Xcp_DTODaqStimPacket, /* 0x57 */
-    Xcp_DTODaqStimPacket, /* 0x58 */
-    Xcp_DTODaqStimPacket, /* 0x59 */
-    Xcp_DTODaqStimPacket, /* 0x5A */
-    Xcp_DTODaqStimPacket, /* 0x5B */
-    Xcp_DTODaqStimPacket, /* 0x5C */
-    Xcp_DTODaqStimPacket, /* 0x5D */
-    Xcp_DTODaqStimPacket, /* 0x5E */
-    Xcp_DTODaqStimPacket, /* 0x5F */
-    Xcp_DTODaqStimPacket, /* 0x60 */
-    Xcp_DTODaqStimPacket, /* 0x61 */
-    Xcp_DTODaqStimPacket, /* 0x62 */
-    Xcp_DTODaqStimPacket, /* 0x63 */
-    Xcp_DTODaqStimPacket, /* 0x64 */
-    Xcp_DTODaqStimPacket, /* 0x65 */
-    Xcp_DTODaqStimPacket, /* 0x66 */
-    Xcp_DTODaqStimPacket, /* 0x67 */
-    Xcp_DTODaqStimPacket, /* 0x68 */
-    Xcp_DTODaqStimPacket, /* 0x69 */
-    Xcp_DTODaqStimPacket, /* 0x6A */
-    Xcp_DTODaqStimPacket, /* 0x6B */
-    Xcp_DTODaqStimPacket, /* 0x6C */
-    Xcp_DTODaqStimPacket, /* 0x6D */
-    Xcp_DTODaqStimPacket, /* 0x6E */
-    Xcp_DTODaqStimPacket, /* 0x6F */
-    Xcp_DTODaqStimPacket, /* 0x70 */
-    Xcp_DTODaqStimPacket, /* 0x71 */
-    Xcp_DTODaqStimPacket, /* 0x72 */
-    Xcp_DTODaqStimPacket, /* 0x73 */
-    Xcp_DTODaqStimPacket, /* 0x74 */
-    Xcp_DTODaqStimPacket, /* 0x75 */
-    Xcp_DTODaqStimPacket, /* 0x76 */
-    Xcp_DTODaqStimPacket, /* 0x77 */
-    Xcp_DTODaqStimPacket, /* 0x78 */
-    Xcp_DTODaqStimPacket, /* 0x79 */
-    Xcp_DTODaqStimPacket, /* 0x7A */
-    Xcp_DTODaqStimPacket, /* 0x7B */
-    Xcp_DTODaqStimPacket, /* 0x7C */
-    Xcp_DTODaqStimPacket, /* 0x7D */
-    Xcp_DTODaqStimPacket, /* 0x7E */
-    Xcp_DTODaqStimPacket, /* 0x7F */
-    Xcp_DTODaqStimPacket, /* 0x80 */
-    Xcp_DTODaqStimPacket, /* 0x81 */
-    Xcp_DTODaqStimPacket, /* 0x82 */
-    Xcp_DTODaqStimPacket, /* 0x83 */
-    Xcp_DTODaqStimPacket, /* 0x84 */
-    Xcp_DTODaqStimPacket, /* 0x85 */
-    Xcp_DTODaqStimPacket, /* 0x86 */
-    Xcp_DTODaqStimPacket, /* 0x87 */
-    Xcp_DTODaqStimPacket, /* 0x88 */
-    Xcp_DTODaqStimPacket, /* 0x89 */
-    Xcp_DTODaqStimPacket, /* 0x8A */
-    Xcp_DTODaqStimPacket, /* 0x8B */
-    Xcp_DTODaqStimPacket, /* 0x8C */
-    Xcp_DTODaqStimPacket, /* 0x8D */
-    Xcp_DTODaqStimPacket, /* 0x8E */
-    Xcp_DTODaqStimPacket, /* 0x8F */
-    Xcp_DTODaqStimPacket, /* 0x90 */
-    Xcp_DTODaqStimPacket, /* 0x91 */
-    Xcp_DTODaqStimPacket, /* 0x92 */
-    Xcp_DTODaqStimPacket, /* 0x93 */
-    Xcp_DTODaqStimPacket, /* 0x94 */
-    Xcp_DTODaqStimPacket, /* 0x95 */
-    Xcp_DTODaqStimPacket, /* 0x96 */
-    Xcp_DTODaqStimPacket, /* 0x97 */
-    Xcp_DTODaqStimPacket, /* 0x98 */
-    Xcp_DTODaqStimPacket, /* 0x99 */
-    Xcp_DTODaqStimPacket, /* 0x9A */
-    Xcp_DTODaqStimPacket, /* 0x9B */
-    Xcp_DTODaqStimPacket, /* 0x9C */
-    Xcp_DTODaqStimPacket, /* 0x9D */
-    Xcp_DTODaqStimPacket, /* 0x9E */
-    Xcp_DTODaqStimPacket, /* 0x9F */
-    Xcp_DTODaqStimPacket, /* 0xA0 */
-    Xcp_DTODaqStimPacket, /* 0xA1 */
-    Xcp_DTODaqStimPacket, /* 0xA2 */
-    Xcp_DTODaqStimPacket, /* 0xA3 */
-    Xcp_DTODaqStimPacket, /* 0xA4 */
-    Xcp_DTODaqStimPacket, /* 0xA5 */
-    Xcp_DTODaqStimPacket, /* 0xA6 */
-    Xcp_DTODaqStimPacket, /* 0xA7 */
-    Xcp_DTODaqStimPacket, /* 0xA8 */
-    Xcp_DTODaqStimPacket, /* 0xA9 */
-    Xcp_DTODaqStimPacket, /* 0xAA */
-    Xcp_DTODaqStimPacket, /* 0xAB */
-    Xcp_DTODaqStimPacket, /* 0xAC */
-    Xcp_DTODaqStimPacket, /* 0xAD */
-    Xcp_DTODaqStimPacket, /* 0xAE */
-    Xcp_DTODaqStimPacket, /* 0xAF */
-    Xcp_DTODaqStimPacket, /* 0xB0 */
-    Xcp_DTODaqStimPacket, /* 0xB1 */
-    Xcp_DTODaqStimPacket, /* 0xB2 */
-    Xcp_DTODaqStimPacket, /* 0xB3 */
-    Xcp_DTODaqStimPacket, /* 0xB4 */
-    Xcp_DTODaqStimPacket, /* 0xB5 */
-    Xcp_DTODaqStimPacket, /* 0xB6 */
-    Xcp_DTODaqStimPacket, /* 0xB7 */
-    Xcp_DTODaqStimPacket, /* 0xB8 */
-    Xcp_DTODaqStimPacket, /* 0xB9 */
-    Xcp_DTODaqStimPacket, /* 0xBA */
-    Xcp_DTODaqStimPacket, /* 0xBB */
-    Xcp_DTODaqStimPacket, /* 0xBC */
-    Xcp_DTODaqStimPacket, /* 0xBD */
-    Xcp_DTODaqStimPacket, /* 0xBE */
-    Xcp_DTODaqStimPacket, /* 0xBF */
+    Xcp_CmdNotImplemented, /* 0x00 */
+    Xcp_CmdNotImplemented, /* 0x01 */
+    Xcp_CmdNotImplemented, /* 0x02 */
+    Xcp_CmdNotImplemented, /* 0x03 */
+    Xcp_CmdNotImplemented, /* 0x04 */
+    Xcp_CmdNotImplemented, /* 0x05 */
+    Xcp_CmdNotImplemented, /* 0x06 */
+    Xcp_CmdNotImplemented, /* 0x07 */
+    Xcp_CmdNotImplemented, /* 0x08 */
+    Xcp_CmdNotImplemented, /* 0x09 */
+    Xcp_CmdNotImplemented, /* 0x0A */
+    Xcp_CmdNotImplemented, /* 0x0B */
+    Xcp_CmdNotImplemented, /* 0x0C */
+    Xcp_CmdNotImplemented, /* 0x0D */
+    Xcp_CmdNotImplemented, /* 0x0E */
+    Xcp_CmdNotImplemented, /* 0x0F */
+    Xcp_CmdNotImplemented, /* 0x10 */
+    Xcp_CmdNotImplemented, /* 0x11 */
+    Xcp_CmdNotImplemented, /* 0x12 */
+    Xcp_CmdNotImplemented, /* 0x13 */
+    Xcp_CmdNotImplemented, /* 0x14 */
+    Xcp_CmdNotImplemented, /* 0x15 */
+    Xcp_CmdNotImplemented, /* 0x16 */
+    Xcp_CmdNotImplemented, /* 0x17 */
+    Xcp_CmdNotImplemented, /* 0x18 */
+    Xcp_CmdNotImplemented, /* 0x19 */
+    Xcp_CmdNotImplemented, /* 0x1A */
+    Xcp_CmdNotImplemented, /* 0x1B */
+    Xcp_CmdNotImplemented, /* 0x1C */
+    Xcp_CmdNotImplemented, /* 0x1D */
+    Xcp_CmdNotImplemented, /* 0x1E */
+    Xcp_CmdNotImplemented, /* 0x1F */
+    Xcp_CmdNotImplemented, /* 0x20 */
+    Xcp_CmdNotImplemented, /* 0x21 */
+    Xcp_CmdNotImplemented, /* 0x22 */
+    Xcp_CmdNotImplemented, /* 0x23 */
+    Xcp_CmdNotImplemented, /* 0x24 */
+    Xcp_CmdNotImplemented, /* 0x25 */
+    Xcp_CmdNotImplemented, /* 0x26 */
+    Xcp_CmdNotImplemented, /* 0x27 */
+    Xcp_CmdNotImplemented, /* 0x28 */
+    Xcp_CmdNotImplemented, /* 0x29 */
+    Xcp_CmdNotImplemented, /* 0x2A */
+    Xcp_CmdNotImplemented, /* 0x2B */
+    Xcp_CmdNotImplemented, /* 0x2C */
+    Xcp_CmdNotImplemented, /* 0x2D */
+    Xcp_CmdNotImplemented, /* 0x2E */
+    Xcp_CmdNotImplemented, /* 0x2F */
+    Xcp_CmdNotImplemented, /* 0x30 */
+    Xcp_CmdNotImplemented, /* 0x31 */
+    Xcp_CmdNotImplemented, /* 0x32 */
+    Xcp_CmdNotImplemented, /* 0x33 */
+    Xcp_CmdNotImplemented, /* 0x34 */
+    Xcp_CmdNotImplemented, /* 0x35 */
+    Xcp_CmdNotImplemented, /* 0x36 */
+    Xcp_CmdNotImplemented, /* 0x37 */
+    Xcp_CmdNotImplemented, /* 0x38 */
+    Xcp_CmdNotImplemented, /* 0x39 */
+    Xcp_CmdNotImplemented, /* 0x3A */
+    Xcp_CmdNotImplemented, /* 0x3B */
+    Xcp_CmdNotImplemented, /* 0x3C */
+    Xcp_CmdNotImplemented, /* 0x3D */
+    Xcp_CmdNotImplemented, /* 0x3E */
+    Xcp_CmdNotImplemented, /* 0x3F */
+    Xcp_CmdNotImplemented, /* 0x40 */
+    Xcp_CmdNotImplemented, /* 0x41 */
+    Xcp_CmdNotImplemented, /* 0x42 */
+    Xcp_CmdNotImplemented, /* 0x43 */
+    Xcp_CmdNotImplemented, /* 0x44 */
+    Xcp_CmdNotImplemented, /* 0x45 */
+    Xcp_CmdNotImplemented, /* 0x46 */
+    Xcp_CmdNotImplemented, /* 0x47 */
+    Xcp_CmdNotImplemented, /* 0x48 */
+    Xcp_CmdNotImplemented, /* 0x49 */
+    Xcp_CmdNotImplemented, /* 0x4A */
+    Xcp_CmdNotImplemented, /* 0x4B */
+    Xcp_CmdNotImplemented, /* 0x4C */
+    Xcp_CmdNotImplemented, /* 0x4D */
+    Xcp_CmdNotImplemented, /* 0x4E */
+    Xcp_CmdNotImplemented, /* 0x4F */
+    Xcp_CmdNotImplemented, /* 0x50 */
+    Xcp_CmdNotImplemented, /* 0x51 */
+    Xcp_CmdNotImplemented, /* 0x52 */
+    Xcp_CmdNotImplemented, /* 0x53 */
+    Xcp_CmdNotImplemented, /* 0x54 */
+    Xcp_CmdNotImplemented, /* 0x55 */
+    Xcp_CmdNotImplemented, /* 0x56 */
+    Xcp_CmdNotImplemented, /* 0x57 */
+    Xcp_CmdNotImplemented, /* 0x58 */
+    Xcp_CmdNotImplemented, /* 0x59 */
+    Xcp_CmdNotImplemented, /* 0x5A */
+    Xcp_CmdNotImplemented, /* 0x5B */
+    Xcp_CmdNotImplemented, /* 0x5C */
+    Xcp_CmdNotImplemented, /* 0x5D */
+    Xcp_CmdNotImplemented, /* 0x5E */
+    Xcp_CmdNotImplemented, /* 0x5F */
+    Xcp_CmdNotImplemented, /* 0x60 */
+    Xcp_CmdNotImplemented, /* 0x61 */
+    Xcp_CmdNotImplemented, /* 0x62 */
+    Xcp_CmdNotImplemented, /* 0x63 */
+    Xcp_CmdNotImplemented, /* 0x64 */
+    Xcp_CmdNotImplemented, /* 0x65 */
+    Xcp_CmdNotImplemented, /* 0x66 */
+    Xcp_CmdNotImplemented, /* 0x67 */
+    Xcp_CmdNotImplemented, /* 0x68 */
+    Xcp_CmdNotImplemented, /* 0x69 */
+    Xcp_CmdNotImplemented, /* 0x6A */
+    Xcp_CmdNotImplemented, /* 0x6B */
+    Xcp_CmdNotImplemented, /* 0x6C */
+    Xcp_CmdNotImplemented, /* 0x6D */
+    Xcp_CmdNotImplemented, /* 0x6E */
+    Xcp_CmdNotImplemented, /* 0x6F */
+    Xcp_CmdNotImplemented, /* 0x70 */
+    Xcp_CmdNotImplemented, /* 0x71 */
+    Xcp_CmdNotImplemented, /* 0x72 */
+    Xcp_CmdNotImplemented, /* 0x73 */
+    Xcp_CmdNotImplemented, /* 0x74 */
+    Xcp_CmdNotImplemented, /* 0x75 */
+    Xcp_CmdNotImplemented, /* 0x76 */
+    Xcp_CmdNotImplemented, /* 0x77 */
+    Xcp_CmdNotImplemented, /* 0x78 */
+    Xcp_CmdNotImplemented, /* 0x79 */
+    Xcp_CmdNotImplemented, /* 0x7A */
+    Xcp_CmdNotImplemented, /* 0x7B */
+    Xcp_CmdNotImplemented, /* 0x7C */
+    Xcp_CmdNotImplemented, /* 0x7D */
+    Xcp_CmdNotImplemented, /* 0x7E */
+    Xcp_CmdNotImplemented, /* 0x7F */
+    Xcp_CmdNotImplemented, /* 0x80 */
+    Xcp_CmdNotImplemented, /* 0x81 */
+    Xcp_CmdNotImplemented, /* 0x82 */
+    Xcp_CmdNotImplemented, /* 0x83 */
+    Xcp_CmdNotImplemented, /* 0x84 */
+    Xcp_CmdNotImplemented, /* 0x85 */
+    Xcp_CmdNotImplemented, /* 0x86 */
+    Xcp_CmdNotImplemented, /* 0x87 */
+    Xcp_CmdNotImplemented, /* 0x88 */
+    Xcp_CmdNotImplemented, /* 0x89 */
+    Xcp_CmdNotImplemented, /* 0x8A */
+    Xcp_CmdNotImplemented, /* 0x8B */
+    Xcp_CmdNotImplemented, /* 0x8C */
+    Xcp_CmdNotImplemented, /* 0x8D */
+    Xcp_CmdNotImplemented, /* 0x8E */
+    Xcp_CmdNotImplemented, /* 0x8F */
+    Xcp_CmdNotImplemented, /* 0x90 */
+    Xcp_CmdNotImplemented, /* 0x91 */
+    Xcp_CmdNotImplemented, /* 0x92 */
+    Xcp_CmdNotImplemented, /* 0x93 */
+    Xcp_CmdNotImplemented, /* 0x94 */
+    Xcp_CmdNotImplemented, /* 0x95 */
+    Xcp_CmdNotImplemented, /* 0x96 */
+    Xcp_CmdNotImplemented, /* 0x97 */
+    Xcp_CmdNotImplemented, /* 0x98 */
+    Xcp_CmdNotImplemented, /* 0x99 */
+    Xcp_CmdNotImplemented, /* 0x9A */
+    Xcp_CmdNotImplemented, /* 0x9B */
+    Xcp_CmdNotImplemented, /* 0x9C */
+    Xcp_CmdNotImplemented, /* 0x9D */
+    Xcp_CmdNotImplemented, /* 0x9E */
+    Xcp_CmdNotImplemented, /* 0x9F */
+    Xcp_CmdNotImplemented, /* 0xA0 */
+    Xcp_CmdNotImplemented, /* 0xA1 */
+    Xcp_CmdNotImplemented, /* 0xA2 */
+    Xcp_CmdNotImplemented, /* 0xA3 */
+    Xcp_CmdNotImplemented, /* 0xA4 */
+    Xcp_CmdNotImplemented, /* 0xA5 */
+    Xcp_CmdNotImplemented, /* 0xA6 */
+    Xcp_CmdNotImplemented, /* 0xA7 */
+    Xcp_CmdNotImplemented, /* 0xA8 */
+    Xcp_CmdNotImplemented, /* 0xA9 */
+    Xcp_CmdNotImplemented, /* 0xAA */
+    Xcp_CmdNotImplemented, /* 0xAB */
+    Xcp_CmdNotImplemented, /* 0xAC */
+    Xcp_CmdNotImplemented, /* 0xAD */
+    Xcp_CmdNotImplemented, /* 0xAE */
+    Xcp_CmdNotImplemented, /* 0xAF */
+    Xcp_CmdNotImplemented, /* 0xB0 */
+    Xcp_CmdNotImplemented, /* 0xB1 */
+    Xcp_CmdNotImplemented, /* 0xB2 */
+    Xcp_CmdNotImplemented, /* 0xB3 */
+    Xcp_CmdNotImplemented, /* 0xB4 */
+    Xcp_CmdNotImplemented, /* 0xB5 */
+    Xcp_CmdNotImplemented, /* 0xB6 */
+    Xcp_CmdNotImplemented, /* 0xB7 */
+    Xcp_CmdNotImplemented, /* 0xB8 */
+    Xcp_CmdNotImplemented, /* 0xB9 */
+    Xcp_CmdNotImplemented, /* 0xBA */
+    Xcp_CmdNotImplemented, /* 0xBB */
+    Xcp_CmdNotImplemented, /* 0xBC */
+    Xcp_CmdNotImplemented, /* 0xBD */
+    Xcp_CmdNotImplemented, /* 0xBE */
+    Xcp_CmdNotImplemented, /* 0xBF */
     Xcp_CmdNotImplemented, /* 0xC0 */
     Xcp_CmdNotImplemented, /* 0xC1 */
     Xcp_CmdNotImplemented, /* 0xC2 */
@@ -1453,17 +1453,23 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  *
                                  * This test is also what keeps Xcp_PIDTable's 0x00..0xBF entries
                                  * unreachable, and it is the ONLY thing that does: the generated
-                                 * ctoInfo sets `enable` for all 256 PIDs and Xcp_PIDToCmdGroupTable
-                                 * holds MASK_NONE across 0x00..0xBF, so neither the enable test
-                                 * above nor the protection gate below stops such a frame. Remove
+                                 * ctoInfo sets `enable` across the whole of 0x00..0xBF (all
+                                 * 192 entries, unconditionally -- script/source_cfg.c.jinja2) and
+                                 * Xcp_PIDToCmdGroupTable holds MASK_NONE there, so neither the
+                                 * enable test above nor the protection gate below stops such a
+                                 * frame. Said of that range rather than of all 256 PIDs, which
+                                 * would be untrue: entries in the COMMAND range are enabled
+                                 * conditionally, since an optional command a build leaves out
+                                 * generates a disabled entry. Remove
                                  * this condition and a frame on the CTO PDU whose first byte falls
                                  * in the DTO range runs the whole dispatch body -- and THREE things
                                  * happen there, not one:
                                  *
-                                 * - Xcp_PIDTable[pid] resolves to Xcp_DTODaqStimPacket, a no-op
-                                 *   returning E_OK that was dead under the old split. E_OK sets
-                                 *   successful_transmission_pending, so whatever stale bytes the
-                                 *   response buffer still held are transmitted as a response.
+                                 * - Xcp_PIDTable[pid] resolves to Xcp_CmdNotImplemented, which
+                                 *   answers ERR_CMD_UNKNOWN. Harmless in itself, and the least of
+                                 *   the three; it used to be Xcp_DTODaqStimPacket, a no-op
+                                 *   returning E_OK without filling the response buffer, which
+                                 *   transmitted whatever stale bytes that buffer still held.
                                  * - `Xcp_Internal.last_pid = pid` runs on the way out, overwriting
                                  *   the record of the previous command. Xcp_DTOCmdStdUnlock
                                  *   (source/Xcp_Std.c) admits a key only when last_pid is GET_SEED
@@ -1476,11 +1482,15 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  *   next protected command is answered ERR_ACCESS_LOCKED with
                                  *   nothing to say why.
                                  *
-                                 * Re-pointing those 192 table entries at Xcp_CmdNotImplemented
-                                 * would NOT make this safe, and that is the trap worth naming: the
-                                 * last two happen after the handler returns, whatever the handler
-                                 * was, so they run either way. The routing decision is the guard;
-                                 * the table's contents are not. */
+                                 * Those 192 entries HAVE since been re-pointed at
+                                 * Xcp_CmdNotImplemented, and that did NOT make this safe -- it is
+                                 * the trap worth naming, because the change looks like a fix and
+                                 * is not one. The last two bullets happen after the handler
+                                 * returns, whatever the handler was, so they run either way. The
+                                 * routing decision is the guard; the table's contents are not.
+                                 * They were changed only to delete a dead function and to stop the
+                                 * table claiming a stimulation handler this dispatch path has not
+                                 * had since DD46 moved STIM to the DTO PduId. */
                                 if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_IS_CTO_MASK) != 0x00u) {
                                     /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
                                      * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and

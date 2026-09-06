@@ -387,7 +387,6 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
     uint8 sub_command;
     uint8 mode;
     uint16 daq_list_number;
-    // uint32 can_identifier;
 
     if (pPduInfo->SduLength >= 0x02u) {
         sub_command = pPduInfo->SduDataPtr[0x01u];
@@ -448,7 +447,17 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
                 if (object_found == TRUE) {
                     if (Xcp_Ptr->config->daqList[daq_list_idx].dtoCount > 0x00u) {
                         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-                        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x01u; // TODO: support configurable CAN ID...
+                        /* CAN_ID_FIXED. Reported as fixed because it is: this slave has no way to
+                         * change a DAQ list's transmit identifier, and SET_DAQ_ID below is
+                         * deliberately not implemented, so the answer is truthful rather than
+                         * provisional. It replaced a "TODO: support configurable CAN ID", which
+                         * read as an unfinished feature.
+                         *
+                         * The field's polarity -- 1 meaning fixed -- comes from the XCP CAN
+                         * Transport Layer specification, which is NOT in docs/external. Confirm it
+                         * there before relying on it for anything new; what is independently sound
+                         * is that this value must not change while SET_DAQ_ID stays unimplemented. */
+                        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x01u;
                         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
                         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
                         Xcp_CopyFromU32WithOrder((uint32)Xcp_Ptr->config->daqList[daq_list_idx].dto[0x00u].dto2PduMapping.txPdu.id,
@@ -474,10 +483,32 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
             }
         }else if (sub_command == 0xFDu) {
             if (pPduInfo->SduLength >= 0x08u) {
-                // Xcp_CopyToU16WithOrder(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u], &daq_list_number, Xcp_Ptr->general->byteOrder);
-                // Xcp_CopyToU32WithOrder(&Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u], &can_identifier, Xcp_Ptr->general->byteOrder);
-
-                // TODO: implement this feature...
+                /* SET_DAQ_ID, and it is NOT implemented on purpose. AUTOSAR SWS XCP R4.3.1 §4.1
+                 * Limitations: "The SET_DAQ_ID command according to the XCP CAN Transport Layer
+                 * Specification is not part of the AUTOSAR XCP module". This module tracks that
+                 * SWS -- test/autosar_sws_test.py asserts against it -- so the refusal is
+                 * conformance, not an unfinished feature, and ERR_CMD_UNKNOWN is exactly what
+                 * 1.1/1.4 prescribes for an optional command a slave does not implement.
+                 *
+                 * Two further obstacles, either of which would need settling first if the decision
+                 * were ever revisited. The normative definition of this sub-command is in the XCP
+                 * CAN Transport Layer specification, which is not in docs/external, so its request
+                 * layout cannot be cited from anything held here -- only inferred from the length
+                 * check above and from GET_DAQ_ID's response shape. And changing a transmit
+                 * identifier at runtime means CanIf_SetDynamicTxId (SWS_CANIF_00189), an API this
+                 * module has never called, which additionally requires every DAQ transmit PDU to be
+                 * configured as a dynamic L-PDU -- an integrator-side guarantee this module can
+                 * neither verify nor impose.
+                 *
+                 * The length check is kept ahead of the refusal so a malformed request still gets
+                 * ERR_CMD_SYNTAX. A syntactically invalid frame is invalid whether or not the
+                 * command behind it exists, and answering ERR_CMD_UNKNOWN to a 3-byte request
+                 * would say the sub-command is unknown when what is wrong is the request.
+                 *
+                 * Two commented-out Xcp_CopyTo* calls stood here, drafting the parse. They read
+                 * from Xcp_Internal.cto_response.pdu_info -- the RESPONSE buffer -- rather than
+                 * from pPduInfo, so they would not have parsed the request at all. Removed rather
+                 * than left as a starting point for whoever picks this up. */
                 Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
             } else {
                 Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
