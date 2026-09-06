@@ -427,6 +427,24 @@ typedef struct
      * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4.
      */
     uint8 firstPid;
+
+    /**
+     * @brief index into Xcp_Rt[...].stimSlot of this DAQ list's first stimulation slot.
+     * @details The slot for ODT i of this list is stimSlot[stimSlotBase + i], which is the whole
+     * of the addressing rule in both configuration models.
+     * @note Exactly the construction firstPid above is: a prefix sum over the preceding lists,
+     * addressing a flat array by base plus ODT number. The one difference is what it sums over.
+     * firstPid sums every list's maxOdt, because every list has ODTs to number; this sums only the
+     * lists that can RECEIVE, because the generator reserves a slot only for those. So a DAQ list
+     * sitting between two receiving ones advances this by nothing, and the second receiving list
+     * starts where the first one ended rather than where its own list number would put it -- there
+     * is no closed form in terms of the list number, which is why this field exists at all. Under
+     * DAQ_DYNAMIC the pool is rectangular and every list can receive, so the same sum happens to
+     * come out as listNumber * odtCount, and nothing has to special-case it.
+     * @note 0, and never read, for a list that cannot receive: nothing addresses a stimulation slot
+     * for a list whose direction excludes STIM.
+     */
+    const uint16 stimSlotBase;
     const Xcp_EventChannelTypeType type;
     uint8 maxOdt;
     uint8 maxOdtEntries;
@@ -712,11 +730,41 @@ typedef struct {
     uint8 count;
 } Xcp_DtoQueueType;
 
+/**
+ * @brief one ODT's worth of stimulation data, as the master last sent it.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.1.4.2. Written by
+ * Xcp_DaqStoreStim in the receive callback's context and read by Xcp_DaqApplyStim in the event
+ * trigger's, which is why SchM_Enter_Xcp_StimBuffer exists (DD37).
+ * @note `length` is a length paired with the buffer it describes, so the two are written together
+ * under that area. This is the DD14 class, and the reason the argument in Xcp_DaqListRtType's note
+ * -- that no field there is a pointer or a paired length, so a torn read costs at most a skewed
+ * cycle -- does not extend to this structure.
+ * @note `length` is the payload only. The identification field and any timestamp are consumed at
+ * reception and never stored.
+ */
+typedef struct {
+    uint8 length;
+
+    uint8 data[XCP_MAX_DTO];
+} Xcp_StimSlotType;
+
 typedef struct {
     Xcp_EventQueueType *eventQueue;
     Xcp_SegmentRtType *segment;
     Xcp_DaqListRtType *daqList;
     Xcp_DtoQueueType *dtoQueue;
+
+    /**
+     * @brief one stimulation slot per ODT the configuration can ever receive into.
+     * @details NULL_PTR when the configuration cannot receive -- a DAQ-typed dynamic pool, or a
+     * static configuration whose every list is DAQ -- so a DAQ-only build reserves nothing.
+     */
+    Xcp_StimSlotType *stimSlot;
+
+    /**
+     * @brief slots behind stimSlot; 0 when the configuration cannot receive.
+     */
+    uint16 stimSlotCount;
 } Xcp_RtType;
 
 typedef struct

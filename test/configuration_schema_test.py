@@ -55,6 +55,16 @@ def test_an_event_built_by_the_event_helper_is_valid(schema):
     validate(DefaultConfig(daqs=(daq(),), events=(event(),)), schema)
 
 
+def test_an_event_configured_as_stim_is_valid(schema):
+    """events[].type used to permit only DAQ and DAQ_STIM, even though Xcp_EventChannelTypeType
+    (interface/Xcp_Types.h) already carried STIM -- daqs[].type had allowed it all along, so the
+    two enums disagreed about a value the C type has always represented. SP3 implemented data
+    stimulation and lifted script/source_cfg.c.jinja2's matching refusal of a pure STIM DAQ list,
+    so a STIM event channel needs the same schema latitude to be configurable at all."""
+    validate(DefaultConfig(daqs=(daq(),),
+                           events=(event(type='STIM', triggered_daq_list_ref=['DAQ1']),)), schema)
+
+
 def test_a_segment_built_by_the_segment_helper_is_valid(schema):
     validate(DefaultConfig(segments=(segment(pages=(page(), page())),)), schema)
 

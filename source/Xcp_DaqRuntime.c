@@ -42,11 +42,32 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
     uint8 length;
 
     /* 1.1/1.1.2.1: with PID_OFF the packet carries no Identification Field at all, so the payload
-     * -- or the timestamp, when both are on -- starts at offset 0. SET_DAQ_LIST_MODE has already
-     * refused the bit for anything but an ABSOLUTE single-ODT list, so this cannot produce a frame
-     * the master is unable to identify. Xcp_DaqListRt (source/Xcp_Daq.c) has file-local linkage
-     * there, so the stored mode is read directly off Xcp_Rt here instead, the same way
-     * Xcp_DaqSampleOdt's own timestamp check further up this file already does. */
+     * -- or the timestamp, when both are on -- starts at offset 0.
+     *
+     * **The bit alone is not a guarantee that the master can still identify the frame, and this
+     * function does not check that it is.** Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) grants
+     * PID_OFF against three conditions -- ABSOLUTE identification, maxOdt == 1, and a TX PDU no
+     * other list shares -- but a grant is a statement about the moment that command ran. Two of
+     * the three cannot drift afterwards: identificationFieldType is fixed at build time, and
+     * Xcp_DaqListTxPduIsExclusive scans every CONFIGURED list (daqCount) rather than the allocated
+     * ones, so a later ALLOC_DAQ cannot change its answer. maxOdt is the one that does. Under
+     * DAQ_DYNAMIC, ALLOC_DAQ, ALLOC_ODT(list, 1), SET_DAQ_LIST_MODE(PID_OFF), ALLOC_ODT(list, 1)
+     * is a legal sequence -- SET_DAQ_LIST_MODE does not touch Xcp_Internal.daq_alloc_state, and
+     * DD28 makes the repeat ACCUMULATE -- and it leaves maxOdt at 2 with PID_OFF still set.
+     * Xcp_TriggerEventChannel then samples BOTH ODTs of that list, this function returns 0x00u for
+     * each of them, and two DTOs go out on one PDU with nothing on the wire to tell them apart.
+     *
+     * Xcp_DaqReadIdentificationField, further down this file, re-checks maxOdt for precisely that
+     * sequence and refuses the frame rather than trusting the grant. **The transmit side has no
+     * such guard.** An earlier revision of this comment claimed the opposite -- that
+     * SET_DAQ_LIST_MODE "has already refused the bit for anything but an ABSOLUTE single-ODT list,
+     * so this cannot produce a frame the master is unable to identify" -- and that is the sentence
+     * the receive-side fix disproved. Do not reintroduce it, here or at any other reader of this
+     * bit: it is what stands between a maintainer and re-deriving a drop already found once.
+     *
+     * Xcp_DaqListRt (source/Xcp_Daq.c) has file-local linkage there, so the stored mode is read
+     * directly off Xcp_Rt here instead, the same way Xcp_DaqSampleOdt's own timestamp check
+     * further down this file already does. */
     if ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode & XCP_DAQ_LIST_MODE_PID_OFF) != 0x00u)
     {
         return 0x00u;
@@ -92,6 +113,149 @@ static uint8 Xcp_DaqWriteIdentificationField(Xcp_DtoFrameType *pFrame,
     }
 
     return length;
+}
+
+/**
+ * @brief Finds the allocated DAQ list that receives on rxPduId and has PID_OFF in its stored mode.
+ * @retval TRUE *pDaqListNumber names that list; FALSE no allocated list satisfies both conditions,
+ * and *pDaqListNumber is not written.
+ * @details 1.1/1.1.2.1: once the Identification Field is turned off, "the unambiguous
+ * identification has to be done on the level of the Transport Layer" -- and the only handle this
+ * module's transport layer offers is the PDU the frame arrived on. So under PID_OFF the receiving
+ * PduId names the DAQ list, in place of a field that is not on the wire at all.
+ *
+ * At most one list can match, which is why the scan stops at the first: Xcp_DTOCmdDaqSetDaqListMode
+ * (source/Xcp_Daq.c) grants PID_OFF only to a list whose PDU no other list shares, and rejects it
+ * otherwise -- that is the whole purpose of Xcp_DaqListTxPduIsExclusive there. Uniqueness is
+ * therefore established when the bit is set, not re-derived here.
+ *
+ * dto[0x00u], the same element Xcp_DaqSampleOdt below and Xcp_DaqListTxPduIsExclusive both read:
+ * the exclusivity PID_OFF was granted on was decided on that element, so identification has to be
+ * read off the same one or the two could disagree. rxPdu rather than txPdu of that union -- the
+ * same bytes either way, since Xcp_RxPduType and Xcp_TxPduType have identical layouts, but this is
+ * the receive side and Xcp_CanIfRxIndication (Xcp.c) matches on the same member.
+ * @note The bound is Xcp_Internal.allocated_daq_count, which is what Xcp_DaqListIsValid
+ * (source/Xcp_Daq.c, file-local there) means by a list existing: equal to daqCount under a STATIC
+ * configuration, and raised from zero by ALLOC_DAQ under a DYNAMIC one.
+ */
+static boolean Xcp_DaqPidOffListForRxPdu(PduIdType rxPduId, uint16 *pDaqListNumber)
+{
+    boolean found = FALSE;
+    uint16 idx;
+
+    for (idx = 0x0000u; (idx < Xcp_Internal.allocated_daq_count) && (found == FALSE); idx++)
+    {
+        if (((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[idx].mode & XCP_DAQ_LIST_MODE_PID_OFF) != 0x00u) &&
+            ((PduIdType)Xcp_Ptr->config->daqList[idx].dto[0x00u].dto2PduMapping.rxPdu.id == rxPduId))
+        {
+            *pDaqListNumber = idx;
+            found = TRUE;
+        }
+    }
+
+    return found;
+}
+
+/**
+ * @brief Reverses absolute_ODT_NUMBER = FIRST_PID(list) + relative ODT_NUMBER.
+ * @retval TRUE pid falls in some allocated list's range; *pDaqListNumber and *pOdtNumber name it.
+ * @retval FALSE no allocated list covers pid; neither output is written.
+ * @details 1.1/1.6.4.1.1.4. The ABSOLUTE identification field is the one form that does not carry
+ * the DAQ list number, so it has to be recovered -- the ranges [firstPid, firstPid + maxOdt) are
+ * disjoint and contiguous by construction (the generator assigns firstPid as a running sum of the
+ * preceding lists' maxOdt), so at most one list matches and a linear scan finds it.
+ *
+ * A 256-entry reverse table would answer in constant time but would have to be rebuilt on every
+ * ALLOC_ODT and every direction change; the scan is bounded by allocated_daq_count, itself capped
+ * at 255, against a frame rate the bus already bounds.
+ *
+ * A list with maxOdt 0x00u -- which config/xcp.schema.json permits -- yields an empty range and
+ * can never match, so it needs no case of its own.
+ */
+static boolean Xcp_DaqListForAbsolutePid(uint8 pid, uint16 *pDaqListNumber, uint8 *pOdtNumber)
+{
+    boolean found = FALSE;
+    uint16 idx;
+
+    for (idx = 0x0000u; (idx < Xcp_Internal.allocated_daq_count) && (found == FALSE); idx++)
+    {
+        const uint16 first_pid = (uint16)Xcp_Ptr->config->daqList[idx].firstPid;
+        const uint16 end_pid = (uint16)(first_pid + (uint16)Xcp_Ptr->config->daqList[idx].maxOdt);
+
+        if (((uint16)pid >= first_pid) && ((uint16)pid < end_pid))
+        {
+            *pDaqListNumber = idx;
+            *pOdtNumber = (uint8)((uint16)pid - first_pid);
+            found = TRUE;
+        }
+    }
+
+    return found;
+}
+
+/**
+ * @brief Payload bytes one ODT's entries will consume when the trigger applies them.
+ * @return The sum over that ODT's entries, each rounded down to a whole number of elements.
+ * @details DD39's "long enough" is exactly this number, and it is computed the way
+ * Xcp_DaqSampleOdt's own read loop consumes the frame in the other direction -- entry.length
+ * divided by the address granularity's element size, times that size -- rather than as the raw
+ * sum of the lengths. The two differ only for an entry whose length is not a whole number of
+ * elements, which WRITE_DAQ (source/Xcp_Daq.c) does not accept today; writing it this way keeps
+ * the reception's requirement equal to the apply's consumption rather than merely equal today.
+ *
+ * An empty entry contributes zero, so the non-empty test Xcp_DaqSampleOdt applies before copying
+ * is not needed here; the sum is the same with or without it.
+ * @note The entry lengths are read without an exclusive area, which is deliberate and narrower
+ * than DD14's case: only `length` is read, never `address`, and nothing is dereferenced through
+ * either. A CLEAR_DAQ_LIST concurrent with this can therefore only make the requirement smaller
+ * or larger than the one the master computed, which costs at most one frame -- it cannot produce
+ * the stale-address dereference DD14 exists to prevent. Taking SchM_Enter_Xcp_DtoQueue here would
+ * put the DTO ring's area on the receive path to buy nothing.
+ */
+static uint8 Xcp_DaqStimOdtPayloadLength(uint16 daqListNumber, uint8 odtNumber)
+{
+    const Xcp_OdtType *p_odt = &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber];
+    const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    uint8 required = 0x00u;
+    uint8_least idx;
+
+    for (idx = 0x00u; idx < p_odt->entryCount; idx++)
+    {
+        required = (uint8)(required +
+                           (uint8)((p_odt->odtEntry[idx].length / element_size) * element_size));
+    }
+
+    return required;
+}
+
+/**
+ * @brief Answers whether the decoded frame may be stored in the addressed list's slot.
+ * @return TRUE the list is stimulation-capable, RUNNING, and directed at stimulation, and
+ * payloadLength covers what its ODT's entries need; FALSE otherwise, and the frame is dropped.
+ * @details DD39. The type test comes first and is not redundant with the DIRECTION test that
+ * follows it: DIRECTION is what the master asked for, type is what the configuration can honour,
+ * and only the type decides whether the generator reserved a slot for this list at all (DD43). A
+ * list whose type excludes STIM has stimSlotBase 0 -- the base of the FIRST receiving list -- so
+ * addressing a slot for it would write into some other list's buffer, which is why this is checked
+ * before stimSlotBase is ever read. Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) refuses
+ * DIRECTION on such a list, so the command set alone cannot reach that state; this stays as the
+ * second, independent guard on the one path that indexes the slot array.
+ * @note Reads the runtime mode without an exclusive area, as every other reader of it does. The
+ * argument is Xcp_DaqListRtType's own (interface/Xcp_Types.h): no field there is a pointer or a
+ * length paired with one, so a torn read costs at most one skewed cycle -- here, one frame stored
+ * or dropped against a mode the master was in the middle of changing.
+ */
+static boolean Xcp_DaqStimFrameIsApplicable(uint16 daqListNumber, uint8 odtNumber,
+                                            uint8 payloadLength)
+{
+    const uint8 mode = Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daqListNumber].mode;
+
+    return (boolean)((((Xcp_Ptr->config->daqList[daqListNumber].type == STIM) ||
+                       (Xcp_Ptr->config->daqList[daqListNumber].type == DAQ_STIM)) &&
+                      ((mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u) &&
+                      ((mode & XCP_DAQ_LIST_MODE_DIRECTION) != 0x00u) &&
+                      (payloadLength >= Xcp_DaqStimOdtPayloadLength(daqListNumber, odtNumber))) ?
+                     TRUE : FALSE);
 }
 
 /**
@@ -252,6 +416,287 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
 }
 
 /**
+ * @brief Writes one ODT's buffered stimulation data back into the memory its entries name.
+ * @details DD36's other half, and the exact mirror of Xcp_DaqSampleOdt directly above: the same
+ * entry walk, the same compaction of empty entries, the same cumulative offset, in the other
+ * direction. That function assembles a frame by reading `length` bytes from each entry's address;
+ * this consumes a frame by writing `length` bytes back to each entry's address, at the offsets the
+ * other one would have placed them at. The two must agree byte for byte -- a master that
+ * stimulates a variable and measures it back through the same ODT layout is comparing this
+ * function's output against that one's -- so where they could drift, this one is written against
+ * that one rather than against the specification a second time.
+ *
+ * Three things are copied out from under a lock before any memory is written, and they are three
+ * separate concerns:
+ *
+ * - DD37, the payload and its `length`, out from under SchM_Enter_Xcp_StimBuffer. Xcp_DaqStoreStim
+ *   writes that pair in CanIf's receive context, which can preempt this one; a length read from
+ *   the new frame against bytes still belonging to the old one would apply data no master ever
+ *   sent. The area is taken per slot, not around the apply loop, and released before the first
+ *   write: Xcp_WriteSlaveMemoryTable calls out to integrator code of unbounded duration, and
+ *   test/stub/SchM_Xcp.h's contract has this area suspending the context that receives.
+ * - DD14, the ODT entries themselves, out from under SchM_Enter_Xcp_DtoQueue -- exactly as
+ *   Xcp_DaqSampleOdt does, for exactly its reason, and with more at stake. CLEAR_DAQ_LIST is legal
+ *   against a RUNNING list (1.1/1.6.4.2.1.1, "the running Data Transmission on this list will be
+ *   stopped"), it runs in the receive context, and Xcp_DaqListClearEntries (source/Xcp_Daq.c)
+ *   resets address to NULL_PTR and length to 0 as separate writes under this same area. Reading
+ *   the live entry field by field could therefore pair a cleared address with a length not yet
+ *   cleared -- and where the sampler would read address 0, this writes to it.
+ * - The number of payload bytes those entries will consume, summed from the SNAPSHOT rather than
+ *   read live a second time. It is Xcp_DaqStimOdtPayloadLength's formula, deliberately: that
+ *   function is what reception measured the frame against (DD39), so computing it the same way
+ *   keeps the apply's consumption equal to the reception's requirement. Summing the snapshot
+ *   rather than calling it again is what makes that equality hold against a concurrent clear too:
+ *   the bytes this loop writes and the bytes this check counts come from the same entries.
+ *
+ * Three outcomes, and only the first is the everyday one:
+ *
+ * - `length` zero: the slot holds nothing because no frame has ever filled it. DD35 makes this a
+ *   skip, and a SILENT one -- it is the steady state of a list that has been started and not yet
+ *   stimulated, so a Det report here would fire on every event of every cycle until the master's
+ *   first frame arrives.
+ * - `length` below what the entries consume: the ODT was reconfigured after its frame arrived.
+ *   DD39 checks the payload against the entries at reception, which is the right place for it, but
+ *   that check is not a property that survives -- START, one frame, STOP, a WRITE_DAQ widening an
+ *   entry, START is six legal commands, and the slot then holds fewer bytes than the ODT wants.
+ *   Applying it would write bytes past the end of what the master sent, which is uninitialised
+ *   stack here. The ODT is refused whole rather than in part: partial application is precisely
+ *   what DD39's reception check exists to keep this path from reasoning about.
+ * - Otherwise every entry applies, except one naming a non-zero address extension.
+ *
+ * DD45 is that exception. Xcp_WriteSlaveMemoryTable takes (address, buffer) and has no parameter
+ * for an extension, while Xcp_ReadSlaveMemoryTable takes one -- so an entry naming a segment other
+ * than 0 can be sampled but cannot be stimulated where it says. Writing it anyway would put the
+ * master's bytes at the right offset in the wrong segment, silently. It is skipped and reported,
+ * and the running offset STILL ADVANCES past its bytes: the master laid the frame out from the
+ * whole ODT, so those bytes are on the wire whether this slave can honour them or not, and a skip
+ * that also skipped the advance would shift every following entry by the width of the one refused.
+ * The report is one per call, whatever the number of entries skipped -- Xcp_ReportError has no
+ * parameter that could name the entry, so repeating it says nothing a single report does not, and
+ * this list may be triggered at a raster rate. Xcp_TriggerEventChannel's own EV_DAQ_OVERLOAD, at
+ * the end of this file, aggregates over a whole trigger for the same reason.
+ * @note bitOffset is not copied and not consulted, the same omission Xcp_DaqSampleOdt documents:
+ * BIT_STIM is a separate feature (GET_DAQ_PROCESSOR_INFO's own bit, and this module does not claim
+ * it), so an entry's bit offset changes nothing about what is written here.
+ */
+static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
+{
+    const Xcp_StimSlotType *p_slot =
+            &Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[
+                    Xcp_Ptr->config->daqList[daqListNumber].stimSlotBase + odtNumber];
+    const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    Xcp_OdtEntryType entry[XCP_MAX_DTO];
+    uint8 payload[XCP_MAX_DTO];
+    uint8 length;
+    uint8_least idx;
+
+    SchM_Enter_Xcp_StimBuffer();
+
+    length = p_slot->length;
+
+    /* Bounded by construction -- Xcp_DaqStoreStim refuses a frame longer than the running
+     * configuration's MAX_DTO, itself no larger than the XCP_MAX_DTO both buffers are sized from
+     * -- and clamped anyway, against sizeof rather than against a repeated macro, so that neither
+     * this copy nor the write loop below can overrun the stack if either side of that invariant
+     * is ever changed alone. One comparison, inside the area only because `length` is read there.
+     */
+    if (length > (uint8)sizeof(payload))
+    {
+        length = (uint8)sizeof(payload);
+    }
+
+    for (idx = 0x00u; idx < (uint8_least)length; idx++)
+    {
+        payload[idx] = p_slot->data[idx];
+    }
+
+    SchM_Exit_Xcp_StimBuffer();
+
+    if (length != 0x00u)
+    {
+        uint8 required = 0x00u;
+        uint8 copied = 0x00u;
+        uint8 offset = 0x00u;
+
+        SchM_Enter_Xcp_DtoQueue();
+
+        for (idx = 0x00u; idx < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount; idx++)
+        {
+            const Xcp_OdtEntryType *p_live =
+                    &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[idx];
+
+            /* Field by field, and the empty entries compacted out, exactly as Xcp_DaqSampleOdt
+             * copies them: .number is declared const, and an entry of length 0 contributes no
+             * bytes in either direction. XCP_MAX_DTO bounds the copy for that function's own
+             * reason -- WRITE_DAQ refuses an ODT summing past MAX_DTO and every contributing entry
+             * contributes at least one byte, so no more than XCP_MAX_DTO can be non-empty at
+             * once. */
+            if ((p_live->length != 0x00u) && (copied < XCP_MAX_DTO))
+            {
+                entry[copied].address = p_live->address;
+                entry[copied].addressExtension = p_live->addressExtension;
+                entry[copied].length = p_live->length;
+                copied++;
+            }
+        }
+
+        SchM_Exit_Xcp_DtoQueue();
+
+        for (idx = 0x00u; idx < (uint8_least)copied; idx++)
+        {
+            required = (uint8)(required +
+                               (uint8)((entry[idx].length / element_size) * element_size));
+        }
+
+        if (length < required)
+        {
+            /* Outside every exclusive area: Det_ReportError is an external call, the same rule
+             * Xcp_DaqStoreStim's own rejection report and Xcp_TriggerEventChannel's
+             * EV_DAQ_OVERLOAD report follow. */
+            Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID, XCP_E_STIM_NOT_APPLIED);
+        }
+        else
+        {
+            /* Accumulated across every entry of this ODT and reported once at the end, not per
+             * entry: Xcp_ReportError takes (instanceId, apiId, errorId) and has no parameter that
+             * could say WHICH entry was skipped, so n identical parameter-free reports carry
+             * exactly what one carries, at n times the cost on a list that triggers at a raster
+             * rate. It is the shape EV_DAQ_OVERLOAD already uses further down this file -- one
+             * event for the whole trigger, however many pushes failed inside it. */
+            boolean skipped = FALSE;
+
+            for (idx = 0x00u; idx < (uint8_least)copied; idx++)
+            {
+                /* The element count Xcp_DaqSampleOdt's own inner loop uses, computed once here
+                 * because the DD45 arm below has to advance the offset by the same number of bytes
+                 * the write arm would have. */
+                const uint8_least elements = (uint8_least)(entry[idx].length / element_size);
+
+                if (entry[idx].addressExtension == 0x00u)
+                {
+                    uint8_least element;
+
+                    for (element = 0x00u; element < elements; element++)
+                    {
+                        Xcp_WriteSlaveMemoryTable[Xcp_Ptr->general->addressGranularity](
+                                (void *)&((uint8 *)entry[idx].address)[element * element_size],
+                                &payload[offset]);
+
+                        offset = (uint8)(offset + element_size);
+                    }
+                }
+                else
+                {
+                    skipped = TRUE;
+
+                    offset = (uint8)(offset + (uint8)(elements * element_size));
+                }
+            }
+
+            if (skipped == TRUE)
+            {
+                Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID, XCP_E_STIM_NOT_APPLIED);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Applies every ODT of one DAQ list's buffered stimulation data at the event trigger.
+ * @details DD36: this is where a stimulation frame finally reaches memory, in the trigger's
+ * context and never in the receive callback's. Called from Xcp_TriggerEventChannel's stimulation
+ * pass below, for a list that pass has already established is RUNNING, bound to this event
+ * channel, past its prescaler and DIRECTED AT STIMULATION -- so none of those four is re-checked
+ * here.
+ *
+ * DIRECTION lives in that caller rather than here, and the placement is the corrected DD40's:
+ * 1.1/1.6.4.1.1.3 makes DIRECTION a choice between two modes for the whole list, so it is what
+ * partitions the trigger's two passes, and asking it a second time here would be a branch nothing
+ * could ever take -- untestable by construction, which is the state the type test below nearly
+ * shipped in. It is still asked at exactly one point in time later than DD39's own check, which is
+ * what matters: DD35 latches the slot, and STOP, SET_DAQ_LIST_MODE with DIRECTION clear and START
+ * is three legal commands that leave a list the master has returned to measurement RUNNING with a
+ * stimulation payload still behind it.
+ *
+ * The ONE condition checked here is the configured type, and it is load-bearing for memory safety
+ * rather than for policy. A list whose type excludes STIM has no slot at all -- the generator
+ * reserves them only for lists that can receive, so such a list's stimSlotBase is 0 and
+ * Xcp_Rt[...].stimSlot is NULL_PTR outright in a build whose every list is DAQ
+ * (interface/Xcp_Types.h, DD43). Indexing the slot array for one would dereference that null
+ * pointer, or in a build that does have a pool, read the FIRST receiving list's slot and stimulate
+ * through this list's addresses. It is the same guard, for the same reason, that
+ * Xcp_DaqStimFrameIsApplicable applies before the receive path indexes the array -- and it is NOT
+ * implied by the caller's DIRECTION filter: SET_DAQ_LIST_MODE refuses DIRECTION to a DAQ-typed
+ * list, but that refusal is a command-set property, not a runtime invariant this function may
+ * assume of a mode field written elsewhere.
+ * @note maxOdt, not the pool's odtCount: it is what the trigger's own sampling loop is bounded by,
+ * and under DAQ_DYNAMIC it is exactly the number of ODTs ALLOC_ODT handed this list. The slot for
+ * ODT i is stimSlot[stimSlotBase + i], and the generator's prefix sum gives every receiving list a
+ * block of maxOdt slots of its own (DD43), so the index is in range by construction.
+ */
+static void Xcp_DaqApplyStim(uint16 daqListNumber)
+{
+    const Xcp_DaqListType *p_list = &Xcp_Ptr->config->daqList[daqListNumber];
+
+    if ((p_list->type == STIM) || (p_list->type == DAQ_STIM))
+    {
+        uint8_least odt_idx;
+
+        for (odt_idx = 0x00u; odt_idx < p_list->maxOdt; odt_idx++)
+        {
+            Xcp_DaqApplyStimOdt(daqListNumber, (uint8)odt_idx);
+        }
+    }
+}
+
+/**
+ * @brief Answers whether one DAQ list owes this trigger a cycle, in the given direction.
+ * @param[in,out] pRt the list's runtime state; its prescalerCounter IS ADVANCED by this call.
+ * @param[in] eventChannelNumber the channel being triggered.
+ * @param[in] stimulating TRUE selects lists whose DIRECTION is STIM, FALSE those whose is DAQ.
+ * @retval TRUE the list is RUNNING on this channel, matches `stimulating`, and its prescaler has
+ * just elapsed -- the counter has been reset and the caller owes it one cycle.
+ * @details The gate Xcp_TriggerEventChannel's two passes share, factored out so the two cannot
+ * drift: the ordering the corrected DD40 requires is only worth anything if both passes agree on
+ * which lists are due.
+ *
+ * **It mutates, so it must be called exactly once per list per trigger.** What guarantees that is
+ * the DIRECTION partition itself: 1.1/1.6.4.1.1.3 makes DIRECTION a choice between two modes, so
+ * every list matches exactly one of the two passes and neither advances the other's counters. Do
+ * not add a third pass, or a caller that asks twice to "check first and act later".
+ *
+ * The one interleaving that could advance a counter twice needs a preemption between the passes
+ * that STOPS the list (SET_DAQ_LIST_MODE answers ERR_DAQ_ACTIVE otherwise), flips DIRECTION and
+ * STARTS it again -- and START resets prescalerCounter to 0x00u before setting RUNNING
+ * (Xcp_DTOCmdDaqStartStopDaqList, source/Xcp_Daq.c), so the second pass would advance it from
+ * zero rather than corrupt a count. Nothing is left inconsistent by it.
+ * @note 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." A list is due when
+ * the counter REACHES the prescaler, so 1 means every trigger.
+ */
+static boolean Xcp_DaqListElapsedOnTrigger(Xcp_DaqListRtType *pRt, uint16 eventChannelNumber,
+                                           boolean stimulating)
+{
+    const boolean is_stimulating =
+            (boolean)(((pRt->mode & XCP_DAQ_LIST_MODE_DIRECTION) != 0x00u) ? TRUE : FALSE);
+    boolean elapsed = FALSE;
+
+    if (((pRt->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u) &&
+        (pRt->eventChannelNumber == eventChannelNumber) &&
+        (is_stimulating == stimulating))
+    {
+        pRt->prescalerCounter++;
+
+        if (pRt->prescalerCounter >= pRt->prescaler)
+        {
+            pRt->prescalerCounter = 0x00u;
+            elapsed = TRUE;
+        }
+    }
+
+    return elapsed;
+}
+
+/**
  * @brief Appends one assembled frame to the ring.
  * @retval E_NOT_OK the ring was full; the frame was dropped and never written.
  * @details Caller-side locking: the exclusive area is taken here, not by the caller, so a
@@ -288,6 +733,267 @@ static Std_ReturnType Xcp_DaqQueuePush(const Xcp_DtoFrameType *pFrame)
 /*------------------------------------------------------------------------------------------------*/
 /* global function definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
+
+Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
+                                              PduIdType rxPduId,
+                                              uint16 *pDaqListNumber,
+                                              uint8 *pOdtNumber,
+                                              uint8 *pOffset)
+{
+    Std_ReturnType result = E_NOT_OK;
+    uint16 daq_list_number = 0x0000u;
+    uint8 odt_number = 0x00u;
+    uint8 offset = 0x00u;
+    boolean decoded = FALSE;
+
+    /* PID_OFF first, and not as an arm of the switch below: it is a property of one DAQ list, not
+     * of the build's identificationFieldType, and it removes the very field the switch would read.
+     * There is no ordering hazard in asking about it before the field is decoded -- a list holding
+     * the bit owns its PDU exclusively (Xcp_DaqPidOffListForRxPdu above), so a frame arriving on
+     * some other list's PDU matches nothing here and falls through to the field. */
+    if (Xcp_DaqPidOffListForRxPdu(rxPduId, &daq_list_number) == TRUE)
+    {
+        /* 1.1/1.1.2.1: no Identification Field on the wire, so the payload -- or the timestamp,
+         * when both are on -- starts at byte 0, and there is no ODT number to read. Exactly what
+         * Xcp_DaqWriteIdentificationField returns 0x00u for on the transmit side.
+         *
+         * maxOdt is re-checked here rather than taken on trust from the moment the bit was granted,
+         * and that is not belt-and-braces: the two can drift apart. 1.1/1.1.2.1 makes the transport
+         * layer responsible for identifying a DTO once the field is gone and states the condition
+         * as "separate CAN-Ids for each DAQ list and only one ODT for each DAQ list";
+         * Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) enforces both when it grants PID_OFF, but
+         * it does not touch Xcp_Internal.daq_alloc_state, so under DAQ_DYNAMIC a master can run
+         * ALLOC_DAQ, ALLOC_ODT(list, 1), SET_DAQ_LIST_MODE(PID_OFF) -- granted, one ODT -- and then
+         * ALLOC_ODT(list, 1) again, which that state still accepts and which DD28 makes ACCUMULATE.
+         * maxOdt becomes 2 while PID_OFF stays set, and every subsequent frame on that PDU would
+         * otherwise decode to ODT 0 and be applied to ODT 0's addresses whichever ODT the master
+         * meant. That is the silent misapplication this whole decoder exists to avoid, so the
+         * frame is refused instead.
+         *
+         * Refused, not fallen through to the switch: the master believes the field is off, so
+         * byte 0 is payload. Reading it as an absolute PID would resolve some unrelated
+         * (list, ODT) and apply the frame there -- strictly worse than dropping it. */
+        odt_number = 0x00u;
+        offset = 0x00u;
+        decoded = (boolean)((Xcp_Ptr->config->daqList[daq_list_number].maxOdt == 0x01u) ?
+                            TRUE : FALSE);
+    }
+    else
+    {
+        /* The arms below are Xcp_DaqWriteIdentificationField's, in its order and reading back
+         * precisely what each of them writes. That function is the authority on these layouts; a
+         * disagreement between the two is a defect here, not there. Each arm checks SduLength
+         * before indexing: the field it is about to read is as long as the configuration says, not
+         * as long as the master actually sent. */
+        switch (Xcp_Ptr->general->identificationFieldType)
+        {
+            case RELATIVE_BYTE:
+            {
+                if (pPduInfo->SduLength >= 0x02u)
+                {
+                    odt_number = pPduInfo->SduDataPtr[0x00u];
+                    daq_list_number = (uint16)pPduInfo->SduDataPtr[0x01u];
+                    offset = 0x02u;
+                    decoded = TRUE;
+                }
+
+                break;
+            }
+            case RELATIVE_WORD:
+            {
+                if (pPduInfo->SduLength >= 0x03u)
+                {
+                    odt_number = pPduInfo->SduDataPtr[0x00u];
+                    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x01u], &daq_list_number,
+                                           Xcp_Ptr->general->byteOrder);
+                    offset = 0x03u;
+                    decoded = TRUE;
+                }
+
+                break;
+            }
+            case RELATIVE_WORD_ALIGNED:
+            {
+                if (pPduInfo->SduLength >= 0x04u)
+                {
+                    odt_number = pPduInfo->SduDataPtr[0x00u];
+                    /* Byte 1 is the FILL byte, skipped: 1.1/1.1.2.1 gives it no defined value, so
+                     * nothing about it can be checked. */
+                    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &daq_list_number,
+                                           Xcp_Ptr->general->byteOrder);
+                    offset = 0x04u;
+                    decoded = TRUE;
+                }
+
+                break;
+            }
+            default:
+            {
+                /* ABSOLUTE. The one form carrying no DAQ list number, so the list is recovered
+                 * from the PID's own range rather than read. */
+                if (pPduInfo->SduLength >= 0x01u)
+                {
+                    decoded = Xcp_DaqListForAbsolutePid(pPduInfo->SduDataPtr[0x00u],
+                                                        &daq_list_number, &odt_number);
+                    offset = 0x01u;
+                }
+
+                break;
+            }
+        }
+    }
+
+    /* Both bounds, for every form: the ABSOLUTE scan establishes them on the way in, but the four
+     * other forms take the master's word for the list number, the ODT number, or both, and the
+     * caller indexes daqList[] and its odt[] with exactly these. */
+    if ((decoded == TRUE) &&
+        (daq_list_number < Xcp_Internal.allocated_daq_count) &&
+        (odt_number < Xcp_Ptr->config->daqList[daq_list_number].maxOdt))
+    {
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+        /* DD44. That a STIM DTO carries a timestamp at all is 1.1/1.1.2.2: "The TIMESTAMP flag can
+         * be used as well for DIRECTION = DAQ as for DIRECTION = STIM", which 1.1/1.6.4.1.1.3
+         * repeats and widens -- "The TIMESTAMP and PID_OFF flags can be used as well for
+         * DIRECTION = DAQ as for DIRECTION = STIM". That it sits directly after the Identification
+         * Field, in the first ODT of the cycle and no other, is 1.1/1.1.2.2's Diagram 10 ("TS only
+         * in first DTO Packet of sample") together with 1.1/1.6.4.1.1.3's "the slave device
+         * transmits the current value of its clock in the first ODT of the DAQ cycle". So this
+         * mirrors Xcp_DaqSampleOdt's own block above, condition for condition, in the other
+         * direction.
+         *
+         * Skipped, not read into anything. What the master puts there is the slave's own clock
+         * coming back: 1.0/1.1.2.2 -- 1.0, deliberately, this paragraph was REMOVED in 1.1 and
+         * appears in neither 1.1/1.1.2.2 nor 1.1/1.6.4.1.1.3 -- says that for DIRECTION = STIM the
+         * master "first receives a time stamped DTO(DAQ) from the slave and then echoes this
+         * current value of the slave device's clock in the DTO Packet for the first ODT of the DAQ
+         * cycle", so that the "time stamp" can be used as a counter that "gives the slave the
+         * possibility to check whether DTO(DAQ) and CTO(STIM) belong functionally together". That
+         * is a possibility the specification offers, not a requirement, and 1.1 dropped even the
+         * offer. Acting on it needs a record of which clock value went out with which DAQ cycle,
+         * which is its own mechanism; the design document records it as a follow-up. This
+         * interface has nowhere to put the value, so reading it would only be a discarded load.
+         *
+         * None of the arithmetic depends on the removed paragraph -- 1.1's own flag sentence and
+         * Diagram 10 are what put the field on ODT 0 -- but it is why the field is there at all,
+         * so it is cited to the version that still contains it.
+         *
+         * Xcp_TimestampWireSize(timestampType), not XCP_DAQ_TIMESTAMP_SIZE, for the reason
+         * Xcp_DaqSampleOdt states at length: the macro is the maximum across every configuration
+         * in the build, right for compile-time sizing and #if gating, wrong as the byte count of
+         * the configuration actually running. It is also the size the specification obliges the
+         * master to use -- "The master has to use the same Type of Timestamp Field when
+         * transferring STIM Packets to the slave" as the slave published through
+         * GET_DAQ_RESOLUTION_INFO -- so there is nothing here to negotiate or infer from the
+         * frame. */
+        if ((odt_number == 0x00u) &&
+            ((Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_list_number].mode &
+              XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u))
+        {
+            offset = (uint8)(offset + Xcp_TimestampWireSize(Xcp_Ptr->general->timestampType));
+        }
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
+
+        /* The frame has to be at least as long as the fields that precede its payload, timestamp
+         * included -- the per-arm checks above cover only the identification field, which is all
+         * they had decoded at that point. Equality is accepted: a frame that is exactly its own
+         * header carries an empty payload, which is a well-formed frame that DD39's payload-length
+         * check (the caller's) is what rejects. This also keeps SduLength - *pOffset defined for
+         * that caller, which is unsigned and would otherwise wrap. */
+        if ((uint32)pPduInfo->SduLength >= (uint32)offset)
+        {
+            *pDaqListNumber = daq_list_number;
+            *pOdtNumber = odt_number;
+            *pOffset = offset;
+
+            result = E_OK;
+        }
+    }
+
+    return result;
+}
+
+void Xcp_DaqStoreStim(const PduInfoType *pPduInfo, PduIdType rxPduId)
+{
+    uint16 daq_list_number = 0x0000u;
+    uint8 odt_number = 0x00u;
+    uint8 offset = 0x00u;
+    boolean stored = FALSE;
+
+    /* MAX_DTO first, and short-circuited before the frame is decoded at all: 1.1/1.1.4.2 bounds a
+     * DTO packet at MAX_DTO, which the slave published in its CONNECT response, so a longer frame
+     * is one the master was told not to send. It is refused rather than truncated because
+     * Xcp_StimSlotType's buffer is XCP_MAX_DTO bytes and a payload past that end has nowhere to go
+     * that is not the next slot -- this check, together with Xcp_DaqReadIdentificationField's
+     * guarantee that *pOffset never exceeds SduLength, is the whole of what bounds the copy below.
+     *
+     * Xcp_Ptr->general->maxDto, not the XCP_MAX_DTO macro: the macro is the largest MAX_DTO across
+     * every configuration in the build, right for sizing the buffer and wrong as the bound of the
+     * configuration actually running -- the same distinction Xcp_DaqSampleOdt states for the
+     * timestamp width. maxDto <= XCP_MAX_DTO by construction (script/header_cfg.h.jinja2 folds the
+     * macro as the maximum over the same configurations), so this is the tighter of the two and
+     * the buffer stays safe.
+     *
+     * The decode that follows answers E_NOT_OK for a frame naming no allocated list, an ODT the
+     * list does not have, a PID_OFF list that no longer has exactly one ODT, or a frame too short
+     * for the fields the configuration says precede its payload. */
+    if (((uint32)pPduInfo->SduLength <= (uint32)Xcp_Ptr->general->maxDto) &&
+        (Xcp_DaqReadIdentificationField(pPduInfo, rxPduId, &daq_list_number, &odt_number,
+                                        &offset) == E_OK))
+    {
+        /* Defined without underflow: Xcp_DaqReadIdentificationField answers E_OK only for an
+         * offset its own SduLength covers. */
+        const uint8 payload_length = (uint8)((uint32)pPduInfo->SduLength - (uint32)offset);
+
+        if (Xcp_DaqStimFrameIsApplicable(daq_list_number, odt_number, payload_length) == TRUE)
+        {
+            /* stimSlot[stimSlotBase + odtNumber], the addressing rule of both configuration models
+             * (DD43, interface/Xcp_Types.h). In range by construction rather than by a check here:
+             * the decoder has already bounded daq_list_number by allocated_daq_count and
+             * odt_number by that list's maxOdt, the generator's prefix sum gives every receiving
+             * list a base whose block of maxOdt slots is its own, and under DAQ_DYNAMIC ALLOC_ODT
+             * bounds maxOdt by the pool's odtCount that same sum is rectangular in. The type test
+             * inside Xcp_DaqStimFrameIsApplicable is what keeps a non-receiving list -- whose base
+             * is 0 and reserves nothing -- from reaching this line at all. */
+            Xcp_StimSlotType *p_slot =
+                    &Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[
+                            Xcp_Ptr->config->daqList[daq_list_number].stimSlotBase + odt_number];
+            uint8_least idx;
+
+            /* DD37, held around this one slot and nothing else -- not around the decode above, and
+             * not around the whole reception. The payload and the `length` describing it are
+             * written inside the same section because that pair is the DD14 failure class:
+             * Xcp_DaqApplyStim reads both in the event trigger's context, and a length that had
+             * already been raised while the bytes it counts were still the previous frame's would
+             * apply data the master never sent.
+             *
+             * `length` last, after the bytes it describes, so the two are also consistent for any
+             * reader that this area does not in fact exclude -- an integrator's SchM that suspends
+             * less than test/stub/SchM_Xcp.h asks for still sees a length no larger than the bytes
+             * actually written, rather than the reverse. */
+            SchM_Enter_Xcp_StimBuffer();
+
+            for (idx = 0x00u; idx < (uint8_least)payload_length; idx++)
+            {
+                p_slot->data[idx] = pPduInfo->SduDataPtr[(uint8_least)offset + idx];
+            }
+
+            p_slot->length = payload_length;
+
+            SchM_Exit_Xcp_StimBuffer();
+
+            stored = TRUE;
+        }
+    }
+
+    if (stored == FALSE)
+    {
+        /* DD39: a DTO is not a command, so there is no error packet to answer it with and no
+         * master waiting on one. Det is the only channel a rejection has. Outside any exclusive
+         * area -- Det_ReportError is an external call, the same rule Xcp_TriggerEventChannel's own
+         * EV_DAQ_OVERLOAD report follows further down this file. */
+        Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_STIM_FRAME_REJECTED);
+    }
+}
 
 Std_ReturnType Xcp_DaqQueuePeek(PduIdType *pTxPduId, PduInfoType **ppPduInfo)
 {
@@ -343,47 +1049,119 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
          * for the whole trigger, however many individual pushes failed within it. */
         boolean overloaded = FALSE;
 
-        /* DD11: the authoritative binding of a DAQ list to an event channel is the one
-         * SET_DAQ_LIST_MODE wrote at runtime (Xcp_Rt[...].daqList[...].eventChannelNumber), not
-         * the configured triggeredDaqListRef, so the lists are scanned rather than the channel's
-         * reference list walked. */
+        /* DD40, as corrected: DIRECTION selects a MODE, not a capability. 1.1/1.6.4.1.1.3 --
+         * "The DIRECTION flag sets the DAQ list into synchronized data acquisition OR synchronized
+         * data stimulation mode". DAQ_STIM is the list's TYPE, what the configuration permits it
+         * to be; DIRECTION is what it is doing now. A list with DIRECTION = STIM acquires nothing,
+         * so the two passes below partition this channel's lists rather than visiting each twice.
+         *
+         * TWO passes over the lists, not one pass doing both per list, and that is the whole point
+         * of the shape. One event channel can carry several lists, and one may stimulate a
+         * variable another measures; DD40's guarantee is that EVERY stimulating list has applied
+         * before ANY acquiring list is sampled, so the measurement reports the value that was
+         * actually in effect rather than the one the stimulus was about to replace. A single
+         * interleaved pass would give that only when the stimulating list happens to hold the
+         * lower index -- an accident of configuration order, not a guarantee.
+         *
+         * It also keeps DD37's two exclusive areas apart: every SchM_Enter_Xcp_StimBuffer section
+         * of pass 1 closes before Xcp_DaqSampleOdt opens the first SchM_Enter_Xcp_DtoQueue section
+         * of pass 2, so the two never nest.
+         *
+         * **The suite is NOT the backstop for that**, and this is the line at which somebody would
+         * assume it is. test/conftest.py tracks the two areas as independent booleans, so it
+         * detects an area nested within ITSELF and cannot see one held across the other; and
+         * swapping these two passes produces no nesting to detect in the first place, because
+         * Xcp_DaqSampleOdt and Xcp_DaqQueuePush each close their section before returning.
+         * Verified by mutation, not assumed. What holds this order is
+         * test/stim_apply_test.py::test_the_apply_precedes_the_sampling_loop, and nothing else --
+         * do not swap these two passes on the strength of a green run.
+         *
+         * The second scan is a real cost paid deliberately: this function is documented callable
+         * from an interrupt, and daqCount is bounded at 255 with a cheap early-out per list
+         * (Xcp_DaqListElapsedOnTrigger). There is no channel-to-list index to walk instead --
+         * DD11 makes the runtime eventChannelNumber authoritative over the configured
+         * triggeredDaqListRef, so the lists are scanned rather than the channel's reference list
+         * walked, in both passes.
+         *
+         * **Both passes test the configured TYPE on top of this partition**, for two different
+         * reasons, and neither test is implied by DIRECTION. Xcp_DaqApplyStim is not handed the
+         * DIRECTION test that selected it; its own type test is a memory-safety question -- a list
+         * that cannot receive has no stimulation slot to index. The acquisition pass's, written at
+         * the loop below, is a protocol one: a pure STIM list left with DIRECTION clear lands in
+         * that pass, and sampling it would transmit a DAQ DTO the master was told this list could
+         * never produce. See each of the two comments for the argument in full. */
+        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+        {
+            if (Xcp_DaqListElapsedOnTrigger(&Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx],
+                                            eventChannelNumber, TRUE) == TRUE)
+            {
+                Xcp_DaqApplyStim(daq_idx);
+            }
+        }
+
         for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
         {
             Xcp_DaqListRtType *p_rt = &Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx];
+            const Xcp_DaqListType *p_list = &Xcp_Ptr->config->daqList[daq_idx];
 
-            if (((p_rt->mode & XCP_DAQ_LIST_MODE_RUNNING) != 0x00u) &&
-                (p_rt->eventChannelNumber == eventChannelNumber))
+            /* The configured TYPE, the mirror of the one Xcp_DaqApplyStim applies to the pass
+             * above, and it is policy here rather than memory safety: 1.1/1.6.4.2.2.1's
+             * DAQ_LIST_TYPE table gives STIM = 1, DAQ = 0 as "only DIRECTION = STIM supported",
+             * and Xcp_DTOCmdDaqGetDaqListInfo (source/Xcp_Daq.c) reports precisely that encoding
+             * for a pure STIM list. Sampling one would transmit a DAQ DTO for a list this slave
+             * has just told the master cannot acquire -- and on a stimulation-capable list's own
+             * PDU, which is the one the master stimulates THROUGH, since rxPdu and txPdu are one
+             * union member (interface/Xcp_Types.h).
+             *
+             * The DIRECTION partition does not already answer this, and that is the whole reason
+             * the test is here. DIRECTION is what the MASTER asked for; a pure STIM list that was
+             * started without SET_DAQ_LIST_MODE ever being sent keeps the DIRECTION bit
+             * Xcp_DaqListReset (source/Xcp_Daq.c) left clear, and so falls into this pass, not the
+             * one above. Xcp_DTOCmdDaqSetDaqListMode's refusal of DIRECTION on a DAQ-only list is
+             * the mirror image of this test and cannot stand in for it: it guards a command that
+             * such a master never sends.
+             *
+             * DAQ_STIM is included deliberately. A list that supports both directions and is
+             * running with DIRECTION clear is in acquisition mode and must sample -- correct,
+             * pre-existing behaviour, which a gate written as "a list that can receive does not
+             * acquire" would have broken silently.
+             *
+             * Xcp_DaqListElapsedOnTrigger is called FIRST and the type tested second, never the
+             * reverse: it mutates, and its own contract is that it runs exactly once per list per
+             * trigger. Short-circuiting past it for a pure STIM list would leave that list's
+             * prescaler counter frozen -- harmless today, since nothing else reads it, but it
+             * would make the one call site that skips it the exception to a rule the rest of this
+             * function relies on. */
+            if ((Xcp_DaqListElapsedOnTrigger(p_rt, eventChannelNumber, FALSE) == TRUE) &&
+                ((p_list->type == DAQ) || (p_list->type == DAQ_STIM)))
             {
-                p_rt->prescalerCounter++;
-
-                /* 1.1/1.6.4.1.1.3: "Without reduction, the prescaler value must equal 1." */
-                if (p_rt->prescalerCounter >= p_rt->prescaler)
-                {
-                    uint8_least odt_idx;
-                    uint32 timestamp = 0x00000000u;
-
-                    p_rt->prescalerCounter = 0x00u;
+                uint8_least odt_idx;
+                uint32 timestamp = 0x00000000u;
 
 #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
-                    /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
-                     * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps
-                     * and would call integrator code once per ODT instead of once per cycle. */
-                    if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
-                    {
-                        timestamp = Xcp_GetDaqTimestamp();
-                    }
+                /* 1.1/1.1.2.2 Diagram 10: one clock reading per DAQ cycle, transmitted in the
+                 * first ODT. Reading per ODT would give one cycle's ODTs differing timestamps and
+                 * would call integrator code once per ODT instead of once per cycle.
+                 *
+                 * In the acquisition pass because nothing else reads it: a STIM DTO's timestamp is
+                 * the master's to send and this slave skips it without storing it (DD44), so a
+                 * stimulating list would otherwise call the integrator's clock once per cycle for
+                 * a value it then discards. */
+                if ((p_rt->mode & XCP_DAQ_LIST_MODE_TIMESTAMP) != 0x00u)
+                {
+                    timestamp = Xcp_GetDaqTimestamp();
+                }
 #endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
-                    for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
-                    {
-                        Xcp_DtoFrameType frame;
+                for (odt_idx = 0x00u; odt_idx < p_list->maxOdt; odt_idx++)
+                {
+                    Xcp_DtoFrameType frame;
 
-                        if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
+                    if (Xcp_DaqSampleOdt(&frame, daq_idx, (uint8)odt_idx, timestamp) == E_OK)
+                    {
+                        if (Xcp_DaqQueuePush(&frame) != E_OK)
                         {
-                            if (Xcp_DaqQueuePush(&frame) != E_OK)
-                            {
-                                overloaded = TRUE;
-                            }
+                            overloaded = TRUE;
                         }
                     }
                 }

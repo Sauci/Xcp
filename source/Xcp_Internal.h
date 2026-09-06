@@ -141,6 +141,23 @@ extern "C" {
  */
 #define XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFCu)
 
+/**
+ * @brief how many absolute ODT numbers a STIM-capable list may use, across every DAQ list
+ * together.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.1.5.1. Master-to-slave STIM ODT
+ * numbers run 0x00..0xBF, where slave-to-master DAQ numbers (1.1.5.2) run 0x00..0xFB -- 0xFC..0xFF
+ * being SERV, EV, ERR and RES. A STIM-capable list whose absolute ODT numbers reach 0xC0 cannot be
+ * addressed at all, so a configuration that can receive is held to the lower ceiling.
+ * @note Same construction as XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX above, and the same inclusive
+ * convention: a total of exactly 0xC0 is legal (it lands on 0x00..0xBF exactly), and only a total
+ * past it reaches the illegal value 0xC0 itself. Xcp_DTOCmdDaqAllocOdt (source/Xcp_Daq.c) chooses
+ * between the two ceilings from the list's own declared type, since under DAQ_DYNAMIC every list
+ * in the pool shares it; script/source_cfg.c.jinja2 applies the same 0xC0 bound to a STATIC
+ * configuration's non-DAQ lists at generation time instead, since their FIRST_PID values are fixed
+ * before this module ever runs.
+ */
+#define XCP_STIM_ABSOLUTE_ODT_COUNT_MAX (0xC0u)
+
 /* SET_DAQ_LIST_MODE mode byte, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3.
  * Read off the specification's own bit table, which is identical in 1.0 and 1.1 except that 1.1
  * fills bit 0, which 1.0 left don't-care:
@@ -156,22 +173,23 @@ extern "C" {
 
 /**
  * @brief every mode bit this implementation refuses outright, regardless of configuration.
- * @details Bits 1, 2 and 3 are marked don't-care in 1.0 and are tolerated. TIMESTAMP is not in
- * this mask any more: Xcp_DTOCmdDaqSetDaqListMode decides that bit itself, depending on whether
- * this build has a clock configured and whether ODT 0 still has room for one. PID_OFF is not in
- * this mask either, for the same reason: Xcp_DTOCmdDaqSetDaqListMode decides it itself, depending
- * on whether the identification field type is absolute and the targeted DAQ list has exactly one
- * ODT (1.1/1.1.2.1). What remains here is refused unconditionally: DIRECTION selects STIM, out of
- * scope until SP3, and ALTERNATING pairs a DAQ list with a display event channel declared only in
- * the A2L file (DAQ_ALTERNATING_SUPPORTED), which this module does not emit -- and which 1.1
- * forbids combining with TIMESTAMP in any case.
+ * @details TIMESTAMP is not in this mask: Xcp_DTOCmdDaqSetDaqListMode decides that bit itself,
+ * depending on whether this build has a clock configured and whether ODT 0 still has room for
+ * one. PID_OFF is not in this mask either, for the same reason: Xcp_DTOCmdDaqSetDaqListMode
+ * decides it itself, depending on whether the identification field type is absolute and the
+ * targeted DAQ list has exactly one ODT (1.1/1.1.2.1). DIRECTION is not in this mask either, and
+ * for the same reason again: Xcp_DTOCmdDaqSetDaqListMode decides it itself, depending on whether
+ * the addressed list's configured type can receive (STIM or DAQ_STIM), refusing it with
+ * ERR_MODE_NOT_VALID otherwise. What remains here is refused unconditionally: ALTERNATING pairs a
+ * DAQ list with a display event channel declared only in the A2L file
+ * (DAQ_ALTERNATING_SUPPORTED), which this module does not emit -- and which 1.1 forbids combining
+ * with TIMESTAMP in any case.
  *
  * Bits 2, 3, 6 and 7 are don't-care in both versions and are tolerated. An earlier revision of
  * this mask refused 6 and 7 believing ALTERNATING lived there; it does not, and refusing bits the
  * specification marks don't-care is over-strict.
  */
-#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED \
-    (XCP_DAQ_LIST_MODE_REQ_DIRECTION | XCP_DAQ_LIST_MODE_REQ_ALTERNATING)
+#define XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (XCP_DAQ_LIST_MODE_REQ_ALTERNATING)
 
 /* GET_DAQ_LIST_MODE mode byte, 1.1/1.6.4.1.2.6. This is the layout Xcp_DaqListRtType stores. */
 #define XCP_DAQ_LIST_MODE_SELECTED (0x01u << 0x00u)
@@ -458,6 +476,103 @@ void Xcp_ClearProtectionStatus(void);
  * callers of this function -- see test/stub/SchM_Xcp.h.
  */
 void Xcp_StartNextTransmission(void);
+
+/**
+ * @brief SchM_Enter_Xcp_StimBuffer / SchM_Exit_Xcp_StimBuffer (DD37): a second exclusive area,
+ * separate from SchM_Enter_Xcp_DtoQueue above -- see test/stub/SchM_Xcp.h for the declarations.
+ * @details Guards one Xcp_StimSlotType at a time: its `length` together with its payload, written
+ * by Xcp_DaqStoreStim in the receive callback's context and read by Xcp_DaqApplyStim in the event
+ * trigger's. A length paired with the buffer it describes is the DD14 class -- the same class
+ * Xcp_DaqListRtType's note (interface/Xcp_Types.h) says its own fields do NOT belong to, which is
+ * exactly why that argument does not excuse this structure from an area.
+ * @note Not folded into SchM_Enter_Xcp_DtoQueue, and NOT for the reason this note used to give.
+ * It said one shared area would risk the apply section nesting inside the sampler's DtoQueue
+ * section, because a DAQ_STIM list applied its slots and sampled its DTO within the same trigger.
+ * That premise is gone: 1.1/1.6.4.1.1.3 makes DIRECTION a choice between synchronized data
+ * acquisition OR synchronized data stimulation, so a list does one or the other (DD40, as
+ * corrected), and Xcp_TriggerEventChannel's two passes run one after the other. Folding the two
+ * areas together would produce no nesting to risk.
+ * What survives is DD37's corrected footing, which the design document now states rather than
+ * leaving it to be re-derived: two areas keep the receive path and the transmit ring INDEPENDENT
+ * -- a stimulation frame arriving while the sampler holds DtoQueue must not wait on it, and the
+ * apply's snapshot must not be serialised behind a queue push it has nothing to do with. One area
+ * would couple two paths that share no state, which is the note below restated from the other
+ * side: they guard different data against different preemptors.
+ * @note Xcp_DaqApplyStim takes BOTH areas, one after the other and never one inside the other, and
+ * they guard two different things for two different reasons. This area covers the slot -- the
+ * payload and its length, against Xcp_DaqStoreStim in the receive context. SchM_Enter_Xcp_DtoQueue
+ * covers the ODT entries the payload is about to be written through, against CLEAR_DAQ_LIST in
+ * that same context (DD14): Xcp_DaqListClearEntries (source/Xcp_Daq.c) resets an entry's address
+ * to NULL_PTR and its length to 0 as separate writes under that area, the command is legal against
+ * a RUNNING list, and where Xcp_DaqSampleOdt would merely READ address 0 from a torn pair, the
+ * apply would WRITE to it. So the apply is a StimBuffer section, then a DtoQueue section, then the
+ * memory writes with neither held -- which is also the order that keeps DD40's claim literally
+ * true: every StimBuffer section of the trigger closes before the sampler's first DtoQueue section
+ * opens.
+ */
+
+/**
+ * @brief Decodes the identification field of a received stimulation frame.
+ * @param[in] pPduInfo the received frame. Must be non-NULL with a non-NULL SduDataPtr, which
+ * Xcp_CanIfRxIndication (Xcp.c) has already established before any DTO reaches here.
+ * @param[in] rxPduId the PDU the frame arrived on, which is what identifies the DAQ list when
+ * PID_OFF has removed the identification field (1.1/1.1.2.1).
+ * @param[out] pDaqListNumber the DAQ list the frame addresses.
+ * @param[out] pOdtNumber the ODT of that list the frame addresses, relative to the list.
+ * @param[out] pOffset index of the first payload byte, with the identification field and any
+ * timestamp already accounted for. Never larger than the frame's own SduLength, so a caller may
+ * subtract it from that length without underflow; equal to it for a frame carrying no payload.
+ * @retval E_OK the frame names a DAQ list and an ODT this slave has, and is long enough to hold
+ * the fields that precede its payload. The three out-parameters are written only in this case.
+ * @retval E_NOT_OK anything else -- an unallocated list, an ODT the list does not have, a PID_OFF
+ * list that no longer has exactly one ODT, or a frame too short for the fields the configuration
+ * says precede its payload.
+ * @details Defined in Xcp_DaqRuntime.c, in the global section; its two file-local helpers,
+ * Xcp_DaqPidOffListForRxPdu and Xcp_DaqListForAbsolutePid, sit directly after
+ * Xcp_DaqWriteIdentificationField, of which this is the exact inverse. That writer is the
+ * authority on each of the five layouts, and any disagreement between the two is a defect here.
+ * Whether the frame should be applied at all -- that the list is STIM-capable, RUNNING, and
+ * directed at stimulation, and that its payload is long enough for the ODT's entries -- is DD39's,
+ * checked by the caller, not here.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.1.2.1 (identification field, and the
+ * single-ODT condition PID_OFF carries), 1.1/1.1.2.2 (timestamp field, DD44) and 1.1/1.6.4.1.1.3,
+ * whose "The TIMESTAMP and PID_OFF flags can be used as well for DIRECTION = DAQ as for
+ * DIRECTION = STIM" is what makes both flags reachable on the receive side at all.
+ */
+Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
+                                              PduIdType rxPduId,
+                                              uint16 *pDaqListNumber,
+                                              uint8 *pOdtNumber,
+                                              uint8 *pOffset);
+
+/**
+ * @brief Buffers one received stimulation frame in the slot of the ODT it addresses.
+ * @param[in] pPduInfo the received frame. Must be non-NULL with a non-NULL SduDataPtr and an
+ * SduLength of at least one, all of which Xcp_CanIfRxIndication (Xcp.c) has established before any
+ * DTO reaches here.
+ * @param[in] rxPduId the PDU the frame arrived on, passed straight to
+ * Xcp_DaqReadIdentificationField, which needs it to identify the list under PID_OFF.
+ * @details Defined in Xcp_DaqRuntime.c. DD36: this is the whole of what a stimulation frame does
+ * in the receive callback's context -- decode, check, copy into one slot, return. No memory is
+ * written through Xcp_WriteSlaveMemoryTable here; Xcp_DaqApplyStim does that at the event trigger.
+ *
+ * That division is what keeps SWS_Xcp_00813 satisfiable. It makes Xcp_<Lo>RxIndication "Reentrant
+ * for different PduIds. Non reentrant for the same PduId.", and every CTO arrives on one PduId --
+ * which is why nothing on the CTO dispatch path guards Xcp_Internal.cto_response, last_pid or the
+ * protection-status clear. A stimulation PDU is a DIFFERENT PduId and may preempt a CTO
+ * mid-dispatch. This function touches none of that state, so that preemption cannot corrupt it,
+ * and the CTO path needs no exclusive area of its own.
+ *
+ * DD39 gives the conditions a frame must meet, and there is no error response for one that does
+ * not: 1.1/1.1.4.2's DTO is not a command, so a rejection's only channel is
+ * Xcp_ReportError(XCP_E_STIM_FRAME_REJECTED) and the frame is dropped. A rejected frame leaves the
+ * slot exactly as it was -- it is never partially written -- so the previous cycle's data keeps
+ * being applied, which DD35 makes the defined behaviour when nothing new arrives.
+ * @note The slot write takes SchM_Enter_Xcp_StimBuffer (DD37), held around that one slot and
+ * nothing else: the payload and the `length` describing it are written together under it, because
+ * a length paired with its buffer is the DD14 failure class.
+ */
+void Xcp_DaqStoreStim(const PduInfoType *pPduInfo, PduIdType rxPduId);
 
 /**
  * @brief Hands back the PduIdType and PduInfoType of the frame at the head of the DTO ring.

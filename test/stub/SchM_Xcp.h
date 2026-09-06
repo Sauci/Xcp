@@ -1,22 +1,33 @@
 /**
  * @file SchM_Xcp.h
- * @brief BSW Scheduler exclusive area used by the DAQ transmit path.
+ * @brief BSW Scheduler exclusive areas used by the DAQ transmit and stimulation paths.
  *
- * @details An integrator replaces this with the SchM the RTE generates. The area protects the
- * DTO ring indices, the event queue's read/write indices, and Xcp_Internal.ongoing_transmit_type,
- * which Xcp_TriggerEventChannel, Xcp_CanIfTxConfirmation and Xcp_MainFunction all reach. The event
- * queue has two producers (Xcp_MainFunction's EV_STORE_CAL push, Xcp_TriggerEventChannel's
- * EV_DAQ_OVERLOAD push) and one consumer (Xcp_TransmitOneFrame's get, paired with
- * Xcp_CanIfTxConfirmation's pop) that can all run in different contexts, exactly as the DTO ring
- * does for DAQ frames -- an integrator must exclude the event queue's accesses under this same
- * area, not only the DTO ring's. It must suspend anything that can call into this module --
- * typically the CAN transmit interrupt -- and must never be held across a call to CanIf_Transmit.
+ * @details An integrator replaces this with the SchM the RTE generates. SchM_Enter_Xcp_DtoQueue /
+ * SchM_Exit_Xcp_DtoQueue protects the DTO ring indices, the event queue's read/write indices, and
+ * Xcp_Internal.ongoing_transmit_type, which Xcp_TriggerEventChannel, Xcp_CanIfTxConfirmation and
+ * Xcp_MainFunction all reach. The event queue has two producers (Xcp_MainFunction's EV_STORE_CAL
+ * push, Xcp_TriggerEventChannel's EV_DAQ_OVERLOAD push) and one consumer (Xcp_TransmitOneFrame's
+ * get, paired with Xcp_CanIfTxConfirmation's pop) that can all run in different contexts, exactly
+ * as the DTO ring does for DAQ frames -- an integrator must exclude the event queue's accesses
+ * under this same area, not only the DTO ring's. It must suspend anything that can call into this
+ * module -- typically the CAN transmit interrupt -- and must never be held across a call to
+ * CanIf_Transmit.
  *
  * "Anything that can call into this module" includes Xcp_CanIfTxConfirmation itself: it updates
  * ongoing_transmit_type outside the area before Xcp_StartNextTransmission reads it under one, so
  * the area must exclude the confirmation's execution context too, not just concurrent callers of
  * this module's other entry points. A primitive that does not -- a spinlock shared with a
  * confirmation handled on another core, for instance -- does not satisfy this.
+ *
+ * It also includes Xcp_CanIfRxIndication, and that is not merely a restatement once a
+ * configuration can receive stimulation. Xcp_DTOCmdDaqAllocOdt (source/Xcp_Daq.c) raises a list's
+ * maxOdt and recomputes every list's firstPid inside this area precisely because the two are
+ * inconsistent in between; both are read, with no area held, by Xcp_DaqSampleOdt in the transmit
+ * direction AND by Xcp_DaqReadIdentificationField in the receive one (source/Xcp_DaqRuntime.c).
+ * What keeps either from observing that window is that this area suspends the context it runs in
+ * -- the CAN transmit interrupt for the first, the CAN receive interrupt for the second. An
+ * integrator who suspends only the transmit side leaves a received stimulation frame able to
+ * resolve its PID against a half-updated layout and be applied to the wrong DAQ list.
  */
 
 #ifndef SCHM_XCP_H
@@ -33,6 +44,36 @@ extern "C" {
 
 extern void SchM_Enter_Xcp_DtoQueue(void);
 extern void SchM_Exit_Xcp_DtoQueue(void);
+
+/**
+ * @brief second exclusive area (DD37), guarding one Xcp_StimSlotType -- its payload and its
+ * `length` together -- while Xcp_DaqStoreStim writes it in the receive callback's context or
+ * Xcp_DaqApplyStim reads it in the event trigger's. Held per slot, not around the whole reception
+ * or the whole apply loop, the same rule Xcp_DaqListClearEntries already follows for DD14.
+ * @details A length paired with the buffer it describes is the DD14 class: a write or a read torn
+ * by the other context would leave the two disagreeing about how much of the buffer is valid.
+ *
+ * Deliberately not SchM_Enter_Xcp_DtoQueue -- and the reason this note used to give was wrong
+ * twice over (DD37, as corrected). It said a DAQ_STIM list applies its slots and samples its DTO
+ * within the same trigger, so sharing one area would risk the apply section nesting inside the
+ * sampler's, which test/conftest.py asserts against. DD40 overturns the first half:
+ * 1.1/1.6.4.1.1.3 makes DIRECTION a choice between synchronized data acquisition OR synchronized
+ * data stimulation, so a list does one or the other. DD40's closing paragraph overturns the
+ * second: conftest.py tracks the two areas as independent booleans, so it sees an area nested
+ * within ITSELF and never one held across the other.
+ *
+ * The conclusion stands on a different footing, and it is the one an integrator implementing these
+ * four functions needs. **Two areas keep the receive path and the transmit ring independent**: a
+ * stimulation frame arriving while the sampler holds DtoQueue must not wait on it, and the apply's
+ * snapshot must not be serialised behind a queue push it has nothing to do with. One area would
+ * couple two paths that share no state.
+ *
+ * So implementing both with one primitive is still CORRECT -- the two never nest, in either order
+ * -- but it reimposes exactly the coupling the separation exists to remove, and on a list that
+ * only receives it makes every frame's arrival wait on a ring that list never pushes to.
+ */
+extern void SchM_Enter_Xcp_StimBuffer(void);
+extern void SchM_Exit_Xcp_StimBuffer(void);
 
 #ifdef __cplusplus
 

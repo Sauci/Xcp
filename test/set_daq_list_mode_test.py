@@ -27,6 +27,13 @@ def set_mode(handle, mode=0x00, daq_list=0, channel=0, prescaler=1, priority=0,
                     tuple(u16_to_array(channel, byte_order)) + (prescaler, priority))
 
 
+def exchange(handle, request, length=8):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
 def fill_odt_zero_to_capacity(handle, daq_list=0, byte_order='LITTLE_ENDIAN'):
     """SET_DAQ_PTR to ODT 0 entry 0, then WRITE_DAQ one byte at a time -- relying on the pointer's
     auto post-increment within the ODT (1.1/1.6.4.1.1.2) -- until the ODT holds odtEntrySizeDaq
@@ -91,13 +98,84 @@ def test_set_daq_list_mode_tolerates_the_bits_the_specification_marks_dont_care(
     assert set_mode(handle, mode=mode)[0] == 0xFF
 
 
+def test_set_daq_list_mode_accepts_stim_on_a_receiving_list():
+    """DD43. DIRECTION was refused outright through XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED because
+    stimulation did not exist. It is now accepted where the configuration can receive, and still
+    refused where it cannot -- a DAQ-typed pool answers ERR_MODE_NOT_VALID, which is the refusal
+    SET_DAQ_LIST_MODE already performs. Mode 0x02 sets DIRECTION alone: ALTERNATING (bit 0) stays
+    clear so the blanket-unsupported check cannot fire, and TIMESTAMP/PID_OFF (bits 4, 5) stay
+    clear so their own dedicated checks cannot either -- ERR_MODE_NOT_VALID here can only come
+    from DIRECTION's own branch."""
+    handle = XcpTest(stim_config(daq_count=1, odt_count=1, odt_entries_count=1))
+    connect(handle)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
+
+    assert exchange(handle, (0xE0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF
+
+    # GET_DAQ_LIST_MODE, 1.1/1.6.4.1.2.6: DIRECTION is bit 1 of the stored mode byte.
+    assert (exchange(handle, (0xDF, 0x00, 0x00, 0x00))[1] & 0b00000010) != 0
+
+
+def test_set_daq_list_mode_accepts_stim_on_a_pure_stim_list():
+    """The capability check is `type != STIM and type != DAQ_STIM`, and
+    test_set_daq_list_mode_accepts_stim_on_a_receiving_list above only exercises the DAQ_STIM half
+    -- stim_config's pool_type defaults to 'DAQ_STIM'. A mutation dropping the `!= STIM` conjunct
+    and keeping only `!= DAQ_STIM` would still pass that test and
+    test_set_daq_list_mode_still_refuses_stim_on_a_daq_only_pool below unchanged: a DAQ list is
+    refused and a DAQ_STIM list is accepted either way, since the surviving conjunct alone decides
+    both of those outcomes. A pure STIM list -- generatable since commit 3659d24, so a real
+    reachable configuration and not a hypothetical -- is the one case only the dropped conjunct
+    protects, and no other test in the suite puts a pure STIM list through SET_DAQ_LIST_MODE."""
+    handle = XcpTest(stim_config(pool_type='STIM', daq_count=1, odt_count=1, odt_entries_count=1))
+    connect(handle)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
+
+    assert exchange(handle, (0xE0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF
+
+    # GET_DAQ_LIST_MODE, 1.1/1.6.4.1.2.6: DIRECTION is bit 1 of the stored mode byte.
+    assert (exchange(handle, (0xDF, 0x00, 0x00, 0x00))[1] & 0b00000010) != 0
+
+
+def test_set_daq_list_mode_still_refuses_stim_on_a_daq_only_pool():
+    """The other half of DD43: a pool that cannot receive must still be refused, exactly as it was
+    before DIRECTION had a conditional path at all. Mode 0x02 isolates DIRECTION for the same
+    reason given in test_set_daq_list_mode_accepts_stim_on_a_receiving_list above."""
+    handle = XcpTest(dynamic_config(daq_count=1, odt_count=1, odt_entries_count=1))
+    connect(handle)
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
+
+    assert exchange(handle, (0xE0, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0:2] == (0xFE, 0x27)
+
+
 def test_set_daq_list_mode_refuses_a_stimulation_direction_rather_than_ignoring_it():
     """Regression. DIRECTION is bit 1 in both 1.0 and 1.1, but this module declared it at bit 0
     until the mode-bit positions were corrected. Bit 1 was covered by nothing, and the mask's own
     comment called bits 1-3 tolerated don't-cares -- so a master asking for STIM got a positive
     response, believed it had configured stimulation, and the slave went on sampling in the DAQ
     direction with no error anywhere. Silence was the whole defect, so this test asserts the error
-    code rather than merely that the request did not succeed."""
+    code rather than merely that the request did not succeed.
+
+    The configuration is now load-bearing rather than incidental, and for a sharper reason than
+    "keep the fixture DAQ-typed": on a stimulation-capable configuration, a correct implementation
+    and PR #9's bit-0 defect are indistinguishable. Both answer 0xFF for mode 0x02 -- a correct
+    implementation because bit 1 is legitimately checked and this list qualifies to receive; the
+    reintroduced defect because it tests bit 0, finds it clear (0x02 has only bit 1 set), and so
+    never applies the type gate at all, falling through to acceptance regardless of what the list
+    is. Only a configuration that cannot receive turns that into an observable difference: a
+    correct implementation refuses (0xFE, 0x27) while the reintroduced defect keeps silently
+    accepting, which is exactly the original defect's shape -- "a master asking for STIM got a
+    positive response ... the slave went on sampling in the DAQ direction with no error anywhere."
+    daq_handle()'s two lists both default to type='DAQ' (test/parameter.py's daq()), so this test
+    keeps that observable difference against the exact static configuration PR #9's regression was
+    found on. test_set_daq_list_mode_still_refuses_stim_on_a_daq_only_pool above pins the same
+    DAQ-only refusal against a dynamic pool instead;
+    test_set_daq_list_mode_accepts_stim_on_a_receiving_list and
+    test_set_daq_list_mode_accepts_stim_on_a_pure_stim_list below show the accepting half. Do not
+    "improve" this test by moving it to a stimulation-capable fixture -- that would silently
+    destroy the one thing it proves."""
     handle = daq_handle()
 
     assert set_mode(handle, mode=0x02) == (0xFE, 0x27)

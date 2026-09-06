@@ -21,6 +21,27 @@ def daq_handle(**kwargs):
     return handle
 
 
+def exchange(handle, request, length=2):
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
+
+
+def write_daq(handle, size, address=0x1000):
+    """SET_DAQ_PTR to (list 0, ODT 0, entry 0) and one WRITE_DAQ of `size` bytes, returning the
+    response's first two bytes.
+
+    The pointer is repositioned before every attempt rather than once for the sequence: WRITE_DAQ
+    post-increments it on success and the list has one entry, so a later attempt without a fresh
+    SET_DAQ_PTR would be refused for pointer validity -- with the same ERR_OUT_OF_RANGE the size
+    checks answer, and for a reason that has nothing to do with the size under test."""
+    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0] == 0xFF, \
+        'SET_DAQ_PTR was refused'
+    return exchange(handle, (0xE1, 0xFF, size, 0x00) +
+                    tuple(u32_to_array(address, 'LITTLE_ENDIAN')))
+
+
 @pytest.mark.parametrize('ag', address_granularities)
 def test_granularity_is_the_address_granularity_element_size(ag):
     """XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5: the possible values for
@@ -53,19 +74,100 @@ def test_max_odt_entry_size_is_what_a_dto_leaves_after_the_identification_field(
     assert info(handle)[2] == expected
 
 
-def test_stim_fields_are_zero_while_stimulation_is_out_of_scope():
-    """GRANULARITY_ODT_ENTRY_SIZE_STIM (byte 3) and MAX_ODT_ENTRY_SIZE_STIM (byte 4) are both hard
-    zeros in this phase -- STIM arrives in SP3. Not vacuous zero checks: connect(), called by
-    daq_handle() immediately before info(), leaves nonzero bytes at both of these exact buffer
-    offsets in Xcp_CTOCmdStdConnect's own response (source/Xcp_Std.c) -- MAX_CTO (0x08 by default)
-    at byte 3, and MAX_DTO's low byte (0x08 by default, little endian) at byte 4. Since
-    Xcp_FinalizeResPacket only fills bytes from its start index onward, a deleted assignment on
-    either byte would leave that 0x08 rather than 0x00, so both assertions are load-bearing under
-    the default configuration this test uses. Confirmed by mutation -- see task-14-report.md."""
+def test_stim_fields_are_zero_for_a_build_that_cannot_receive_stimulation():
+    """GRANULARITY_ODT_ENTRY_SIZE_STIM (byte 3) and MAX_ODT_ENTRY_SIZE_STIM (byte 4) are both zero
+    for a DAQ-only configuration. Not "not implemented yet" -- SP3 implements stimulation, and the
+    sibling test below is what this slave reports once a configuration can receive. Zero is what a
+    slave that stimulates nothing has to say about the size and granularity of a stimulation ODT
+    entry it will never accept, and it is what the ASAP2 grammar says by making its "STIM" block
+    optional (1.1/1.6.4.1.2.5, whose GRANULARITY_ODT_ENTRY_SIZE_x enumeration is {1,2,4,8}).
+
+    Not vacuous zero checks: connect(), called by daq_handle() immediately before info(), leaves
+    nonzero bytes at both of these exact buffer offsets in Xcp_CTOCmdStdConnect's own response
+    (source/Xcp_Std.c) -- MAX_CTO (0x08 by default) at byte 3, and MAX_DTO's low byte (0x08 by
+    default, little endian) at byte 4. Since Xcp_FinalizeResPacket only fills bytes from its start
+    index onward, a deleted assignment on either byte would leave that 0x08 rather than 0x00, so
+    both assertions are load-bearing under the default configuration this test uses. Confirmed by
+    mutation -- see task-14-report.md.
+
+    It is load-bearing a second way now, which the paragraph above does not cover: byte 3 is no
+    longer a constant, so a granularity reported unconditionally -- without asking whether this
+    configuration can receive at all -- would answer 1 here rather than 0. Also confirmed by
+    mutation; see task-9-report.md."""
     handle = daq_handle()
 
     assert info(handle)[3] == 0
     assert info(handle)[4] == 0
+
+
+@pytest.mark.parametrize('ag', address_granularities)
+def test_stim_fields_report_the_same_limits_write_daq_enforces_on_a_stim_entry(ag):
+    """The DIRECTION = STIM half of the two tests above, on a configuration that can receive.
+
+    1.1/1.6.4.1.2.5 reports the two directions as four separate bytes because it allows a slave
+    whose directions differ. This one's do not, and the reason is structural rather than a
+    coincidence worth reporting twice (DD47): WRITE_DAQ and WRITE_DAQ_MULTIPLE share one
+    entry-application routine, Xcp_DaqApplyOdtEntry (source/Xcp_Daq.c), and it refuses an entry
+    whose size is not a multiple of the address granularity or is larger than odtEntrySizeDaq
+    without consulting the list's direction at all -- an entry does not know, when it is written,
+    which direction SET_DAQ_LIST_MODE will later put its list into.
+
+    **The last two assertions are what make that demonstrated rather than inferred.** The first
+    three compare byte 3 against byte 1 and byte 4 against byte 2, which says the two directions
+    agree but leans on the DAQ half being pinned by a test that runs on a DAQ-only list -- sound,
+    since the routine takes no direction, but a transitive argument. So this list, which is
+    DAQ_STIM, is offered the two entry sizes its own reported bytes forbid and the one they permit:
+
+    - a size one past the reported granularity is refused, **at the two granularities where that
+      constraint has content**. At BYTE there is no such size -- every integer is a multiple of 1
+      -- so the refusal is asserted for WORD and DWORD, and the acceptance below covers all three.
+      Both refused sizes stay well under MAX_ODT_ENTRY_SIZE_STIM (3 and 5, against 7), so the
+      granularity check is unambiguously what answers them.
+    - a size one past the reported maximum is refused at every granularity: 8 is a multiple of 1,
+      2 and 4 alike, so only the size check can be refusing it.
+    - a size of exactly the reported granularity is accepted, which keeps the two refusals from
+      being satisfied by a slave that had simply stopped accepting entries.
+
+    ERR_OUT_OF_RANGE (0x22) is pinned rather than "some error": 1.7.3.2.4 gives its prescribed
+    master action as "retry other parameter", which is the honest answer to a size this slave
+    cannot take, and the neighbouring refusals in this routine answer ERR_DAQ_ACTIVE,
+    ERR_WRITE_PROTECTED and ERR_DAQ_CONFIG instead.
+
+    daq_acceptance_test.py::test_write_daq_accepts_exactly_what_get_daq_resolution_info_promises is
+    the DAQ direction's version of these three, sweeping MAX_DTO and the identification field type
+    as well. This is deliberately the narrower twin rather than a second sweep: what is new here is
+    that the list is DAQ_STIM and the bytes being honoured are 3 and 4, not that the routine's
+    arithmetic works -- which that test already establishes across a far wider space than a STIM
+    list adds anything to.
+
+    Asserted against the DAQ bytes of the same response rather than against fresh literals: the
+    claim is that the two directions agree, and two independently written literals would still
+    agree if the module had stopped deriving one from the other. The non-zero assertions are what
+    keep that from being satisfied by a slave that reported 0 for all four.
+
+    Swept over the address granularity for byte 3, exactly as the DAQ granularity test above is:
+    a hard-coded 1 would pass at BYTE and nowhere else.
+    """
+    handle = XcpTest(DefaultConfig(address_granularity=ag,
+                                   daqs=(daq(name='DAQ1', type='DAQ_STIM'),)))
+    connect(handle)
+
+    response = info(handle)
+
+    assert response[3] == element_size_from_address_granularity(ag)
+    assert response[3] == response[1], \
+        'one entry-application routine, one granularity, both directions'
+    assert response[4] == response[2], 'and one MAX_ODT_ENTRY_SIZE, for the same reason'
+    assert response[3] != 0 and response[4] != 0, \
+        'a configuration that can receive must not report a DAQ-only build\'s zeros'
+
+    if response[3] > 1:
+        assert write_daq(handle, response[3] + 1) == (0xFE, 0x22), \
+            'a STIM entry whose size is not a multiple of the reported granularity is refused'
+    assert write_daq(handle, response[4] + 1) == (0xFE, 0x22), \
+        'a STIM entry larger than the reported MAX_ODT_ENTRY_SIZE_STIM is refused'
+    assert write_daq(handle, response[3])[0] == 0xFF, \
+        'and one of exactly the reported granularity is accepted'
 
 
 def test_timestamp_fields_are_invalid_because_timestamps_are_unsupported():

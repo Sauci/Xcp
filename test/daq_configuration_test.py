@@ -409,6 +409,43 @@ def test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling():
         XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', max_odt=200), daq(name='DAQ2', max_odt=53))))
 
 
+def test_generation_fails_when_a_stim_capable_list_exceeds_the_stim_pid_ceiling():
+    """DD42. XCP part 2 - Protocol Layer Specification 1.1/1.1.5.1 caps a STIM PID at 0xBF, tighter
+    than the 0xFB ceiling test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling above
+    checks: a list that can receive is addressed in that direction too, so its absolute ODT numbers
+    -- FIRST_PID is fixed at generation for a STATIC list -- must not reach 0xC0.
+
+    193 is the smallest total that violates it, the same reasoning the 252/253 pair above uses for
+    the wider ceiling. A DAQ list of the same size is untouched by this guard (it keeps the 0xFB
+    range), which is the generation-time half of proving the two ceilings are distinguished rather
+    than both clamped low -- test/alloc_odt_test.py proves the runtime half."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM', max_odt=193),)))
+
+
+def test_generation_accepts_a_daq_list_past_the_stim_ceiling_when_it_cannot_receive():
+    """DD42, the STATIC sibling of test_alloc_odt_keeps_the_full_daq_ceiling_for_a_daq_only_pool:
+    script/source_cfg.c.jinja2's `daq.type != 'DAQ'` filter is what lets a DAQ list keep the wider
+    0xFB range while a list that can receive is held to 0xC0, and nothing above exercises the
+    DAQ-only half of that filter. test_generation_fails_when_total_odt_count_exceeds_the_pid_ceiling
+    cannot: its two DAQ lists total 253, which trips the pre-existing `pid.next > 252` guard before
+    the 0xC0 loop is ever reached, so its `pytest.raises(UndefinedError)` cannot tell a correctly
+    scoped 0xC0 guard from one that also caught DAQ lists -- dropping `!= 'DAQ'` entirely (or
+    inverting it) would pass every test above just as well as the real filter does.
+
+    DAQ2 here sits in the one window that discriminates the two: its absolute ODT numbers run
+    100..249 -- past 192 (0xC0), so an over-broad guard refuses it, but at or under 252 (0xFB + 1),
+    so it is clear of the `pid.next` guard and only the type filter decides the outcome. DAQ1 is
+    DAQ_STIM and stays under its own 192 ceiling (0..99), so this one configuration exercises both
+    guards without either tripping incorrectly."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM', max_odt=100),
+                                          daq(name='DAQ2', type='DAQ', max_odt=150))))
+
+    assert handle.config.lib.Xcp[0].config.daqList[1].type == handle.lib.DAQ
+    assert handle.config.lib.Xcp[0].config.daqList[1].firstPid == 100
+    assert handle.config.lib.Xcp[0].config.daqList[1].maxOdt == 150
+
+
 def test_generation_fails_when_odt_entry_size_daq_exceeds_the_uint8_field():
     """odtEntrySizeDaq is emitted as one byte into Xcp_GeneralType's uint8 XcpOdtEntrySizeDaq, but
     it is derived from max_dto, whose schema maximum is 65535. It sat two lines below the
@@ -425,27 +462,109 @@ def test_generation_fails_when_odt_entry_size_daq_exceeds_the_uint8_field():
         XcpTest(DefaultConfig(identification_field_type='ABSOLUTE', max_dto=257))
 
 
-def test_generation_fails_when_a_daq_list_is_configured_as_stim():
-    """A pure STIM list can do nothing in this module: stimulation arrives in SP3. Generating one
-    anyway made Xcp_DTOCmdDaqGetDaqListInfo answer DAQ_LIST_PROPERTIES with both type bits clear
-    -- DAQ clear because the list is not DAQ-capable, STIM clear because the direction is
-    unimplemented -- and XCP part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks that encoding "Not
-    allowed". Refusing the list is the alternative to emitting a forbidden encoding or advertising
-    a capability the module lacks.
+def test_generation_accepts_a_pure_stim_list():
+    """A pure STIM list used to be refused at generation: Xcp_DTOCmdDaqGetDaqListInfo would have
+    answered DAQ_LIST_PROPERTIES with both type bits clear -- DAQ clear because the list is not
+    DAQ-capable, STIM clear because the direction was unimplemented -- and XCP part 2
+    1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks that encoding "Not allowed". SP3 implemented data
+    stimulation and lifted the guard: Xcp_DTOCmdDaqGetDaqListInfo now sets the STIM bit for such a
+    list instead of leaving both clear, which is the encoding the table marks "Not allowed"'s
+    counterpart. This pins that the static list itself generates with the right type;
+    get_daq_list_info_test.py's test_get_daq_list_info_reports_stim_for_a_pure_stim_list pins the
+    resulting DAQ_LIST_PROPERTIES bits over a real GET_DAQ_LIST_INFO exchange.
+    test_get_daq_list_info_reports_stim_for_a_receiving_list in that file is not this list's
+    equivalent -- it configures a DAQ_STIM pool, not a pure STIM list."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),)))
 
-    The companion below is what discriminates this guard from the other generation guards, all of
-    which surface the same "'raise' is undefined": the very same configuration with DAQ_STIM in
-    place of STIM generates and runs."""
-    with pytest.raises(UndefinedError):
-        XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),)))
+    assert handle.config.lib.Xcp[0].config.daqList[0].type == handle.lib.STIM
 
 
 def test_generation_accepts_a_daq_stim_list():
-    """DAQ_STIM is not caught by the guard above and must not be: such a list is DAQ-capable
-    today, and only its stimulation half waits for SP3."""
+    """DAQ_STIM generates too, and stays distinguishable from the pure STIM list above: DAQ_STIM
+    is DAQ-capable as well as STIM-capable, where a pure STIM list is STIM-capable only."""
     handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM'),)))
 
     assert handle.config.lib.Xcp[0].config.daqList[0].type == handle.lib.DAQ_STIM
+
+
+#: The three shapes a stimulation-capable configuration comes in, one per branch of the
+#: `stim.capable` computation script/source_cfg.c.jinja2 shares with the guard below: two static
+#: types, and the dynamic pool's one declared type (DD43). A guard written against only one of the
+#: two configuration models would pass the other two.
+STIMULATION_CAPABLE_CONFIGURATIONS = (
+    pytest.param(lambda: DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),),
+                                       resource_protection_data_stimulation=True),
+                 id='STATIC, a pure STIM list'),
+    pytest.param(lambda: DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ_STIM'),),
+                                       resource_protection_data_stimulation=True),
+                 id='STATIC, a DAQ_STIM list'),
+    pytest.param(lambda: stim_config(resource_protection_data_stimulation=True),
+                 id='DYNAMIC, a receiving pool'),
+)
+
+
+@pytest.mark.parametrize('build', STIMULATION_CAPABLE_CONFIGURATIONS)
+def test_generation_refuses_the_stim_resource_on_a_configuration_that_can_stimulate(build):
+    """DD48. `resource_protection.data_stimulation` sets bit 3 of protectedResource -- the STIM
+    resource of XCP part 2 1.1/1.5 -- and CONNECT's RESOURCE byte, GET_STATUS and GET_SEED/UNLOCK
+    all honour it. **Nothing keys on it.** Xcp_PIDToCmdGroupTable (source/Xcp.c) is the only map
+    from a command to a resource and every DAQ command in it carries MASK_DAQ, so
+    `data_stimulation: true, data_acquisition: false` advertises a protected stimulation resource
+    to a master that has to unlock nothing: SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ against
+    any address it names, and START_STOP_DAQ_LIST are all reachable, which is the whole of
+    stimulation.
+
+    That was inert before SP3 -- no configuration could stimulate, so the flag gated a capability
+    that did not exist. SP3 makes it gate the sub-project's central one, so the combination is
+    refused at generation.
+
+    Refused there rather than in a handler, and 1.1/1.5 is why: it defines the resource as "DAQ
+    list commands (DIRECTION = STIM)", protection keyed on an ARGUMENT of one command, while
+    Xcp_PIDToCmdGroupTable is a per-PID OR mask that cannot express it -- and SET_DAQ_LIST_MODE's
+    error set (1.7.3.2.4) has no ERR_ACCESS_LOCKED, so a handler-side refusal would invent an error
+    code. That is the objection Task 6 honoured for ALLOC_ODT, and it applies unchanged here.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(build())
+
+
+def test_generation_accepts_the_stim_resource_on_a_configuration_that_cannot_stimulate():
+    """The other half of DD48's condition, and what makes the guard a statement about a LIE rather
+    than about the flag.
+
+    A DAQ-only build that sets `data_stimulation` advertises a resource nothing in the build can
+    reach. No command exists for a master to be wrongly let through to, so the flag is inert --
+    exactly what it was for every configuration before SP3 -- and the configuration still
+    generates, with bit 3 of protectedResource set.
+
+    Without this test the guard above passes just as well when written as "refuse
+    data_stimulation", full stop, which would refuse a configuration that is not lying about
+    anything.
+    """
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ'),),
+                                   resource_protection_data_stimulation=True))
+
+    # Bit 3, STIM, in the resource layout of XCP part 2 1.1/1.5 -- written as the shift
+    # script/source_cfg.c.jinja2 emits rather than as a name, because
+    # XCP_RESOURCE_PROTECTION_STATUS_MASK_STIM lives in source/Xcp_Internal.h, which the harness
+    # does not parse for defines. test/connect_test.py reads the same bit the same way.
+    assert handle.config.lib.Xcp[0].general.protectedResource == (0x01 << 0x03)
+
+
+def test_generation_accepts_a_stimulation_capable_configuration_that_does_not_claim_the_resource():
+    """The second discriminator DD48's guard needs: it is the CONJUNCTION that is refused.
+
+    A configuration that can stimulate and leaves `data_stimulation` clear promises the master
+    nothing about protecting stimulation, so there is nothing for it to be wrong about. A guard
+    written as "refuse a stimulation-capable configuration" would pass the two tests above and fail
+    here -- and would refuse every other stimulation test in this suite along with it.
+    """
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='STIM'),),
+                                   resource_protection_data_acquisition=True))
+
+    # Bit 2, DAQ, in the same 1.1/1.5 layout. A protected resource is still set here, so this
+    # cannot pass by the configuration simply protecting nothing.
+    assert handle.config.lib.Xcp[0].general.protectedResource == (0x01 << 0x02)
 
 
 def test_generation_accepts_the_largest_odt_entry_size_the_uint8_field_can_hold():
@@ -745,3 +864,104 @@ def test_generation_refuses_a_dynamic_pool_declared_under_a_static_configuration
 
     with pytest.raises(UndefinedError):
         XcpTest(config)
+
+
+def test_a_stim_capable_pool_reserves_a_slot_for_every_odt():
+    """DD43. A STIM buffer must exist for any list that might receive, and under a dynamic pool
+    there is no per-list type -- SET_DAQ_LIST_MODE sets direction at runtime. The pool therefore
+    declares its own direction, mirroring daqs[].type for a static list.
+
+    A DAQ-typed pool generates no slots at all, which is what keeps a DAQ-only build paying
+    nothing for stimulation it never uses.
+
+    Reads Xcp_Rt[...] the way every other test in the suite does -- handle.lib, the module under
+    test linked against the generated runtime, not handle.config.lib, which is the generated
+    CONFIGURATION module and carries no Xcp_Rt at all."""
+    handle = XcpTest(stim_config(daq_count=2, odt_count=3, odt_entries_count=2))
+    rt = handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef]
+
+    assert rt.stimSlotCount == 2 * 3
+
+    for daq_idx in range(2):
+        # The pool is rectangular and every list in it can receive, so the prefix sum
+        # stimSlotBase carries collapses to daq_idx * odt_count here. Asserted rather than
+        # assumed, because it is the closed form that does NOT survive the static model --
+        # see test_a_static_list_that_can_receive_starts_where_its_own_slots_do.
+        assert handle.lib.Xcp_Ptr.config.daqList[daq_idx].stimSlotBase == daq_idx * 3
+
+        for odt_idx in range(3):
+            slot = rt.stimSlot[handle.lib.Xcp_Ptr.config.daqList[daq_idx].stimSlotBase + odt_idx]
+            assert slot.length == 0, 'a freshly generated slot holds nothing'
+
+
+def test_a_daq_only_pool_reserves_no_stim_slots():
+    """The other half of DD43: declaring `DAQ` must cost nothing.
+
+    The second half of this test drops the key entirely, because `type` is deliberately absent
+    from the schema's required list for daq_dynamic -- the default is what keeps every dynamic
+    configuration written before stimulation existed valid, and DAQ-only. Without this, both
+    templates' `| default('DAQ')` would be reached by no test at all."""
+    handle = XcpTest(dynamic_config(daq_count=2, odt_count=3, odt_entries_count=2))
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0
+
+    config = dynamic_config(daq_count=2, odt_count=3, odt_entries_count=2)
+    del config['configurations'][0]['daq_dynamic']['type']
+    handle = XcpTest(config)
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 0
+
+
+def test_a_dynamic_pool_generates_lists_of_its_declared_type():
+    """script/source_cfg.c.jinja2's DYNAMIC branch hard-coded XcpDaqListType to DAQ for every pool
+    slot regardless of daq_dynamic.type, predating pools having a type at all. source/Xcp.c's
+    Xcp_CanIfRxIndication accepts a received PDU on a DAQ list only when its type is STIM or
+    DAQ_STIM, so with every slot typed DAQ no dynamically allocated list could ever accept a
+    stimulation frame no matter what the pool declared -- valid_pdu_id stayed FALSE and reception
+    was dead for every dynamic STIM pool, a path no other test exercises. Two slots, both checked:
+    the bug was per-slot, the same hard-coded literal emitted on every iteration of the loop."""
+    handle = XcpTest(stim_config(daq_count=2, odt_count=1, odt_entries_count=1))
+
+    for i in range(2):
+        assert handle.lib.Xcp_Ptr.config.daqList[i].type == handle.lib.DAQ_STIM
+
+
+def test_a_static_list_that_can_receive_starts_where_its_own_slots_do():
+    """DD43. The case with no closed form, and the reason Xcp_DaqListType carries stimSlotBase at
+    all rather than the addressing being computed from the list number.
+
+    A static configuration reserves slots for its RECEIVING lists only, so a DAQ list advances the
+    base by nothing however many ODTs it owns. Here list 0 is a DAQ list with two ODTs, and the two
+    receiving lists that follow it start at 0 and 3 -- not at 2 and 5, which is where summing over
+    every list would put them, and not at 1 * odt_count and 2 * odt_count, which is where the
+    rectangular rule a dynamic pool obeys would. Both wrong answers are indistinguishable from the
+    right one under a dynamic pool, which is why this case is pinned separately.
+
+    A DAQ list's own base is 0 and is never read: nothing addresses a stimulation slot for a list
+    whose direction excludes STIM."""
+    handle = XcpTest(DefaultConfig(daqs=(daq(name='DAQ1', type='DAQ', max_odt=2),
+                                         daq(name='DAQ2', type='DAQ_STIM', max_odt=3),
+                                         daq(name='DAQ3', type='DAQ_STIM', max_odt=4)),
+                                   events=(event(name='EVT1', triggered_daq_list_ref=['DAQ1']),)))
+    daq_list = handle.lib.Xcp_Ptr.config.daqList
+
+    assert daq_list[0].stimSlotBase == 0, 'a DAQ list reserves nothing, so it starts nowhere'
+    assert daq_list[1].stimSlotBase == 0, 'the first receiving list starts at the front'
+    assert daq_list[2].stimSlotBase == 3, "after the first receiving list's three ODTs"
+
+    assert handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount == 3 + 4
+
+    # The last slot the last list addresses is the last slot reserved: base plus its own ODTs
+    # accounts for the array exactly, with nothing over-run and nothing stranded.
+    assert daq_list[2].stimSlotBase + daq_list[2].maxOdt == \
+        handle.lib.Xcp_Rt[handle.lib.Xcp_Ptr.xcpRtRef].stimSlotCount
+
+
+def test_odt_entry_size_stim_is_reported_for_a_stim_capable_build():
+    """DD44/§4. XcpOdtEntrySizeStim derives exactly as XcpOdtEntrySizeDaq does -- MAX_DTO less the
+    identification field -- and was hard-coded 0x00u with the comment "STIM arrives in SP3"."""
+    handle = XcpTest(stim_config(daq_count=1, odt_count=1, odt_entries_count=1, max_dto=8))
+
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeStim == \
+        handle.config.lib.Xcp[0].general.odtEntrySizeDaq
+    assert handle.config.lib.Xcp[0].general.odtEntrySizeStim != 0

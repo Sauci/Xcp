@@ -264,6 +264,28 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- if first_pids.append(pid.next) %}{% endif %}
     {%- set pid.next = pid.next + daq.max_odt %}
     {%- endfor %}
+    {#- stimSlotBase (DD43), built exactly as first_pids above and for the same reason: a flat array
+        addressed by a per-list base plus the ODT number. A reader who follows one follows the
+        other. The only difference is what the sum runs over. first_pids sums every list's max_odt,
+        because every list has ODTs to number; this sums only the lists that can RECEIVE, because
+        script/source_rt.c.jinja2 reserves a slot only for those. So a DAQ list between two
+        receiving ones advances the base by nothing, and the second receiving list starts where the
+        first one ended rather than where its own list number would put it -- there is no closed
+        form in terms of the list number, which is the whole reason this is generated rather than
+        computed at the point of use. A non-receiving list gets 0, which is never read.
+
+        The dynamic branch does not use this list: its pool is rectangular and every list can
+        receive, so the same sum collapses to i * odt_count and is emitted that way below. #}
+    {%- set stim_slot_bases = [] %}
+    {%- set stim_base = namespace(next=0) %}
+    {%- for daq in configuration.daqs | default([]) %}
+    {%- if daq.type != 'DAQ' %}
+    {%- if stim_slot_bases.append(stim_base.next) %}{% endif %}
+    {%- set stim_base.next = stim_base.next + daq.max_odt %}
+    {%- else %}
+    {%- if stim_slot_bases.append(0) %}{% endif %}
+    {%- endif %}
+    {%- endfor %}
     {#- `raise(...)` here, and at every other call site in this file, is not a registered Jinja
         global: bsw_code_gen builds a bare jinja2.Environment with no such name, and this pinned,
         external dependency gives no hook to add one. Referencing the undefined name aborts
@@ -278,19 +300,29 @@ static const Xcp_DtoType Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}Daq{
     {%- if (not daq_dynamic) and pid.next > 252 %}
 {{ raise('{} ODTs across {} DAQ lists exceed the 0xFB PID ceiling of XCP part 2 1.1/1.1.4.1'.format(pid.next, configuration.daqs|length)) }}
     {%- endif %}
+    {#- DD42, the tighter half of the guard above. STATIC only, for the same reason: a non-DAQ
+        list's FIRST_PID is fixed by the prefix sum at generation time, so first_pids[i] +
+        daq.max_odt is exactly the absolute ODT number one past this list's last -- known now,
+        needing no runtime re-evaluation. XCP part 2 1.1/1.1.5.1 holds master-to-slave STIM ODT
+        numbers to 0x00..0xBF, tighter than the 0x00..0xFB every list is held to above, because a
+        list that can receive is addressed in that direction too (source/Xcp_Internal.h's
+        XCP_STIM_ABSOLUTE_ODT_COUNT_MAX carries the full citation). A DAQ list is exempt: nothing
+        ever addresses it as STIM, so it keeps the wider 0xFB range the loop above already checked.
+        This loop cannot fire under DAQ_DYNAMIC: `daqs` is empty there (config/xcp.schema.json), so
+        the check ALLOC_ODT applies at runtime against Xcp_DaqAllocatedOdtCount() is the only one
+        that ever runs for a dynamic pool -- exactly as for the 0xFB guard above. #}
+    {%- for daq in configuration.daqs | default([]) %}
+    {%- if (daq.type != 'DAQ') and ((first_pids[loop.index0] + daq.max_odt) > 192) %}
+{{ raise('DAQ list {} can receive and its absolute ODT numbers {}..{} reach {}, past the 0xC0 STIM ceiling of XCP part 2 1.1/1.1.5.1'.format(daq.name, first_pids[loop.index0], first_pids[loop.index0] + daq.max_odt - 1, first_pids[loop.index0] + daq.max_odt)) }}
+    {%- endif %}
+    {%- endfor %}
     {%- for daq in configuration.daqs | default([]) %}
         {%- set daq_index = loop.index0 %}
-        {#- A pure STIM list is refused rather than generated. source/Xcp_Daq.c's
-            Xcp_DTOCmdDaqGetDaqListInfo would answer DAQ_LIST_PROPERTIES with both type bits clear
-            for one -- the DAQ bit because the list is not DAQ-capable, the STIM bit because
-            stimulation is unimplemented -- and XCP part 2 1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table
-            marks that encoding "Not allowed". The alternatives were to emit a forbidden encoding
-            or to advertise a capability this module does not have; refusing a list that can do
-            nothing today is the honest third. DAQ_STIM stays accepted: it is DAQ-capable now and
-            its STIM half simply waits. SP3 lifts this guard when it implements the direction. #}
-        {%- if daq.type == 'STIM' %}
-{{ raise('DAQ list {} is configured as STIM, but data stimulation is not implemented; GET_DAQ_LIST_INFO would report DAQ_LIST_PROPERTIES with neither type bit set, which XCP part 2 1.1/1.6.4.2.2.1 marks "Not allowed". Use DAQ_STIM for a list that is DAQ-capable today'.format(daq.name)) }}
-        {%- endif %}
+        {#- A pure STIM list used to be refused here: SP3 implemented data stimulation, so
+            source/Xcp_Daq.c's Xcp_DTOCmdDaqGetDaqListInfo now sets DAQ_LIST_PROPERTIES' STIM bit
+            for one instead of leaving both type bits clear, which is the encoding XCP part 2
+            1.1/1.6.4.2.2.1's DAQ_LIST_TYPE table marks "Not allowed" -- so the encoding this
+            guard used to prevent is no longer the one a pure STIM list produces. #}
         {%- for dto in daq.dtos %}
         {%- if dto.pid is defined and loop.index0 == 0 and dto.pid != first_pids[daq_index] %}
 {{ raise('DAQ list {} configures pid {} but its derived FIRST_PID is {}; FIRST_PID is assigned by the slave (XCP part 2 1.1/1.6.4.1.1.4)'.format(daq.name, dto.pid, first_pids[daq_index])) }}
@@ -329,7 +361,20 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % p
     {
         {{'0x%04Xu' % i}}, /* XcpDaqListNumber */
         0x00u, /* FIRST_PID, assigned by ALLOC_ODT */
-        DAQ, /* XcpDaqListType */
+        {#- The prefix sum of the comment beside stim_slot_bases above, in closed form: this pool is
+            rectangular and, when it can receive at all, every list in it can, so list i's slots
+            start i * odt_count into the flat array script/source_rt.c.jinja2 reserves. Unlike
+            FIRST_PID this is NOT assigned by ALLOC_ODT -- the slots are reserved for the whole
+            rectangle at build time, so a list's base does not depend on how many ODTs the master
+            actually allocates to it. #}
+        {{'0x%04Xu' % (i * pool.odt_count if (pool.type | default('DAQ')) != 'DAQ' else 0)}}, /* stimSlotBase */
+        {#- The pool's own declared type, not a bare DAQ: every slot of the pool shares one
+            direction (SET_DAQ_LIST_MODE has no way to pick a different one per list), and that
+            direction is what source/Xcp.c's Xcp_CanIfRxIndication reads to decide whether a
+            received PDU may stimulate this list at all. The same `pool.type | default('DAQ')`
+            expression as stimSlotBase above, so the two can never disagree about whether this
+            pool can receive. #}
+        {{pool.type | default('DAQ')}}, /* XcpDaqListType */
         0x00u, /* XcpMaxOdt, raised by ALLOC_ODT */
         {{'0x%02Xu' % pool.odt_entries_count}}, /* XcpMaxOdtEntries */
         &Xcp_DtoConfig{{'%02X' % configuration_loop.index0}}[0x00u], /* reference to XcpDto */
@@ -350,6 +395,7 @@ static Xcp_DaqListType Xcp_DaqListConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % c
     {
         {{'0x%04Xu' % loop.index0}}, /* XcpDaqListNumber */
         {{'0x%02Xu' % first_pids[loop.index0]}}, /* FIRST_PID, derived */
+        {{'0x%04Xu' % stim_slot_bases[loop.index0]}}, /* stimSlotBase, derived */
         {{daq.type}}, /* XcpDaqListType */
         {{'0x%02Xu' % daq.max_odt}}, /* XcpMaxOdt */
         {{'0x%02Xu' % daq.max_odt_entries}}, /* XcpMaxOdtEntries */
@@ -559,6 +605,19 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- set identification_field_type = configuration.protocol_layer.identification_field_type | default('ABSOLUTE') %}
 {%- set odt_entry_size_daq = configuration.protocol_layer.max_dto - identification_field_size[identification_field_type] %}
 {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
+{#- Whether this configuration can receive stimulation at all (DD43): a dynamic pool that declares
+    a direction other than DAQ, or a static configuration with at least one non-DAQ list. It is the
+    same question script/source_rt.c.jinja2's stim_slot_count macro answers -- that file needs the
+    ODT total, this one only needs the yes/no -- and `type` is optional on daq_dynamic and defaults
+    to DAQ, so a configuration written before stimulation existed reports nothing new. #}
+{%- set stim = namespace(capable=false) %}
+{%- if daq_dynamic %}
+{%- set stim.capable = (configuration.daq_dynamic.type | default('DAQ')) != 'DAQ' %}
+{%- else %}
+{%- for daq in configuration.daqs | default([]) if daq.type != 'DAQ' %}
+{%- set stim.capable = true %}
+{%- endfor %}
+{%- endif %}
 {%- if odt_entry_size_daq < 1 %}
 {{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
@@ -635,7 +694,16 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % (configuration.daq_dynamic.odt_count if daq_dynamic else 0)}}, /* XcpOdtCount */
     {{'0x%02Xu' % (configuration.daq_dynamic.odt_entries_count if daq_dynamic else 0)}}, /* XcpOdtEntriesCount */
     {{'0x%02Xu' % odt_entry_size_daq}}, /* XcpOdtEntrySizeDaq */
-    0x00u, /* XcpOdtEntrySizeStim; STIM arrives in SP3 */
+    {#- MAX_ODT_ENTRY_SIZE_STIM derives exactly as MAX_ODT_ENTRY_SIZE_DAQ does -- MAX_DTO less the
+        identification field -- so in this module the two are always the same number: master and
+        slave exchange stimulation DTOs in the same frame format, with the same identification
+        field type, as the DAQ direction (XCP part 2 1.1/1.1.4.2). GET_DAQ_RESOLUTION_INFO reports
+        them as two separate bytes regardless (1.1/1.6.4.1.2.5), because the specification allows a
+        slave whose two directions differ; this one's do not, and reporting the DAQ value twice
+        would be a coincidence dressed up as a derivation. A configuration that cannot receive
+        reports 0, which is what it has always reported and what a DAQ-only build keeps
+        reporting. #}
+    {{'0x%02Xu' % (odt_entry_size_daq if stim.capable else 0)}}, /* XcpOdtEntrySizeStim */
     TRUE, /* hard-coded XcpOnCanEnabled */
     FALSE, /* hard-coded XcpOnCddEnabled */
     FALSE, /* hard-coded XcpOnEthernetEnabled */
@@ -916,6 +984,29 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
     {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
     {{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}, /* eventQueueSize */
+{#- DD48. Bit 3 below is the STIM resource of XCP part 2 1.1/1.5, and CONNECT's RESOURCE byte,
+    GET_STATUS and GET_SEED/UNLOCK all honour it -- but NOTHING IN THE MODULE KEYS ON IT.
+    Xcp_PIDToCmdGroupTable (source/Xcp.c) is the only thing that maps a command to a resource, and
+    every DAQ command in it carries MASK_DAQ. So `data_stimulation: true, data_acquisition: false`
+    would advertise a protected stimulation resource to a master that then needs to unlock nothing
+    at all: SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ against any address it likes, and
+    START_STOP_DAQ_LIST are all reachable, which is the whole of stimulation. Inert before SP3,
+    because no configuration could stimulate; refused here now that one can.
+
+    Refused at generation rather than gated in a handler, and that is DD41's two obstacles, not a
+    preference. 1.1/1.5 defines the resource as "DAQ list commands (DIRECTION = STIM)" --
+    protection keyed on an ARGUMENT of one command -- while Xcp_PIDToCmdGroupTable is a per-PID OR
+    mask that structurally cannot say "this command when its DIRECTION bit is set"; and
+    SET_DAQ_LIST_MODE's error set (1.7.3.2.4) contains no ERR_ACCESS_LOCKED, so a handler-side
+    refusal would have to invent an error code. Expressing the specification's rule is a change to
+    the protection model, and it needs its own design.
+
+    Conditioned on `stim.capable` above, not on the flag alone: a DAQ-only build may still set it.
+    That advertises a resource nothing in the build can reach, which is inert -- the combination
+    refused here is the one where the advertised protection is a lie. #}
+{%- if stim.capable and configuration.apis.resource_protection.data_stimulation %}
+{{ raise('resource_protection.data_stimulation is set and this configuration can stimulate, but no command is gated on the STIM resource: Xcp_PIDToCmdGroupTable (source/Xcp.c) maps every DAQ command to MASK_DAQ, so CONNECT and GET_STATUS would advertise a protection the slave does not enforce and SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ and START_STOP_DAQ_LIST would stay reachable with nothing unlocked (XCP part 2 1.1/1.5; DD41 and DD48 in docs/superpowers/specs/2026-09-04-xcp-stim-sp3-design.md)') }}
+{%- endif %}
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |

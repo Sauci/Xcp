@@ -213,6 +213,44 @@ extern "C" {
  */
 #define XCP_E_INVALID_EVENT_CHANNEL (0x05u)
 
+/**
+ * @brief A received stimulation frame was dropped instead of being buffered.
+ * @details Raised by Xcp_DaqStoreStim for every frame it refuses (DD39): one it cannot resolve to
+ * a DAQ list and an ODT, one addressing a list that cannot receive, is not running or is not
+ * directed at stimulation, one whose payload is shorter than that ODT's entries need, and one
+ * longer than the running configuration's MAX_DTO.
+ * @note This error is not part of the specification, and Det is the only channel a rejection has:
+ * XCP part 2 - Protocol Layer Specification 1.1/1.1.4.2's DTO is not a command, so there is no
+ * error packet to answer it with and no master waiting on one.
+ */
+#define XCP_E_STIM_FRAME_REJECTED (0x06u)
+
+/**
+ * @brief Buffered stimulation data was not written to memory at the event trigger.
+ * @details Raised by Xcp_DaqApplyStim (source/Xcp_DaqRuntime.c) for what it cannot honour, and for
+ * two reasons only:
+ *
+ * - one or more ODT entries name a non-zero address extension. Xcp_WriteSlaveMemoryTable has no
+ *   parameter for one, so such an entry cannot be written where it says (DD45); it is skipped and
+ *   its siblings still apply. Raised once for the ODT, however many of its entries were skipped:
+ *   this error carries no parameter that could say which one, so repeating it says nothing a
+ *   single report does not, at a raster rate.
+ * - the whole ODT, when the slot holds fewer bytes than its entries consume. The frame was long
+ *   enough for the ODT when it arrived (DD39) and the ODT has been reconfigured since, so it is
+ *   refused whole rather than applied in part.
+ *
+ * Deliberately NOT raised for the everyday case of a slot no frame has filled yet: DD35 makes that
+ * a silent skip, and reporting it would fire on every event of every cycle until a master's first
+ * frame arrives.
+ * @note This error is not part of the specification, and Det is the only channel it has: the
+ * trigger is a vendor API answering no master, so there is no error packet and nobody waiting on
+ * one -- the same reasoning XCP_E_STIM_FRAME_REJECTED above records for the receive direction.
+ * Distinct from that code because this is a different API (XCP_TRIGGER_EVENT_CHANNEL_API_ID) at a
+ * different point in time: a frame this slave accepted and buffered, which it then could not
+ * apply.
+ */
+#define XCP_E_STIM_NOT_APPLIED (0x07u)
+
 /** @} */
 
 /**
@@ -406,6 +444,32 @@ void Xcp_MainFunction(void);
  * raise XCP_E_INVALID_EVENT_CHANNEL and sample nothing.
  */
 void Xcp_TriggerEventChannel(uint16 eventChannelNumber);
+
+#ifdef CFFI_ENABLE
+
+/**
+ * @brief Second, CFFI-only declaration of an internal function. The real one, with the
+ * documentation, is in source/Xcp_Internal.h; this is not part of the module's interface.
+ * @details test/conftest.py builds the CFFI cdef by preprocessing exactly this header
+ * (CMakeLists.txt passes --header interface/Xcp.h), and interface/Xcp.h never includes
+ * Xcp_Internal.h -- so a function declared only there cannot be reached from a test at all,
+ * however the compiled sources export it. Xcp_DaqReadIdentificationField computes the payload
+ * offset of a received stimulation frame, where an error of one, two or four bytes applies the
+ * master's data to the wrong addresses and nothing in the protocol reports it, so it is worth
+ * pinning directly (test/stim_decode_test.py) rather than only through its callers.
+ * @note Deliberately not `extern`: CFFIHeader (test/conftest.py) rewrites every `extern` function
+ * declaration it finds in this header into `extern "Python+C"` and wires it to a Python mock,
+ * which is right for an integrator callback and would displace this module's own definition.
+ * Xcp_Internal.h's copy is visible in every translation unit that defines or calls this
+ * (Xcp_Internal.h includes this header), so the compiler rejects any disagreement between the two.
+ */
+Std_ReturnType Xcp_DaqReadIdentificationField(const PduInfoType *pPduInfo,
+                                              PduIdType rxPduId,
+                                              uint16 *pDaqListNumber,
+                                              uint8 *pOdtNumber,
+                                              uint8 *pOffset);
+
+#endif /* #ifdef CFFI_ENABLE */
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"

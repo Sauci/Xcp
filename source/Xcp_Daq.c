@@ -367,6 +367,7 @@ static void Xcp_DaqSessionStatusUpdate(void)
 void Xcp_DaqFreeAll(void)
 {
     uint16 daq_idx;
+    uint16 slot_idx;
 
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.1: "This command clears all DAQ
      * lists and frees all dynamically allocated DAQ lists, ODTs and ODT entries."
@@ -402,6 +403,45 @@ void Xcp_DaqFreeAll(void)
     for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
     {
         Xcp_DaqListReset(daq_idx);
+    }
+
+    /* SP3: the stimulation slots belong to the lists just released, so they are released with
+     * them. Nothing else ever clears one -- the pool is a generated static, zero at load and
+     * written only by Xcp_DaqStoreStim (source/Xcp_DaqRuntime.c) -- and DD35 makes a slot LATCHED:
+     * Xcp_DaqApplyStim re-applies the last payload received on every event until a new frame
+     * replaces it. Without this, a payload received in one session would survive DISCONNECT,
+     * survive the re-CONNECT and re-allocation after it, and be written into slave memory at the
+     * first trigger of the next session with no master having sent anything. That is the
+     * memory-writing twin of the descriptor state this function was extended to release, and it is
+     * worse: descriptors that outlive their session make the module disagree with itself, whereas
+     * this one silently writes an ECU variable.
+     *
+     * `length` alone, not the payload bytes behind it: length is what makes a slot readable at
+     * all, and Xcp_DaqApplyStim reads no byte past it. This is the rule Xcp_Init already applies
+     * to the DTO ring three lines from its own call to this function -- read, write and count
+     * reset, the queued frames left where they lie -- and it keeps this unwind's cost one byte per
+     * slot rather than XCP_MAX_DTO.
+     *
+     * After the reset loop above rather than before it, for the reason the entry clear runs before
+     * the counts are zeroed: every list is stopped by the time this runs, so a trigger interleaved
+     * here finds nothing to apply, whichever slots it has already passed.
+     *
+     * stimSlotCount is itself the guard a DAQ-only build needs: the generator sets it to 0 exactly
+     * when stimSlot is NULL_PTR (interface/Xcp_Types.h), so the loop runs zero times, takes no
+     * exclusive area and never dereferences the null pointer.
+     *
+     * The exclusive area is taken per slot even though a lone `length` store cannot tear on its
+     * own. It keeps "no field of a stimulation slot is ever written outside
+     * SchM_Enter_Xcp_StimBuffer" true without exception, which is the rule the next person to
+     * touch this loop will read it against -- and it is the same per-item granularity
+     * Xcp_DaqListClearEntries already uses for its own area inside Xcp_DaqListReset above. */
+    for (slot_idx = 0x0000u; slot_idx < Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlotCount; slot_idx++)
+    {
+        SchM_Enter_Xcp_StimBuffer();
+
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].length = 0x00u;
+
+        SchM_Exit_Xcp_StimBuffer();
     }
 
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
@@ -932,10 +972,23 @@ uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduIn
         error = XCP_E_ASAM_MEMORY_OVERFLOW;
     }
     else if ((uint16)(Xcp_DaqAllocatedOdtCount() + (uint16)odt_count) >
-             (uint16)XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX)
+             (uint16)((Xcp_Ptr->config->daqList[daq_list_number].type != DAQ) ?
+                      XCP_STIM_ABSOLUTE_ODT_COUNT_MAX : XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX))
     {
         /* A second, independent ceiling: the per-list slice above says nothing about the total,
-         * and absolute ODT numbers are drawn from one PID space shared by every list. */
+         * and absolute ODT numbers are drawn from one PID space shared by every list.
+         *
+         * DD42. The bound itself depends on whether this configuration can receive: XCP part 2
+         * 1.1/1.1.5.1 holds master-to-slave STIM ODT numbers to 0x00..0xBF, tighter than the
+         * 0x00..0xFB slave-to-master DAQ range 1.1.5.2 gives (source/Xcp_Internal.h). Read off
+         * daqList[daq_list_number].type rather than off list 0 or some pool-level field: under
+         * DAQ_DYNAMIC every list in the pool shares one direction (SET_DAQ_LIST_MODE has no way to
+         * pick a different one per list, and script/source_cfg.c.jinja2 emits the pool's declared
+         * type for every slot), so the list actually being allocated into always carries the
+         * answer for the whole pool. This is reachable only under DAQ_DYNAMIC in the first place --
+         * a STATIC configuration refuses all four ALLOC APIs -- where script/source_cfg.c.jinja2
+         * applies the same 0xC0 bound to each non-DAQ list's fixed FIRST_PID at generation time
+         * instead, since there the total is known before this module ever runs. */
         error = XCP_E_ASAM_MEMORY_OVERFLOW;
     }
     else
@@ -956,6 +1009,20 @@ uint8 Xcp_DTOCmdDaqAllocOdt(boolean *responseExpected, const PduInfoType *pPduIn
          * SchM_Enter_Xcp_DtoQueue suppresses nothing, an injected trigger inside the held area is
          * a preemption the target cannot have -- which is why test/free_daq_test.py sweeps its
          * interleavings from SchM_Exit's side effect rather than SchM_Enter's.
+         *
+         * SP3 added a SECOND unguarded reader of this pair, in a different context, and the
+         * argument above has to cover it explicitly rather than by analogy: Xcp_DaqStoreStim's
+         * decoder (Xcp_DaqReadIdentificationField, source/Xcp_DaqRuntime.c) reads firstPid, maxOdt
+         * and allocated_daq_count from CanIf's RECEIVE context, which source/Xcp.c's own note says
+         * may preempt a CTO mid-dispatch -- and a stimulation frame landing between these two
+         * writes would resolve its PID against a half-updated layout and be applied to the wrong
+         * DAQ list. It cannot land there for the same reason the sampler cannot: test/stub/
+         * SchM_Xcp.h requires this area to suspend "anything that can call into this module", which
+         * is every one of its entry points and so the receive indication too, not only the transmit
+         * interrupt that note names as the typical case. ALLOC_ODT is also not refused for a
+         * RUNNING list (Xcp_CTOErrorMatrix gives 0xD4 no ERR_DAQ_ACTIVE), so "the master allocates
+         * before it starts a list" is a convention and not what makes this safe. That header now
+         * says so outright; do not narrow this area to the transmit side.
          *
          * Raised, not assigned: DD28 makes a repeat naming the same list accumulate. Rejected
          * whole above, never in part -- a partly applied allocation would leave the master
@@ -1074,12 +1141,23 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         error = XCP_E_ASAM_DAQ_ACTIVE;
     }
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
-     * DIRECTION selects stimulation and PID_OFF a DTO without an identification field; 1.1 adds
-     * ALTERNATING somewhere in bits 6..7. None of these three is implemented, and 1.7.3.2.4 lists
+     * ALTERNATING pairs a DAQ list with a display event channel declared only in the A2L file
+     * (DAQ_ALTERNATING_SUPPORTED), which this module does not emit. 1.7.3.2.4 lists
      * ERR_MODE_NOT_VALID for this command, which is precisely what an unsupported mode is.
-     * TIMESTAMP is handled separately below: whether it is honoured depends on this build's
-     * configuration, not on a blanket refusal. */
+     * TIMESTAMP, PID_OFF and DIRECTION are handled separately below: whether each is honoured
+     * depends on this build's configuration, not on a blanket refusal. */
     else if ((mode & XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED) != 0x00u)
+    {
+        error = XCP_E_ASAM_MODE_NOT_VALID;
+    }
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.3
+     * DIRECTION selects stimulation, which only a list whose configured type can receive (STIM or
+     * DAQ_STIM) is able to honour -- the same test Xcp_CanIfRxIndication (source/Xcp.c) applies
+     * before routing a stimulation frame to this list. DD9: an unsupported mode is what
+     * ERR_MODE_NOT_VALID means, and DIRECTION on a DAQ-only list is unsupported by that list. */
+    else if (((mode & XCP_DAQ_LIST_MODE_REQ_DIRECTION) != 0x00u) &&
+             (Xcp_Ptr->config->daqList[daq_list_number].type != STIM) &&
+             (Xcp_Ptr->config->daqList[daq_list_number].type != DAQ_STIM))
     {
         error = XCP_E_ASAM_MODE_NOT_VALID;
     }
@@ -1153,11 +1231,11 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         Xcp_DaqListRt(daq_list_number)->priority = priority;
 
         /* The stored mode uses the GET_DAQ_LIST_MODE layout of 1.1/1.6.4.1.2.6, which is not the
-         * layout this request arrives in -- TIMESTAMP and PID_OFF happen to sit at the same bit in
-         * both, but that is a coincidence, not a shortcut: do not be tempted to assign `mode`
-         * wholesale here when DIRECTION becomes supported too, as it sits at a different bit in
-         * each byte (request bit 0, stored bit 1). Xcp_DTOCmdDaqGetDaqListMode (below) reads these
-         * same bits back. */
+         * layout this request arrives in -- TIMESTAMP, PID_OFF and DIRECTION happen to sit at the
+         * same bit in both, but that is a coincidence, not a shortcut: do not assign `mode`
+         * wholesale here. SELECTED (stored bit 0) has no equivalent in the request byte, and
+         * ALTERNATING (request bit 0) is refused above and so never reaches here.
+         * Xcp_DTOCmdDaqGetDaqListMode (below) reads these same bits back. */
         if ((mode & XCP_DAQ_LIST_MODE_REQ_TIMESTAMP) != 0x00u)
         {
             Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_TIMESTAMP;
@@ -1177,6 +1255,19 @@ uint8 Xcp_DTOCmdDaqSetDaqListMode(boolean *responseExpected, const PduInfoType *
         else
         {
             Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_PID_OFF);
+        }
+
+        /* Re-specified in full on every request, exactly as TIMESTAMP and PID_OFF are above: a
+         * master that turns DIRECTION back off (returning this list to DAQ) in a later
+         * SET_DAQ_LIST_MODE must see it actually cleared here. Reachable only when the type check
+         * above already let DIRECTION through, i.e. the addressed list is STIM or DAQ_STIM. */
+        if ((mode & XCP_DAQ_LIST_MODE_REQ_DIRECTION) != 0x00u)
+        {
+            Xcp_DaqListRt(daq_list_number)->mode |= XCP_DAQ_LIST_MODE_DIRECTION;
+        }
+        else
+        {
+            Xcp_DaqListRt(daq_list_number)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_DIRECTION);
         }
     }
 
@@ -1294,12 +1385,19 @@ uint8 Xcp_DTOCmdDaqGetDaqEventInfo(boolean *responseExpected, const PduInfoType 
         uint8 properties = 0x00u;
 
         /* DAQ_EVENT_PROPERTIES: DAQ set for DAQ and DAQ_STIM, the same condition
-         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its DAQ bit. STIM
-         * stays clear even for a DAQ_STIM channel for the same reason that comment gives: data
-         * stimulation arrives in SP3. */
+         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its DAQ bit. */
         if ((p_channel->type == DAQ) || (p_channel->type == DAQ_STIM))
         {
             properties |= XCP_DAQ_EVENT_PROPERTIES_DAQ;
+        }
+
+        /* STIM set for STIM and DAQ_STIM, the equivalent condition
+         * Xcp_DTOCmdDaqGetDaqListInfo's own DAQ_LIST_PROPERTIES uses below for its STIM bit. SP3
+         * implemented data stimulation and lifted the generation guard that used to keep a pure
+         * STIM channel from ever reaching this handler. */
+        if ((p_channel->type == STIM) || (p_channel->type == DAQ_STIM))
+        {
+            properties |= XCP_DAQ_EVENT_PROPERTIES_STIM;
         }
 
         properties |= Xcp_EventConsistencyBits(p_channel->consistency);
@@ -1380,21 +1478,23 @@ uint8 Xcp_DTOCmdDaqGetDaqListInfo(boolean *responseExpected, const PduInfoType *
          * triggeredDaqListRef -- so the master can genuinely move a list between event channels,
          * which is exactly what EVENT_FIXED = 0 means. FIXED_EVENT below is therefore don't-care
          * and zero-filled.
-         * STIM stays clear even for a DAQ_STIM list: data stimulation arrives in SP3, matching
-         * the STIM granularity of 0 that Xcp_DTOCmdDaqGetDaqResolutionInfo (this file) already
-         * reports for the same reason.
-         *
-         * The false arm of the DAQ test below is unreachable today, and deliberately kept. Both
-         * type bits clear is what a pure STIM list would produce, and 1.6.4.2.2.1's DAQ_LIST_TYPE
-         * table marks that encoding "Not allowed" -- so script/source_cfg.c.jinja2 refuses
-         * daqs[].type == "STIM" outright, leaving DAQ and DAQ_STIM as the only types that reach
-         * here and both of them DAQ-capable. Do not simplify the condition to an unconditional
-         * set: SP3 lifts that generation guard when it implements the direction, and this is the
-         * expression that has to be right on the day it does. */
+         * DAQ and STIM are independent bits reporting the direction(s) this list was configured
+         * for. The false arm of the DAQ test below is reachable now: script/source_cfg.c.jinja2
+         * no longer refuses daqs[].type == "STIM" (SP3 implemented data stimulation), so a pure
+         * STIM list reaches this handler DAQ bit clear, STIM bit set below. */
         if ((Xcp_Ptr->config->daqList[daq_list_number].type == DAQ) ||
             (Xcp_Ptr->config->daqList[daq_list_number].type == DAQ_STIM))
         {
             properties |= XCP_DAQ_LIST_PROPERTIES_DAQ;
+        }
+
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.2.1. Both bits clear is the
+         * encoding DAQ_LIST_TYPE marks "Not allowed", which is why a pure STIM list could not be
+         * generated before stimulation existed. */
+        if ((Xcp_Ptr->config->daqList[daq_list_number].type == STIM) ||
+            (Xcp_Ptr->config->daqList[daq_list_number].type == DAQ_STIM))
+        {
+            properties |= XCP_DAQ_LIST_PROPERTIES_STIM;
         }
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
@@ -1688,9 +1788,33 @@ uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfo
      * master that trusts what this command reports can never have WRITE_DAQ refuse it. */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->odtEntrySizeDaq;
 
-    /* Data stimulation arrives in SP3; until then a STIM granularity of 0 says so, and there is
-     * no WRITE_DAQ-equivalent for STIM yet to disagree with it. */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5
+     * GRANULARITY_ODT_ENTRY_SIZE_STIM and MAX_ODT_ENTRY_SIZE_STIM, the DIRECTION = STIM twins of
+     * the two bytes above. In this module they carry the DAQ direction's own values, because there
+     * is one WRITE_DAQ for both directions: Xcp_DaqApplyOdtEntry enforces `size % granularity` and
+     * `size <= odtEntrySizeDaq` on every entry it writes, whatever direction the list it belongs to
+     * is later put into. So what this command advertises for STIM is exactly what that command
+     * enforces for STIM -- the same agreement MAX_ODT_ENTRY_SIZE_DAQ's own byte above exists to
+     * keep, and the reason these are not reported as an independent pair of limits.
+     *
+     * Both are zero for a configuration that cannot receive stimulation at all. That is what
+     * odtEntrySizeStim already means -- the generator emits odtEntrySizeDaq for a STIM-capable
+     * configuration and 0 for a DAQ-only one (script/source_cfg.c.jinja2, DD43) -- so the
+     * granularity is keyed off that same field rather than off a second capability test of its own,
+     * which is what keeps the two bytes from ever disagreeing about whether this slave stimulates.
+     * 0 is outside the {1,2,4,8} this section enumerates for GRANULARITY_ODT_ENTRY_SIZE_x, and
+     * deliberately so: it is the same thing MAX_ODT_ENTRY_SIZE_STIM has always said in a DAQ-only
+     * build, and the same thing the ASAP2 grammar says by making its "STIM" block optional. */
+    if (Xcp_Ptr->general->odtEntrySizeStim == 0x00u)
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+    }
+    else
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] =
+                Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+    }
+
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->odtEntrySizeStim;
 
     if (Xcp_Ptr->general->timestampType == NO_TIME_STAMP)

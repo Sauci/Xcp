@@ -181,6 +181,34 @@ def test_alloc_daq_after_alloc_odt_is_a_sequence_error():
     assert exchange(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF
 
 
+def test_alloc_odt_holds_a_stim_pool_to_the_lower_pid_ceiling():
+    """DD42. 1.1/1.1.5.1 gives master-to-slave STIM ODT numbers 0x00..0xBF; 1.1.5.2 gives
+    slave-to-master DAQ 0x00..0xFB. A STIM-capable list whose absolute ODT numbers reach 0xC0
+    cannot be addressed by the master at all, so the ceiling is a property of the pool's declared
+    direction, not one constant.
+
+    192 ODTs is the last that fits. The DAQ-only case below is what proves the two ceilings are
+    distinguished rather than both clamped low."""
+    handle = XcpTest(stim_config(daq_count=2, odt_count=252, odt_entries_count=1))
+    connect(handle)
+    exchange(handle, (0xD5, 0x00, 0x02, 0x00))
+
+    assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0xC0))[0] == 0xFF, \
+        '192 ODTs is the last that fits below the STIM ceiling of 0xC0'
+    assert exchange(handle, (0xD4, 0x00, 0x01, 0x00, 0x01))[0:2] == (0xFE, 0x30), \
+        'one more ODT would reach the illegal absolute ODT number 0xC0'
+
+
+def test_alloc_odt_keeps_the_full_daq_ceiling_for_a_daq_only_pool():
+    """The other half of DD42: a DAQ-only pool still reaches 0xFC."""
+    handle = XcpTest(dynamic_config(daq_count=2, odt_count=252, odt_entries_count=1))
+    connect(handle)
+    exchange(handle, (0xD5, 0x00, 0x02, 0x00))
+
+    assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0xFC))[0] == 0xFF, \
+        'a DAQ-only pool keeps the 0xFC ceiling'
+
+
 def test_alloc_odt_restarts_the_prefix_sum_after_free_daq():
     """FREE_DAQ zeroes maxOdt and firstPid across the pool (1.1/1.6.4.3.1.1), so a master that
     starts over gets PIDs from 0 again rather than continuing the previous session's prefix sum.

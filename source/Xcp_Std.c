@@ -1129,7 +1129,16 @@ uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPdu
      * This therefore does not touch a static build's configured DAQ entries. Whether DISCONNECT
      * ought to clear those as well is a separate question about XCP part 1 - Overview 2.3 and is
      * not settled here; changing it would be a behaviour change to the static model, which SP2d
-     * is required to leave byte-for-byte as it is (DD25). */
+     * is required to leave byte-for-byte as it is (DD25).
+     *
+     * SP3 puts a stimulation slot behind this same gate, so state the resulting invariant rather
+     * than leaving it to be inferred: a slot is released on Xcp_Init always, on FREE_DAQ always,
+     * and on DISCONNECT only under DAQ_DYNAMIC. A STATIC configuration's slot therefore survives a
+     * disconnect, keeping whatever the last master stimulated with -- which is the same residue
+     * that model already has for its DAQ direction, where DISCONNECT leaves a running list running
+     * and sampling. Stimulation inherits that behaviour rather than adding a class of its own, and
+     * closing it means answering the Overview 2.3 question above for the whole static model, not
+     * for the slot alone. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         Xcp_DaqFreeAll();
