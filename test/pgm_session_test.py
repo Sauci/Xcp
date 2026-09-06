@@ -566,8 +566,22 @@ def test_program_prepare_defers_through_the_pending_slot_and_keeps_passing_codes
     suite -- neither needs anything beyond pStatusCode -- so this is what actually exercises the
     difference. Isomorphic to
     test_the_response_appears_on_the_main_function_where_the_callback_completes
-    (pgm_deferred_test.py), substituting Xcp_ProgramPrepare for Xcp_ProgramStart."""
+    (pgm_deferred_test.py), substituting Xcp_ProgramPrepare for Xcp_ProgramStart.
+
+    Review fix round 1, finding 2. The address argument on this same completing poll was
+    previously discarded (`_address, code_size, _p_status_code = ...`), asserting Codesize alone
+    -- a poll that passed a stale copy, NULL, or the address of Xcp_Internal.memory_transfer
+    .address itself (rather than its value) would have been caught by nothing in the suite, since
+    test_program_prepare_passes_the_current_mta_and_codesize_to_the_integrator only pins the
+    handler's own first, synchronous call. A known MTA is set here for the same reason that test
+    sets one, and checked again on the LAST call, alongside Codesize."""
     handle = pgm_handle()
+    handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00) +
+                                        tuple(u32_to_array(0x12345678, 'LITTLE_ENDIAN'))))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
     state = dict(calls=0)
 
     def busy_then_complete(_address, _code_size, p_status_code):
@@ -594,7 +608,9 @@ def test_program_prepare_defers_through_the_pending_slot_and_keeps_passing_codes
 
     assert transmitted(handle)[0] == 0xFF, 'the deferred PROGRAM_PREPARE response arrives'
 
-    _address, code_size, _p_status_code = handle.xcp_program_prepare.call_args_list[-1][0]
+    address, code_size, _p_status_code = handle.xcp_program_prepare.call_args_list[-1][0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x12345678, \
+        'the MTA must still be the current one on the completing poll'
     assert code_size == 0x2345, "Codesize must still be the request's own value on the completing poll"
 
 
@@ -681,6 +697,90 @@ def test_an_active_programming_session_makes_the_pgm_active_gate_fire():
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
 
     assert send(handle, (0xF8, 0x00, 0x01))[0:2] == (0xFE, 0x12), 'ERR_PGM_ACTIVE'
+
+
+def test_a_mid_session_synch_does_not_end_the_programming_session():
+    """Review fix round 1, finding 1. Design doc DD55, corrected.
+
+    Xcp_PgmAbandonPendingCommand (source/Xcp_Pgm.c) used to reset Xcp_Internal.pgm_state to
+    XCP_PGM_IDLE unconditionally whenever a pending PGM command was abandoned by SYNCH. That is
+    right for PROGRAM_START abandoned while still in the transient XCP_PGM_STARTING state (its own
+    handler sets that state before deferring, and undoing it is the whole point), and wrong for
+    PROGRAM_PREPARE, which can legally be pending while pgm_state is XCP_PGM_ACTIVE -- a real,
+    already-established session, not a transient one -- since 1.1/1.6.5.2.3 allows it from ACTIVE
+    too (test_program_prepare_is_also_accepted_from_xcp_pgm_active above; a second code block
+    mid-session is the natural reason a master would send it there). The unconditional reset ended
+    such a session silently on any ordinary SYNCH, which 1.1/1.7.1.1 requires to stay available
+    throughout one: DD51's new pgm_state disjunct would stop firing for the rest of the session,
+    a second PROGRAM_START would be accepted where DD49 requires ERR_SEQUENCE, and the master
+    would be told nothing on the wire to suggest either.
+
+    Sequence: PROGRAM_START completes (pgm_state -> ACTIVE); PROGRAM_PREPARE defers, leaving
+    pending_command.active TRUE with pgm_state still ACTIVE; SYNCH arrives and DD55's own
+    ERR_CMD_BUSY gate (source/Xcp.c) routes it to Xcp_PgmAbandonPendingCommand, exactly as it
+    already does for PROGRAM_START in test_synch_is_exempt_and_abandons_without_clearing_the_slot
+    above. The abandoned PROGRAM_PREPARE is then polled to actual completion (DD55: abandoning is
+    not cancelling), releasing the slot -- only once pending_command.active is FALSE again does a
+    fresh command reach the ERR_PGM_ACTIVE/sequence gates instead of ERR_CMD_BUSY.
+
+    Checked through two wire consequences, since Xcp_Internal is not reachable from this CFFI
+    harness (test/clear_daq_list_test.py:80-92): GET_SEED (0xF8, carrying
+    XCP_INTERNAL_ERR_PGM_ACTIVE in its own matrix entry, same as the gate-fire test above) must
+    still be refused ERR_PGM_ACTIVE, and a second PROGRAM_START must still be refused ERR_SEQUENCE
+    by its own handler's `if (pgm_state != XCP_PGM_IDLE)` check (source/Xcp_Pgm.c) -- both false
+    unless pgm_state is still XCP_PGM_ACTIVE. A module with the reverted, unconditional reset would
+    instead dispatch GET_SEED normally and accept the second PROGRAM_START (0xFF, since
+    xcp_program_start's stub still returns E_OK immediately), silently opening a second session on
+    top of the first."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    state = dict(calls=0)
+
+    def busy_then_complete(_address, _code_size, p_status_code):
+        # Mirrors test_synch_is_exempt_and_abandons_without_clearing_the_slot's own busy_calls=2:
+        # call 1 is the fast path inside the handler (program_prepare below), call 2 is the poll
+        # freed by SYNCH's own confirmation below, and only call 3 completes.
+        state['calls'] += 1
+        if state['calls'] <= 2:
+            return handle.define('E_NOT_OK')
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_program_prepare.side_effect = busy_then_complete
+    handle.can_if_transmit.reset_mock()
+
+    program_prepare(handle, code_size=0x0010)  # call 1: busy: defers; pgm_state stays ACTIVE
+
+    assert send(handle, (0xFC,))[0:2] == (0xFE, 0x00), 'ERR_CMD_SYNCH'
+
+    # Frees the transmit pipeline: SWS_Xcp_00859 carries one frame at a time, and send()'s own
+    # ERR_CMD_SYNCH response above is still unconfirmed. Nothing was queued behind it -- finding
+    # 3's guard (Xcp_MainFunction, Task 4) withheld the poll entirely while it was in flight -- so
+    # one confirmation fully drains the pipeline.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    # One busy poll now allowed to run (call 2): pushes and transmits its own EV_CMD_PENDING,
+    # confirmed in turn, leaving the pipeline settled again immediately before the completing poll.
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # call 3: completes, but abandoned -- answers nobody
+
+    assert transmitted(handle) is None, 'the abandoned PROGRAM_PREPARE still answers nobody'
+
+    assert send(handle, (0xF8, 0x00, 0x01))[0:2] == (0xFE, 0x12), \
+        'the session must still be ACTIVE: GET_SEED must still be refused ERR_PGM_ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xD2,))[0:2] == (0xFE, 0x29), \
+        'a second PROGRAM_START must still be refused ERR_SEQUENCE -- the session never ended'
 
 
 @pytest.mark.parametrize('pid, name, payload', (

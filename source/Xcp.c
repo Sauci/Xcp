@@ -972,7 +972,17 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     /* DD51/1.1/1.6.5.1.1: BUILD_CHECKSUM is one of the seven commands that "must always be
      * available during a memory programming sequence" -- carrying PGM_ACTIVE here would make the
      * new pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the
-     * command that section requires to stay reachable throughout one. */
+     * command that section requires to stay reachable throughout one.
+     *
+     * Deliberate divergence from the OFF build below, worth recording so a future reader does not
+     * "fix" it back: one bit governs all four ERR_PGM_ACTIVE triggers per command (the gate ORs
+     * STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ/pgm_state==ACTIVE), so clearing it here to satisfy
+     * DD51 also stops BUILD_CHECKSUM being refused during an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ -- a refusal 1.1/1.7.3's error table does list for it, and which
+     * asam_error_matrix_test.py's TestBuildChecksumErrorHandling::test_returns_err_pgm_active
+     * still pins, but only for the OFF build (see that test's own DefaultConfig). DD51 requires
+     * this bit absent from all seven regardless, so this cost is the spec's choice, not a defect;
+     * no ON-build test currently asserts either side of it. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
 #else
     /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
@@ -990,7 +1000,17 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     /* DD51/1.1/1.6.5.1.1: UPLOAD is one of the seven commands that "must always be available
      * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
      * pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the command
-     * that section requires to stay reachable throughout one. */
+     * that section requires to stay reachable throughout one.
+     *
+     * Deliberate divergence from the OFF build below, worth recording so a future reader does not
+     * "fix" it back: one bit governs all four ERR_PGM_ACTIVE triggers per command (the gate ORs
+     * STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ/pgm_state==ACTIVE), so clearing it here to satisfy
+     * DD51 also stops UPLOAD being refused during an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ -- a refusal 1.1/1.7.3's error table does list for it, and which
+     * asam_error_matrix_test.py's TestUploadErrorHandling::test_returns_err_pgm_active still pins,
+     * but only for the OFF build (see that test's own DefaultConfig). DD51 requires this bit
+     * absent from all seven regardless, so this cost is the spec's choice, not a defect; no
+     * ON-build test currently asserts either side of it. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
 #else
     /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
@@ -1008,7 +1028,17 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
      * pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the command
      * that section requires to stay reachable throughout one; PROGRAM_NEXT's block transfer, and
-     * PROGRAM_PREPARE's own use of the MTA above, both depend on SET_MTA still working. */
+     * PROGRAM_PREPARE's own use of the MTA above, both depend on SET_MTA still working.
+     *
+     * Deliberate divergence from the OFF build below, worth recording so a future reader does not
+     * "fix" it back: one bit governs all four ERR_PGM_ACTIVE triggers per command (the gate ORs
+     * STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ/pgm_state==ACTIVE), so clearing it here to satisfy
+     * DD51 also stops SET_MTA being refused during an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ -- a refusal 1.1/1.7.3's error table does list for it, and which
+     * asam_error_matrix_test.py's TestSetMtaErrorHandling::test_returns_err_pgm_active still pins,
+     * but only for the OFF build (see that test's own DefaultConfig). DD51 requires this bit
+     * absent from all seven regardless, so this cost is the spec's choice, not a defect; no
+     * ON-build test currently asserts either side of it. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
 #else
     /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
