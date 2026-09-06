@@ -478,8 +478,15 @@ the relationship survives the separation in the only place a reader will look.
   `Xcp_MainFunction` (DD53); DD55's `ERR_CMD_BUSY` test; DD51's fourth disjunct.
 - `source/Xcp_Internal.h` — `pgm_state`, `pending_command`, `XCP_EVENT_CMD_PENDING`, and the three
   handler declarations.
-- `source/Xcp_Std.c` — nothing. `CONNECT`'s condition is already correct; D10 and D11 are fixed in
-  the generator and the configuration, not in the handler.
+- `source/Xcp_Std.c` — `Xcp_DisconnectSession`, the session unwind lifted out of
+  `Xcp_CTOCmdStdDisconnect` so `PROGRAM_RESET`'s completion can call the identical sequence (DD57).
+  Nothing else: `CONNECT`'s condition is already correct, and D10 and D11 are fixed in the
+  generator and the configuration rather than in a handler.
+
+  An earlier revision of this section read "nothing", which was true only while DD57 still required
+  the confirmation-time disconnect. Sharing the unwind is the whole point of the corrected
+  decision — a second door to DISCONNECTED that reimplements the teardown is a second door that can
+  forget part of it, which is what the first attempt did.
 - `script/header_cfg.h.jinja2` — `XCP_FLASH_PROGRAMMING_ENABLED` (DD58).
 - `script/source_cfg.c.jinja2` — the PGM `ctoInfo` enable bits (DD59) and their minimum request
   sizes: 1 for `PROGRAM_START` and `PROGRAM_RESET`, 4 for `PROGRAM_PREPARE`.
