@@ -467,6 +467,29 @@ extern Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
  */
 extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
 
+/**
+ * @brief Prepares non-volatile memory programming by declaring a code download's target and size.
+ * @param [in] address The current MTA (set by SET_MTA), which points to the volatile memory
+ * location where the code about to be downloaded will be stored.
+ * @param [in] codeSize The request's Codesize: the size of the code that will be downloaded.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero if the target memory area is not available.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
+ * the PROGRAM_PREPARE handler to start the work and then once per Xcp_MainFunction until it
+ * reports completion. An implementation whose work is instantaneous returns E_OK from the first
+ * call and the command is answered without ever deferring. Unlike @ref Xcp_ProgramStart above,
+ * this carries no dependency on the programming session's state: XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.5.2.3 makes PROGRAM_PREPARE a precondition FOR programming -- the master
+ * downloads code to volatile memory before PROGRAM_START -- so it legitimately precedes the
+ * session, and this callback is reached the same way whether or not one is open.
+ * @note 1.1/1.6.5.2.3: "The slave device has to make sure that the target memory area is available
+ * and it is in a operational state which permits the download of code." A non-zero pStatusCode
+ * answers ERR_GENERIC, exactly as it does for @ref Xcp_ProgramStart.
+ */
+extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *pStatusCode);
+
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
 /** @} */

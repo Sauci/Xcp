@@ -333,7 +333,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xC9 */
     Xcp_CmdNotImplemented, /* 0xCA */
     Xcp_CmdNotImplemented, /* 0xCB */
-    Xcp_CmdNotImplemented, /* 0xCC */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramPrepare, /* PROGRAM_PREPARE 0xCC, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_PREPARE 0xCC, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xCD */
     Xcp_CmdNotImplemented, /* 0xCE */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
@@ -964,10 +968,59 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* DOWNLOAD 0xF0 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* USER_CMD 0xF1, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* TRANSPORT_LAYER_CMD 0xF2, optional */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* DD51/1.1/1.6.5.1.1: BUILD_CHECKSUM is one of the seven commands that "must always be
+     * available during a memory programming sequence" -- carrying PGM_ACTIVE here would make the
+     * new pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the
+     * command that section requires to stay reachable throughout one. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
+#else
+    /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
+     * the gate off. BUILD_CHECKSUM's own enabled bit does not depend on
+     * configuration.programming.enabled, so it dispatches in every build, and PGM_ACTIVE here
+     * still means what it always has for such a build: refused while session_status carries
+     * STORE_CAL_REQ (asam_error_matrix_test.py, TestBuildChecksumErrorHandling::
+     * test_returns_err_pgm_active pins exactly this). Unchanged from before this task, both
+     * because that behaviour is real and for acceptance criterion 1's byte-for-byte constant --
+     * only the ON-build's row above gains the pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* SHORT_UPLOAD 0xF4, optional */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* DD51/1.1/1.6.5.1.1: UPLOAD is one of the seven commands that "must always be available
+     * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
+     * pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the command
+     * that section requires to stay reachable throughout one. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
+#else
+    /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
+     * the gate off. UPLOAD's own enabled bit does not depend on
+     * configuration.programming.enabled, so it dispatches in every build, and PGM_ACTIVE here
+     * still means what it always has for such a build: refused while session_status carries
+     * STORE_CAL_REQ (asam_error_matrix_test.py, TestUploadErrorHandling::
+     * test_returns_err_pgm_active pins exactly this). Unchanged from before this task, both
+     * because that behaviour is real and for acceptance criterion 1's byte-for-byte constant --
+     * only the ON-build's row above gains the pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* DD51/1.1/1.6.5.1.1: SET_MTA is one of the seven commands that "must always be available
+     * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
+     * pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the command
+     * that section requires to stay reachable throughout one; PROGRAM_NEXT's block transfer, and
+     * PROGRAM_PREPARE's own use of the MTA above, both depend on SET_MTA still working. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
+#else
+    /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
+     * the gate off. SET_MTA's own enabled bit does not depend on configuration.programming.
+     * enabled, so it dispatches in every build, and PGM_ACTIVE here still means what it always has
+     * for such a build: refused while session_status carries STORE_CAL_REQ
+     * (asam_error_matrix_test.py, TestSetMtaErrorHandling::test_returns_err_pgm_active pins
+     * exactly this). Unchanged from before this task, both because that behaviour is real and for
+     * acceptance criterion 1's byte-for-byte constant -- only the ON-build's row above gains the
+     * pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* UNLOCK 0xF7, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_SEED 0xF8, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_REQUEST 0xF9, optional */
@@ -1659,7 +1712,22 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                 (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_PGM_ACTIVE) != 0x00u) &&
                                                  ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_CAL_REQ) == 0x00u) &&
                                                  ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) == 0x00u) &&
-                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) == 0x00u)))
+                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) == 0x00u)
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                                                 /* DD51: a fourth disjunct beside the three session-status bits above, not a fourth bit
+                                                  * added to session_status -- 1.1/1.6.1.2.3's session status byte is a wire format GET_STATUS
+                                                  * reports, and a programming session is module state, not one of its bits. This is the
+                                                  * trigger the ERR_PGM_ACTIVE mechanism has lacked since before SP1: entering
+                                                  * XCP_PGM_ACTIVE (Xcp_PgmCompleteProgramStart, Xcp_Pgm.c) now makes every command whose own
+                                                  * Xcp_CTOErrorMatrix entry carries XCP_INTERNAL_ERR_PGM_ACTIVE refuse with ERR_PGM_ACTIVE,
+                                                  * exactly as an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ already does. 1.1/1.6.5.1.1
+                                                  * constrains which commands may still carry that bit while this is true: SET_MTA,
+                                                  * PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX, PROGRAM_NEXT, and optionally UPLOAD and
+                                                  * BUILD_CHECKSUM "must always be available during a memory programming sequence", so none
+                                                  * of those seven rows may carry the bit (source/Xcp.c, Xcp_CTOErrorMatrix). */
+                                                 && (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+                                                ))
                                             {
                                                 if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
                                                     ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))

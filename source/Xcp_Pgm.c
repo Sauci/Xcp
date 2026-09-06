@@ -33,6 +33,15 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode);
  */
 static void Xcp_PgmCompleteProgramReset(uint8 statusCode);
 
+/**
+ * @brief Finishes PROGRAM_PREPARE, building the positive response or ERR_GENERIC from statusCode.
+ * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
+ * Xcp_DTOCmdPgmProgramPrepare below calls it directly for an integrator whose work completes
+ * instantaneously (spec Section 4) -- the same function Xcp_PgmCompletePendingCommand dispatches
+ * to when the same command instead completes on a later Xcp_MainFunction poll.
+ */
+static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode);
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
@@ -108,6 +117,46 @@ uint8 Xcp_DTOCmdPgmProgramReset(boolean *responseExpected, const PduInfoType *pP
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdPgmProgramPrepare(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint8 status_code = 0x00u;
+    uint16 code_size;
+
+    *responseExpected = TRUE;
+
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &code_size, Xcp_Ptr->general->byteOrder);
+
+    /* 1.1/1.6.5.2.3: "This optional command is used to indicate the begin of a code download as a
+     * precondition for non-volatile memory programming." Unlike PROGRAM_START above, this carries
+     * no gate on Xcp_Internal.pgm_state at all -- a precondition FOR a sequence precedes it, so it
+     * is legal from XCP_PGM_IDLE and from XCP_PGM_ACTIVE alike. Design §4.
+     *
+     * The FIRST call happens here, not on the next Xcp_MainFunction, for the same reason
+     * PROGRAM_START's own first call does above: an integrator whose work is instantaneous returns
+     * E_OK from it and the master is answered on this very exchange. Spec §4. */
+    if (Xcp_ProgramPrepare(Xcp_Internal.memory_transfer.address, code_size, &status_code) == E_OK)
+    {
+        Xcp_PgmCompleteProgramPrepare(status_code);
+    }
+    else
+    {
+        Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_PREPARE;
+        Xcp_Internal.pending_command.active = TRUE;
+        Xcp_Internal.pending_command.abandoned = FALSE;
+        Xcp_Internal.pending_command.event_outstanding = FALSE;
+        /* Xcp_ProgramPrepare's contract takes codeSize on every call, not only this first one, and
+         * Xcp_PgmPollPendingCommand (below) has no other way to recover it once this handler
+         * returns -- the MTA needs no equivalent, since Xcp_Internal.memory_transfer.address is
+         * itself standing state it can re-read directly. */
+        Xcp_Internal.pending_command.program_prepare_code_size = code_size;
+
+        /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+        *responseExpected = FALSE;
+    }
+
+    return E_OK;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* deferred-response machinery, called from Xcp_MainFunction (DD53).                              */
 /*------------------------------------------------------------------------------------------------*/
@@ -130,6 +179,18 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
         case XCP_PID_CMD_PROGRAM_RESET:
         {
             result = Xcp_ProgramReset(pStatusCode);
+            break;
+        }
+        case XCP_PID_CMD_PROGRAM_PREPARE:
+        {
+            /* Unlike the two cases above, Xcp_ProgramPrepare's contract also takes address and
+             * codeSize on every call. The MTA is re-read from Xcp_Internal.memory_transfer.address
+             * directly -- stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any
+             * interloping SET_MTA -- and codeSize comes from the slot, which is the only place
+             * left holding it once the handler that parsed it from the request has returned. */
+            result = Xcp_ProgramPrepare(Xcp_Internal.memory_transfer.address,
+                                        Xcp_Internal.pending_command.program_prepare_code_size,
+                                        pStatusCode);
             break;
         }
         default:
@@ -172,6 +233,11 @@ void Xcp_PgmCompletePendingCommand(uint8 statusCode)
             case XCP_PID_CMD_PROGRAM_RESET:
             {
                 Xcp_PgmCompleteProgramReset(statusCode);
+                break;
+            }
+            case XCP_PID_CMD_PROGRAM_PREPARE:
+            {
+                Xcp_PgmCompleteProgramPrepare(statusCode);
                 break;
             }
             default:
@@ -342,6 +408,29 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
          * ERR_GENERIC, matching Xcp_PgmCompleteProgramStart's own failure path; nothing about the
          * session or the connection changes -- there is no positive response here to hang a
          * disconnect off of, and the master may simply try again. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */
+    Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
+}
+
+static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode)
+{
+    if (statusCode == 0x00u)
+    {
+        /* 1.1/1.6.5.2.3 specifies no response payload beyond the standard positive response --
+         * unlike PROGRAM_START's COMM_MODE_PGM byte and friends, there is nothing else to report
+         * here, matching PROGRAM_RESET's own success response just above. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        /* 1.1/1.6.5.2.3: "The slave device has to make sure that the target memory area is
+         * available and it is in a operational state which permits the download of code. If not,
+         * a ERR_GENERIC will be returned." */
         Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
     }
 

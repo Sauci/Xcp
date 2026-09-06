@@ -1,9 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import pytest
+
 from .pgm_deferred_test import pgm_handle, program_start, program_reset, transmitted, busy_then
 from .download_test import connect
 from .free_daq_test import dynamic_handle, allocate_directly
+from .parameter import u16_to_array, u32_to_array
 
 
 def send(handle, request):
@@ -12,6 +15,16 @@ def send(handle, request):
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
     handle.lib.Xcp_MainFunction()
     return transmitted(handle)
+
+
+def program_prepare(handle, code_size):
+    """PROGRAM_PREPARE (Task 5), without pumping Xcp_MainFunction -- mirrors program_start/
+    program_reset in pgm_deferred_test.py and for the same reason: a test needs to pump
+    Xcp_MainFunction and confirm transmissions itself, at its own pace. Byte 1 is the request's
+    unused byte (1.1/1.6.5.2.3); Codesize is the WORD at bytes 2-3, in this suite's default
+    byte order (LITTLE_ENDIAN, test/parameter.py's DefaultConfig)."""
+    handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xCC, 0x00) + tuple(u16_to_array(code_size, 'LITTLE_ENDIAN'))))
 
 
 def test_a_command_arriving_mid_operation_is_answered_err_cmd_busy():
@@ -483,3 +496,229 @@ def test_program_reset_frees_a_dynamic_allocation_so_the_next_session_does_not_i
     assert descriptor.odt[1].entryCount == 0
     assert descriptor.odt[1].odtEntry[0].address == handle.ffi.NULL
     assert descriptor.odt[1].odtEntry[0].length == 0
+
+
+def test_program_prepare_passes_the_current_mta_and_codesize_to_the_integrator():
+    """Task 5, requirement 1. 1.1/1.6.5.2.3: 'The MTA points to the begin of the volatile memory
+    location where the code will be stored. The parameter Codesize specifies the size of the code
+    that will be downloaded.' Design §4: 'Xcp_ProgramPrepare receives the current MTA and the
+    Codesize from the request, rather than reading module state itself.'
+
+    SET_MTA first establishes a known, non-zero MTA (0x12345678) -- reusing the harness's own
+    address-setting command rather than reaching into Xcp_Internal, which is not reachable from
+    this CFFI harness (test/clear_daq_list_test.py:80-92). Its own response is confirmed before
+    PROGRAM_PREPARE is sent: PROGRAM_PREPARE's own Xcp_CTOErrorMatrix entry (source/Xcp.c) carries
+    XCP_INTERNAL_ERR_CMD_BUSY, so an unconfirmed SET_MTA response left occupying the one-frame
+    transmit pipeline (SWS_Xcp_00859) would answer ERR_CMD_BUSY instead of ever calling
+    Xcp_ProgramPrepare at all.
+
+    Both halves are checked against the SAME call, so a module that passed a stale or zero
+    address, or the wrong Codesize, is caught either way."""
+    handle = pgm_handle()
+    handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00) +
+                                        tuple(u32_to_array(0x12345678, 'LITTLE_ENDIAN'))))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    program_prepare(handle, code_size=0x1234)
+
+    address, code_size, _p_status_code = handle.xcp_program_prepare.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x12345678, 'the current MTA'
+    assert code_size == 0x1234, "the request's own Codesize"
+
+
+def test_program_prepare_answers_err_generic_on_a_non_zero_status_code():
+    """Task 5, requirement 1's other half. 1.1/1.6.5.2.3: 'The slave device has to make sure that
+    the target memory area is available and it is in a operational state which permits the
+    download of code. If not, a ERR_GENERIC will be returned.'"""
+    handle = pgm_handle()
+
+    def target_area_unavailable(_address, _code_size, p_status_code):
+        p_status_code[0] = 0x01
+        return handle.define('E_OK')
+
+    handle.xcp_program_prepare.side_effect = target_area_unavailable
+    handle.can_if_transmit.reset_mock()
+
+    program_prepare(handle, code_size=0x0010)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+
+
+def test_program_prepare_defers_through_the_pending_slot_and_keeps_passing_codesize():
+    """Not one of the four requirements handed down for this task, but the direct consequence of
+    giving Xcp_ProgramPrepare a callback signature the existing deferred machinery was not built
+    for: Xcp_PgmPollPendingCommand and Xcp_PgmCompletePendingCommand (source/Xcp_Pgm.c) switch on
+    pending_command.pid, which carries nothing beyond the PID itself, active/abandoned/
+    event_outstanding flags -- exactly enough for PROGRAM_START and PROGRAM_RESET, whose polled
+    contract is pStatusCode alone. Xcp_ProgramPrepare's own contract additionally takes address
+    and codeSize on EVERY call, not only the first (design §4), and the switch-based poll has no
+    way back to the original request once the handler that parsed it has returned -- which is why
+    Task 5 adds pending_command.program_prepare_code_size (source/Xcp_Internal.h) to carry it. The
+    MTA needs no equivalent: Xcp_Internal.memory_transfer.address is already standing state the
+    poll re-reads directly, stable for the duration because DD55's ERR_CMD_BUSY gate refuses any
+    interloping SET_MTA.
+
+    A module that never persisted Codesize (leaving it at 0, or at whatever the slot's memory
+    happened to hold) would still pass every existing PROGRAM_START/PROGRAM_RESET test in this
+    suite -- neither needs anything beyond pStatusCode -- so this is what actually exercises the
+    difference. Isomorphic to
+    test_the_response_appears_on_the_main_function_where_the_callback_completes
+    (pgm_deferred_test.py), substituting Xcp_ProgramPrepare for Xcp_ProgramStart."""
+    handle = pgm_handle()
+    state = dict(calls=0)
+
+    def busy_then_complete(_address, _code_size, p_status_code):
+        # Mirrors pgm_deferred_test.py's own busy_then(..., busy_calls=2): call 1 is the fast
+        # path inside the handler itself (program_prepare below), call 2 is the first
+        # Xcp_MainFunction poll, and only call 3, the second poll, completes.
+        state['calls'] += 1
+        if state['calls'] <= 2:
+            return handle.define('E_NOT_OK')
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_program_prepare.side_effect = busy_then_complete
+    handle.can_if_transmit.reset_mock()
+
+    program_prepare(handle, code_size=0x2345)
+
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] != 0xFF, 'still busy on the second poll'
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'the deferred PROGRAM_PREPARE response arrives'
+
+    _address, code_size, _p_status_code = handle.xcp_program_prepare.call_args_list[-1][0]
+    assert code_size == 0x2345, "Codesize must still be the request's own value on the completing poll"
+
+
+def test_program_prepare_is_accepted_from_xcp_pgm_idle():
+    """Task 5, requirement 2. 1.1/1.6.5.2.3 makes PROGRAM_PREPARE a precondition FOR programming,
+    not a step within a session -- the master downloads code to volatile memory before
+    PROGRAM_START -- so it is legal before PROGRAM_START has ever been sent. pgm_handle() connects
+    but never sends PROGRAM_START, so pgm_state is XCP_PGM_IDLE here by construction.
+
+    Mutation: copying PROGRAM_START's own `if (pgm_state != XCP_PGM_IDLE)` gate into
+    Xcp_DTOCmdPgmProgramPrepare would not even fire here (pgm_state IS XCP_PGM_IDLE already) -- the
+    mutant is only caught by test_program_prepare_is_also_accepted_from_xcp_pgm_active below, this
+    test's complement."""
+    handle = pgm_handle()
+    handle.can_if_transmit.reset_mock()
+
+    program_prepare(handle, code_size=0x0010)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'PROGRAM_PREPARE must be accepted from XCP_PGM_IDLE'
+
+
+def test_program_prepare_is_also_accepted_from_xcp_pgm_active():
+    """Task 5, requirement 2's other direction. PROGRAM_PREPARE must keep working once a session
+    is already open, not merely before one starts -- nothing in 1.1/1.6.5.2.3 or design §4 closes
+    it off once XCP_PGM_ACTIVE, and an integrator downloading a second block of code mid-session
+    still needs it. Mutation: gating the handler on `pgm_state != XCP_PGM_IDLE` (PROGRAM_START's
+    own check, the natural mistake a reviewer reusing that handler as a template could make)
+    answers ERR_SEQUENCE (0xFE, 0x29) here instead of 0xFF, while leaving
+    test_program_prepare_is_accepted_from_xcp_pgm_idle passing (pgm_state IS XCP_PGM_IDLE there).
+
+    A real, completed PROGRAM_START reaches XCP_PGM_ACTIVE -- not merely asserted, since
+    Xcp_Internal is not reachable from this CFFI harness (test/clear_daq_list_test.py:80-92)."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    program_prepare(handle, code_size=0x0010)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'PROGRAM_PREPARE must also be accepted from XCP_PGM_ACTIVE'
+
+
+@pytest.mark.parametrize('payload', ((0xCC,), (0xCC, 0x00), (0xCC, 0x00, 0x00)))
+def test_program_prepare_below_four_bytes_answers_err_cmd_syntax(payload):
+    """Task 5, requirement 3. 1.1/1.6.5.2.3's request is command code, one unused byte, then a
+    WORD Codesize: four bytes. Enforced by the generic ERR_CMD_SYNTAX gate already in
+    Xcp_CanIfRxIndication, against Xcp_Ptr->general->ctoInfo[0xCC]'s own minimum request size
+    (script/source_cfg.c.jinja2: 4 for PROGRAM_PREPARE) -- nothing PROGRAM_PREPARE-specific was
+    written for this, so this test is what actually confirms the generated minimum is 4 and not
+    something smaller that would let a truncated request reach Xcp_ProgramPrepare."""
+    handle = pgm_handle()
+
+    assert send(handle, payload)[0:2] == (0xFE, 0x21), 'ERR_CMD_SYNTAX'
+
+
+def test_an_active_programming_session_makes_the_pgm_active_gate_fire():
+    """DD51. The ERR_PGM_ACTIVE machinery has existed since before SP1 and has never had a
+    programming session to trigger it. Reached through Xcp_Internal.pgm_state as a fourth
+    disjunct beside the three session-status bits Xcp_CanIfRxIndication's gate already tests, NOT
+    by adding a fourth bit to the session status byte: 1.1/1.6.1.2.3 is a wire format that
+    GET_STATUS reports, and a programming session is module state, not one of its bits.
+
+    GET_SEED (0xF8) is the probe: its own Xcp_CTOErrorMatrix entry (source/Xcp.c) carries
+    XCP_INTERNAL_ERR_PGM_ACTIVE, the same bit the pre-existing session_status-driven trigger
+    already exercises for this exact command (asam_error_matrix_test.py,
+    TestGetSeedErrorHandling::test_returns_err_pgm_active) -- so a refusal here pins the new
+    pgm_state-driven trigger alongside a form of the gate that already has coverage, rather than
+    inventing an unrelated observable.
+
+    A real, completed PROGRAM_START reaches XCP_PGM_ACTIVE -- not merely asserted, since
+    Xcp_Internal is not reachable from this CFFI harness (test/clear_daq_list_test.py:80-92)."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xF8, 0x00, 0x01))[0:2] == (0xFE, 0x12), 'ERR_PGM_ACTIVE'
+
+
+@pytest.mark.parametrize('pid, name, payload', (
+    (0xF6, 'SET_MTA', (0xF6, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)),
+    (0xD1, 'PROGRAM_CLEAR', (0xD1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)),
+    (0xD0, 'PROGRAM', (0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)),
+    (0xC9, 'PROGRAM_MAX', (0xC9, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)),
+    (0xCA, 'PROGRAM_NEXT', (0xCA, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)),
+    (0xF5, 'UPLOAD', (0xF5, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)),
+    (0xF3, 'BUILD_CHECKSUM', (0xF3, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00)),
+))
+def test_the_commands_required_during_programming_are_not_pgm_active_gated(pid, name, payload):
+    """1.1/1.6.5.1.1 lists the commands that 'must always be available during a memory programming
+    sequence' -- SET_MTA, PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX or PROGRAM_NEXT, optionally UPLOAD
+    and BUILD_CHECKSUM. Gating any of them behind ERR_PGM_ACTIVE would make a programming session
+    impossible to conduct.
+
+    Xcp_CTOErrorMatrix (source/Xcp.c) is declared `static` and reaches no header interface/Xcp.h
+    includes, so it is not visible to this CFFI harness (test/conftest.py builds its cdef from
+    interface/Xcp.h alone) -- an earlier draft of this test read it directly and could not have
+    run. Asserted instead by actually sending each command during an active session and checking
+    the answer is not ERR_PGM_ACTIVE (0xFE, 0x12): four of these seven (PROGRAM_CLEAR, PROGRAM,
+    PROGRAM_MAX, PROGRAM_NEXT) are unimplemented until SP4b and answer ERR_CMD_UNKNOWN
+    (0xFE, 0x20) today, which is not ERR_PGM_ACTIVE either and keeps this assertion honest and
+    future-proof once SP4b implements them for real.
+
+    Each payload is padded to 8 bytes (this suite's default MAX_CTO) and at or above every one of
+    these seven's own minimum request size (script/source_cfg.c.jinja2: 2 to 8 bytes) -- anything
+    short enough to trip ERR_CMD_SYNTAX first would make the assertion vacuous, since that gate is
+    checked in Xcp_CanIfRxIndication before ERR_PGM_ACTIVE and would refuse the command for an
+    unrelated reason without ever reaching the gate this test exists to check."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, payload)[0:2] != (0xFE, 0x12), \
+        '%s must stay available during a programming sequence' % name

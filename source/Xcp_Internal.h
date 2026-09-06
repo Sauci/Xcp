@@ -419,6 +419,20 @@ typedef struct {
         boolean active;
         boolean abandoned;
         boolean event_outstanding;
+
+        /**
+         * @brief PROGRAM_PREPARE's own Codesize argument, valid only while pid ==
+         * XCP_PID_CMD_PROGRAM_PREPARE.
+         * @details Xcp_ProgramPrepare's contract (interface/Xcp.h) takes address and codeSize on
+         * EVERY call, not only the first -- unlike the single-pStatusCode-argument PROGRAM_START/
+         * PROGRAM_RESET callbacks, which need nothing beyond this struct's existing fields.
+         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) re-reads the MTA itself from
+         * Xcp_Internal.memory_transfer.address on every poll -- stable for the duration, since
+         * DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- but has no such standing
+         * field for Codesize, which this one exists to hold across the poll cycles the switch-based
+         * Xcp_PgmPollPendingCommand does not otherwise have the original request to re-read from.
+         */
+        uint16 program_prepare_code_size;
     } pending_command; /* DD52 */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
@@ -834,6 +848,17 @@ uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pP
  * for other purposes."
  */
 uint8 Xcp_DTOCmdPgmProgramReset(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_PREPARE, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.3.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdPgmProgramStart above documents -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ * Unlike PROGRAM_START and PROGRAM_RESET, this one carries no gate on Xcp_Internal.pgm_state at
+ * all, in either direction (Task 5): 1.1/1.6.5.2.3 makes it a precondition FOR programming, not a
+ * step within one, so it is legal from XCP_PGM_IDLE and from XCP_PGM_ACTIVE alike.
+ */
+uint8 Xcp_DTOCmdPgmProgramPrepare(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
