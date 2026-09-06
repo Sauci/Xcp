@@ -1270,8 +1270,32 @@ void Xcp_MainFunction(void)
     /* Polled ahead of STORE_CAL_REQ below: a programming master is waiting on a response with a
      * t3/t4/t5 timeout running, where a store-calibration request has nobody waiting on it at all.
      * DD53. Xcp_MainFunction gains these four lines and no knowledge of any PGM command -- the
-     * poll, the response and EV_CMD_PENDING all live in Xcp_Pgm.c. */
-    if (Xcp_Internal.pending_command.active == TRUE)
+     * poll, the response and EV_CMD_PENDING all live in Xcp_Pgm.c.
+     *
+     * Fix round 1, finding 3: withheld while cto_response.successful_transmission_pending is
+     * TRUE, not merely while polled. Xcp_Internal.cto_response.pdu_info is one buffer shared by
+     * every CTO response, including the ERR_CMD_BUSY packet DD55's own gate (Xcp_CanIfRxIndication)
+     * writes for an interloper arriving in this same window. That gate stops the interloper's
+     * HANDLER from touching the buffer, but says nothing about Xcp_MainFunction's own completion
+     * doing so an instant later -- and until here it did: polling to E_OK and completing
+     * unconditionally would let Xcp_PgmCompleteProgramStart overwrite an ERR_CMD_BUSY packet that
+     * is still unconfirmed, sitting in the exact frame CanIf is still holding for the master. One
+     * response is lost (its bytes silently become the other response's) and, if CanIf reads the
+     * buffer lazily rather than having copied it already, the other is malformed on the wire.
+     * Confirmed by direct observation: reading the buffer between an unconfirmed ERR_CMD_BUSY and
+     * an unguarded completing poll shows the positive PROGRAM_START response already sitting in
+     * it, in the frame the master will still match to its own, unrelated interloper command.
+     *
+     * Withholding the whole block, not polling and then discarding the completion, is deliberate:
+     * the integrator callback's contract (source/Xcp_Pgm.c's Xcp_PgmPollPendingCommand) defines
+     * E_OK as "the callback has finished" and says nothing about what a further call after that
+     * returns, so polling an already-finished operation again is unspecified behaviour, not a safe
+     * way to buy a cycle. Deferring the whole block costs at most one Xcp_MainFunction cycle --
+     * bounded by SWS_Xcp_00859's one-frame-at-a-time confirmation, not by this module's period,
+     * which Xcp_MainFunction may never depend on -- and keeps the poll loop's own contract intact:
+     * once polled to E_OK, it is completed on that same call, never re-polled first. */
+    if ((Xcp_Internal.pending_command.active == TRUE) &&
+        (Xcp_Internal.cto_response.successful_transmission_pending == FALSE))
     {
         uint8 status_code = 0x00u;
 
@@ -1543,10 +1567,17 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                      * so a command whose own matrix entry carries
                                      * XCP_INTERNAL_ERR_CMD_BUSY would sail through that test
                                      * unopposed. Dispatching it anyway would let its handler write
-                                     * cto_response.pdu_info at the same time Xcp_MainFunction is
-                                     * about to overwrite that very buffer with the pending
-                                     * command's own answer: one response lost, the other
-                                     * malformed.
+                                     * cto_response.pdu_info -- the one buffer every CTO response
+                                     * shares, including the ERR_CMD_BUSY packet this gate itself
+                                     * produces -- while the pending command's own answer is still
+                                     * due to land in that same buffer. This gate stops only the
+                                     * interloper's HANDLER from doing that; Xcp_MainFunction's own
+                                     * completion of the pending command must separately not do it
+                                     * either, which is why its poll is withheld there whenever
+                                     * cto_response.successful_transmission_pending is TRUE (fix
+                                     * round 1, finding 3) -- without both halves, one response is
+                                     * lost and the other malformed regardless of which of the two
+                                     * writers loses the race.
                                      *
                                      * 1.1/1.7.1.1 exempts SYNCH: it is the master's only means of
                                      * resynchronising, and one that cannot get through leaves a
@@ -1570,8 +1601,19 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                          * PROGRAM_START starting a second operation on top of one
                                          * still running. Abandoning it instead lets the poll run to
                                          * completion; Xcp_PgmCompletePendingCommand (Xcp_Pgm.c)
-                                         * discards the response instead of transmitting it. */
-                                        if ((Xcp_Internal.pending_command.active == TRUE) && (pid == XCP_PID_CMD_SYNCH))
+                                         * discards the response instead of transmitting it.
+                                         *
+                                         * pid is not re-tested here: this else is reached only when
+                                         * (active == FALSE) or (pid == XCP_PID_CMD_SYNCH) (the
+                                         * negation of the if above), so active == TRUE by itself
+                                         * already rules out the first disjunct and leaves
+                                         * pid == XCP_PID_CMD_SYNCH the only way to be here. Fix
+                                         * round 1, finding 2: the repeated compare was dead code on
+                                         * the CTO receive path DD55's own risk note says must not
+                                         * pay for a feature most builds compile out, and it invited
+                                         * a reader to conclude this branch is reachable with
+                                         * pid != XCP_PID_CMD_SYNCH, which it is not. */
+                                        if (Xcp_Internal.pending_command.active == TRUE)
                                         {
                                             Xcp_PgmAbandonPendingCommand();
                                         }
