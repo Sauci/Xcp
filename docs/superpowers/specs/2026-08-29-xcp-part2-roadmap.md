@@ -78,7 +78,7 @@ positive response without doing anything, which was defect D2, fixed in SP1.
 | 0xF5 | UPLOAD | done — D1 fixed in SP1 |
 | 0xF4 | SHORT_UPLOAD | done |
 | 0xF3 | BUILD_CHECKSUM | done |
-| 0xF2 | TRANSPORT_LAYER_CMD | partial — `GET_SLAVE_ID` only; `SET_DAQ_LIST_CAN_ID` absent |
+| 0xF2 | TRANSPORT_LAYER_CMD | done — `GET_SLAVE_ID` and `GET_DAQ_ID`; `SET_DAQ_ID` excluded by SWS_Xcp §4.1 |
 | 0xF1 | USER_CMD | done |
 
 ### 2.2 Calibration commands (§1.4.2, §1.6.2)
@@ -433,8 +433,17 @@ schedulable whenever flash programming becomes a requirement.
 ### SP5 — Protocol completion
 
 The residue: the interleaved communication model (§1.7.2.3), `EV_CMD_PENDING` (§1.7.2.4.2),
-RESUME mode, `GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2),
-`SET_DAQ_LIST_CAN_ID`, the remaining `EV_*` event codes and the `SERV_*` service request codes.
+RESUME mode, `GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2), the remaining `EV_*` event
+codes and the `SERV_*` service request codes.
+
+`SET_DAQ_ID` was listed here and has been **removed from the roadmap rather than deferred within
+it**. AUTOSAR SWS XCP R4.3.1 §4.1 puts it out of scope — "The SET_DAQ_ID command according to the
+XCP CAN Transport Layer Specification is not part of the AUTOSAR XCP module" — and this module
+tracks that SWS. Two things would have to be settled before revisiting it: its normative definition
+lives in the XCP CAN Transport Layer specification, which is not in `docs/external`, and changing a
+transmit identifier at runtime needs `CanIf_SetDynamicTxId` (SWS_CANIF_00189) plus an integrator
+guarantee that every DAQ transmit PDU is a dynamic L-PDU. The slave answers `ERR_CMD_UNKNOWN`,
+which §1.4 prescribes, and `GET_DAQ_ID` reports the identifier as fixed.
 
 Note that time-out handling itself is *not* here: §1.7.2 places the t1…t6 timers entirely on
 the master. `EV_CMD_PENDING` and the interleaved request queue are the slave's whole share
@@ -470,7 +479,7 @@ Three things this must get right, all of them discovered by D9:
   module's advertisement and its refusals are currently consistent; changing one without the
   others is what would make it incoherent.
 
-**Dependencies.** `SET_DAQ_LIST_CAN_ID` and SP5-NV both depend on SP2 — RESUME is a
+**Dependencies.** RESUME and SP5-NV both depend on SP2 — RESUME is a
 `SET_DAQ_LIST_MODE` bit backed by `STORE_DAQ_REQ` persistence, and the session configuration
 id is persisted and cleared through the same DAQ storage mechanism. Only the interleaved
 model, `EV_CMD_PENDING`, `GET_ID` types and the `SERV_*` codes are genuinely independent and
