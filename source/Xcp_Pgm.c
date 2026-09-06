@@ -157,6 +157,16 @@ void Xcp_PgmRequestPending(void)
                                          0x00000000u);
         SchM_Exit_Xcp_DtoQueue();
 
+        /* Review finding 5: a failed push must leave event_outstanding FALSE, not TRUE -- only a
+         * successful pop clears it (Xcp_CanIfTxConfirmation), so marking one outstanding here
+         * without actually queuing it would starve every later busy poll of a retry, permanently,
+         * for the rest of this operation. Deliberately does not report XCP_E_EVENT_QUEUE_FULL the
+         * way Xcp_MainFunction's EV_STORE_CAL push does (Xcp_MainFunction, STORE_CAL_REQ block):
+         * EV_STORE_CAL is one-shot, so a failed push loses that notification forever and is worth
+         * a diagnostic; EV_CMD_PENDING already retries here on every subsequent busy poll while
+         * event_outstanding stays FALSE, and a busy erase can hold that poll open for a long time,
+         * so reporting on every failed attempt would itself become the kind of flood DD54 exists
+         * to prevent applied to the diagnostic channel instead of the wire. */
         if (push_result == E_OK)
         {
             Xcp_Internal.pending_command.event_outstanding = TRUE;

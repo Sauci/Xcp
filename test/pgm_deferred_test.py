@@ -58,16 +58,29 @@ def test_program_start_transmits_nothing_while_the_integrator_is_busy():
     """DD53. The response is withheld with *responseExpected = FALSE, the mechanism
     Xcp_DTOCmdCalDownload already uses mid-block-transfer.
 
-    Asserted as 'no CanIf_Transmit call at all' rather than 'not a positive response': a module
-    that answered ERR_GENERIC immediately would satisfy the weaker assertion while being exactly
-    the bug this test exists to catch."""
+    Review fix round 1, finding 1. The previous form of this test asserted
+    `transmitted(handle) is None` after `program_start` alone, with no Xcp_MainFunction call --
+    but Xcp_CanIfRxIndication never transmits (the only Xcp_StartNextTransmission call sites are
+    Xcp_MainFunction's own tail and Xcp_CanIfTxConfirmation's), so that assertion held
+    unconditionally, for any handler behaviour whatsoever, and mutation 3 in the report documents
+    catching this without repairing it. Pumping one Xcp_MainFunction is what actually exercises
+    DD53: the poll is still busy, so no *response* may go out, but DD54's EV_CMD_PENDING on that
+    same poll is expected and must be let through -- asserted as 'no CTO frame', PID 0xFF or 0xFE,
+    rather than 'no CanIf_Transmit call at all'. A module with *responseExpected = TRUE on the
+    deferral branch writes nothing new into cto_response.pdu_info and this handler's caller
+    publishes it anyway, so the stale CONNECT response already sitting there (every one of these
+    tests calls connect() first) would be transmitted as PROGRAM_START's answer -- exactly what
+    this form catches and the previous one could not."""
     handle = pgm_handle()
     busy_then(handle, 0x00, busy_calls=3)
     handle.can_if_transmit.reset_mock()
 
     program_start(handle)
+    handle.lib.Xcp_MainFunction()
 
-    assert transmitted(handle) is None, 'no response may go out while the callback is unfinished'
+    responses = [call for call in handle.can_if_transmit.call_args_list
+                 if call[0][1].SduDataPtr[0] in (0xFF, 0xFE)]
+    assert responses == [], 'no response may go out while the callback is unfinished'
 
 
 def test_the_response_appears_on_the_main_function_where_the_callback_completes():
@@ -144,6 +157,7 @@ def test_the_positive_response_reports_comm_mode_pgm(master_block_mode, interlea
     handle = pgm_handle(master_block_mode=master_block_mode, interleaved_mode=interleaved_mode,
                         slave_block_mode=slave_block_mode)
     busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
     program_start(handle)
     handle.lib.Xcp_MainFunction()
 
@@ -162,6 +176,7 @@ def test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed()
     ERR_SEQUENCE (0x29)."""
     handle = pgm_handle()
     busy_then(handle, 0x01, busy_calls=1)
+    handle.can_if_transmit.reset_mock()
     program_start(handle)
     handle.lib.Xcp_MainFunction()
 
@@ -211,23 +226,24 @@ def test_an_instantaneous_integrator_is_answered_without_deferring():
     this test pins is that ONE ordinary flush is enough, never the busy-poll cycle a deferred
     PROGRAM_START needs several of before its response appears.
 
-    Without this test the handler could defer unconditionally and every other test here would
-    still pass, since they all pump Xcp_MainFunction anyway. What it pins is the absence of an
-    event: a module that always defers would emit one before answering.
-
-    'nothing was left pending' cannot be read off pending_command.active directly, for the same
-    CFFI-visibility reason as the ERR_GENERIC test above (test/clear_daq_list_test.py:80-92). Its
-    only consumer in this task is Xcp_MainFunction's own poll, which runs the integrator callback
-    again while a command is still marked pending -- so a stuck slot would replay
-    Xcp_ProgramStart's already-configured success and transmit a second, unsolicited positive
-    response on the next main-function call. Task 3 adds an ERR_CMD_BUSY gate on incoming commands
-    that would give this a second, independent observable; Task 2 has only this one."""
+    Review fix round 1, finding 3. The wire-level assertions below (0xFF on the first flush, no
+    EV_CMD_PENDING, nothing left pending) all still pass for a handler mutated to defer
+    unconditionally -- set pending_command, *responseExpected = FALSE, no fast path -- because
+    with busy_calls=0 the very first Xcp_MainFunction poll immediately calls back into
+    Xcp_ProgramStart, which returns E_OK on ITS first call too, so the response still arrives on
+    the first Xcp_MainFunction and the slot still gets released. None of that distinguishes
+    'answered in the handler' from 'deferred once, resolved on the very next poll'. What does is a
+    count on the mock itself, which needs no Xcp_Internal reachability: the handler call and the
+    completing poll are the same call if and only if the fast path ran."""
     handle = pgm_handle()
     busy_then(handle, 0x00, busy_calls=0)
     handle.can_if_transmit.reset_mock()
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xD2,)))
+    assert handle.xcp_program_start.call_count == 1, 'the first call happens in the handler'
+
     handle.lib.Xcp_MainFunction()
+    assert handle.xcp_program_start.call_count == 1, 'and the completed command is not polled again'
 
     assert transmitted(handle)[0] == 0xFF, 'answered on the first ordinary flush'
 
@@ -295,3 +311,150 @@ def test_a_second_ev_cmd_pending_follows_the_first_confirmation():
               if call[0][1].SduDataPtr[0] == 0xFD and call[0][1].SduDataPtr[1] == 0x05]
 
     assert len(events) == 2
+
+
+def test_a_foreign_events_confirmation_does_not_release_the_bound():
+    """Review fix round 1, finding 2. DD54's bound is 'no EV_CMD_PENDING FROM THIS PENDING
+    COMMAND still outstanding', not 'no event of any kind'. The event queue is shared with
+    EV_STORE_CAL (Xcp_MainFunction's own STORE_CAL_REQ block) and EV_DAQ_OVERLOAD
+    (Xcp_TriggerEventChannel, Xcp_DaqRuntime.c); SET_REQUEST is the simplest way to put a second,
+    independent producer on the same queue without a full DAQ configuration.
+
+    No other test in this file has two event sources, which is exactly why the leak this pins was
+    invisible before: with one producer, 'clear on any confirmation' and 'clear on this command's
+    own confirmation' are indistinguishable.
+
+    Sequence (event_queue_size=4 so both events comfortably coexist in the ring at once). Checked
+    one step at a time, resetting the mock before each: Xcp_Internal.event.pdu_info is one buffer
+    reused for every event, whichever type, so a *retrospective* scan of call_args_list is not
+    reliable evidence of what an earlier call actually sent -- an old entry's SduDataPtr reflects
+    whatever the *next* event transmission later wrote into that same memory. Only the single most
+    recent call (this file's transmitted() helper) is ever a trustworthy snapshot, which is why
+    every other test in this file already reads transmitted() rather than filtering
+    call_args_list -- except the two DD54 tests just above, which get away with a retrospective
+    scan only because EV_CMD_PENDING is the sole event type they ever produce.
+
+    1. A busy poll pushes and transmits EV_CMD_PENDING #1.
+    2. SET_REQUEST(STORE_CAL_REQ) arrives; its callback completes on the very next poll, which
+       pushes EV_STORE_CAL behind #1 -- #1 is still in flight, unconfirmed, so nothing new is
+       transmitted this step.
+    3. Confirming #1 correctly clears the bound (it IS the module's own event) and drains the
+       queue. The freed slot is filled by SET_REQUEST's own CTO response, not by EV_STORE_CAL
+       yet -- CTO takes priority over the event queue in Xcp_TransmitOneFrame.
+    4. Confirming that CTO response drains it in turn, so EV_STORE_CAL is finally selected and
+       transmitted.
+    5. A further busy poll finds the bound correctly clear and pushes EV_CMD_PENDING #2, which
+       only queues behind the still-in-flight EV_STORE_CAL -- nothing new transmitted this step.
+    6. Confirming EV_STORE_CAL -- not a CMD_PENDING event -- drains the queue in turn, so #2 is
+       selected and transmitted. This is the moment a module that clears the bound unconditionally
+       would also (wrongly) clear it, since #2 is the one now in flight and NOT yet confirmed.
+    7. One more busy poll: a leaking module pushes EV_CMD_PENDING #3 here, behind #2, which is
+       still outstanding. Nothing transmits this step either way -- the pipeline is still occupied
+       by #2 -- so this step cannot by itself distinguish the fix from the leak.
+    8. Confirming #2 is where the two diverge: fixed, the bound was held at step 6, so step 7
+       pushed nothing and the now-empty queue transmits nothing here either. Leaking, step 7's #3
+       is sitting queued, and gets transmitted now -- a THIRD EV_CMD_PENDING that the operation
+       never asked for TxConfirmation to release.
+    """
+    handle = pgm_handle(event_queue_size=4)
+
+    def store_calibration_completes(p_success):
+        p_success[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_calibration_data_to_non_volatile_memory.side_effect = store_calibration_completes
+    busy_then(handle, 0x00, busy_calls=20)
+    handle.can_if_transmit.reset_mock()
+
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()  # 1
+    assert transmitted(handle)[0:2] == (0xFD, 0x05), 'EV_CMD_PENDING #1'
+
+    # SET_REQUEST(STORE_CAL_REQ): the second, independent event producer.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, 0x01, 0x00, 0x00)))
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # 2
+    assert transmitted(handle) is None, 'the pipeline is still occupied by #1, unconfirmed'
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 3
+    assert transmitted(handle)[0:2] == (0xFF, 0x00), "SET_REQUEST's own response, ahead of the queue"
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 4
+    assert transmitted(handle)[0:2] == (0xFD, 0x03), 'EV_STORE_CAL, queued behind #1 until now'
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # 5
+    assert transmitted(handle) is None, 'the pipeline is still occupied by EV_STORE_CAL, unconfirmed'
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 6
+    assert transmitted(handle)[0:2] == (0xFD, 0x05), '#2, queued behind EV_STORE_CAL until now'
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # 7
+    assert transmitted(handle) is None, \
+        'the pipeline is still occupied by #2 -- this step alone cannot show the leak'
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 8
+
+    assert transmitted(handle) is None, \
+        'confirming EV_STORE_CAL at step 6 must not have released the bound on #2 -- a module ' \
+        'that cleared it there would have let step 7 push a third EV_CMD_PENDING, which would ' \
+        'transmit here as soon as #2 itself is confirmed'
+
+
+def test_a_failed_push_leaves_the_bound_clear_so_a_later_poll_retries():
+    """Review fix round 1, finding 5. Xcp_EventQueuePush can fail (queue full); the retry
+    contract is that event_outstanding stays FALSE whenever nothing was actually queued, so the
+    very next busy poll tries again. Marking one outstanding unconditionally would starve every
+    later poll of a retry for the rest of the operation, permanently, since only a successful pop
+    of an actual queued event ever clears the flag.
+
+    Reuses set_request_test.py's proven technique for forcing Xcp_EventQueuePush to fail: at
+    event_queue_size=2 an event already selected for transmission, unconfirmed, still occupies its
+    ring slot (Xcp_EventQueueGet peeks without advancing `read`), so the ring's one usable slot
+    (capacity eventQueueSize - 1) is unavailable to a second push until that first event is
+    confirmed. EV_STORE_CAL (via SET_REQUEST) is put in that unconfirmed, in-flight state first,
+    which forces the PGM busy poll's own push to fail outright -- no DAQ configuration needed.
+
+    Checked one step at a time with transmitted(), resetting the mock before each, rather than by
+    scanning call_args_list once at the end: Xcp_Internal.event.pdu_info is one buffer reused for
+    every event, so an old entry's SduDataPtr silently takes on whatever a *later* event
+    transmission writes into that same memory -- see
+    test_a_foreign_events_confirmation_does_not_release_the_bound, just above, for the full
+    explanation and the test this file used to get that wrong."""
+    handle = pgm_handle(event_queue_size=2)
+
+    def store_calibration_completes(p_success):
+        p_success[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_calibration_data_to_non_volatile_memory.side_effect = store_calibration_completes
+    busy_then(handle, 0x00, busy_calls=20)
+
+    # SET_REQUEST(STORE_CAL_REQ), driven to the point where EV_STORE_CAL is selected and
+    # transmitted but not yet confirmed -- occupying the ring's only usable slot.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, 0x01, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # confirms SET_REQUEST's own
+    # CTO response; EV_STORE_CAL is selected and transmitted next, and stays unconfirmed
+
+    handle.can_if_transmit.reset_mock()
+
+    program_start(handle)
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # busy poll's own push fails outright: the ring is full
+
+    assert transmitted(handle) is None, 'nothing was queued, so nothing may be transmitted'
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # confirms EV_STORE_CAL,
+    # freeing the ring; nothing is queued yet, so nothing transmits from this call either
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # a module that marked the bound set on the failed push above
+    # would skip this retry forever; one that left it clear pushes and transmits now
+
+    assert transmitted(handle)[0:2] == (0xFD, 0x05), \
+        'a failed push must not block every later retry once the queue has room again'

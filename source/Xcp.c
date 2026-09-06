@@ -1693,15 +1693,33 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                 {
                     /* Fix round 2: only the pop and the flag it gates go inside -- same reasoning
                      * as the push in Xcp_MainFunction above; no external call sits in this branch
-                     * to keep out. */
+                     * to keep out. Fix round 3 (review finding 2): the PGM peek below reads the
+                     * same shared queue, under the same area, for the same reason. */
                     SchM_Enter_Xcp_DtoQueue();
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                    {
+                        uint8 event_packet_id;
+                        uint8 event_code;
+
+                        /* Peeked before the pop below removes it, under the same exclusive area
+                         * so nothing can push or pop between the two. DD54's bound is "no
+                         * EV_CMD_PENDING FROM THIS PENDING COMMAND is still outstanding", not "no
+                         * event of any kind": this queue is shared with EV_STORE_CAL
+                         * (Xcp_MainFunction) and EV_DAQ_OVERLOAD (Xcp_TriggerEventChannel,
+                         * Xcp_DaqRuntime.c), so confirming one of those must not release the bound
+                         * on a still-queued, unconfirmed EV_CMD_PENDING -- that would make the
+                         * EV_CMD_PENDING rate a function of the other feature's event rate, which
+                         * is exactly the coupling DD54 forbids. */
+                        if ((Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                               &event_packet_id, &event_code) == E_OK) &&
+                            (event_code == XCP_EVENT_CMD_PENDING))
+                        {
+                            Xcp_Internal.pending_command.event_outstanding = FALSE;
+                        }
+                    }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                     if (Xcp_EventQueuePop(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue) == E_OK) {
                         Xcp_Internal.event.successful_transmission_pending = FALSE;
-#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
-                        /* DD54: the one EV_CMD_PENDING this module allows in flight is confirmed,
-                         * so Xcp_PgmRequestPending may ask again on the next busy poll. */
-                        Xcp_Internal.pending_command.event_outstanding = FALSE;
-#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                     }
                     SchM_Exit_Xcp_DtoQueue();
                 }
