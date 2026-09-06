@@ -136,10 +136,16 @@ All eleven handlers, every flash callback, any programming-mode state, and `EV_C
 
 ## 3. Design decisions
 
-### DD49 — One programming-session state, three values
+### DD49 — One programming-session state, two values
 
-`Xcp_Internal.pgm_state` takes `XCP_PGM_IDLE`, `XCP_PGM_STARTING` (a `PROGRAM_START` is being
-polled) and `XCP_PGM_ACTIVE` (session open).
+`Xcp_Internal.pgm_state` takes `XCP_PGM_IDLE` and `XCP_PGM_ACTIVE`.
+
+**This decision specified three, and the third was dead.** `XCP_PGM_STARTING` was to be entered
+while a `PROGRAM_START` was being polled, on the reasoning below that `Xcp_MainFunction` needs to
+know which state a finished `PROGRAM_START` came from. It does not: the completion decides from the
+integrator's status code alone and never reads `pgm_state`, and the other two readers cannot
+distinguish `STARTING` from `IDLE`. Replacing it with `XCP_PGM_IDLE` changed no behaviour and no
+test, which is how the final review found it. It is deleted.
 
 §1.6.5.1.1 requires that `PROGRAM_CLEAR`, `PROGRAM`, `PROGRAM_MAX` and `PROGRAM_NEXT` "are not
 allowed, until the PROGRAM_START command has been successfully executed". The gate is implemented
@@ -147,17 +153,16 @@ here, in SP4a, even though every command it gates arrives in SP4b. That is delib
 what `PROGRAM_START` *means*, and a `PROGRAM_START` that sets a flag nothing reads is not
 testable as the thing the specification describes. SP4b's handlers consult it on arrival.
 
-Refusal is `ERR_SEQUENCE` (0x29). §1.7.3.2.4's matrix lists `ERR_SEQUENCE` for `PROGRAM_CLEAR`,
-`PROGRAM` and `PROGRAM_MAX`, so this invents nothing.
+Refusal of the gated commands is `ERR_SEQUENCE` (0x29), which **§1.7.3.2.5** — the PGM matrix;
+§1.7.3.2.4 is DAQ's, and an earlier revision of this document cited it throughout — lists for
+`PROGRAM_CLEAR`, `PROGRAM` and `PROGRAM_MAX`.
 
-`STARTING` earns its place at the completion of the poll, not before it: `Xcp_MainFunction` has to
-know whether a finished `PROGRAM_START` should move to `ACTIVE` or back to `IDLE`, and that is a
-property of the state it came from. Reading it off `pending_command.pid` instead would work and
-would put the session's transitions somewhere other than the session's state.
-
-It is also correct on its own for §1.6.5.1.1's gate, which DD55 makes unreachable in practice: a
-master sending `PROGRAM_CLEAR` mid-poll has not had a successful `PROGRAM_START`, and `STARTING`
-answers that question without consulting the pending slot.
+**A second `PROGRAM_START` inside an open session is answered `ERR_GENERIC` (0x31), not
+`ERR_SEQUENCE`.** This decision originally said `ERR_SEQUENCE` for that case too, by carrying the
+gated commands' error over to the gating command. `PROGRAM_START`'s own row in §1.7.3.2.5 lists
+`CMD_BUSY`, `DAQ_ACTIVE`, `CMD_SYNTAX`, `ACCESS_LOCKED` and `GENERIC` — no `SEQUENCE` — and
+`Xcp_CTOErrorMatrix[0xD2]` agrees. §1.6.5.1.1 names `ERR_GENERIC` for a slave "not in a state which
+permits programming", which is exactly what an open session is.
 
 ### DD50 — `PROGRAM_RESET` disconnects without resetting the device
 
@@ -172,6 +177,20 @@ deciding argument is ownership: this module is one BSW component among many on a
 own, and resetting the device on receipt of a CTO is not its call to make. An integrator that wants
 a reset performs one from its own `Xcp_ProgramReset` implementation, which is the right place for
 it because that code knows what else is running.
+
+**Declining the reset makes clearing `pgm_state` the module's own responsibility, and this decision
+originally left that to one door.** ASAM's model has the hardware reset dispose of the session, so
+a slave that follows it needs no other exit. Having refused that, only `PROGRAM_RESET`'s completion
+cleared the state — and `DISCONNECT` is itself refused `ERR_PGM_ACTIVE` while a session is open,
+while `CONNECT` was accepted and cleared nothing. Measured: `PROGRAM_START` → `DISCONNECT`
+(`ERR_PGM_ACTIVE`) → `CONNECT` (accepted) → `DOWNLOAD` (`ERR_PGM_ACTIVE`). A master that died
+mid-sequence left the next one with some thirty-eight commands refused for good, and two further
+routes reached the same place: a build with `PROGRAM_RESET` disabled, and an `Xcp_ProgramReset`
+that reports failure.
+
+`Xcp_CTOCmdStdConnect` therefore resets `pgm_state`. `CONNECT` is the right door because it is the
+one command that is never refused — XCP Part 1 §2.3, quoted at `source/Xcp.c:1583-1589` — and
+because `DISCONNECT` cannot be it while a session is open.
 
 ### DD51 — `ACTIVE` triggers the existing `ERR_PGM_ACTIVE` gate
 
@@ -274,7 +293,7 @@ re-polling a completed operation is unspecified behaviour and this module will n
 cost is that a completion waits one `Xcp_MainFunction` cycle behind an in-flight CTO, which is
 invisible to a master that is by definition waiting on that CTO.
 
-The new test is `pending_command.active`, evaluated beside the existing one. §1.7.3.2.4 lists
+The new test is `pending_command.active`, evaluated beside the existing one. §1.7.3.2.5 lists
 `ERR_CMD_BUSY` for every PGM command with the action "wait t7, repeat ∞ times", so a conformant
 master already knows what to do with it.
 
@@ -356,7 +375,7 @@ it disproved the reasoning twice over, both measured:
   the next `Xcp_MainFunction` — an unbounded window, since that function is aperiodic — overwrites
   the response, and the disconnect then fires on whatever CTO is confirmed next. Measured: a
   following `SYNCH` gives the master `ERR_CMD_SYNCH`, a `GET_STATUS` gives the `GET_STATUS`
-  response, and a second `PROGRAM_RESET` — the t7 retry §1.7.3.2.4 mandates — gives `ERR_CMD_BUSY`.
+  response, and a second `PROGRAM_RESET` — the t7 retry §1.7.3.2.5 mandates — gives `ERR_CMD_BUSY`.
   In each the answer is gone, the slave disconnects anyway, and the master retries into silence:
   exactly the divergence the confirmation form was adopted to prevent. The in-handler form is
   immune because the receive gate drops the interloper before it reaches the buffer.
@@ -583,6 +602,34 @@ survives-its-own-deletion conjuncts across SP2d and SP3.
 - SP5: `EV_CMD_PENDING` for non-PGM commands, and the interleaved communication model. This
   sub-project defines the event and raises it for three commands; making it generally available is
   a different design.
+
+**Raised by the final whole-branch review, and each one blocks something concrete:**
+
+- **The seed-and-key unlock lasts exactly one dispatched command** — `source/Xcp.c` clears the
+  protection status after every PID except `UNLOCK`, so even an unrelated interposed `GET_STATUS`
+  spends it. For CAL_PAG and DAQ that is merely tiresome, since §1.7.3.2.x's action for
+  `ERR_ACCESS_LOCKED` is "unlock slave, repeat 2 times" and the master can. For PGM it is fatal:
+  `PROGRAM_START` would consume the unlock and `PROGRAM_CLEAR` would be locked again, and
+  re-unlocking mid-session is impossible because `GET_SEED` and `UNLOCK` themselves carry
+  `ERR_PGM_ACTIVE` — which §1.7.3.2.5 mandates. Pre-existing and affecting all three resource
+  groups identically, so out of SP4a's scope to fix; SP4a instead **refuses the configuration at
+  generation**, as DD48 does for its STIM equivalent. Fixing the unlock lifetime is what lifts that
+  refusal, and it is what will allow `test_get_seed_unlock_genuinely_gates_a_pgm_command` — deleted
+  because the configuration it needs no longer generates — to be restored. It was the only proof in
+  the suite that seed-and-key gates a **PGM** command specifically.
+- **One internal bit governs four `ERR_PGM_ACTIVE` triggers.** Satisfying DD51 for a programming
+  session also stopped `SET_MTA`, `UPLOAD` and `BUILD_CHECKSUM` being refused during
+  `STORE_CAL_REQ`, `STORE_DAQ_REQ` and `CLEAR_DAQ_REQ` — refusals §1.7.3.2.x does list for all
+  three. Splitting `XCP_INTERNAL_ERR_PGM_ACTIVE` into a programming-session bit and a
+  store/clear-request bit satisfies both readings; the in-code comments currently describe the
+  merge as the specification's choice, which it is not. SP4b.
+- **`CONNECT`'s PGM resource bit is unreachable in every buildable SP4a configuration**, because
+  the generation refusal above forbids enabling the three commands it reads. The line is correct
+  and untested; SP4b restores its coverage when those commands exist.
+- **`GET_STATUS` reports the resource-protection byte inverted.** §1.6.1.2.3 defines `1 = protected`
+  and 1.1's Diagram 17 shows `UNLOCK` answering `FF 00`; measured, byte 2 is `0x00` while PGM is
+  locked and `0x10` once unlocked. Pre-existing, unrelated to PGM, and noted here only because the
+  final review met it while answering the protection question.
 
 ---
 

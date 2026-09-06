@@ -480,7 +480,7 @@ cases on that one term, so it would not notice the other two being deleted.
 > sole cause of a zero in exactly one case. Landing the fix and the test that can see it together
 > mattered: DD59 alone would still have passed the old four-case sweep unchanged, on
 > `xcp_program_max_api_enable` alone, the same way the defect did.
-> `test_the_gate_touches_only_the_eleven_pgm_ctoinfo_rows` (test/pgm_configuration_test.py, Task 6)
+> `test_the_gate_touches_only_pgm_ctoinfo_rows` (test/pgm_configuration_test.py, Task 6)
 > additionally confirms the generator fix changes exactly those eleven rows and nothing else in
 > the generated source.
 
