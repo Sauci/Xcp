@@ -178,12 +178,14 @@ into SP1; it belongs with D6.
 
 ## 3. Known defects in existing code
 
-**Status as of 2026-09-03:** D1, D2, D3, D4, D5 and D8 were fixed in SP1; D7 fell out of the
+**Status as of 2026-09-06:** D1, D2, D3, D4, D5 and D8 were fixed in SP1; D7 fell out of the
 same dispatch rework. D9 was resolved by refusing the two modes it could not fulfil, which also
 closed a session-wide denial of service found while investigating it; the non-volatile storage
 that would let those modes be accepted is tracked as SP5-NV. D6 remains open and travels with the
-per-segment checksum reconciliation noted at the end of §2.6. The entries below are kept as
-written, each with its outcome, because the reasoning is what makes the fix reviewable.
+per-segment checksum reconciliation noted at the end of §2.6. D10 and D11 were found while
+surveying SP4 and are fixed by SP4a; both are written up in §5 beside that sub-project rather
+than here, because neither is separable from the design that closes them. The entries below are
+kept as written, each with its outcome, because the reasoning is what makes the fix reviewable.
 
 These are live in the current baseline, independent of any new feature work.
 
@@ -414,6 +416,40 @@ Settle it in SP3's design; do not discover it in review.
 
 The eleven PGM commands and their integrator callbacks. Independent of SP2 and SP3;
 schedulable whenever flash programming becomes a requirement.
+
+AUTOSAR scopes this in, unlike `SET_DAQ_ID`: SRS_Xcp_29020 maps to SWS_Xcp_00855 ("shall support
+the flash programming (PGM)") and SWS_Xcp_00856, and `XcpFlashProgrammingEnabled`
+(ECUC_Xcp_00181) is its pre-compile gate.
+
+Eleven commands, a deferred-response model and a flash sector configuration model are more than
+one design can carry, so SP4 is **three sub-projects**:
+
+- **SP4a — programming session and deferred responses.** `PROGRAM_START` (0xD2), `PROGRAM_RESET`
+  (0xCF), `PROGRAM_PREPARE` (0xCC); the session state machine and the gate that refuses
+  clear/program commands before `PROGRAM_START`; the pending-command slot, the polled integrator
+  callbacks and `EV_CMD_PENDING`; the `XCP_FLASH_PROGRAMMING_ENABLED` compile gate; and defects
+  D10 and D11. Design: `2026-09-06-xcp-pgm-sp4a-design.md` (DD49–DD61).
+- **SP4b — clear and program, absolute access mode.** `PROGRAM_CLEAR` (0xD1), `PROGRAM` (0xD0),
+  `PROGRAM_MAX` (0xC9), `PROGRAM_NEXT` (0xCA), `GET_PGM_PROCESSOR_INFO` (0xCE). The first slice
+  where flash contents change, and the first where `CONNECT` may legitimately advertise PGM.
+- **SP4c — sectors, formats and verification.** `GET_SECTOR_INFO` (0xCD) and the flash sector
+  configuration model, `PROGRAM_FORMAT` (0xCB) with functional access mode and the block sequence
+  counter, `PROGRAM_VERIFY` (0xC8).
+
+**D10 — `CONNECT` advertises flash programming that answers `ERR_CMD_UNKNOWN`.** With the shipped
+`config/xcp.json`, `CONNECT` returns resource byte `0x15`, setting the PGM bit (§1.6.1.1.1), while
+all eleven PGM PIDs dispatch to `Xcp_CmdNotImplemented`. Measured against a default handle, not
+inferred. Same class as SP3's advertised-but-ungated `STIM` resource. Fixed by SP4a's DD58: the
+compile gate defaults off, so the default configuration stops making the claim.
+
+**D11 — two of the three PGM API configuration keys are dead.** `script/source_cfg.c.jinja2`
+hard-codes the `ctoInfo` enable bit for the whole PGM block except `xcp_program_max_api_enable`,
+so `xcp_program_api_enable` and `xcp_program_clear_api_enable` are accepted and ignored.
+`Xcp_CTOCmdStdConnect` tests all three, making its three-term conjunction one term in practice —
+and `test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis` passes all four of its
+cases on that one term, so it would not notice the other two being deleted. Fixed by SP4a's DD59
+and DD60, which have to land together: after the generator fix those same four cases would still
+pass.
 
 ### SP5 — Protocol completion
 
