@@ -39,6 +39,7 @@ string(JSON XCP_CONFIG_N_CONFIGURATIONS LENGTH ${XCP_CONFIG_JSON} configurations
 set(XCP_PAGING_SUPPORTED_DERIVED OFF)
 set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED OFF)
 set(XCP_DAQ_TIMESTAMP_SIZE_DERIVED 0)
+set(XCP_FLASH_PROGRAMMING_ENABLED_DERIVED OFF)
 
 if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
     math(EXPR XCP_CONFIG_LAST_INDEX "${XCP_CONFIG_N_CONFIGURATIONS} - 1")
@@ -49,6 +50,18 @@ if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
         if(NOT XCP_CFG_SEGMENTS_ERROR)
             if(XCP_CFG_SEGMENTS_LENGTH GREATER 0)
                 set(XCP_PAGING_SUPPORTED_DERIVED ON)
+            endif()
+        endif()
+
+        # DD58: XcpFlashProgrammingEnabled (ECUC_Xcp_00181) is a pre-compile-time boolean in
+        # XcpGeneral, so ANY configuration enabling it turns the whole module's gate on -- the
+        # same one-macro-for-every-configuration rule XCP_PAGING_SUPPORTED above follows, because
+        # the sources are compiled once regardless of how many configurations use them.
+        string(JSON XCP_CFG_PROGRAMMING_ENABLED ERROR_VARIABLE XCP_CFG_PROGRAMMING_ERROR
+            GET ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} programming enabled)
+        if(NOT XCP_CFG_PROGRAMMING_ERROR)
+            if(XCP_CFG_PROGRAMMING_ENABLED)
+                set(XCP_FLASH_PROGRAMMING_ENABLED_DERIVED ON)
             endif()
         endif()
 
@@ -146,6 +159,13 @@ endfunction()
 xcp_derive_from_configuration(XCP_PAGING_SUPPORTED BOOL ${XCP_PAGING_SUPPORTED_DERIVED}
     "enables/disables the calibration page switching commands. Defaults to whether XCP_CONFIG_FILEPATH declares at least one segment; override only if you know why.")
 
+# XCP_FLASH_PROGRAMMING_ENABLED needs exactly the same treatment as XCP_PAGING_SUPPORTED above,
+# and for the same reason: source/*.c includes Xcp.h, never the generated Xcp_Cfg.h, so nothing on
+# the library's include path supplies it otherwise (DD58,
+# docs/superpowers/specs/2026-09-06-xcp-pgm-sp4a-design.md).
+xcp_derive_from_configuration(XCP_FLASH_PROGRAMMING_ENABLED BOOL ${XCP_FLASH_PROGRAMMING_ENABLED_DERIVED}
+    "enables/disables the non-volatile memory programming commands. Defaults to whether XCP_CONFIG_FILEPATH enables programming in at least one configuration; override only if you know why.")
+
 # XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE need exactly the same treatment as XCP_PAGING_SUPPORTED above,
 # and for the same reason: source/*.c includes Xcp.h, never the generated Xcp_Cfg.h, so nothing on
 # the library's include path supplies these two. The generated header does define them from the
@@ -188,7 +208,8 @@ add_library(Xcp STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Cal.c
     ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Pag.c
     ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Daq.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_DaqRuntime.c)
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_DaqRuntime.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/source/Xcp_Pgm.c)
 
 target_compile_definitions(Xcp
     PRIVATE XCP_DEV_ERROR_DETECT=$<IF:$<BOOL:${ENABLE_DET}>,STD_ON,STD_OFF>
@@ -205,7 +226,8 @@ target_compile_definitions(Xcp
     PUBLIC XCP_SUPPRESS_TX_SUPPORT=$<IF:$<BOOL:${OS_GET_TIME_API}>,STD_ON,STD_OFF>
     PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>
     PUBLIC XCP_DAQ_TIMESTAMP_SUPPORTED=$<IF:$<BOOL:${XCP_DAQ_TIMESTAMP_SUPPORTED}>,STD_ON,STD_OFF>
-    PUBLIC XCP_DAQ_TIMESTAMP_SIZE=${XCP_DAQ_TIMESTAMP_SIZE})
+    PUBLIC XCP_DAQ_TIMESTAMP_SIZE=${XCP_DAQ_TIMESTAMP_SIZE}
+    PUBLIC XCP_FLASH_PROGRAMMING_ENABLED=$<IF:$<BOOL:${XCP_FLASH_PROGRAMMING_ENABLED}>,STD_ON,STD_OFF>)
 
 target_include_directories(Xcp
     PUBLIC interface

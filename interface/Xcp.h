@@ -429,6 +429,27 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment);
 
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+
+/**
+ * @brief Enters non-volatile memory programming mode.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero for a slave that cannot permit programming.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once
+ * from the PROGRAM_START handler to start the work and then once per Xcp_MainFunction until it
+ * reports completion. An implementation whose work is instantaneous returns E_OK from the first
+ * call and the command is answered without ever deferring.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1 permits implementation-specific
+ * preconditions -- "slave device in a secure physical state, additional code downloaded" -- and
+ * names ERR_GENERIC as the answer when they are unmet. A non-zero pStatusCode produces exactly
+ * that.
+ */
+extern Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
+
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/

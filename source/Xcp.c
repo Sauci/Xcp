@@ -339,7 +339,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xCF */
     Xcp_CmdNotImplemented, /* 0xD0 */
     Xcp_CmdNotImplemented, /* 0xD1 */
-    Xcp_CmdNotImplemented, /* 0xD2 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramStart, /* PROGRAM_START 0xD2 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_START 0xD2 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_DTOCmdDaqAllocOdtEntry, /* ALLOC_ODT_ENTRY 0xD3, optional */
     Xcp_DTOCmdDaqAllocOdt, /* ALLOC_ODT 0xD4, optional */
     Xcp_DTOCmdDaqAllocDaq, /* ALLOC_DAQ 0xD5, optional */
@@ -1111,6 +1115,17 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.allocated_daq_count =
                     (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC) ? 0x0000u
                                                                      : Xcp_Ptr->general->daqCount;
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+            /* SP3 shipped a defect that was exactly this omission: state surviving into the next
+             * session because Xcp_Init did not reset it. pending_command's every member is reset,
+             * not only active -- a stale pid or event_outstanding read by code that trusted active
+             * alone would be a second copy of that same defect. */
+            Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+            Xcp_Internal.pending_command.pid = 0x00u;
+            Xcp_Internal.pending_command.active = FALSE;
+            Xcp_Internal.pending_command.abandoned = FALSE;
+            Xcp_Internal.pending_command.event_outstanding = FALSE;
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
             Xcp_Internal.last_pid = 0x00u;
@@ -1250,6 +1265,26 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     uint8 store_calibration_status;
+
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* Polled ahead of STORE_CAL_REQ below: a programming master is waiting on a response with a
+     * t3/t4/t5 timeout running, where a store-calibration request has nobody waiting on it at all.
+     * DD53. Xcp_MainFunction gains these four lines and no knowledge of any PGM command -- the
+     * poll, the response and EV_CMD_PENDING all live in Xcp_Pgm.c. */
+    if (Xcp_Internal.pending_command.active == TRUE)
+    {
+        uint8 status_code = 0x00u;
+
+        if (Xcp_PgmPollPendingCommand(&status_code) == E_OK)
+        {
+            Xcp_PgmCompletePendingCommand(status_code);
+        }
+        else
+        {
+            Xcp_PgmRequestPending();
+        }
+    }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
      * The STORE_CAL_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
@@ -1662,6 +1697,11 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                     SchM_Enter_Xcp_DtoQueue();
                     if (Xcp_EventQueuePop(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue) == E_OK) {
                         Xcp_Internal.event.successful_transmission_pending = FALSE;
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                        /* DD54: the one EV_CMD_PENDING this module allows in flight is confirmed,
+                         * so Xcp_PgmRequestPending may ask again on the next busy poll. */
+                        Xcp_Internal.pending_command.event_outstanding = FALSE;
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                     }
                     SchM_Exit_Xcp_DtoQueue();
                 }

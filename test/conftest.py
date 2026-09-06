@@ -338,6 +338,16 @@ class XcpTest(object):
         # header's own definition. A later -D wins, so appending the derived value corrects it.
         paging_define = ('XCP_PAGING_SUPPORTED={}'.format(
                 'STD_ON' if any(c.get('segments') for c in config['configurations']) else 'STD_OFF'),)
+        # XCP_FLASH_PROGRAMMING_ENABLED gates Xcp_ProgramStart's declaration (interface/Xcp.h) and
+        # the PGM handler and state compiled into source/Xcp_Pgm.c and source/Xcp.c -- the same
+        # role XCP_PAGING_SUPPORTED plays for the PAG commands above, and the same reasoning:
+        # the generated Xcp_Cfg.h is not visible to the module under test, so this is derived here
+        # from the configuration dict directly. One macro gates the whole module, the rule
+        # XCP_PAGING_SUPPORTED already follows, so it is on when ANY configuration enables
+        # programming.
+        flash_programming_enabled_define = ('XCP_FLASH_PROGRAMMING_ENABLED={}'.format(
+                'STD_ON' if any(c.get('programming', {}).get('enabled')
+                                for c in config['configurations']) else 'STD_OFF'),)
         # XCP_MAX_DTO sizes the DTO frame buffers in Xcp_Types.h, which every module includes, so
         # all three compiled modules must agree on it or the ring in the runtime module and the
         # code that indexes it disagree on the element stride. Same reasoning as paging_define
@@ -387,14 +397,22 @@ class XcpTest(object):
         # XCP_DAQ_TIMESTAMP_SIZE. Confirmed by running the parametrized BYTE/WORD/DWORD cases of
         # test_configured_timestamp_reaches_the_generated_configuration without this fold: the
         # second case failed with the first case's wire size still in effect.
+        # flash_programming_enabled_define is in exactly max_dto_define's position too: PGM adds
+        # no per-configuration runtime array, so nothing in source_rt reads configuration.programming
+        # either, and two configurations differing only by it would otherwise collide here and hand
+        # the second one a self.code compiled with the first one's gate value -- silently answering
+        # PROGRAM_START with ERR_CMD_UNKNOWN under a config that enabled it, or dispatching into a
+        # handler whose supporting state was never compiled in under one that did not.
         rt_key = hashlib.sha1((code_gen.source_rt + max_dto_define[0] + daq_timestamp_supported_define[0] +
-                              daq_timestamp_size_define[0]).encode('utf-8')).hexdigest()[0:8]
+                              daq_timestamp_size_define[0] +
+                              flash_programming_enabled_define[0]).encode('utf-8')).hexdigest()[0:8]
         self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
                           define_macros=tuple(self.compile_definitions) +
                                         ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
                                         paging_define +
+                                        flash_programming_enabled_define +
                                         max_dto_define +
                                         daq_timestamp_supported_define +
                                         daq_timestamp_size_define,
@@ -411,6 +429,7 @@ class XcpTest(object):
                                             ('XCP_PDU_ID_TRANSMIT=0x{:04X}'.format(
                                                     config.default_daq_dto_pdu_mapping),) +
                                             paging_define +
+                                            flash_programming_enabled_define +
                                             max_dto_define +
                                             daq_timestamp_supported_define +
                                             daq_timestamp_size_define,
@@ -431,6 +450,7 @@ class XcpTest(object):
                             define_macros=tuple(self.compile_definitions) +
                                           ('XCP_EVENT_QUEUE_SIZE=0x{:04X}'.format(config.event_queue_size),) +
                                           paging_define +
+                                          flash_programming_enabled_define +
                                           max_dto_define +
                                           daq_timestamp_supported_define +
                                           daq_timestamp_size_define,
@@ -456,6 +476,7 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16 = MagicMock()
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
+        self.xcp_program_start = MagicMock()
         # Xcp_GetDaqTimestamp reaches self.code.mocked on its own once Xcp_DaqTimestamp.h is
         # pulled in under XCP_DAQ_TIMESTAMP_SUPPORTED -- pcpp discovers any `extern`-declared
         # function reachable from interface/Xcp.h without help. What it does not do is invent this
@@ -494,6 +515,7 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
+        self.xcp_program_start.return_value = self.define('E_OK')
         # Fix round 1: MagicMock pre-configures __int__/__index__ to return 1, so a call reaching
         # this mock through the real CFFI boundary (extern "Python+C", uint32 return) coerces
         # successfully to 1 instead of raising -- _guarded_callback only records an exception the

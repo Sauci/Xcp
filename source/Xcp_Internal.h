@@ -245,6 +245,9 @@ extern "C" {
 
 #define XCP_EVENT_DAQ_OVERLOAD (0x06u)
 
+/* 1.1/1.2 table of event codes: EV_CMD_PENDING, severity S1. Same code in 1.0. */
+#define XCP_EVENT_CMD_PENDING (0x05u)
+
 #define XCP_INTERNAL_ERR_CMD_SYNCH (0x00000001u << 0x01u)
 #define XCP_INTERNAL_ERR_CMD_BUSY (0x00000001u << 0x02u)
 #define XCP_INTERNAL_ERR_DAQ_ACTIVE (0x00000001u << 0x03u)
@@ -303,6 +306,21 @@ typedef enum {
     XCP_DAQ_ALLOC_ODT,
     XCP_DAQ_ALLOC_ODT_ENTRY
 } Xcp_DaqAllocStateType;
+
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+/**
+ * @brief State of the non-volatile memory programming session.
+ * @details XCP_PGM_STARTING exists so that Xcp_MainFunction knows, when a polled PROGRAM_START
+ * completes, whether to move to ACTIVE or back to IDLE -- a property of the state it came from.
+ * It also answers 1.1/1.6.5.1.1's gate correctly on its own: a master sending PROGRAM_CLEAR
+ * mid-poll has not had a successful PROGRAM_START.
+ */
+typedef enum {
+    XCP_PGM_IDLE = 0x00u,
+    XCP_PGM_STARTING,
+    XCP_PGM_ACTIVE
+} Xcp_PgmStateType;
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
 typedef struct {
     uint8 connect_mode;
@@ -384,6 +402,25 @@ typedef struct {
      */
     uint16 allocated_daq_count;
     uint8 internal_buffer[0x08u];
+
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_PgmStateType pgm_state;
+
+    /**
+     * @brief The one PGM command whose response is deferred, if any.
+     * @details One slot rather than a queue: XCP is request/response and the master is waiting, so
+     * a second outstanding operation cannot arise from a conformant master and is refused from a
+     * non-conformant one. `abandoned` is set by SYNCH and never clears `active` -- Xcp_MainFunction
+     * polls only while `active`, so clearing it would strand the integrator mid-operation with its
+     * callback never called again.
+     */
+    struct {
+        uint8 pid;
+        boolean active;
+        boolean abandoned;
+        boolean event_outstanding;
+    } pending_command; /* DD52 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 
 /** @} */
@@ -778,6 +815,44 @@ uint8 Xcp_DTOCmdDaqGetDaqResolutionInfo(boolean *responseExpected, const PduInfo
  * Xcp_CmdNotImplemented in that build instead.
  */
 uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_START, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdDaqGetDaqClock above documents -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ */
+uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
+ * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
+ * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
+ * the slot, so Tasks 4 and 5 add a case each instead of a hard-coded single-command function.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK.
+ * @retval E_OK the integrator callback has finished, successfully or not.
+ * @retval E_NOT_OK the integrator callback has not finished; pStatusCode is not read.
+ */
+Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode);
+
+/**
+ * @brief Releases the pending-command slot and builds the deferred response.
+ * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction once Xcp_PgmPollPendingCommand
+ * reports completion (DD53). Switches on pending_command.pid to dispatch to the matching
+ * per-command completion function, unless the command was abandoned by an intervening SYNCH, in
+ * which case the response is discarded rather than transmitted.
+ * @param [in] statusCode The completed integrator callback's outcome.
+ */
+void Xcp_PgmCompletePendingCommand(uint8 statusCode);
+
+/**
+ * @brief Requests that the master restart its command time-out (EV_CMD_PENDING, DD54).
+ * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction while a PGM command is still being
+ * polled. Bounded to one outstanding event by pending_command.event_outstanding: Xcp_MainFunction
+ * is cyclic per SWS_Xcp_00824 but this module may never depend on its period, so the rate this
+ * follows is TxConfirmation's instead, which SWS_Xcp_00859 already forces the module to wait for.
+ */
+void Xcp_PgmRequestPending(void);
 
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
