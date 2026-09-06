@@ -332,13 +332,31 @@ module's own `Xcp_CTOCmdStdDisconnect` proves the point by construction: it buil
 *then* sets `XCP_CONNECTION_STATE_DISCONNECTED`, in the handler, and the response goes out.
 
 What the ordering actually decides is narrower: which commands arriving in the window between the
-response being built and its confirmation are still processed. Disconnecting when the response is
-built makes the receive gate ignore everything but `CONNECT` from that instant; disconnecting on
-confirmation keeps the session live across that window. §1.6.5.1.4 does not say which instant it
-means, so this is the module's choice and not a conformance question — and the honest reason to
-prefer confirmation is that a `PROGRAM_RESET` whose response is never confirmed has not been
-delivered, so a session torn down before that would leave a master unable to retry into a slave
-that still believes it is connected.
+response being built and its confirmation are still processed. §1.6.5.1.4 does not say which
+instant it means, so this is the module's choice and not a conformance question.
+
+**The disconnect happens in the completion, not on the response's confirmation, and it calls the
+same unwind `DISCONNECT` does.** A revision of this decision required the confirmation form, on the
+reasoning that a `PROGRAM_RESET` whose response is never confirmed has not been delivered. Building
+it disproved the reasoning twice over, both measured:
+
+- **Nothing can bind the deferred disconnect to `PROGRAM_RESET`'s own frame.** `cto_response.pdu_info`
+  is one shared buffer and `Xcp_CanIfRxIndication` never transmits, so any command arriving before
+  the next `Xcp_MainFunction` — an unbounded window, since that function is aperiodic — overwrites
+  the response, and the disconnect then fires on whatever CTO is confirmed next. Measured: a
+  following `SYNCH` gives the master `ERR_CMD_SYNCH`, a `GET_STATUS` gives the `GET_STATUS`
+  response, and a second `PROGRAM_RESET` — the t7 retry §1.7.3.2.4 mandates — gives `ERR_CMD_BUSY`.
+  In each the answer is gone, the slave disconnects anyway, and the master retries into silence:
+  exactly the divergence the confirmation form was adopted to prevent. The in-handler form is
+  immune because the receive gate drops the interloper before it reaches the buffer.
+- **A second door to DISCONNECTED is a second place to forget the unwind.** The first attempt
+  skipped `Xcp_DaqFreeAll`, so a `DAQ_DYNAMIC` master that allocated two ODTs, sent `PROGRAM_RESET`
+  and reconnected found its next allocation starting from the previous session's lists — the
+  contamination `test/free_daq_test.py` exists to prevent.
+
+So `PROGRAM_RESET`'s completion builds its response and then calls the same internal unwind
+`Xcp_CTOCmdStdDisconnect` calls, which is shared between them precisely so the two doors cannot
+diverge again.
 
 `PROGRAM_RESET` is legal from `XCP_PGM_IDLE` as well as `XCP_PGM_ACTIVE`. §1.6.5.1.4: "This command
 may be used to force a slave device reset for other purposes." It is therefore not gated on a
