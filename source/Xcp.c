@@ -336,7 +336,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xCC */
     Xcp_CmdNotImplemented, /* 0xCD */
     Xcp_CmdNotImplemented, /* 0xCE */
-    Xcp_CmdNotImplemented, /* 0xCF */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramReset, /* PROGRAM_RESET 0xCF */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_RESET 0xCF */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xD0 */
     Xcp_CmdNotImplemented, /* 0xD1 */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
@@ -906,7 +910,16 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_PREPARE 0xCC, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_MODE_NOT_VALID | XCP_INTERNAL_ERR_SEGMENT_NOT_VALID, /* GET_SECTOR_INFO 0xCD, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_RESET 0xCF */
+    /* Neither PGM_ACTIVE nor SEQUENCE, unlike most of this block: DD57 makes PROGRAM_RESET the one
+     * PGM command not gated on a programming session in either direction -- accepted from
+     * XCP_PGM_IDLE (no ERR_SEQUENCE; unlike PROGRAM_START, Xcp_DTOCmdPgmProgramReset carries no
+     * pgm_state check of its own) and, just as importantly, from XCP_PGM_ACTIVE too (no generic
+     * ERR_PGM_ACTIVE refusal), since ending an active session is this command's entire purpose --
+     * a PGM_ACTIVE bit here would make the gate refuse the one command that is supposed to clear
+     * it. GENERIC is added because Xcp_PgmCompleteProgramReset (Xcp_Pgm.c) answers it when
+     * Xcp_ProgramReset reports a non-zero status code, mirroring PROGRAM_START's own failure path
+     * below. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_RESET 0xCF */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* PROGRAM 0xD0 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_CLEAR 0xD1 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_START 0xD2 */
@@ -1125,6 +1138,9 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pending_command.active = FALSE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* Task 4: the identical omission would let a PROGRAM_RESET response confirmed after
+             * Xcp_Init runs disconnect a session that has not even connected yet. */
+            Xcp_Internal.pgm_reset_disconnect_pending = FALSE;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
@@ -1771,6 +1787,17 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                     else
                     {
                         Xcp_Internal.cto_response.successful_transmission_pending = FALSE;
+
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                        /* DD57. PROGRAM_RESET's own response is never a block transfer, so this is
+                         * the branch it confirms through. Xcp_PgmDisconnectIfPending (Xcp_Pgm.c)
+                         * is a no-op unless Xcp_PgmCompleteProgramReset set
+                         * pgm_reset_disconnect_pending while building THIS exact response --
+                         * Xcp_CanIfTxConfirmation gains no further knowledge of PROGRAM_RESET than
+                         * this one guarded call, matching how DD53 already reaches into Xcp_Pgm.c
+                         * from Xcp_MainFunction without growing a per-command switch there. */
+                        Xcp_PgmDisconnectIfPending();
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                     }
                 }
 

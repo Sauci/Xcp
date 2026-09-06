@@ -477,6 +477,13 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
         self.xcp_program_start = MagicMock()
+        # Task 4 (PROGRAM_RESET): Xcp_ProgramReset copies Xcp_ProgramStart's own polled contract
+        # (design Section 4) exactly, so this mock exists unconditionally here for the same reason
+        # xcp_program_start does above -- a build with XCP_FLASH_PROGRAMMING_ENABLED off never puts
+        # Xcp_ProgramReset in self.code.mocked, so the loop below never asks for this attribute, but
+        # constructing it costs nothing and keeps this constructor from depending on which build a
+        # given test happens to be.
+        self.xcp_program_reset = MagicMock()
         # Xcp_GetDaqTimestamp reaches self.code.mocked on its own once Xcp_DaqTimestamp.h is
         # pulled in under XCP_DAQ_TIMESTAMP_SUPPORTED -- pcpp discovers any `extern`-declared
         # function reachable from interface/Xcp.h without help. What it does not do is invent this
@@ -516,6 +523,7 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
         self.xcp_program_start.return_value = self.define('E_OK')
+        self.xcp_program_reset.return_value = self.define('E_OK')
         # Fix round 1: MagicMock pre-configures __int__/__index__ to return 1, so a call reaching
         # this mock through the real CFFI boundary (extern "Python+C", uint32 return) coerces
         # successfully to 1 instead of raising -- _guarded_callback only records an exception the

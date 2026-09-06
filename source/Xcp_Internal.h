@@ -420,6 +420,18 @@ typedef struct {
         boolean abandoned;
         boolean event_outstanding;
     } pending_command; /* DD52 */
+
+    /**
+     * @brief TRUE once PROGRAM_RESET's positive response has been built and is waiting to be
+     * confirmed; the connection goes down when it is.
+     * @details Set by Xcp_PgmCompleteProgramReset (Xcp_Pgm.c) in the same step it builds that
+     * response, whether that happens synchronously in the handler (an instantaneous
+     * Xcp_ProgramReset) or later from Xcp_PgmCompletePendingCommand. Consulted and cleared by
+     * Xcp_PgmDisconnectIfPending, called from Xcp_CanIfTxConfirmation (Xcp.c) once an ordinary CTO
+     * response is confirmed. DD57: disconnecting any earlier would discard the response buffer
+     * along with the session before CanIf ever had a chance to send it.
+     */
+    boolean pgm_reset_disconnect_pending;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 
@@ -825,6 +837,17 @@ uint8 Xcp_DTOCmdDaqGetDaqClock(boolean *responseExpected, const PduInfoType *pPd
 uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM_RESET, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.4.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdPgmProgramStart above documents -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ * Unlike every other PGM command handler, this one is legal from XCP_PGM_IDLE as well as
+ * XCP_PGM_ACTIVE (DD57): 1.1/1.6.5.1.4, "this command may be used to force a slave device reset
+ * for other purposes."
+ */
+uint8 Xcp_DTOCmdPgmProgramReset(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
@@ -863,6 +886,18 @@ void Xcp_PgmRequestPending(void);
  * integrator mid-operation, its callback never called again, never reporting completion.
  */
 void Xcp_PgmAbandonPendingCommand(void);
+
+/**
+ * @brief Disconnects the session once PROGRAM_RESET's own positive response has been confirmed
+ * (DD57).
+ * @details Defined in Xcp_Pgm.c and called from Xcp_CanIfTxConfirmation (Xcp.c) whenever an
+ * ordinary (non-block-transfer) CTO response is confirmed -- the same place DD53 already reaches
+ * into Xcp_Pgm.c from, so Xcp_CanIfTxConfirmation gains no knowledge of PROGRAM_RESET itself. A
+ * no-op unless Xcp_PgmCompleteProgramReset set Xcp_Internal.pgm_reset_disconnect_pending while
+ * building that exact response; harmless to call on every confirmation, including one that has
+ * nothing to do with PROGRAM_RESET at all.
+ */
+void Xcp_PgmDisconnectIfPending(void);
 
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);

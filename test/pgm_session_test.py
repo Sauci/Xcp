@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from .pgm_deferred_test import pgm_handle, program_start, transmitted, busy_then
+from .pgm_deferred_test import pgm_handle, program_start, program_reset, transmitted, busy_then
+from .download_test import connect
 
 
 def send(handle, request):
@@ -219,3 +220,201 @@ def test_a_completing_poll_does_not_clobber_an_unconfirmed_err_cmd_busy():
 
     assert state['calls'] == 2, 'the integrator is polled once the pipeline is actually free'
     assert transmitted(handle)[0] == 0xFF, 'the PROGRAM_START response arrives only afterwards'
+
+
+def probe_still_connected(handle):
+    """GET_SEED (0xF8), used across the PROGRAM_RESET tests below as a direct, wire-independent
+    witness of whether the module still considers itself connected.
+
+    Chosen over reading the transmitted frame because GET_SEED reaches a mock
+    (handle.xcp_get_seed) that is called if and only if Xcp_CanIfRxIndication actually dispatches
+    it: source/Xcp.c's disconnected-state gate (~line 1493, 'the slave processes no XCP commands
+    except for CONNECT') drops a non-CONNECT CTO before it ever reaches Xcp_PIDTable -- no
+    response, no dispatch, no Det report -- so a module that (wrongly) already believes itself
+    disconnected leaves this mock uncalled. Reading transmitted() instead would not work here:
+    cto_response.pdu_info is one buffer shared by every CTO response (standing hazard 3), and the
+    single-frame transmit pipeline (SWS_Xcp_00859) means GET_SEED's own answer, even if dispatched,
+    would not reach CanIf_Transmit until whatever is already in flight is confirmed -- entangling
+    the assertion with pipeline timing that has nothing to do with connection state."""
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x00, 0x01)))
+    return handle.xcp_get_seed.call_count
+
+
+def test_program_reset_is_accepted_from_xcp_pgm_idle():
+    """Task 4, requirement 1. 1.1/1.6.5.1.4: 'This command may be used to force a slave device
+    reset for other purposes.' DD57 makes PROGRAM_RESET the one PGM command in this sub-project not
+    gated on a programming session: every other one requires a successful PROGRAM_START first, but
+    this one is legal even when Xcp_Internal.pgm_state has never left XCP_PGM_IDLE.
+
+    pgm_handle() connects but never sends PROGRAM_START, so pgm_state is XCP_PGM_IDLE here by
+    construction. Mutation: gating the handler on XCP_PGM_ACTIVE (the mirror image of
+    PROGRAM_START's own `if (pgm_state != XCP_PGM_IDLE)` check in source/Xcp_Pgm.c) answers
+    ERR_SEQUENCE instead of 0xFF, which this test catches directly."""
+    handle = pgm_handle()
+    handle.can_if_transmit.reset_mock()
+
+    program_reset(handle)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'PROGRAM_RESET must be accepted from XCP_PGM_IDLE'
+
+
+def test_program_reset_is_also_accepted_from_xcp_pgm_active():
+    """The complement of the test above, guarding the other direction DD57 requires: PROGRAM_RESET
+    is not merely tolerated from IDLE, it must keep working from XCP_PGM_ACTIVE too, since ending an
+    active session is this command's entire purpose. Mutation: copying PROGRAM_START's own
+    `if (pgm_state != XCP_PGM_IDLE) ERR_SEQUENCE` gate into Xcp_DTOCmdPgmProgramReset -- the natural
+    mistake a reviewer reaching for that handler as a template could make -- answers ERR_SEQUENCE
+    (0xFE, 0x29) here instead of 0xFF, while leaving test_program_reset_is_accepted_from_xcp_pgm_idle
+    passing (pgm_state IS XCP_PGM_IDLE there); verified by hand (see the task report).
+
+    Xcp_CTOErrorMatrix[0xCF] (source/Xcp.c) also carries no XCP_INTERNAL_ERR_PGM_ACTIVE, for the
+    same reason. That specific bit is NOT independently mutation-verifiable today: DD51's fourth
+    disjunct (gating 42 commands on Xcp_Internal.pgm_state == XCP_PGM_ACTIVE, alongside the three
+    session_status bits the generic ERR_PGM_ACTIVE gate already tests) has not been implemented by
+    any task yet -- confirmed by reading source/Xcp.c's gate directly, and by hand: reinstating the
+    bit here changes nothing today. It is set correctly regardless, because leaving it out is what
+    DD57 requires and what stops the coming task from silently locking PROGRAM_RESET out of the one
+    state it exists to leave -- see the task report.
+
+    A real, completed PROGRAM_START is used to reach XCP_PGM_ACTIVE -- not merely asserted, since
+    Xcp_Internal is not reachable from this CFFI harness (test/clear_daq_list_test.py:80-92)."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach ACTIVE'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    busy_then(handle, 0x00, busy_calls=0, mock=handle.xcp_program_reset)
+    handle.can_if_transmit.reset_mock()
+    program_reset(handle)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'PROGRAM_RESET must also be accepted from XCP_PGM_ACTIVE'
+
+
+def test_program_reset_answers_before_disconnecting():
+    """Task 4, requirement 2. DD57: the response is built and handed to the transmit path before
+    any disconnect takes effect. In this module's actual implementation that separation is
+    structural, not merely a matter of statement order: Xcp_PgmCompleteProgramReset (Xcp_Pgm.c)
+    only ever sets Xcp_Internal.pgm_reset_disconnect_pending; Xcp_Internal.connection_status and
+    pgm_state are touched nowhere else but Xcp_PgmDisconnectIfPending, called exclusively from
+    Xcp_CanIfTxConfirmation's CTO branch once THIS exact response is confirmed.
+
+    That ordering is deliberately NOT tested here by racing an interloper into the window before
+    confirmation -- verified by hand (see the task report) that no such race is wire-observable in
+    this codebase: every command that reaches a Python-visible callback also carries
+    XCP_INTERNAL_ERR_CMD_BUSY in its own Xcp_CTOErrorMatrix entry (source/Xcp.c), so it is refused
+    by the PRE-EXISTING busy gate whenever cto_response.successful_transmission_pending is TRUE --
+    which it already is the instant PROGRAM_RESET's own response is built, disconnect timing aside
+    -- and GET_STATUS, the one command whose matrix carries neither that bit nor PGM_ACTIVE, has no
+    Python-visible callback to observe at all, and would have its own response silently discarded
+    regardless: Xcp_TransmitOneFrame only starts a new transmission once ongoing_transmit_type is
+    NONE, and confirming PROGRAM_RESET's own transmission clears
+    cto_response.successful_transmission_pending unconditionally, discarding whatever GET_STATUS
+    wrote into that same shared buffer in the meantime. Dispatched-then-lost and
+    dropped-for-being-disconnected are indistinguishable on the wire either way, in both the
+    correct implementation and the mutation this test guards against.
+
+    What that leaves as directly testable: the response must come from actually calling
+    Xcp_ProgramReset, not from a handler that shortcuts straight to a Disconnect-shaped answer --
+    which is the concrete shape DD57's 'disconnecting first' warning describes, and the one a
+    reviewer reaching for Xcp_CTOCmdStdDisconnect as a template could plausibly copy. Mutation: a
+    handler built that way answers 0xFF (transmitted(handle) alone would not catch it) but never
+    calls the integrator callback at all, which the second assertion catches."""
+    handle = pgm_handle()
+    handle.can_if_transmit.reset_mock()
+    program_reset(handle)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'PROGRAM_RESET must answer positively'
+    assert handle.xcp_program_reset.call_count == 1, \
+        'the response must come from actually calling Xcp_ProgramReset, not from a handler that ' \
+        'shortcuts straight to a Disconnect-shaped answer'
+
+
+def test_program_reset_disconnects_once_the_response_is_confirmed():
+    """Task 4, requirement 3. The other half of DD57, completing the test above: once
+    PROGRAM_RESET's own positive response IS confirmed, the connection must actually be down.
+    source/Xcp.c:1434 (now ~1493) is where this becomes observable at all -- 'the slave processes
+    no XCP commands except for CONNECT' once Xcp_Internal.connection_status is
+    XCP_CONNECTION_STATE_DISCONNECTED, silently dropping a non-CONNECT CTO with no dispatch, no
+    response and no Det report.
+
+    Mutation: a module that never disconnects at all (e.g. Xcp_PgmDisconnectIfPending never wired
+    into Xcp_CanIfTxConfirmation, or its body left empty) leaves probe_still_connected's call_count
+    at 1 here instead of 0."""
+    handle = pgm_handle()
+    program_reset(handle)
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert probe_still_connected(handle) == 0, \
+        'the connection must be down once PROGRAM_RESET\'s own response has been confirmed'
+
+
+def test_program_reset_calls_no_reset_api_and_exposes_none():
+    """Task 4, requirement 4. SWS_Xcp_00856 / DD50: unlike ASAM's own suggestion ('usually a
+    hardware reset of the slave device is executed'), this module performs no device reset itself.
+    An integrator wanting one performs it from within its own Xcp_ProgramReset implementation --
+    the only hook this sub-project gives it for ending a programming sequence at all.
+
+    There is no reset API in this module for a test to mock a call to and assert against, so the
+    honest check is structural: handle.code.mocked is the exact set of extern functions
+    interface/Xcp.h declares, built by the same cdef parse (interface/Xcp.h alone) this whole
+    harness relies on -- not Xcp_Internal, and not a guess about the module's insides. The only
+    name in that set with 'reset' in it may be Xcp_ProgramReset itself, which is the integrator's
+    OWN polled hook (the module calling out to ASK whether the integrator is done, never a command
+    FROM the module telling anything to reset) -- there is no second, separate trigger.
+
+    Mutation-verified by hand (see the task report): temporarily adding a second declaration,
+    `extern void Xcp_ResetDevice(void);`, under interface/Xcp.h's XCP_FLASH_PROGRAMMING_ENABLED
+    guard makes this fail, since handle.code.mocked would then carry two reset-shaped names."""
+    handle = pgm_handle()
+
+    reset_like = {name for name in handle.code.mocked if 'reset' in name.lower()}
+
+    assert reset_like == {'Xcp_ProgramReset'}, \
+        'PROGRAM_RESET must not declare or expose any further, separate device-reset trigger'
+
+
+def test_program_reset_leaves_pgm_state_ready_for_a_new_session():
+    """Not one of the five requirements handed down for this task, but a direct consequence of
+    them: Xcp_PgmDisconnectIfPending (Xcp_Pgm.c) resets Xcp_Internal.pgm_state to XCP_PGM_IDLE, not
+    merely Xcp_Internal.connection_status. That reset is necessary because nothing else ever
+    performs it -- Xcp_CTOCmdStdConnect and Xcp_CTOCmdStdDisconnect (Xcp_Std.c) do not touch
+    pgm_state at all, and it is otherwise reset only by Xcp_Init. Without it, a session that
+    reached XCP_PGM_ACTIVE and was properly ended by PROGRAM_RESET would leave pgm_state stuck at
+    XCP_PGM_ACTIVE forever, silently, since disconnecting says nothing on the wire about it.
+
+    The wire-observable consequence, since Xcp_Internal is not reachable from this CFFI harness
+    (test/clear_daq_list_test.py:80-92): a master that reconnects after a completed PROGRAM_RESET
+    and starts an entirely new session must be accepted, not refused ERR_SEQUENCE (0xFE, 0x29) by
+    PROGRAM_START's own `if (pgm_state != XCP_PGM_IDLE)` check (source/Xcp_Pgm.c) -- which is
+    exactly what a module that leaked the old ACTIVE state into the new session would do.
+
+    Mutation: deleting `Xcp_Internal.pgm_state = XCP_PGM_IDLE;` from Xcp_PgmDisconnectIfPending
+    (Xcp_Pgm.c) leaves this second PROGRAM_START refused ERR_SEQUENCE instead of accepted --
+    verified by hand (see the task report)."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    busy_then(handle, 0x00, busy_calls=0, mock=handle.xcp_program_reset)
+    program_reset(handle)
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # disconnects here (DD57)
+
+    connect(handle)  # a fresh master, or the same one, starting an entirely new session
+
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, \
+        'pgm_state must have been reset to XCP_PGM_IDLE by PROGRAM_RESET, or this new session\'s ' \
+        'own PROGRAM_START is refused ERR_SEQUENCE instead of accepted'

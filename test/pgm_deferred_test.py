@@ -25,6 +25,13 @@ def program_start(handle):
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xD2,)))
 
 
+def program_reset(handle):
+    """PROGRAM_RESET (Task 4), without pumping Xcp_MainFunction -- mirrors program_start above and
+    for the same reason: a test needs to pump Xcp_MainFunction and confirm transmissions itself,
+    at its own pace, rather than have this helper do it once and hide how many cycles it took."""
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xCF,)))
+
+
 def transmitted(handle):
     """The last frame handed to CanIf, or None if CanIf_Transmit has not been called since the
     marker was placed. Reading call_args directly would return the CONNECT response for a command
@@ -34,12 +41,18 @@ def transmitted(handle):
     return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
 
 
-def busy_then(handle, status_code, busy_calls):
+def busy_then(handle, status_code, busy_calls, mock=None):
     """Xcp_ProgramStart returns E_NOT_OK `busy_calls` times, then E_OK with `status_code`.
 
     Writes 0xEE into pStatusCode on every BUSY call. DD54 says the module must not read that
     parameter while the callback is unfinished, and a poison value is how a test can see a module
-    that does -- 0xEE would reach the wire as a bogus ERR_GENERIC."""
+    that does -- 0xEE would reach the wire as a bogus ERR_GENERIC.
+
+    `mock` defaults to handle.xcp_program_start; Task 4's own tests pass handle.xcp_program_reset
+    instead, since Xcp_ProgramReset(uint8 *pStatusCode) copies the exact same polled contract (spec
+    Section 4) and every test below would otherwise have to reimplement this side effect."""
+    if mock is None:
+        mock = handle.xcp_program_start
     state = dict(calls=0)
 
     def side_effect(p_status):
@@ -50,7 +63,7 @@ def busy_then(handle, status_code, busy_calls):
         p_status[0] = status_code
         return handle.define('E_OK')
 
-    handle.xcp_program_start.side_effect = side_effect
+    mock.side_effect = side_effect
     return state
 
 
@@ -483,3 +496,57 @@ def test_a_failed_push_leaves_the_bound_clear_so_a_later_poll_retries():
 
     assert transmitted(handle)[0:2] == (0xFD, 0x05), \
         'a failed push must not block every later retry once the queue has room again'
+
+
+def test_program_reset_defers_like_program_start():
+    """Task 4, requirement 5. Xcp_DTOCmdPgmProgramReset must go through the exact same
+    pending-command machinery PROGRAM_START uses -- Xcp_PgmPollPendingCommand and
+    Xcp_PgmCompletePendingCommand switch on pending_command.pid precisely so a second command can
+    join them -- rather than answering synchronously regardless of what Xcp_ProgramReset reports.
+
+    Isomorphic to test_the_response_appears_on_the_main_function_where_the_callback_completes
+    above, substituting Xcp_ProgramReset for Xcp_ProgramStart: still busy on the second poll (only
+    EV_CMD_PENDING may go out), and the positive response arrives only once the callback actually
+    reports E_OK. Mutation: a handler that answers immediately regardless of Xcp_ProgramReset's
+    first return value would transmit 0xFF right after program_reset(handle), before either
+    Xcp_MainFunction call below, which the first assertion catches."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=2, mock=handle.xcp_program_reset)
+    handle.can_if_transmit.reset_mock()
+    program_reset(handle)
+
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] != 0xFF, 'still busy on the second poll'
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'the positive response arrives once Xcp_ProgramReset does'
+
+
+def test_a_failing_program_reset_yields_err_generic_and_does_not_disconnect():
+    """Xcp_ProgramReset copies Xcp_StoreCalibrationDataToNonVolatileMemory's contract (design
+    Section 4): pStatusCode non-zero means the operation finished, but unsuccessfully. Mirrors
+    test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed above, PROGRAM_START's
+    own equivalent.
+
+    The disconnect must NOT happen on this path -- DD57's ordering is 'answer positively, then
+    disconnect once THAT confirms', and there is no positive response here to hang a disconnect
+    off of. xcp_get_seed's call_count is the witness, exactly as in
+    pgm_session_test.test_program_reset_disconnects_once_the_response_is_confirmed: a module that
+    already believes itself disconnected drops a non-CONNECT CTO with no dispatch at all
+    (source/Xcp.c's disconnected-state gate), so a module that wrongly disconnects even on FAILURE
+    would leave xcp_get_seed uncalled here."""
+    handle = pgm_handle()
+    busy_then(handle, 0x01, busy_calls=0, mock=handle.xcp_program_reset)
+    handle.can_if_transmit.reset_mock()
+    program_reset(handle)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x00, 0x01)))
+
+    assert handle.xcp_get_seed.call_count == 1, 'a failed PROGRAM_RESET must not disconnect'

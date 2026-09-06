@@ -24,6 +24,15 @@
  */
 static void Xcp_PgmCompleteProgramStart(uint8 statusCode);
 
+/**
+ * @brief Finishes PROGRAM_RESET, building the positive response or ERR_GENERIC from statusCode.
+ * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
+ * Xcp_DTOCmdPgmProgramReset below calls it directly for an integrator whose work completes
+ * instantaneously (spec Section 4) -- the same function Xcp_PgmCompletePendingCommand dispatches
+ * to when the same command instead completes on a later Xcp_MainFunction poll.
+ */
+static void Xcp_PgmCompleteProgramReset(uint8 statusCode);
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
@@ -70,6 +79,35 @@ uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pP
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdPgmProgramReset(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint8 status_code = 0x00u;
+
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* 1.1/1.6.5.1.4: "This command may be used to force a slave device reset for other purposes."
+     * Unlike PROGRAM_START just above, this carries no gate on Xcp_Internal.pgm_state -- it is
+     * accepted from XCP_PGM_IDLE exactly as it is from XCP_PGM_ACTIVE. DD57. */
+    if (Xcp_ProgramReset(&status_code) == E_OK)
+    {
+        Xcp_PgmCompleteProgramReset(status_code);
+    }
+    else
+    {
+        Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_RESET;
+        Xcp_Internal.pending_command.active = TRUE;
+        Xcp_Internal.pending_command.abandoned = FALSE;
+        Xcp_Internal.pending_command.event_outstanding = FALSE;
+
+        /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+        *responseExpected = FALSE;
+    }
+
+    return E_OK;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* deferred-response machinery, called from Xcp_MainFunction (DD53).                              */
 /*------------------------------------------------------------------------------------------------*/
@@ -87,6 +125,11 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
         case XCP_PID_CMD_PROGRAM_START:
         {
             result = Xcp_ProgramStart(pStatusCode);
+            break;
+        }
+        case XCP_PID_CMD_PROGRAM_RESET:
+        {
+            result = Xcp_ProgramReset(pStatusCode);
             break;
         }
         default:
@@ -124,6 +167,11 @@ void Xcp_PgmCompletePendingCommand(uint8 statusCode)
             case XCP_PID_CMD_PROGRAM_START:
             {
                 Xcp_PgmCompleteProgramStart(statusCode);
+                break;
+            }
+            case XCP_PID_CMD_PROGRAM_RESET:
+            {
+                Xcp_PgmCompleteProgramReset(statusCode);
                 break;
             }
             default:
@@ -200,6 +248,25 @@ void Xcp_PgmAbandonPendingCommand(void)
     Xcp_Internal.pgm_state = XCP_PGM_IDLE;
 }
 
+void Xcp_PgmDisconnectIfPending(void)
+{
+    if (Xcp_Internal.pgm_reset_disconnect_pending == TRUE)
+    {
+        Xcp_Internal.pgm_reset_disconnect_pending = FALSE;
+
+        /* DD57 + SWS_Xcp_00856/DD50: the connection goes down now, once PROGRAM_RESET's own
+         * positive response is confirmed -- disconnecting any earlier would discard the response
+         * buffer along with the session before CanIf ever had a chance to send it (called from
+         * Xcp_CanIfTxConfirmation, Xcp.c). pgm_state returns to IDLE in the same step: nothing
+         * else ever resets it once a session reaches XCP_PGM_ACTIVE --
+         * Xcp_CTOCmdStdConnect/Xcp_CTOCmdStdDisconnect (Xcp_Std.c) do not touch it -- and ending
+         * that session is this command's entire purpose. No device reset is performed here or
+         * anywhere else in this module: DD50. */
+        Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+        Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
+    }
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* local function definitions (static).                                                           */
 /*------------------------------------------------------------------------------------------------*/
@@ -251,6 +318,39 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
     }
 
     /* Publishes for both outcomes alike, matching the STORE_CAL_REQ path in Xcp_MainFunction. */
+    Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
+}
+
+static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
+{
+    if (statusCode == 0x00u)
+    {
+        /* 1.1/1.6.5.1.4's response is PID only -- no COMM_MODE_PGM/MAX_CTO_PGM/etc. the way
+         * PROGRAM_START's is, and no error table of its own either (§1.7.3.2.4 lists none for this
+         * command), so success is simply this one byte. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+
+        /* DD57: the disconnect itself does not happen here. Disconnecting before this response is
+         * confirmed would discard the response buffer along with the session before CanIf ever
+         * had a chance to send it -- Xcp_PgmDisconnectIfPending, called from
+         * Xcp_CanIfTxConfirmation (Xcp.c) once THIS exact response is confirmed, is where it
+         * actually takes effect. */
+        Xcp_Internal.pgm_reset_disconnect_pending = TRUE;
+    }
+    else
+    {
+        /* Spec §4 (this module's own polled-callback contract, copied from
+         * Xcp_StoreCalibrationDataToNonVolatileMemory and Xcp_ProgramStart above): E_OK with a
+         * non-zero statusCode means the operation finished, but unsuccessfully. Answered
+         * ERR_GENERIC, matching Xcp_PgmCompleteProgramStart's own failure path; nothing about the
+         * session or the connection changes -- there is no positive response here to hang a
+         * disconnect off of, and the master may simply try again. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */
     Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
 }
 
