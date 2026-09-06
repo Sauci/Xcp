@@ -257,6 +257,23 @@ would otherwise dispatch the new command, whose handler writes `cto_response.pdu
 `Xcp_MainFunction` is about to fill the same buffer with the pending command's answer. One of the
 two responses would be lost and the other malformed.
 
+**Refusing the command is necessary and NOT sufficient, and an earlier revision of this decision
+stopped at the refusal.** It named the interloping handler as the only competing writer and missed
+the obvious second one: `Xcp_MainFunction` itself. The `ERR_CMD_BUSY` packet is written into that
+same `cto_response.pdu_info`, so between building it and its confirmation there is a window in
+which the pending command can complete and overwrite it — putting the `PROGRAM_START` response
+inside the frame the master matches to the command it was refused on. Measured, not reasoned: the
+buffer CanIf still owned after a completing poll held `(255, 0, 65, 8, ...)` where `(254, 16)` was
+due.
+
+So `Xcp_MainFunction` skips the **whole** pending-command block while
+`cto_response.successful_transmission_pending` is `TRUE` — the poll included, not merely the
+response write. Withholding only the publish would mean polling a callback that has already
+returned `E_OK`, and §4 defines `E_OK` as "finished" without defining what a further call returns;
+re-polling a completed operation is unspecified behaviour and this module will not rely on it. The
+cost is that a completion waits one `Xcp_MainFunction` cycle behind an in-flight CTO, which is
+invisible to a master that is by definition waiting on that CTO.
+
 The new test is `pending_command.active`, evaluated beside the existing one. §1.7.3.2.4 lists
 `ERR_CMD_BUSY` for every PGM command with the action "wait t7, repeat ∞ times", so a conformant
 master already knows what to do with it.
