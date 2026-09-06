@@ -103,10 +103,12 @@ class TestSWS00847:
                                                         handle.define('XCP_E_PARAM_POINTER'))
 
     @pytest.mark.parametrize('pdu_id', [0x0002] + list(range(0x0004, 0x000F)))
-    # "STIM" is absent because a pure STIM DAQ list is refused at generation -- see
-    # test_generation_fails_when_a_daq_list_is_configured_as_stim in daq_configuration_test.py.
-    # DAQ_STIM is the remaining type whose list carries an RX PDU mapping, which is what makes
-    # this parametrization about anything.
+    # "STIM" is absent because this parametrization predates SP3, when a pure STIM DAQ list was
+    # refused at generation. SP3 lifted that refusal (commit 3659d24), so the named test no longer
+    # exists.
+    # What the sweep needs is a list carrying an RX PDU mapping, which is what makes it about
+    # anything; DAQ_STIM is one such type and, since SP3, a pure STIM list is another. Either
+    # would do, and DAQ_STIM is kept because it is what this test has always used.
     @pytest.mark.parametrize('daq_type', ('DAQ_STIM',))
     def test_invalid_pdu_id_error(self, pdu_id, daq_type):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,

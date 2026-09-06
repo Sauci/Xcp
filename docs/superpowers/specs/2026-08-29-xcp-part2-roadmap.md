@@ -148,9 +148,10 @@ triggering a DAQ event, and ECUC_Xcp_00014 states the module does not require it
 function period, so a module-driven raster could not have been built on anything the
 configuration is allowed to know.
 
-The timestamp field (§1.1.2.2) and `PID_OFF` landed in SP2b. Still absent from the runtime:
-`ALTERNATING`, DAQ list prioritisation and more than one outstanding DTO frame — all SP2c — and
-STIM reception in `Xcp_CanIfRxIndication`, which remains SP3.
+The timestamp field (§1.1.2.2) and `PID_OFF` landed in SP2b; STIM reception in
+`Xcp_CanIfRxIndication` landed in SP3. Still absent from the runtime: `ALTERNATING`, DAQ list
+prioritisation and more than one outstanding DTO frame — all SP2c — and, from SP3, `BIT_STIM` and
+`EV_STIM_TIMEOUT`.
 
 ### 2.5 Non-volatile memory programming (§1.4.5, §1.6.5)
 
@@ -391,24 +392,38 @@ then command surface, then runtime. That was rejected when the design was writte
 is independently shippable, since configured lists that never transmit have no value to a
 master.
 
-### SP3 — Synchronous data stimulation (STIM)
+### SP3 — Synchronous data stimulation (STIM) — **complete**
 
-STIM reception in `Xcp_CanIfRxIndication`, `DAQ_STIM` and `STIM` event channel types.
-Depends on SP2 for the DAQ list infrastructure it reuses wholesale.
+STIM reception in `Xcp_CanIfRxIndication`, `DAQ_STIM` and `STIM` DAQ list types. Depends on SP2 for
+the DAQ list infrastructure it reuses wholesale.
 
-**Concurrency question SP3 must answer, found in SP2b.** SWS_Xcp_00813 specifies
-`Xcp_<Lo>RxIndication` as *"Reentrant for different PduIds. Non reentrant for the same PduId."*
-Every CTO command reaches the module on one PduId — `channel_rx_pdu_ref->id` — so CanIf's own
-contract prevents a CTO from racing itself, and no exclusive area guards `cto_response`, `last_pid`
-or the protection-status clear today.
+Design: `2026-09-04-xcp-stim-sp3-design.md` (DD35–DD48).
 
-**STIM breaks that.** DAQ_STIM receive PDUs are *different* PduIds, so a stimulation indication may
-preempt a CTO command mid-dispatch. The branch that will host it already exists in
-`Xcp_CanIfRxIndication` and today only sets `valid_pdu_id`, touching nothing shared. The moment
-SP3's handler touches the response buffer, the DAQ pointer, the runtime mode bits or the DTO ring,
-the race is real and needs an exclusive area around the busy-check/dispatch/set-flag sequence —
-which affects all 256 PID entries and is a design decision, not an implementation detail.
-Settle it in SP3's design; do not discover it in review.
+**The concurrency question this sub-project had to answer, found in SP2b, and how it was answered.**
+SWS_Xcp_00813 specifies `Xcp_<Lo>RxIndication` as *"Reentrant for different PduIds. Non reentrant
+for the same PduId."* Every CTO command reaches the module on one PduId — `channel_rx_pdu_ref->id`
+— so CanIf's own contract prevents a CTO from racing itself, and no exclusive area guards
+`cto_response`, `last_pid` or the protection-status clear. DAQ_STIM receive PDUs are *different*
+PduIds, so a stimulation indication may preempt a CTO command mid-dispatch, and the fear was that
+guarding it would need an exclusive area around the whole busy-check/dispatch/set-flag sequence.
+
+It did not. **DD36** keeps the receive path off everything the dispatch touches: reception copies
+the frame into a per-ODT slot and returns, and the event trigger — not the receive context — writes
+ECU memory. The slot is guarded by its own exclusive area, `SchM_Enter_Xcp_StimBuffer` (**DD37**),
+which is disjoint from the DTO ring's. Nothing was added to the CTO dispatch path, and a DAQ-only
+build is byte-for-byte unchanged.
+
+**DD46** settled the routing that the original note did not anticipate: CTO and DTO are told apart
+by the *receiving PduId*, not by the frame's first byte. Splitting on the byte would have let a
+`PID_OFF` stimulation payload whose first byte fell in `0xC0..0xFF` be dispatched as a command —
+which, past the handler, also clears the protection status and so silently revokes a completed
+seed-and-key unlock.
+
+**Deferred out of SP3, each needing its own design:** `BIT_STIM`, `EV_STIM_TIMEOUT`, and runtime
+protection of the STIM resource (**DD41** — `Xcp_PIDToCmdGroupTable` is a per-PID mask that cannot
+express a predicate on a command's argument, and `SET_DAQ_LIST_MODE` has no `ERR_ACCESS_LOCKED` in
+its error set). Until that lands, **DD48** makes generation refuse the one configuration where the
+gap would be visible: stimulation-capable *and* declaring the STIM resource protected.
 
 ### SP4 — Non-volatile memory programming (PGM)
 

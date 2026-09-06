@@ -241,8 +241,12 @@ check could be added to the DAQ commands alone. What actually blocks it is narro
   set". The table is the wrong shape, so the check has to move, not be re-tabulated.
 - **`SET_DAQ_LIST_MODE` has no `ERR_ACCESS_LOCKED` in its error set** (§1.7.3.2.4). A handler-side
   refusal would therefore have to answer with an error code the specification does not list for
-  that command — the same objection Task 6 honoured when it declined to invent one for `ALLOC_ODT`,
-  and it applies unchanged here.
+  that command — the same objection Task 6 honoured when it declined to invent one for `ALLOC_ODT`.
+  This is an obstacle, not a proof of impossibility, and the original wording ("it applies
+  unchanged here") overstated it: §1.7.3.2.4 lists the errors a command is *expected* to produce,
+  and a slave that adds `ERR_ACCESS_LOCKED` there is answering a request it genuinely refused
+  rather than inventing a meaning. What makes it an obstacle is that the choice deserves its own
+  argument, which is exactly why per-direction protection is deferred rather than settled here.
 
 Together those make per-direction protection its own design, not a line in this sub-project.
 

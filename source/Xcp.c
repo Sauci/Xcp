@@ -1453,9 +1453,14 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  *
                                  * This test is also what keeps Xcp_PIDTable's 0x00..0xBF entries
                                  * unreachable, and it is the ONLY thing that does: the generated
-                                 * ctoInfo sets `enable` for all 256 PIDs and Xcp_PIDToCmdGroupTable
-                                 * holds MASK_NONE across 0x00..0xBF, so neither the enable test
-                                 * above nor the protection gate below stops such a frame. Remove
+                                 * ctoInfo sets `enable` across the whole of 0x00..0xBF (all
+                                 * 192 entries, unconditionally -- script/source_cfg.c.jinja2) and
+                                 * Xcp_PIDToCmdGroupTable holds MASK_NONE there, so neither the
+                                 * enable test above nor the protection gate below stops such a
+                                 * frame. Said of that range rather than of all 256 PIDs, which
+                                 * would be untrue: entries in the COMMAND range are enabled
+                                 * conditionally, since an optional command a build leaves out
+                                 * generates a disabled entry. Remove
                                  * this condition and a frame on the CTO PDU whose first byte falls
                                  * in the DTO range runs the whole dispatch body -- and THREE things
                                  * happen there, not one:
