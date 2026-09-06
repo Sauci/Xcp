@@ -220,6 +220,7 @@ class DefaultConfig(dict):
                  daq_dynamic_type='DAQ',
                  segments=(),
                  freeze_supported=False,
+                 programming_enabled=False,
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -267,6 +268,9 @@ class DefaultConfig(dict):
                  xcp_program_clear_api_enable=True,
                  xcp_program_api_enable=True,
                  xcp_program_max_api_enable=True,
+                 xcp_program_start_api_enable=True,
+                 xcp_program_reset_api_enable=True,
+                 xcp_program_prepare_api_enable=True,
                  xcp_get_comm_mode_info_api_enable=True,
                  xcp_download_next_api_enable=True,
                  xcp_modify_bits_api_enable=True,
@@ -350,6 +354,7 @@ class DefaultConfig(dict):
                 "daqs": list(daqs),
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
+                "programming": {"enabled": programming_enabled},
                 # event()'s own bare default omits "name" (see its docstring comment), and
                 # publish_names defaults to True two lines above -- so DefaultConfig's own
                 # fallback event needs a name of its own, or every test that builds DefaultConfig()
@@ -400,6 +405,10 @@ class DefaultConfig(dict):
                     "xcp_program_clear_api_enable": {"enabled": xcp_program_clear_api_enable, "protected": False},
                     "xcp_program_api_enable": {"enabled": xcp_program_api_enable, "protected": False},
                     "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},
+                    "xcp_program_start_api_enable": {"enabled": xcp_program_start_api_enable, "protected": False},
+                    "xcp_program_reset_api_enable": {"enabled": xcp_program_reset_api_enable, "protected": False},
+                    "xcp_program_prepare_api_enable": {"enabled": xcp_program_prepare_api_enable,
+                                                       "protected": False},
                     "xcp_get_comm_mode_info_api_enable": {"enabled": xcp_get_comm_mode_info_api_enable,
                                                           "protected": False},
                     "xcp_download_next_api_enable": {"enabled": xcp_download_next_api_enable, "protected": False},

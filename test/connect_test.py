@@ -108,18 +108,14 @@ def test_connect_sets_the_resource_stim_bit_according_to_enabled_apis(resource_s
     assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x03)) >> 0x03) == resource_stim_bit
 
 
-@pytest.mark.parametrize('resource_pgm_bit, api_enable', ((0, (False, False, False)),
-                                                          (0, (True, False, False)),
-                                                          (0, (True, True, False)),
-                                                          (1, (True, True, True))))
-def test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis(resource_pgm_bit, api_enable):
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
-                                   xcp_program_clear_api_enable=api_enable[0],
-                                   xcp_program_api_enable=api_enable[1],
-                                   xcp_program_max_api_enable=api_enable[2]))
-    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
-    handle.lib.Xcp_MainFunction()
-    assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x04)) >> 0x04) == resource_pgm_bit
+# test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis is gone. D11/DD60: its four
+# cases passed on xcp_program_max_api_enable alone -- disabling xcp_program_clear_api_enable or
+# xcp_program_api_enable instead, the other two conjuncts Xcp_CTOCmdStdConnect also tests, changed
+# nothing it asserted, because script/source_cfg.c.jinja2 never wired either key to its ctoInfo
+# enable bit. pgm_configuration_test.py now owns the PGM resource bit:
+# test_each_pgm_api_key_alone_withdraws_the_connect_advertisement sweeps one case per conjunct
+# instead of one per outcome, and test_all_three_pgm_api_keys_enabled_advertises_flash_programming
+# and test_the_gate_overrides_the_api_keys cover the all-enabled and gate-off cases.
 
 
 @pytest.mark.parametrize('byte_order_bit, byte_order', ((0, "LITTLE_ENDIAN"), (1, "BIG_ENDIAN")))
