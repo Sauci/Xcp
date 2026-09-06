@@ -175,6 +175,31 @@ void Xcp_PgmRequestPending(void)
     }
 }
 
+void Xcp_PgmAbandonPendingCommand(void)
+{
+    /* DD55. Called from Xcp_CanIfRxIndication's ERR_CMD_BUSY gate (Xcp.c), and only while
+     * pending_command.active is TRUE -- there is nothing to abandon otherwise, and this function
+     * must not be the thing that decides that: forcing pgm_state to XCP_PGM_IDLE unconditionally
+     * would end a real, already-established programming session (XCP_PGM_ACTIVE) on any ordinary
+     * SYNCH, which 1.1/1.7.1.1 requires to stay available throughout one.
+     *
+     * `active` is deliberately left untouched. Xcp_MainFunction polls only while it is TRUE
+     * (Xcp_MainFunction, Xcp.c), so clearing it here would stop that polling and strand the
+     * integrator mid-operation: its callback would never be called again, would never report
+     * completion, and a later PROGRAM_START would start a second operation on top of one still
+     * running. `abandoned` alone tells Xcp_PgmCompletePendingCommand to discard the response
+     * instead of transmitting it once polling finally reaches E_OK.
+     *
+     * Returning pgm_state to XCP_PGM_IDLE undoes only the transient state PROGRAM_START's handler
+     * set (XCP_PGM_STARTING, Xcp_DTOCmdPgmProgramStart above) before this poll began -- as far as
+     * the master is concerned the sequence it started never happened. pending_command.active
+     * staying TRUE is what still refuses a new one with ERR_CMD_BUSY regardless (DD55 in Xcp.c),
+     * because that gate reads active, not pgm_state; the two facts are real and different, and
+     * deliberately not merged into one flag. */
+    Xcp_Internal.pending_command.abandoned = TRUE;
+    Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* local function definitions (static).                                                           */
 /*------------------------------------------------------------------------------------------------*/

@@ -317,8 +317,28 @@ def test_a_foreign_events_confirmation_does_not_release_the_bound():
     """Review fix round 1, finding 2. DD54's bound is 'no EV_CMD_PENDING FROM THIS PENDING
     COMMAND still outstanding', not 'no event of any kind'. The event queue is shared with
     EV_STORE_CAL (Xcp_MainFunction's own STORE_CAL_REQ block) and EV_DAQ_OVERLOAD
-    (Xcp_TriggerEventChannel, Xcp_DaqRuntime.c); SET_REQUEST is the simplest way to put a second,
-    independent producer on the same queue without a full DAQ configuration.
+    (Xcp_TriggerEventChannel, Xcp_DaqRuntime.c).
+
+    Task 3 retired this test's original second producer. SET_REQUEST used to be sent after
+    program_start deferred, which was the simplest way to put a second, independent producer on
+    the queue without a full DAQ configuration -- but DD55 (source/Xcp.c's ERR_CMD_BUSY gate)
+    now answers ANY command arriving while pending_command.active is TRUE with ERR_CMD_BUSY,
+    SYNCH alone excepted, and does not dispatch it. A SET_REQUEST sent in that window never
+    reaches Xcp_DTOCmdStdSetRequest, session_status never gains STORE_CAL_REQ, and
+    Xcp_MainFunction's STORE_CAL_REQ block never fires -- the scenario this test needs no longer
+    exists on that path. EV_DAQ_OVERLOAD is the surviving second producer, because
+    Xcp_TriggerEventChannel is called directly rather than through Xcp_CanIfRxIndication: DD55
+    gates the CTO receive path, not this call, which is exactly the property this substitution
+    needs.
+
+    max_odt=2 against daq_queue_size=1 (one usable ring slot, matching
+    daq_runtime_test.py's own test_an_overloaded_trigger_queues_exactly_one_overload_event
+    construction) makes a single trigger sample one ODT successfully and drop the other, raising
+    exactly one EV_DAQ_OVERLOAD (1.1/1.8.6). The one successful ODT's own DTO frame is an
+    unavoidable side effect of that construction: Xcp_TransmitOneFrame ranks DAQ below both CTO
+    and the event queue, so that frame only gets a turn once this test's event traffic finally
+    stops -- which is why the last step below checks for the ABSENCE of an EV_CMD_PENDING shape
+    rather than for no transmission at all, unlike every earlier step here.
 
     No other test in this file has two event sources, which is exactly why the leak this pins was
     invisible before: with one producer, 'clear on any confirmation' and 'clear on this command's
@@ -335,75 +355,80 @@ def test_a_foreign_events_confirmation_does_not_release_the_bound():
     scan only because EV_CMD_PENDING is the sole event type they ever produce.
 
     1. A busy poll pushes and transmits EV_CMD_PENDING #1.
-    2. SET_REQUEST(STORE_CAL_REQ) arrives; its callback completes on the very next poll, which
-       pushes EV_STORE_CAL behind #1 -- #1 is still in flight, unconfirmed, so nothing new is
-       transmitted this step.
-    3. Confirming #1 correctly clears the bound (it IS the module's own event) and drains the
-       queue. The freed slot is filled by SET_REQUEST's own CTO response, not by EV_STORE_CAL
-       yet -- CTO takes priority over the event queue in Xcp_TransmitOneFrame.
-    4. Confirming that CTO response drains it in turn, so EV_STORE_CAL is finally selected and
-       transmitted.
-    5. A further busy poll finds the bound correctly clear and pushes EV_CMD_PENDING #2, which
-       only queues behind the still-in-flight EV_STORE_CAL -- nothing new transmitted this step.
-    6. Confirming EV_STORE_CAL -- not a CMD_PENDING event -- drains the queue in turn, so #2 is
+    2. Xcp_TriggerEventChannel fires DAQ1's bound event directly: one ODT samples into the DAQ
+       queue's only slot, the other is dropped, and EV_DAQ_OVERLOAD is pushed behind #1 -- #1 is
+       still in flight, unconfirmed, so nothing new is transmitted this step.
+    3. Confirming #1 correctly clears the bound (it IS the module's own event) and reveals
+       EV_DAQ_OVERLOAD, which is selected and transmitted next -- nothing else competes ahead of
+       it, since this producer has no CTO response of its own the way SET_REQUEST used to.
+    4. A further busy poll finds the bound correctly clear and pushes EV_CMD_PENDING #2, which
+       only queues behind the still-in-flight EV_DAQ_OVERLOAD -- nothing new transmitted this step.
+    5. Confirming EV_DAQ_OVERLOAD -- not a CMD_PENDING event -- drains the queue in turn, so #2 is
        selected and transmitted. This is the moment a module that clears the bound unconditionally
        would also (wrongly) clear it, since #2 is the one now in flight and NOT yet confirmed.
-    7. One more busy poll: a leaking module pushes EV_CMD_PENDING #3 here, behind #2, which is
+    6. One more busy poll: a leaking module pushes EV_CMD_PENDING #3 here, behind #2, which is
        still outstanding. Nothing transmits this step either way -- the pipeline is still occupied
        by #2 -- so this step cannot by itself distinguish the fix from the leak.
-    8. Confirming #2 is where the two diverge: fixed, the bound was held at step 6, so step 7
-       pushed nothing and the now-empty queue transmits nothing here either. Leaking, step 7's #3
-       is sitting queued, and gets transmitted now -- a THIRD EV_CMD_PENDING that the operation
-       never asked for TxConfirmation to release.
+    7. Confirming #2 is where the two diverge: fixed, the bound was held at step 5, so step 6
+       pushed nothing, and the freed pipeline goes to the waiting DTO frame instead -- the DAQ
+       queue outranks nothing else once CTO and the event queue are both actually empty. Leaking,
+       step 6's #3 is sitting queued ahead of that DTO frame, and transmits now instead -- a THIRD
+       EV_CMD_PENDING that never got a TxConfirmation-driven release.
     """
-    handle = pgm_handle(event_queue_size=4)
-
-    def store_calibration_completes(p_success):
-        p_success[0] = 0x00
-        return handle.define('E_OK')
-
-    handle.xcp_store_calibration_data_to_non_volatile_memory.side_effect = store_calibration_completes
+    handle = pgm_handle(event_queue_size=4, daq_queue_size=1,
+                        daqs=(daq(name='DAQ1', max_odt=2, max_odt_entries=1),))
     busy_then(handle, 0x00, busy_calls=20)
+
+    def daq_setup_exchange(request):
+        """RxIndication + MainFunction + TxConfirmation, confirmed as it goes: plain sequential
+        setup, run entirely before program_start below, so pending_command.active is FALSE
+        throughout and none of these CTOs can ever meet DD55's busy gate."""
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    for odt in range(2):
+        daq_setup_exchange((0xE2, 0x00) + tuple(u16_to_array(0, 'LITTLE_ENDIAN')) + (odt, 0x00))
+        daq_setup_exchange((0xE1, 0xFF, 0x01, 0x00) + tuple(u32_to_array(0x1000 + odt, 'LITTLE_ENDIAN')))
+    daq_setup_exchange((0xE0, 0x00) + tuple(u16_to_array(0, 'LITTLE_ENDIAN')) +
+                       tuple(u16_to_array(0, 'LITTLE_ENDIAN')) + (0x01, 0x00))
+    daq_setup_exchange((0xDE, 0x01) + tuple(u16_to_array(0, 'LITTLE_ENDIAN')))
+
     handle.can_if_transmit.reset_mock()
 
     program_start(handle)
     handle.lib.Xcp_MainFunction()  # 1
     assert transmitted(handle)[0:2] == (0xFD, 0x05), 'EV_CMD_PENDING #1'
 
-    # SET_REQUEST(STORE_CAL_REQ): the second, independent event producer.
-    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, 0x01, 0x00, 0x00)))
     handle.can_if_transmit.reset_mock()
-    handle.lib.Xcp_MainFunction()  # 2
+    handle.lib.Xcp_TriggerEventChannel(0)  # 2
     assert transmitted(handle) is None, 'the pipeline is still occupied by #1, unconfirmed'
 
     handle.can_if_transmit.reset_mock()
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 3
-    assert transmitted(handle)[0:2] == (0xFF, 0x00), "SET_REQUEST's own response, ahead of the queue"
+    assert transmitted(handle)[0:2] == (0xFD, 0x06), 'EV_DAQ_OVERLOAD, revealed once #1 is gone'
 
     handle.can_if_transmit.reset_mock()
-    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 4
-    assert transmitted(handle)[0:2] == (0xFD, 0x03), 'EV_STORE_CAL, queued behind #1 until now'
+    handle.lib.Xcp_MainFunction()  # 4
+    assert transmitted(handle) is None, 'the pipeline is still occupied by EV_DAQ_OVERLOAD, unconfirmed'
 
     handle.can_if_transmit.reset_mock()
-    handle.lib.Xcp_MainFunction()  # 5
-    assert transmitted(handle) is None, 'the pipeline is still occupied by EV_STORE_CAL, unconfirmed'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 5
+    assert transmitted(handle)[0:2] == (0xFD, 0x05), '#2, queued behind EV_DAQ_OVERLOAD until now'
 
     handle.can_if_transmit.reset_mock()
-    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 6
-    assert transmitted(handle)[0:2] == (0xFD, 0x05), '#2, queued behind EV_STORE_CAL until now'
-
-    handle.can_if_transmit.reset_mock()
-    handle.lib.Xcp_MainFunction()  # 7
+    handle.lib.Xcp_MainFunction()  # 6
     assert transmitted(handle) is None, \
         'the pipeline is still occupied by #2 -- this step alone cannot show the leak'
 
     handle.can_if_transmit.reset_mock()
-    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 8
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))  # 7
 
-    assert transmitted(handle) is None, \
-        'confirming EV_STORE_CAL at step 6 must not have released the bound on #2 -- a module ' \
-        'that cleared it there would have let step 7 push a third EV_CMD_PENDING, which would ' \
-        'transmit here as soon as #2 itself is confirmed'
+    assert transmitted(handle)[0:2] != (0xFD, 0x05), \
+        'confirming EV_DAQ_OVERLOAD at step 5 must not have released the bound on #2 -- a module ' \
+        'that cleared it there would have let step 6 push a third EV_CMD_PENDING, which would ' \
+        'transmit here as soon as #2 itself is confirmed, ahead of the DTO frame this correctly ' \
+        'empty event queue now finally lets through instead'
 
 
 def test_a_failed_push_leaves_the_bound_clear_so_a_later_poll_retries():

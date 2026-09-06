@@ -1530,6 +1530,52 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
                                      * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
                                      * return an error packet with the error code ERR_CMD_BUSY. */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                                    /* DD55. 1.1/1.7.3.2.4 lists ERR_CMD_BUSY (action "wait t7,
+                                     * repeat infinitely times") for every PGM command; this extends
+                                     * it to every command, while pending_command.active is TRUE,
+                                     * regardless of that command's own Xcp_CTOErrorMatrix entry.
+                                     * The BUSY test just below does NOT already cover this case,
+                                     * which is the reason this term exists at all: it reads
+                                     * cto_response.successful_transmission_pending, which DD53
+                                     * leaves FALSE for the whole duration of a deferred operation
+                                     * -- precisely so that nothing is transmitted while it runs --
+                                     * so a command whose own matrix entry carries
+                                     * XCP_INTERNAL_ERR_CMD_BUSY would sail through that test
+                                     * unopposed. Dispatching it anyway would let its handler write
+                                     * cto_response.pdu_info at the same time Xcp_MainFunction is
+                                     * about to overwrite that very buffer with the pending
+                                     * command's own answer: one response lost, the other
+                                     * malformed.
+                                     *
+                                     * 1.1/1.7.1.1 exempts SYNCH: it is the master's only means of
+                                     * resynchronising, and one that cannot get through leaves a
+                                     * confused master with no way out. Exempted here, not answered
+                                     * here -- it falls through to dispatch below like any other
+                                     * command and gets its usual ERR_CMD_SYNCH from
+                                     * Xcp_CTOCmdStdSynch (Xcp_Std.c), which answers unconditionally
+                                     * whether or not anything is pending. */
+                                    if ((Xcp_Internal.pending_command.active == TRUE) && (pid != XCP_PID_CMD_SYNCH))
+                                    {
+                                        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
+                                        Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                    }
+                                    else
+                                    {
+                                        /* DD55: SYNCH must not clear pending_command.active.
+                                         * Xcp_MainFunction polls only while active is TRUE, so
+                                         * clearing it here would stop that polling and strand the
+                                         * integrator mid-operation -- its callback never called
+                                         * again, never reporting completion, and a later
+                                         * PROGRAM_START starting a second operation on top of one
+                                         * still running. Abandoning it instead lets the poll run to
+                                         * completion; Xcp_PgmCompletePendingCommand (Xcp_Pgm.c)
+                                         * discards the response instead of transmitting it. */
+                                        if ((Xcp_Internal.pending_command.active == TRUE) && (pid == XCP_PID_CMD_SYNCH))
+                                        {
+                                            Xcp_PgmAbandonPendingCommand();
+                                        }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                                     if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) == 0x00u) ||
                                         (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) != 0x00u) && (Xcp_Internal.cto_response.successful_transmission_pending == FALSE)))
                                     {
@@ -1590,6 +1636,9 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     }
 
                                     Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                                    }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                                 }
                             }
                             else
