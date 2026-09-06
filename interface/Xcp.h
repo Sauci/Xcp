@@ -251,6 +251,33 @@ extern "C" {
  */
 #define XCP_E_STIM_NOT_APPLIED (0x07u)
 
+/**
+ * @brief A DAQ list was not sampled because its DTOs would have reached the master unidentifiable.
+ * @details Raised by Xcp_TriggerEventChannel (source/Xcp_DaqRuntime.c) for a running list that has
+ * PID_OFF set and more than one ODT. Such a list would put several DTOs on one PDU carrying no
+ * identification field and nothing else to tell them apart, so it is skipped whole.
+ *
+ * The state is reachable only by drift. Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) grants
+ * PID_OFF against three conditions -- ABSOLUTE identification, a single ODT, and a TX PDU no other
+ * list shares -- but a grant describes the moment the command ran. Under DAQ_DYNAMIC the master
+ * may allocate further ODTs to that list afterwards: ALLOC_ODT is legal after ALLOC_ODT and no
+ * ERR_SEQUENCE rule in XCP part 2 - Protocol Layer Specification 1.1/1.6.4.2.1.3 forbids it, so
+ * the second allocation succeeds and leaves PID_OFF set on a list of two ODTs.
+ * @note This error is not part of the specification, and Det is the only channel the skip has: the
+ * trigger is a vendor API answering no master, so there is no error packet and nobody waiting on
+ * one. The specification does not say what a slave does here. It requires only that PID_OFF go
+ * with ABSOLUTE identification, and assigns the rest to the transport -- 1.1/1.1.2.1: "If the
+ * Identification Field is not transferred in the XCP Packet, the unambiguous identification has to
+ * be done on the level of the Transport Layer", of which one CAN-Id and one ODT per list is the
+ * example it offers, not a rule it imposes. This module adopts that example as its grant rule
+ * because on CAN every ODT of a list shares one TX PDU, leaving the transport nothing to
+ * disambiguate with; skipping here keeps that self-imposed invariant true at the moment of use,
+ * rather than emitting frames whose identification the specification requires and this transport
+ * cannot supply. The master is told nothing -- no event code exists for "your configuration
+ * became unrepresentable" -- so Det is where an integrator sees it.
+ */
+#define XCP_E_DAQ_LIST_NOT_IDENTIFIABLE (0x08u)
+
 /** @} */
 
 /**
