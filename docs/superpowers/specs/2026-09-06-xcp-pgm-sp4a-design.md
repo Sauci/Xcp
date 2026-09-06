@@ -321,8 +321,24 @@ response is confirmed, not before.
 §1.6.5.1.4 permits either: the command "may or may not have a response". This module answers,
 because on the wire a silent `PROGRAM_RESET` is indistinguishable from a slave that crashed while
 handling it, and a master cannot tell a successful end-of-programming from a failure it should
-report. Ordering matters and is easy to get backwards: disconnecting first would discard the
-response buffer along with the rest of the session state.
+report.
+
+**The original reason given for the ordering was false, and is corrected here.** It claimed that
+"disconnecting first would discard the response buffer along with the rest of the session state".
+It would not. Nothing in the transmit path reads `connection_status` — `Xcp_FinalizeResPacket`,
+`Xcp_StartNextTransmission` and `Xcp_TransmitOneFrame` never consult it, and the flag has exactly
+three readers in `source/Xcp.c`: the initialisation, the receive gate at `:1509`, and `:1719`. The
+module's own `Xcp_CTOCmdStdDisconnect` proves the point by construction: it builds its response and
+*then* sets `XCP_CONNECTION_STATE_DISCONNECTED`, in the handler, and the response goes out.
+
+What the ordering actually decides is narrower: which commands arriving in the window between the
+response being built and its confirmation are still processed. Disconnecting when the response is
+built makes the receive gate ignore everything but `CONNECT` from that instant; disconnecting on
+confirmation keeps the session live across that window. §1.6.5.1.4 does not say which instant it
+means, so this is the module's choice and not a conformance question — and the honest reason to
+prefer confirmation is that a `PROGRAM_RESET` whose response is never confirmed has not been
+delivered, so a session torn down before that would leave a master unable to retry into a slave
+that still believes it is connected.
 
 `PROGRAM_RESET` is legal from `XCP_PGM_IDLE` as well as `XCP_PGM_ACTIVE`. §1.6.5.1.4: "This command
 may be used to force a slave device reset for other purposes." It is therefore not gated on a
