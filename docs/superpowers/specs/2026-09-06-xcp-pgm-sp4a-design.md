@@ -373,9 +373,7 @@ the sector model; that is a truthful answer for a slave with no sector descripti
 
 ## 4. The integrator interface
 
-Three functions, declared in `interface/Xcp.h` under `#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)`
-and stubbed in `test/stub/Xcp_MemoryAccess.h` beside
-`Xcp_StoreCalibrationDataToNonVolatileMemory`, whose contract they copy exactly:
+Three functions, declared in `interface/Xcp.h` under `#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)`:
 
 ```c
 Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
@@ -405,6 +403,19 @@ of its budget on exactly that class of question.
 `Xcp_ProgramPrepare` receives the current MTA and the `Codesize` from the request, rather than
 reading module state itself. §1.6.5.2.3 defines the command entirely in terms of those two values.
 
+**Declared in `interface/Xcp.h` only, and NOT mirrored into `test/stub/Xcp_MemoryAccess.h`.** An
+earlier revision of this section required both, beside
+`Xcp_StoreCalibrationDataToNonVolatileMemory`, so that the three sat next to the function whose
+contract they copy. That is not buildable: `interface/Xcp.h` includes the stub header, so a
+declaration in both is seen twice by `pcpp`'s expansion and cffi's `cdef()` rejects it with
+`FFIError: multiple declarations`. Declaring once is the resolution, and it is a genuine cffi
+constraint rather than a workaround covering something else.
+
+The cost is real and worth naming: these three are now separated from the polled NV callback whose
+contract §4 says they copy exactly, so nothing in the header puts them side by side. Each of the
+three carries a `@details` line naming `Xcp_StoreCalibrationDataToNonVolatileMemory` explicitly, so
+the relationship survives the separation in the only place a reader will look.
+
 ---
 
 ## 5. Source layout
@@ -423,7 +434,15 @@ reading module state itself. §1.6.5.2.3 defines the command entirely in terms o
   sizes: 1 for `PROGRAM_START` and `PROGRAM_RESET`, 4 for `PROGRAM_PREPARE`.
 - `config/xcp.schema.json`, `config/xcp.json` — the three new API keys and
   `flash_programming_enabled`, defaulting false.
-- `interface/Xcp.h`, `test/stub/Xcp_MemoryAccess.h` — §4's declarations.
+- `interface/Xcp.h` — §4's declarations, and **only** here; see §4 on why the stub header cannot
+  also carry them.
+- `CMakeLists.txt` — besides adding `Xcp_Pgm.c` to `add_library`, `XCP_FLASH_PROGRAMMING_ENABLED`
+  is derived from the configuration and compiled in, exactly as `XCP_PAGING_SUPPORTED` already is.
+  `test/conftest.py` threads the same macro into its compile definitions **and into the CFFI module
+  cache key**: the key names the generated runtime and the source text, neither of which mentions
+  `programming`, so without it two configurations differing only in the gate would hash to the same
+  compiled module and silently reuse each other's code — making every gate-dependent test, in every
+  task, unreliable.
 
 ---
 
