@@ -889,7 +889,6 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
     {
         if (mode == 0x00u)
         {
-            Xcp_Internal.requested_protected_resource = resource;
             Xcp_Internal.seed.total_length = 0x00u;
             Xcp_Internal.seed.current_index = 0x00u;
 
@@ -902,6 +901,24 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
             if (Xcp_Internal.seed.total_length == 0x00u)
             {
                 result = XCP_E_ASAM_OUT_OF_RANGE;
+            }
+
+            /* DD72 (authentication bypass, pre-existing). This used to assign
+             * requested_protected_resource unconditionally, before either check above could
+             * refuse the request, and never rolled it back on failure -- so a GET_SEED that never
+             * produced a seed still left this resource requestable. Xcp_SetProtectionStatus
+             * (source/Xcp.c) copies this field into protection_status verbatim once UNLOCK's key
+             * matches, with no way to tell "GET_SEED succeeded for this resource" from "GET_SEED
+             * was merely asked for this resource and refused". Committing the write only once
+             * both checks above have passed is a true rollback rather than a reset to a fixed
+             * value: whatever resource (or none, XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE) was
+             * requested before this attempt is what stays in effect. This is one of two
+             * independent legs the defect needs both of -- the other is last_pid's own write in
+             * Xcp_CanIfRxIndication (source/Xcp.c), which Xcp_DTOCmdStdUnlock below reads as "the
+             * previous command was a successful GET_SEED"; see test/seed_key_defects_test.py. */
+            if (result == E_OK)
+            {
+                Xcp_Internal.requested_protected_resource = resource;
             }
         }
         else

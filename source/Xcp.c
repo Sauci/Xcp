@@ -1831,7 +1831,28 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                 {
                                                     result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
 
-                                                    Xcp_Internal.last_pid = pid;
+                                                    /* DD72 (authentication bypass, pre-existing). last_pid used to be written here for
+                                                     * every dispatched command unconditionally, including one whose own handler just
+                                                     * decided to refuse it -- and Xcp_DTOCmdStdUnlock (source/Xcp_Std.c) reads
+                                                     * last_pid == XCP_PID_CMD_GET_SEED as "the previous command was a SUCCESSFUL
+                                                     * GET_SEED", not merely "the previous command was GET_SEED". A GET_SEED that
+                                                     * answered ERR_OUT_OF_RANGE (no seed produced) left that read wrong, and UNLOCK
+                                                     * admitted a key against a seed that was never issued -- XCP part 2 - Protocol Layer
+                                                     * Specification 1.1/1.6.1.1.7 makes UNLOCK meaningful only against a seed the slave
+                                                     * actually issued.
+                                                     *
+                                                     * Every error response in this module is built by Xcp_FillErrorPacket or
+                                                     * Xcp_FillErrorPacketWithData (source/Xcp.c), and both write XCP_PID_ERROR into byte 0
+                                                     * before anything else -- so that byte, already computed by the handler this line
+                                                     * runs immediately after, is a complete answer to "did this dispatch's own handler
+                                                     * refuse it" and needs no separate flag threaded through every one of Xcp_PIDTable's
+                                                     * handlers. This is one of two independent legs the defect needs both of -- the other
+                                                     * is requested_protected_resource's own write in Xcp_DTOCmdStdGetSeed
+                                                     * (source/Xcp_Std.c); see test/seed_key_defects_test.py. */
+                                                    if (Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] != XCP_PID_ERROR)
+                                                    {
+                                                        Xcp_Internal.last_pid = pid;
+                                                    }
 
                                                     if (pid != XCP_PID_CMD_UNLOCK) {
                                                         Xcp_ClearProtectionStatus();
