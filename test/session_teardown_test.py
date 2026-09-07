@@ -55,6 +55,8 @@ optional", and neither it nor DOWNLOAD's entry (1.1/1.6.2.1.1) states what the M
 the first SET_MTA of a session. The fix's own comment in source/Xcp_Std.c states this precisely
 rather than repeating the brief's "undefined" wording as a verified quote."""
 
+import math
+
 from .parameter import *
 from .conftest import XcpTest
 from .download_test import connect, set_mta, capture_writes
@@ -78,6 +80,44 @@ def disconnect(handle):
     response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2])
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
     return response
+
+
+def set_mta_with_extension(handle, address, extension, byte_order='LITTLE_ENDIAN'):
+    """download_test.set_mta always sends address extension 0 -- fine for every test that only
+    cares about the address half of the MTA, but DD75 (this file's own last three tests below) is
+    specifically about the extension half, so this needs its own SET_MTA that can set a non-zero
+    one. Mirrors disconnect()'s own shape (reset, send, confirm exactly one transmission, return
+    it, confirm) rather than download_test.set_mta's, since that one does not return a response at
+    all and every caller below needs to pin that SET_MTA itself actually succeeded."""
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(
+        0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, extension) + tuple(u32_to_array(address, byte_order))))
+    handle.lib.Xcp_MainFunction()
+    assert handle.can_if_transmit.call_count == 1, 'SET_MTA must be answered when nothing is outstanding'
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:1])
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+    return response
+
+
+def capture_extensions(handle):
+    """Records the (address, extension) pair of every AG=BYTE slave-memory read as plain
+    integers -- address is cast, never dereferenced, because this double is also used where the
+    MTA is a fabricated address (SET_MTA(0xDEADBEEF) with no GET_ID) that this process has no real
+    memory backing for; dereferencing it the way test/get_id_test.py's own double does would
+    segfault. Matches poison_reads' own address-as-integer convention
+    (block_transfer_disclosure_test.py), extended with the extension parameter every existing
+    read_slave_memory double in this suite names `_extension` and drops -- Trap 11, and this
+    defect's own history (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md,
+    DD75: 'Nothing caught it because the existing test doubles ignore the parameter', said there of
+    DD73 but equally true here -- this is the one double in the suite that actually looks at it)."""
+    reads = list()
+
+    def read_slave_memory(p_address, extension, p_buffer):
+        reads.append((int(handle.ffi.cast('uint32_t', p_address)), extension))
+        p_buffer[0] = 0x00
+
+    handle.xcp_read_slave_memory_u8.side_effect = read_slave_memory
+    return reads
 
 
 def test_an_open_block_transfer_does_not_survive_a_reconnect():
@@ -308,3 +348,151 @@ def test_a_normal_session_still_works_end_to_end_after_a_reconnect():
     assert unlock_response[0:2] == (0xFF, CAL_PAG), (
         'a legitimate GET_SEED/UNLOCK sequence must still grant the resource it requested after '
         'a reconnect -- got {}'.format(unlock_response))
+
+
+def test_get_id_does_not_leak_the_previous_commands_address_extension():
+    """DD75 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md) -- a
+    pre-existing defect in shipped code, independent of any feature branch this repository
+    carries, and independent of DD74 above despite sharing this file: DD74 is CONNECT leaving
+    session state standing across a reconnect; this is GET_ID leaving part of the MTA standing
+    across the very next command, in the SAME session, no CONNECT involved anywhere in this test.
+
+    Xcp_DTOCmdStdGetId (source/Xcp_Std.c) writes memory_transfer.address to point the MTA at the
+    identification string it is about to publish, but leaves .extension untouched -- so a
+    following UPLOAD (Xcp_BlockTransferReadSlaveMemory, source/Xcp.c) reads that string through
+    whatever extension the PREVIOUS command last set, not through the identification's own.
+
+    XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 (1.0/1.6.1.2.2, identical wording,
+    verified against both the local 1.1 PDF's own OCR text and the 1.0 PDF via `pdftotext
+    -layout`) has GET_ID, mode 0, "set the Memory Transfer Address (MTA) to the location from
+    which the master device may upload the requested identification" -- and 1.1/1.6.1.2.6
+    (1.0/1.6.1.2.6, same wording) defines the MTA itself as one complete pointer, "32Bit address +
+    8Bit extension", not an address alone. Xcp_DTOCmdDaqGetDaqEventInfo
+    (source/Xcp_Daq.c:1424-1425) shows the intended contract: it sets both members when it points
+    the MTA at its own plain, module-owned string (an event channel's name) for a following
+    UPLOAD.
+
+    SET_MTA(extension=7) first, matching this defect's own measured reproduction, and deliberately
+    NOT the fixed value: 7 is the top of this suite's own address_extensions range
+    (test/parameter.py, range(8)) and the identification's own correct extension is this task's
+    own fix, 0x00u, the bottom of it -- so a test that failed to observe the swap would still show
+    7 leaking through rather than 0 by some unrelated coincidence.
+
+    Measured against unfixed code (task-5-report.md): UPLOAD(3) reads the identification through
+    extension 7 -- SET_MTA's own leftover -- for all three elements, not through 0."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity='BYTE', max_cto=8))
+    connect(handle)
+
+    assert set_mta_with_extension(handle, 0xDEADBEEF, 0x07)[0] == 0xFF, (
+        'setup: SET_MTA must succeed here, or the leftover extension this test measures was '
+        'never actually set in the first place')
+
+    get_id_response = exchange(handle, (0xFA, 0x00), length=2)
+    assert get_id_response == (0xFF, 0x00), (
+        'setup: GET_ID must answer (PID, Mode) = (0xFF, 0x00) -- got {} -- meaning "the '
+        'identification is available via the MTA", or the UPLOAD below would not be reading '
+        'through the pointer GET_ID is supposed to have just set'.format(get_id_response))
+
+    reads = capture_extensions(handle)
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, 0x03)))
+    handle.lib.Xcp_MainFunction()
+    assert handle.can_if_transmit.call_count == 1, 'UPLOAD must be answered'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    observed_extensions = [extension for _address, extension in reads]
+    assert observed_extensions == [0x00, 0x00, 0x00], (
+        'UPLOAD read the identification through extension(s) {} -- expected [0, 0, 0] (this '
+        "module's own convention for a plain, non-segmented descriptive pointer -- see this "
+        "task's own fix comment at Xcp_DTOCmdStdGetId, source/Xcp_Std.c). Getting 7 back means "
+        "GET_ID left memory_transfer.extension holding SET_MTA's own leftover value instead of "
+        'setting it alongside the address it does write -- exactly DD75'.format(observed_extensions))
+
+
+def test_get_id_followed_by_upload_still_returns_the_correct_identification_content():
+    """DD75's own neighbour, named explicitly by this task's own brief: GET_ID followed by UPLOAD
+    must still return the identification string itself correctly. The fix adds an extension
+    assignment immediately beside the address assignment Xcp_DTOCmdStdGetId already had (source/
+    Xcp_Std.c) -- close enough in the source that a slip (writing to the wrong member, or
+    clobbering the address while adding the extension) would land right there and would not be
+    caught by test_get_id_does_not_leak_the_previous_commands_address_extension above, which never
+    looks at what UPLOAD actually returns.
+
+    SET_MTA(extension=7) first, matching the scenario above rather than a session whose MTA was
+    never touched, so this exercises the identical control flow the fix touches.
+
+    identification is deliberately a string this test chooses itself, not DefaultConfig's own
+    default (test/parameter.py) -- decoupled from that default so a future change to it could not
+    make this test pass by coincidence.
+
+    Content is read back the same way test/get_id_test.py's own
+    test_get_id_returns_identification_through_mta_when_mode_is_0 does: by dereferencing the real
+    address each read names, which is safe here specifically because GET_ID has just pointed the
+    MTA at Xcp_Ptr->general->identification, real backing memory in this process -- unlike
+    capture_extensions above, which must never do this because it is also used where the MTA
+    names a fabricated address."""
+    identification = 'DD75/get_id/content.a2l'
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity='BYTE',
+                                   max_cto=8, identification=identification))
+    connect(handle)
+
+    assert set_mta_with_extension(handle, 0xDEADBEEF, 0x07)[0] == 0xFF, (
+        'setup: SET_MTA must succeed here')
+
+    get_id_response = exchange(handle, (0xFA, 0x00), length=2)
+    assert get_id_response == (0xFF, 0x00), (
+        'setup: GET_ID must answer (PID, Mode) = (0xFF, 0x00) -- got {}'.format(get_id_response))
+
+    reads = list()
+
+    def read_slave_memory(p_address, extension, p_buffer):
+        p_buffer[0] = handle.ffi.cast('uint8_t*', p_address)[0]
+        reads.append((extension, int(p_buffer[0])))
+
+    handle.xcp_read_slave_memory_u8.side_effect = read_slave_memory
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, len(identification))))
+    for _ in range(math.ceil(len(identification) / 7)):
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert len(reads) == len(identification), (
+        'UPLOAD triggered {} slave-memory read(s), expected exactly the {} bytes of the '
+        'identification string'.format(len(reads), len(identification)))
+    assert ''.join(chr(byte) for _extension, byte in reads) == identification, (
+        'the identification content UPLOAD returned does not match what GET_ID pointed the MTA '
+        'at -- the extension fix must have disturbed the address assignment beside it')
+    assert [extension for extension, _byte in reads] == [0x00] * len(identification), (
+        'expected extension 0x00 throughout -- this identification is not part of any configured '
+        'SEGMENT for a non-zero extension to name')
+
+
+def test_set_mta_followed_by_upload_without_get_id_is_unaffected_by_the_get_id_fix():
+    """DD75's other neighbour, named explicitly by this task's own brief: a SET_MTA followed by an
+    ordinary UPLOAD, with no GET_ID in between, must be unaffected. Xcp_DTOCmdStdGetId's own fix
+    is scoped to its own handler (a local assignment, not, say, a helper that zeroes the extension
+    somewhere every command passes through), so a session that never calls GET_ID at all must see
+    exactly the extension its own SET_MTA set, undisturbed.
+
+    extension=3 here, not 7 or 0 -- distinct from the leaked value the test above pins and from
+    this task's own fixed value for GET_ID, so a pass here cannot be mistaken for either of those
+    by coincidence."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, address_granularity='BYTE', max_cto=8))
+    connect(handle)
+
+    assert set_mta_with_extension(handle, 0xDEADBEEF, 0x03)[0] == 0xFF, (
+        'setup: SET_MTA must succeed here')
+
+    reads = capture_extensions(handle)
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, 0x03)))
+    handle.lib.Xcp_MainFunction()
+    assert handle.can_if_transmit.call_count == 1, 'UPLOAD must be answered'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    observed_extensions = [extension for _address, extension in reads]
+    assert observed_extensions == [0x03, 0x03, 0x03], (
+        'UPLOAD with no intervening GET_ID read memory through extension(s) {} -- expected '
+        "[3, 3, 3], SET_MTA's own value, unaffected by DD75's fix to a wholly different command's "
+        'handler'.format(observed_extensions))
