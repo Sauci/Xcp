@@ -138,10 +138,20 @@ else**. Three measured consequences, one omission:
 - **The MTA survives.** A `DOWNLOAD` with no `SET_MTA` writes at the previous session's address.
 
 `CONNECT` therefore resets the block transfer, both key buffers, the seed, and the MTA, alongside
-what it already clears. The MTA reset deserves its own note: §1.6.2 leaves the MTA undefined until
-`SET_MTA`, so a master that omits it is not conformant — but "the previous session's address" is
-the most dangerous possible value for an undefined pointer, and zero is not obviously better, so
-the reset is to a state the module refuses to use rather than to an address it will happily write.
+what it already clears.
+
+**The MTA reset needs two corrections to what this decision first said.** It claimed §1.6.2 "leaves
+the MTA undefined until `SET_MTA`". That is not a literal claim in either revision — verified
+against both PDFs. What the specification actually supports is weaker and sufficient: `SET_MTA` is
+categorised "Standard, optional" and no default MTA is stated anywhere, so a master that programs
+or uploads without first setting it is relying on something the specification does not promise.
+
+And the reset is to `NULL_PTR`, **not** to "a state the module refuses to use" as first written.
+That would require an address-validity flag this module does not have — there is no MTA validity
+check anywhere in it — and inventing one to satisfy a sentence in a design document would be the
+wrong order of reasoning. `NULL_PTR` matches `Xcp_Init`'s own existing precedent for the same
+field. It is an improvement on the previous session's address rather than a guarantee, and the code
+comment says so rather than implying the stronger property.
 
 ### DD75 — `GET_ID` must set the whole MTA, not half of it
 
