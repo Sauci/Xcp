@@ -445,6 +445,18 @@ typedef struct {
          */
         uint16 program_prepare_code_size;
     } pending_command; /* DD52 */
+
+    /**
+     * @brief One master block mode block of PROGRAM data, accumulated as frames arrive.
+     * @details DD63. Intermediate PROGRAM_NEXT frames copy here and answer nothing; the frame that
+     * completes the block is what calls the integrator, once, through pending_command. Sized from
+     * XCP_PGM_MAX_BLOCK_SIZE, the same constant PROGRAM_START reports as MAX_BS_PGM, so the value
+     * the master programs against and the space actually available cannot drift apart.
+     */
+    struct {
+        uint8 data[XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u)];
+        uint16 length;
+    } pgm_block;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 

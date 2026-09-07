@@ -221,6 +221,10 @@ class DefaultConfig(dict):
                  segments=(),
                  freeze_supported=False,
                  programming_enabled=False,
+                 # MAX_BS_PGM (DD62): a separate, compile-time-sized value from protocol_layer's
+                 # own max_bs, which this module no longer reports in programming mode. Defaults
+                 # to the schema's own default of 8.
+                 programming_max_block_size=8,
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -354,7 +358,8 @@ class DefaultConfig(dict):
                 "daqs": list(daqs),
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
-                "programming": {"enabled": programming_enabled},
+                "programming": {"enabled": programming_enabled,
+                                "max_block_size": programming_max_block_size},
                 # event()'s own bare default omits "name" (see its docstring comment), and
                 # publish_names defaults to True two lines above -- so DefaultConfig's own
                 # fallback event needs a name of its own, or every test that builds DefaultConfig()

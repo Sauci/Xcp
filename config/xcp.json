@@ -49,7 +49,7 @@
         }
       ],
       "paging": {"freeze_supported": false},
-      "programming": {"enabled": false},
+      "programming": {"enabled": false, "max_block_size": 8},
       "events": [
         {
           "consistency": "ODT",

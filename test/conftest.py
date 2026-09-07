@@ -354,6 +354,20 @@ class XcpTest(object):
         # above: the generated Xcp_Cfg.h is not visible to the module under test.
         max_dto_define = ('XCP_MAX_DTO=0x{:02X}'.format(
                 max(c['protocol_layer']['max_dto'] for c in config['configurations'])),)
+        # XCP_MAX_CTO sizes Xcp_Internal.pgm_block (source/Xcp_Internal.h, DD62/DD63) at compile
+        # time, and XCP_PGM_MAX_BLOCK_SIZE -- what PROGRAM_START reports as MAX_BS_PGM -- is the
+        # other half of that same buffer's size. Same reasoning as max_dto_define immediately
+        # above: the generated Xcp_Cfg.h is not visible to the module under test, so both are
+        # derived here from the configuration dict directly, and the same largest-across-every-
+        # configuration rule applies, because the sources are compiled once for all of them.
+        # Unlike every *_api_enable-style boolean above, this pair sizes a buffer that source code
+        # actually allocates -- not merely a gate -- so an absent "programming" key must still
+        # yield the schema's own default (8) rather than a KeyError.
+        max_cto_define = ('XCP_MAX_CTO=0x{:02X}'.format(
+                max(c['protocol_layer']['max_cto'] for c in config['configurations'])),)
+        pgm_max_block_size_define = ('XCP_PGM_MAX_BLOCK_SIZE={}'.format(
+                max(c.get('programming', {}).get('max_block_size', 8)
+                    for c in config['configurations'])),)
         # XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE gate Xcp_GetDaqTimestamp's declaration (once a later
         # task wires it into Xcp.h) and describe the timestamp field width to code compiled
         # against Xcp_Types.h. Same reasoning as paging_define/max_dto_define above: the generated
@@ -403,9 +417,16 @@ class XcpTest(object):
         # the second one a self.code compiled with the first one's gate value -- silently answering
         # PROGRAM_START with ERR_CMD_UNKNOWN under a config that enabled it, or dispatching into a
         # handler whose supporting state was never compiled in under one that did not.
+        # max_cto_define/pgm_max_block_size_define are in exactly that same position: nothing in
+        # source_rt reads protocol_layer.max_cto or programming.max_block_size either, but both are
+        # now baked at compile time into self.code's Xcp_Internal.pgm_block (DD62/DD63) -- two
+        # configurations differing only by one of them would otherwise collide here and hand the
+        # second one the first one's compiled-in buffer size, silently under- or over-reporting
+        # MAX_BS_PGM on the wire.
         rt_key = hashlib.sha1((code_gen.source_rt + max_dto_define[0] + daq_timestamp_supported_define[0] +
                               daq_timestamp_size_define[0] +
-                              flash_programming_enabled_define[0]).encode('utf-8')).hexdigest()[0:8]
+                              flash_programming_enabled_define[0] + max_cto_define[0] +
+                              pgm_max_block_size_define[0]).encode('utf-8')).hexdigest()[0:8]
         self.rt = MockGen('libcffi_xcp_rt_{}'.format(rt_key),
                           code_gen.source_rt,
                           code_gen.header_rt,
@@ -414,6 +435,8 @@ class XcpTest(object):
                                         paging_define +
                                         flash_programming_enabled_define +
                                         max_dto_define +
+                                        max_cto_define +
+                                        pgm_max_block_size_define +
                                         daq_timestamp_supported_define +
                                         daq_timestamp_size_define,
                           include_dirs=tuple(self.include_directories + [self.build_directory]),
@@ -431,6 +454,8 @@ class XcpTest(object):
                                             paging_define +
                                             flash_programming_enabled_define +
                                             max_dto_define +
+                                            max_cto_define +
+                                            pgm_max_block_size_define +
                                             daq_timestamp_supported_define +
                                             daq_timestamp_size_define,
                               include_dirs=tuple(self.include_directories + [self.build_directory]),
@@ -452,6 +477,8 @@ class XcpTest(object):
                                           paging_define +
                                           flash_programming_enabled_define +
                                           max_dto_define +
+                                          max_cto_define +
+                                          pgm_max_block_size_define +
                                           daq_timestamp_supported_define +
                                           daq_timestamp_size_define,
                             include_dirs=tuple(self.include_directories + [self.build_directory]),

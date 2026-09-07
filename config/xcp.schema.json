@@ -782,9 +782,16 @@
     "programming": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"}
+        "enabled": {"type": "boolean"},
+        "max_block_size": {
+          "description": "MAX_BS_PGM: the maximum number of consecutive PROGRAM_NEXT command packets a master block mode PROGRAM sequence may contain (see XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1). Reported by PROGRAM_START and sized into a dedicated buffer at compile time (DD62); independent of the ordinary protocol_layer.max_bs, which this module does not use in programming mode.",
+          "type": "integer",
+          "default": 8,
+          "minimum": 0,
+          "maximum": 255
+        }
       },
-      "required": ["enabled"],
+      "required": ["enabled", "max_block_size"],
       "additionalProperties": false
     }
   }

@@ -386,7 +386,14 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u; /* reserved */
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = comm_mode_pgm;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = (uint8)Xcp_Ptr->general->maxCto;
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->maxBS;
+
+        /* DD62, revising DD56: MAX_BS_PGM is its own configured value (XCP_PGM_MAX_BLOCK_SIZE),
+         * not the live protocol_layer maxBS -- unlike MAX_CTO_PGM just above and MIN_ST_PGM/
+         * QUEUE_SIZE_PGM just below, which stay the live Xcp_Ptr->general fields exactly as DD56
+         * left them. A compile-time macro, not a runtime field, because it is what Xcp_Internal
+         * .pgm_block (source/Xcp_Internal.h) is actually sized from -- reporting anything else
+         * here would let this response promise a block the buffer cannot hold. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = XCP_PGM_MAX_BLOCK_SIZE;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = Xcp_Ptr->general->minST;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->ctoQueueSize;
 

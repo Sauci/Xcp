@@ -59,6 +59,37 @@
 
 #endif /* #ifndef XCP_MAX_DTO */
 
+{%- set max_cto = namespace(value=0) %}
+{%- for configuration in configurations %}
+{%- if configuration.protocol_layer.max_cto > max_cto.value %}
+{%- set max_cto.value = configuration.protocol_layer.max_cto %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_MAX_CTO
+
+/* One macro sizes the CTO-related buffers that need a compile-time bound for the whole module,
+ * so it takes the largest MAX_CTO any configuration declares -- the same rule XCP_MAX_DTO above
+ * follows, for the same reason: the sources are compiled once for every configuration. */
+#define XCP_MAX_CTO ({{'0x%02Xu' % max_cto.value}})
+
+#endif /* #ifndef XCP_MAX_CTO */
+
+{%- set pgm_block = namespace(size=0) %}
+{%- for configuration in configurations %}
+{%- if (configuration.programming.max_block_size | default(8)) > pgm_block.size %}
+{%- set pgm_block.size = configuration.programming.max_block_size | default(8) %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_PGM_MAX_BLOCK_SIZE
+
+/* The largest across every configuration, as XCP_MAX_DTO above is: the sources are compiled once
+ * for all of them, so the buffer must hold the biggest block any of them can ask for. Reported as
+ * MAX_BS_PGM by PROGRAM_START (DD62), which is what makes it the contract the master programs
+ * against rather than an internal limit. */
+#define XCP_PGM_MAX_BLOCK_SIZE ({{ pgm_block.size }}u)
+
+#endif /* #ifndef XCP_PGM_MAX_BLOCK_SIZE */
+
 {%- set daq_timestamp_supported = namespace(value=false) %}
 {%- for configuration in configurations %}
 {%- if configuration.protocol_layer.timestamp is defined and configuration.protocol_layer.timestamp %}

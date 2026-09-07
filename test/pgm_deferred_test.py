@@ -139,8 +139,13 @@ def test_the_response_appears_on_the_main_function_where_the_callback_completes(
 
 
 def test_the_positive_response_reports_the_live_communication_parameters():
-    """DD56. MAX_CTO_PGM, MAX_BS_PGM, MIN_ST_PGM and QUEUE_SIZE_PGM are the module's ordinary
-    values, because this module does not change them in programming mode.
+    """DD56, as narrowed by DD62. MAX_CTO_PGM, MIN_ST_PGM and QUEUE_SIZE_PGM are still the
+    module's ordinary, live values, because this module does not change them in programming mode.
+
+    MAX_BS_PGM (byte 4) is deliberately NOT asserted here any more: DD62 revises DD56 for that one
+    field alone, and it is no longer "live" in the sense this test's name means -- it is covered by
+    test_max_bs_pgm_reports_the_configured_block_size_not_the_live_max_bs below, which needs a
+    configuration where max_bs and max_block_size actually differ to mean anything.
 
     Pinned against the configuration rather than against literals: 1.1/1.6.5.1.3 makes MAX_BS_PGM
     and MIN_ST_PGM the bound on SP4b's PROGRAM_NEXT block transfer, so a wrong value here becomes
@@ -152,7 +157,7 @@ def test_the_positive_response_reports_the_live_communication_parameters():
     without the reset_mock() before program_start, this test passed anyway by reading connect()'s
     own response back out of the mock -- CONNECT's byte 3 is also maxCto (Xcp_CTOCmdStdConnect,
     Xcp_Std.c), so frame[0] and frame[3] matched a response this exchange never sent."""
-    handle = pgm_handle(max_bs=5, min_st=3, cto_queue_size=2)
+    handle = pgm_handle(min_st=3, cto_queue_size=2)
     busy_then(handle, 0x00, busy_calls=0)
     handle.can_if_transmit.reset_mock()
     program_start(handle)
@@ -162,9 +167,31 @@ def test_the_positive_response_reports_the_live_communication_parameters():
 
     assert frame[0] == 0xFF
     assert frame[3] == handle.lib.Xcp_Ptr.general.maxCto, 'MAX_CTO_PGM'
-    assert frame[4] == 5, 'MAX_BS_PGM'
     assert frame[5] == 3, 'MIN_ST_PGM'
     assert frame[6] == 2, 'QUEUE_SIZE_PGM'
+
+
+def test_max_bs_pgm_reports_the_configured_block_size_not_the_live_max_bs():
+    """DD62, revising DD56. MAX_BS_PGM (byte 4) is programming.max_block_size -- sized, at compile
+    time, into Xcp_Internal.pgm_block (source/Xcp_Internal.h, XCP_PGM_MAX_BLOCK_SIZE) -- not the
+    ordinary protocol_layer.max_bs this module reported here before SP4b needed a buffer to size
+    (DD56, as SP4a left it).
+
+    max_bs and max_block_size are configured to DIFFERENT values on purpose: 5 and 12. Equal
+    values would pass whether the module answered with the old field or the new one, pinning
+    nothing -- exactly the plan's failure mode 5 ('a deferral test discarding the very value it
+    meant to check'), one of six ways a test in this sub-project has already passed while proving
+    nothing. Asserting 12 and NOT 5 is what actually distinguishes DD62's field from DD56's."""
+    handle = pgm_handle(max_bs=5, programming_max_block_size=12)
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+
+    frame = transmitted(handle)
+
+    assert frame[0] == 0xFF
+    assert frame[4] == 12, 'MAX_BS_PGM must be programming.max_block_size (12), not max_bs (5)'
 
 
 @pytest.mark.parametrize('master_block_mode, interleaved_mode, slave_block_mode, expected', (

@@ -1230,6 +1230,10 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pending_command.active = FALSE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* DD63. SP3 and SP4a each shipped a defect that was exactly this omission for their
+             * own buffers -- a fill level surviving into the next session because Xcp_Init did not
+             * reset it. Only length needs clearing: data is never read past it. */
+            Xcp_Internal.pgm_block.length = 0x0000u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
