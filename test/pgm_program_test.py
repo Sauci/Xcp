@@ -769,6 +769,64 @@ def test_confirming_a_response_while_a_program_block_is_open_does_not_leak_slave
     assert transmitted(handle)[0] == 0xFF
 
 
+def test_confirming_a_set_mta_response_while_a_program_block_is_open_does_not_leak_slave_memory():
+    """Review, fix round 2. Companion to
+    test_confirming_a_response_while_a_program_block_is_open_does_not_leak_slave_memory above,
+    which only exercised ONE of the two triggers fix round 1's own finding 1 measured -- a refused
+    PROGRAM_MAX. The other, SET_MTA, had no test of its own: 1.1/1.6.5.1.1 requires SET_MTA to stay
+    available during a programming sequence, so it is not refused like PROGRAM_MAX is, it answers
+    0xFF and it actually moves Xcp_Internal.memory_transfer.address -- a different shape of
+    'ordinary response confirmed while a block is open' than the companion test above covers, and
+    the review's own reproduction measured it separately for exactly that reason.
+
+    Three consecutive SET_MTA/confirm cycles are exercised, matching the review's own reproduction
+    ('quiet across three consecutive SET_MTA/confirm cycles'), each to a distinct address, so a
+    module that only stayed quiet on the FIRST confirmation (say, because some one-shot guard
+    happened to suppress it) would still be caught by the second or third. The still-open block,
+    completed afterward with the correct remaining count, must land at the LAST of the three
+    addresses -- proof none of the three confirmations silently advanced the MTA on their own.
+
+    Mutation: reverting Xcp_Internal.pgm_block's own requested_elements/frame_elements back to
+    Xcp_Internal.block_transfer's (fix round 1, finding 1's own defect) makes this test fail
+    identically to its own companion above -- confirmed by actually performing that reversion
+    (task report)."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x3000)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # opens a block, 4 elements still outstanding
+
+    for mta in (0x4000, 0x5000, 0x6000):
+        handle.can_if_transmit.reset_mock()
+        handle.lib.Xcp_CanIfRxIndication(
+                0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00) +
+                                            tuple(u32_to_array(mta, 'LITTLE_ENDIAN'))))
+        handle.lib.Xcp_MainFunction()
+        assert transmitted(handle)[0] == 0xFF, \
+            'setup: SET_MTA must succeed even inside an open block (1.1/1.6.5.1.1)'
+
+        handle.can_if_transmit.reset_mock()
+        handle.xcp_read_slave_memory_u8.reset_mock()
+
+        handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+        assert handle.xcp_read_slave_memory_u8.call_count == 0, \
+            'confirming SET_MTA must never read slave memory for an unsolicited UPLOAD'
+        assert handle.can_if_transmit.call_count == 0, \
+            'confirming SET_MTA must not trigger any further, unsolicited transmission'
+
+    # the block itself must still be exactly as it was: completed with the correct remaining count,
+    # it must write at the LAST of the three addresses set above -- proof none of the three
+    # confirmations silently advanced it instead.
+    program_next(handle, 0x04, data=(0x07, 0x08, 0x09, 0x0A))
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x6000, 'the LAST of the three SET_MTA addresses'
+    assert length == 0x0A
+    assert bytes(p_data[0:length]) == bytes(range(0x01, 0x0B))
+    assert transmitted(handle)[0] == 0xFF
+
+
 def test_program_block_of_max_bs_pgm_frames_succeeds():
     """H3: PROGRAM_START's own response advertises programming.max_block_size (8, this suite's
     default) as MAX_BS_PGM, and 1.1/1.6.5.1.3 makes that value, together with MIN_ST_PGM, the bound

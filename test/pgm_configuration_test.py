@@ -222,6 +222,70 @@ def test_program_next_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off():
         'because the row is unreachable either way: %r' % matches[0]
 
 
+def test_gate_off_output_does_not_depend_on_any_other_programming_setting():
+    """Task 4 review, fix round 2. The two tests immediately above are hand-written siblings, one
+    per row (PROGRAM 0xD0 from Task 3's own review, PROGRAM_NEXT 0xCA from this task's own fix
+    round 1) -- each pins that ONE row's own minimum nibble against ONE way it could leak past the
+    gate. The review checked directly whether that generalises, by keying a THIRD row's own
+    minimum nibble (GET_SECTOR_INFO 0xCD) on something other than `programming.enabled` while the
+    gate stayed off: every one of the 108 tests in this file still passed, because
+    test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off only reads the enable bit and
+    test_the_gate_touches_only_pgm_ctoinfo_rows only compares which LINES differ between gate-on
+    and gate-off -- neither reads a value that stays constant across THAT comparison while still
+    depending on something it should not. Two more hand-written siblings would only have moved the
+    same gap to a fourth and fifth row; GET_SECTOR_INFO and GET_PGM_PROCESSOR_INFO both still have
+    no sibling of their own after this test is added, and neither needs one.
+
+    The property that actually closes the class, not merely one instance of it: with
+    `programming.enabled` FALSE, source/Xcp.c's own dispatcher never reads a PGM row's ctoInfo
+    fields beyond the enable bit it already tested false, so NOTHING else about a PGM row -- not
+    its minimum nibble, not any other field this sub-project or a later one adds -- may depend on
+    ANY other configuration value while the gate stays off. A baseline gate-off build is compared,
+    byte for byte, against one variant per OTHER setting this command group's own implementation
+    status could plausibly leak through -- `programming.max_block_size` moved to each of its two
+    extremes, and each of the six `xcp_program_*_api_enable` keys flipped off -- all eight with the
+    gate itself left off throughout. Comparing the WHOLE generated file, not only the ctoInfo
+    table, matches acceptance criterion 1's own scope (design doc Section 9): a leak could in
+    principle land anywhere the generator touches, not only in the block this sub-project's own two
+    siblings happen to read.
+
+    `resource_protection_programming` is deliberately NOT one of the variants, and finding out why
+    the hard way is exactly what building this test caught: it changes `protectedResource`'s own
+    PGM bit (source/Xcp_Cfg.c) whether or not `programming.enabled` is true, by design -- a slave
+    declares which resources need unlocking as a policy independent of whether the commands behind
+    them exist yet, the same way GET_SEED/UNLOCK already read that bit for resources a given build
+    does not implement at all. Including it as a variant made this test fail against CORRECT
+    output on the very first run, which is worth recording so the same false lead is not
+    rediscovered: resource protection is a different axis from command-implementation gating, and
+    this property is about the latter only.
+
+    Mutation-verified against two independent, unrelated leaks (task report), proving this is not
+    a sibling of the two tests above with extra steps: keying GET_SECTOR_INFO 0xCD's own minimum
+    nibble on `programming.max_block_size`, ungated on `programming.enabled` -- mirroring this
+    task's own fix round 1 mistake, on a row and a setting neither hand-written sibling above ever
+    names -- makes the `max_block_size` variant below fail; keying PROGRAM_FORMAT 0xCB's own
+    minimum nibble on `xcp_program_prepare_api_enable` the same, ungated, way makes the
+    corresponding api_enable variant fail instead. Both were reverted after."""
+    baseline = _generated_source(DefaultConfig())
+
+    variants = {
+        'programming_max_block_size=1': DefaultConfig(programming_max_block_size=1),
+        'programming_max_block_size=255': DefaultConfig(programming_max_block_size=255),
+        'xcp_program_clear_api_enable=False': DefaultConfig(xcp_program_clear_api_enable=False),
+        'xcp_program_api_enable=False': DefaultConfig(xcp_program_api_enable=False),
+        'xcp_program_max_api_enable=False': DefaultConfig(xcp_program_max_api_enable=False),
+        'xcp_program_start_api_enable=False': DefaultConfig(xcp_program_start_api_enable=False),
+        'xcp_program_reset_api_enable=False': DefaultConfig(xcp_program_reset_api_enable=False),
+        'xcp_program_prepare_api_enable=False': DefaultConfig(xcp_program_prepare_api_enable=False),
+    }
+
+    for label, config in variants.items():
+        assert _generated_source(config) == baseline, \
+            'programming.enabled is FALSE in both the baseline and this variant, so %s alone must ' \
+            'not change a single byte of the generated output -- something programming-related ' \
+            'reached Xcp_Cfg.c without the enable check source/Xcp.c relies on' % label
+
+
 def test_the_gate_touches_only_pgm_ctoinfo_rows():
     """The other half of acceptance criterion 1: not merely that the disabled state above is
     correct, but that turning the gate on touches NOTHING else. A generator defect that shifted
