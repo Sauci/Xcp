@@ -1394,6 +1394,90 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
     Xcp_PgmBlockAbort();
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
+    /* DD74 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). This
+     * function's own reasoning above -- no state of the previous session may survive into the
+     * next, XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.1 makes CONNECT the start of
+     * one -- applies just as much to a block transfer, a partial key, a seed and the MTA as it
+     * does to pgm_state/pgm_block above; until here none of the four was touched. Three measured
+     * consequences (test/session_teardown_test.py):
+     *
+     * - An UPLOAD (slave block mode) left open -- its first frame sent but never confirmed --
+     *   answered a later, unrelated transmission confirmation by continuing to read and transmit
+     *   the PREVIOUS session's memory into the new one: DD70's disclosure, reopened across a
+     *   reconnect.
+     * - A partial key -- GET_SEED then an UNLOCK that announces N bytes and delivers fewer --
+     *   left standing let a new session's UNLOCK complete it with only the still-missing bytes,
+     *   granting a resource the new session never actually supplied a full key for.
+     * - An MTA set in the previous session and never reset let a DOWNLOAD with no SET_MTA in the
+     *   new session write at the previous session's address.
+     *
+     * Xcp_BlockTransferAbort() (source/Xcp.c) already exists for the first -- Xcp_Cal.c's own
+     * DOWNLOAD/DOWNLOAD_MAX/DOWNLOAD_NEXT handlers already reuse it, at five call sites, to
+     * abandon a block whose own request turns out malformed or out of sequence -- so it is
+     * reused here too, rather than the two fields it clears being written directly.
+     * A stale block_transfer.slave_block_mode surviving this call is harmless, and deliberately
+     * left to Xcp_BlockTransferAbort() to not touch, for the same reason the DD70 fix that added
+     * it leaves it alone in every other caller: every reader of it is already gated on
+     * Xcp_BlockTransferIsActive() (== requested_elements != 0) first, which this call clears.
+     *
+     * key_master/key_slave: total_length back to 0x00u, matching Xcp_DTOCmdStdUnlock's own reset
+     * once a key completes (source/Xcp_Std.c below) -- total_length == 0 is that function's own
+     * "no transfer in progress" reading
+     * (`if (Xcp_Internal.key_master.total_length == 0x00u)`), the same value a fresh session must
+     * present. current_index is reset alongside it for the identical reason
+     * Xcp_DTOCmdStdUnlock's own completion does not bother resetting it there: nothing reads a
+     * stale current_index once its own total_length is 0, but a field that means nothing this
+     * session is reset to nothing instead of to a number that used to mean something in the one
+     * before it.
+     *
+     * seed: total_length back to 0x00u, for the identical reason as key_master's above -- an
+     * earlier task (DD73) corrected this field to mean the seed's own length rather than "bytes
+     * still to send", and 0 is that meaning's own "no seed issued this session" value, matching
+     * Xcp_DTOCmdStdGetSeed's mode=1 continuation gate
+     * (`if (Xcp_Internal.seed.total_length != 0x00u)`) and Xcp_DTOCmdStdUnlock's own
+     * post-completion reset of the same field, both below. current_index reset alongside it for
+     * the same reason as key_master's own above.
+     *
+     * memory_transfer: XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.6 lists SET_MTA as
+     * "Category: Standard, optional", and neither it nor 1.1/1.6.2.1.1 (DOWNLOAD, which uses the
+     * MTA) states what the MTA holds before a session's first SET_MTA -- checked against both the
+     * local 1.1 PDF's own OCR text and the 1.0 PDF (pdftotext -layout) for this comment, neither
+     * uses the word "undefined" anywhere in connection with the MTA; the only "undefined" in
+     * either document is 1.1/1.6.4.1.1.2's DAQ pointer, a different field with its own explicit
+     * daq_pointer.valid flag (source/Xcp_Internal.h) that this pair has no equivalent of. So: a
+     * master that omits SET_MTA is unaddressed by the letter of the text, not named
+     * non-conformant by it -- but the previous session's own address is still the worst available
+     * value, being the one this defect is measured writing through.
+     *
+     * A true "refuses to use" reset -- one this module would actively decline to write through --
+     * is not achievable here without inventing a validity flag this pair does not have, matching
+     * daq_pointer's own .valid above: Xcp_ReadSlaveMemoryTable/Xcp_WriteSlaveMemoryTable
+     * (source/Xcp.c) are integrator callbacks this module calls through unconditionally, with no
+     * address check of its own anywhere in this file, so nothing here can be made to refuse a
+     * write the way an exhausted daq_pointer already refuses WRITE_DAQ. Adding that concept for
+     * the MTA would mean a new field AND a new check at every one of memory_transfer's readers --
+     * Xcp_Cal.c, Xcp_Pag.c, the checksum helpers in this file, and, under
+     * XCP_FLASH_PROGRAMMING_ENABLED, Xcp_Pgm.c -- disproportionate to this task and a change of
+     * its own. Chosen instead: NULL_PTR, matching the one place this module already makes exactly
+     * this choice for exactly this reason -- Xcp_Init (source/Xcp.c) resets
+     * memory_transfer.address to NULL_PTR (and .extension to 0x00u) on its own entry into a fresh
+     * session, with no more of a "refuses to use it" guarantee than this line has, for the
+     * identical reason. This does not make a NULL write impossible; it makes any write land at a
+     * NEW address rather than the previous session's, which is what this defect is measured doing
+     * and what this line ends. */
+    Xcp_BlockTransferAbort();
+
+    Xcp_Internal.key_master.total_length = 0x00u;
+    Xcp_Internal.key_master.current_index = 0x00u;
+    Xcp_Internal.key_slave.total_length = 0x00u;
+    Xcp_Internal.key_slave.current_index = 0x00u;
+
+    Xcp_Internal.seed.total_length = 0x00u;
+    Xcp_Internal.seed.current_index = 0x00u;
+
+    Xcp_Internal.memory_transfer.address = NULL_PTR;
+    Xcp_Internal.memory_transfer.extension = 0x00u;
+
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 
     return E_OK;
