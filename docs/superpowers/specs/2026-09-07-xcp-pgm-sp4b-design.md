@@ -150,8 +150,25 @@ segment, and answers. It does not end the programming sequence — §1.6.5.1.3 g
 transfer sequence."* Inside an open block it answers `ERR_SEQUENCE`, which its §1.7.3.2.5 row
 lists.
 
-Outside a block it programs `MAX_CTO − 1` elements from the MTA with no length byte — the fixed
-size is the point of the command — and defers exactly as `PROGRAM` does.
+Outside a block it programs a fixed element count from the MTA with no length byte — the fixed size
+is the point of the command — and defers exactly as `PROGRAM` does.
+
+**That count is `MAX_CTO / AG − 1`, not the `MAX_CTO − 1` the prose states, and §1.6.5.2.6
+contradicts itself on the point.** Its position table places the data elements at
+`AG..MAX_CTO-AG`, so they begin at offsets `AG, 2·AG, … , MAX_CTO−AG` and there are
+`(MAX_CTO − AG) / AG` of them — that is, `MAX_CTO / AG − 1`. Its prose then says "the fixed length
+of MAX_CTO-1 elements", which agrees with the table only at `AG = BYTE`.
+
+The table is the reading to follow, because the prose is not merely imprecise at wider
+granularities — it is unsafe. At `AG = WORD` a literal `MAX_CTO − 1` *elements* is
+`2 × (MAX_CTO − 1)` bytes read out of a frame that holds `MAX_CTO`, overrunning it by nearly its
+own length. The module's `DOWNLOAD_MAX`, whose §1.6.2.2.2 layout is the same shape, already derives
+its count through `Xcp_ElementSizeForAddressGranularity` for the same reason, so this follows
+existing practice rather than inventing a reading.
+
+The suite exercises `AG = BYTE` almost exclusively, where the two formulas coincide — so no test
+distinguishes them, and the choice is recorded here rather than left to be re-derived by whoever
+first configures `WORD` or `DWORD` granularity.
 
 ### DD66 — the MTA post-increments only on a successful write
 
