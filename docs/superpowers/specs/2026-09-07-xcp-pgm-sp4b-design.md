@@ -124,8 +124,29 @@ and SP4a's `ERR_CMD_BUSY` guard would refuse it — breaking a block-transfer se
 that exists to protect a response buffer. The guard is correct; it simply must never see these
 frames.
 
-The counters come from the existing `Xcp_Internal.block_transfer`, which already tracks requested
-and per-frame element counts for `DOWNLOAD`/`DOWNLOAD_NEXT`. `PROGRAM_NEXT`'s negative response —
+**The counters live in `pgm_block`, beside the buffer they describe, and must NOT be
+`Xcp_Internal.block_transfer`.** An earlier revision of this decision said to reuse that struct,
+since it already tracks requested and per-frame element counts for `DOWNLOAD`/`DOWNLOAD_NEXT`. That
+is wrong, and the way it is wrong is worth recording, because reuse looked like the frugal choice.
+
+`Xcp_CanIfTxConfirmation` reads `block_transfer` to decide whether a confirmed CTO is a **slave
+block mode UPLOAD continuation**. Nothing in `Xcp_Pgm.c` can see that reader. So a non-zero
+`block_transfer` during a programming sequence makes an open PGM block indistinguishable from an
+outstanding UPLOAD, and any CTO transmitted while a block is open — `SET_MTA`, which §1.6.5.1.1
+*requires* to stay available during programming, or the `ERR_SEQUENCE` refusing a `PROGRAM_MAX`
+under DD65 — causes the slave, on confirmation, to read `MAX_CTO−1` bytes at the MTA, **transmit
+them unsolicited**, advance the MTA, underflow the element count, and repeat on every subsequent
+confirmation.
+
+Measured before the fix: seven `Xcp_ReadSlaveMemoryU8` calls and four consecutive `0xFF` frames
+from one refused `PROGRAM_MAX`. Slave memory on the wire, the MTA moved so the next block programs
+seven bytes off target — breaching DD66 and §9's criterion 4 — and a session that never answers
+again.
+
+The general rule this yields, and the reason it is stated here rather than in a comment: **a
+command group may not write shared state whose readers live outside its own file.** `pgm_block` is
+private to the PGM path, so its counters are safe there; `block_transfer` is not, and the cost of
+sharing it was not visible from the code doing the sharing. `PROGRAM_NEXT`'s negative response —
 `ERR_SEQUENCE` carrying the number of elements the slave expected — is `Xcp_FillErrorPacketWithData`,
 already in use by `Xcp_DTOCmdCalDownloadNext`. §1.7.3.2.5 lists `ERR_SEQUENCE` for `PROGRAM_NEXT`
 with the pre-action **`SYNCH+PROGRAM`**, which is the master-side confirmation of this design: a
