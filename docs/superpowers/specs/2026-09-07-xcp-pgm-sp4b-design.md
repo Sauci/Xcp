@@ -170,6 +170,25 @@ The MTA points at the start of a memory sector and the DWORD clear range gives t
 (§1.6.5.1.2). It defers through SP4a's machinery: erase is the slowest operation in the protocol,
 which is why §1.7.3.2.5 gives `PROGRAM_CLEAR` the t4 timeout where ordinary commands get t1.
 
+A failed erase answers **`ERR_ACCESS_DENIED` (0x24)**, and that choice is worth stating because the
+obvious alternative would have been a deviation. §1.6.5.1.2 names no error at all for a failed
+erase, so the matrix is the only guide, and §1.7.3.2.5's row for this command lists
+`ERR_CMD_BUSY`, `ERR_CMD_SYNTAX`, `ERR_OUT_OF_RANGE`, `ERR_ACCESS_DENIED`, `ERR_ACCESS_LOCKED` and
+`ERR_SEQUENCE` — no `ERR_GENERIC`. The error-code table defines `ERR_ACCESS_DENIED` as *"The memory
+location is not accessible"* against `ERR_GENERIC`'s bare *"Generic error"*, so the listed code is
+also the more precise one, not a substitute accepted for conformance's sake.
+
+The asymmetry across the PGM rows is coherent once both are read together. `PROGRAM_START` lists
+`ERR_GENERIC` and not `ERR_ACCESS_DENIED`, because §1.6.5.1.1 names `ERR_GENERIC` for a slave "not
+in a state which permits programming" — a statement about the *slave*. `PROGRAM_CLEAR` lists
+`ERR_ACCESS_DENIED` and not `ERR_GENERIC`, because its failure is a statement about the *memory*.
+
+**This is deliberately unlike DD57's deviation, and the distinction is the rule this design follows.**
+`PROGRAM_RESET` genuinely has no listed code for an integrator that reports failure, so DD57 adds
+one and records why. Here a listed code fits, so no deviation is taken — an avoidable deviation is
+not worth taking, and a row honoured exactly is one less thing for a conformance test to argue
+with.
+
 Mode byte `0x01`, functional access mode, is refused `ERR_OUT_OF_RANGE` — listed in its row with
 the action *"retry other parameter"*, which is precisely what a master should do with a mode this
 slave does not offer. Refusing it here rather than ignoring the mode byte matters: §1.6.5.1.2 makes
