@@ -419,9 +419,8 @@ happened, and never scan `call_args_list` for content.
 
 ## 9. Acceptance
 
-1. A build with `XCP_FLASH_PROGRAMMING_ENABLED` off is **behaviourally** identical to SP4a's, its
-   compiled objects byte-identical, and no programming-keyed value reaches the generated
-   configuration **source** — `Xcp_Cfg.c`, which is what the property test in
+1. A build with `XCP_FLASH_PROGRAMMING_ENABLED` off is **behaviourally** identical to SP4a's, and
+   no programming-keyed *behaviour* reaches the generated configuration **source** — `Xcp_Cfg.c`, which is what the property test in
    `test/pgm_configuration_test.py` reads. The generated *header* does gain
    `XCP_PGM_MAX_BLOCK_SIZE` and `XCP_MAX_CTO`, which is the point of DD62 and is not something the
    property test can see; the distinction is stated because an earlier revision of this criterion
@@ -435,9 +434,21 @@ happened, and never scan `call_args_list` for content.
    against the same wording; stating the intent plainly is better than a criterion every future
    sub-project must quietly round.
 
-   What the criterion protects is real and is now checked three ways: the compiled objects and
-   `libXcp.a` are byte-identical with the gate off (verified for SP4a by direct comparison); the
-   generated configuration's *functional* content is invariant, enforced by the property test in
+   **The "compiled objects byte-identical" clause has since been dropped too, and this is its third
+   and final correction.** It held until DD62's runtime `maxBsPgm` field arrived — a member of
+   `Xcp_GeneralType`, present whatever the gate says, which shifts four member offsets and changes
+   `Xcp.c.o`. Measured: removing the field returns that object to SP4a's hash exactly, and the
+   disassembly differs by four instructions, each an offset `+1`, with sections unchanged.
+
+   The field is unconditional on purpose. Gating it would make a *shared type* depend on the
+   programming gate, and today none does — `interface/Xcp_Types.h` contains no
+   `XCP_FLASH_PROGRAMMING_ENABLED` conditional at all. That property is worth more than an
+   object-hash criterion: it is what lets the gate-on compile guard build `source/*.c` against the
+   shipped gate-off configuration without producing a mix no real build would.
+
+   A criterion that has to be narrowed each time the design legitimately grows was measuring the
+   wrong thing. What it protects is behaviour, checked three ways: the generated configuration's
+   *functional* content is invariant, enforced by the property test in
    `test/pgm_configuration_test.py` that generates with the gate off while varying every other
    programming setting; and the suite is unchanged. That property test exists because a
    programming-keyed `ctoInfo` value leaked into gate-off output twice — Task 3 fixed it for
