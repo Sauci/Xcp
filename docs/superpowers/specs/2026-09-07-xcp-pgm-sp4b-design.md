@@ -85,8 +85,10 @@ which §4.1 excludes. No SWS requirement bears on the commands in this sub-proje
 DD56 chose to report the ordinary `maxBS` on the reasoning that this module does not change its
 communication parameters in programming mode. That was true of SP4a and is not true of SP4b.
 Accumulating a block (DD63) costs `MAX_BS_PGM × (MAX_CTO − 2)` bytes of RAM, and the configuration
-schema admits `maxBS` up to 255 with `maxCto` up to 65535 — about 64 KB at the limits, and 1530
-bytes at XCP-on-CAN's ordinary `MAX_CTO` of 8. A module that sized a buffer from a parameter chosen
+schema admits `max_bs` up to 255 with `max_cto` up to 256 — 64770 bytes at those limits, against
+1530 at XCP-on-CAN's ordinary `MAX_CTO` of 8. (An earlier revision of this paragraph reached the
+same figure by way of 65535, which is `max_dto`'s ceiling, not `max_cto`'s. The conclusion was
+right and the arithmetic behind it was not.) A module that sized a buffer from a parameter chosen
 for DAQ and calibration throughput would be letting an unrelated decision dictate its own
 footprint.
 
