@@ -113,6 +113,12 @@ def test_get_pgm_processor_info_is_answered_identically_from_xcp_pgm_idle_and_xc
         'must answer normally from XCP_PGM_IDLE (no PROGRAM_START has been sent): %r' % (idle_response,)
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
 
+    # reset_mock() before the exchange this guard reads, not after: the idle response above is also
+    # 0xFF-led, so without it the assertion is satisfied by stale data and a PROGRAM_START that
+    # silently stopped transmitting would leave this test re-exercising XCP_PGM_IDLE while claiming
+    # XCP_PGM_ACTIVE. test/pgm_clear_test.py's _active_session_with_mta, which this mirrors, resets
+    # for the same reason.
+    handle.can_if_transmit.reset_mock()
     program_start(handle)
     handle.lib.Xcp_MainFunction()
     assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_START must succeed to reach XCP_PGM_ACTIVE'
