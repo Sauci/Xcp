@@ -65,10 +65,16 @@ which §4.1 excludes. No SWS requirement bears on the commands in this sub-proje
   and a `PROGRAM_RESET` or a `CONNECT`. §1.6.5.1.1 requires the four commands in this sub-project
   to be refused until `PROGRAM_START` has succeeded, and SP4a implemented that gate with no users;
   SP4b is its first user.
-- **Block transfer.** `Xcp_BlockTransferIsActive`, `Xcp_BlockTransferAcknowledgeFrame`,
-  `Xcp_BlockTransferFrameElements`, `Xcp_BlockTransferAbort` and
-  `Xcp_FillErrorPacketWithData(XCP_E_ASAM_SEQUENCE, expected)` — the last being exactly
-  `PROGRAM_NEXT`'s negative response shape. `Xcp_DTOCmdCalDownloadNext` is the worked example.
+- **Block transfer, but only in part.** `Xcp_FillErrorPacketWithData(XCP_E_ASAM_SEQUENCE,
+  expected)` is exactly `PROGRAM_NEXT`'s negative response shape, and
+  `Xcp_BlockTransferFrameElements` is a pure function taking its inputs as parameters, so both are
+  safe to share. `Xcp_DTOCmdCalDownloadNext` is the worked example for the response.
+
+  **`Xcp_BlockTransferIsActive`, `Xcp_BlockTransferAcknowledgeFrame` and `Xcp_BlockTransferAbort`
+  are NOT reusable here**, and an earlier revision of this section listed them as though they were.
+  All three read or write `Xcp_Internal.block_transfer`, which `Xcp_CanIfTxConfirmation` also reads
+  to recognise a slave block mode UPLOAD continuation — see DD63 for what that cost when it was
+  tried. The PGM path keeps its own counters in `pgm_block`.
 - **`Xcp_BlockTransferWriteSlaveMemory` is NOT reusable here.** It writes RAM through
   `Xcp_WriteSlaveMemoryTable`, synchronously. Flash is neither.
 - **Every error code needed** is in `interface/Xcp_Errors.h`.
@@ -327,7 +333,8 @@ call and an implementation that merely retained it would be correct by accident.
 
 - `source/Xcp_Pgm.c` — the five handlers, and one `case` each in `Xcp_PgmPollPendingCommand` and
   `Xcp_PgmCompletePendingCommand`.
-- `source/Xcp_Internal.h` — `pgm_block` (the buffer and its fill level), and the handler
+- `source/Xcp_Internal.h` — `pgm_block`: the buffer, its fill level, **and the block's element
+  counters**, which DD63 forbids putting in `Xcp_Internal.block_transfer`. Plus the handler
   declarations.
 - `source/Xcp.c` — `Xcp_PIDTable` entries for 0xD1, 0xD0, 0xCA, 0xC9 and 0xCE, replacing
   `Xcp_CmdNotImplemented`.
