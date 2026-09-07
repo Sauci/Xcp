@@ -55,6 +55,14 @@ def program_max(handle, data):
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xC9,) + tuple(data)))
 
 
+def program_next(handle, elements, data=()):
+    """PROGRAM_NEXT (0xCA, Task 4), without pumping Xcp_MainFunction -- mirrors program() above.
+    Byte 1 is the remaining element count the master believes the slave still expects (1.1/
+    1.6.5.2.5); AG=1 means no alignment byte, so the data begins immediately at byte 2, exactly as
+    program() above has it."""
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xCA, elements) + tuple(data)))
+
+
 def test_program_is_refused_err_sequence_before_program_start_succeeds():
     """1.1/1.6.5.1.1 requires PROGRAM refused until PROGRAM_START has succeeded -- the same gate
     Xcp_DTOCmdPgmProgramClear's own handler carries (Task 2, DD67), and this is that gate's second
@@ -176,26 +184,55 @@ def test_program_with_zero_elements_ends_the_segment_without_calling_the_integra
     assert handle.xcp_program_write.call_count == 0
 
 
-def test_program_declaring_more_elements_than_fit_a_single_frame_is_refused_err_out_of_range():
-    """Task 3 does not implement master block mode for PROGRAM (design doc title: 'PROGRAM without
-    block mode') -- PROGRAM_NEXT, which Task 4 adds, is what a genuine multi-frame block needs. A
-    declared count larger than one CTO frame can carry is therefore refused outright, mirroring
-    Xcp_DTOCmdCalDownload's own identical choice when ITS OWN masterBlockModeSupported is FALSE
-    (Xcp_DataTransferInitialize, source/Xcp.c) --
+def test_program_declaring_more_elements_than_fit_a_single_frame_is_refused_err_out_of_range_without_master_block_mode():
+    """Task 3 did not implement master block mode for PROGRAM (design doc title: 'PROGRAM without
+    block mode') -- PROGRAM_NEXT, which Task 4 adds, is what a genuine multi-frame block needs.
+    Task 4 wires Xcp_Ptr->general->masterBlockModeSupported into this decision (DD63): a declared
+    count larger than one CTO frame can carry is refused outright ONLY when master block mode is
+    unsupported, mirroring Xcp_DTOCmdCalDownload's own identical choice when ITS OWN
+    masterBlockModeSupported is FALSE (Xcp_DataTransferInitialize, source/Xcp.c) --
     test_download_returns_err_out_of_range_when_the_count_exceeds_a_single_packet
     (test/download_test.py) pins the identical condition for that sibling command. At MAX_CTO=8,
     AG=BYTE, a single frame carries at most 6 data bytes (2 header bytes reserved); 7 is one past
     that.
 
+    master_block_mode=False is passed explicitly, unlike Task 3's own version of this test:
+    DefaultConfig's own default is True (test/parameter.py), which after Task 4 opens a block
+    instead of refusing -- test_program_next_accumulates_a_multi_frame_block_into_one_contiguous_write
+    below is what pins THAT behaviour. Without forcing the flag off here, this test would be
+    exercising block mode by accident and its own name would no longer describe what it asserts.
+
     call_count == 0 is the assertion that matters: a handler that copied the 6 bytes it COULD hold
     and called Xcp_ProgramWrite anyway would silently discard the master's 7th byte and report
     success for less than what was asked -- exactly the silent-partial-write class of bug the
     call-count assertion, not the wire code alone, is what catches."""
-    handle = pgm_program_handle()
+    handle = pgm_program_handle(master_block_mode=False)
     _active_session_with_mta(handle)
 
     assert send(handle, (0xD0, 0x07) + tuple(range(7)))[0:2] == (0xFE, 0x22), 'ERR_OUT_OF_RANGE'
     assert handle.xcp_program_write.call_count == 0
+
+
+def test_program_with_master_block_mode_off_still_succeeds_when_the_count_fits_a_single_frame():
+    """Closes a mutation gap in Xcp_DTOCmdPgmProgram's own block-mode-off refusal, whose condition
+    is `(frame_elements != number_of_data_elements) && (masterBlockModeSupported == FALSE)`: every
+    OTHER test in this suite passing master_block_mode=False also happens to send an OVERSIZED
+    count, so deleting the `frame_elements != number_of_data_elements` term (leaving the refusal
+    keyed on masterBlockModeSupported alone) would refuse every single PROGRAM whenever block mode
+    is off, fitting or not -- and nothing above would notice, since the term's own deletion changes
+    nothing for an already-oversized count. A 3-element count, well under the 6-byte single-frame
+    capacity at this suite's default MAX_CTO=8, must still succeed with block mode off."""
+    handle = pgm_program_handle(master_block_mode=False)
+    _active_session_with_mta(handle, address=0x2800)
+
+    program(handle, 0x03, data=(0x11, 0x22, 0x33))
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x2800
+    assert length == 0x03
+    assert bytes(p_data[0:length]) == bytes((0x11, 0x22, 0x33))
+    assert transmitted(handle)[0] == 0xFF
 
 
 def test_program_declaring_more_bytes_than_the_frame_actually_carries_answers_err_cmd_syntax():
@@ -414,3 +451,404 @@ def test_program_max_also_leaves_the_mta_unmoved_on_a_failed_write():
     address, _p_data, _length, _p_status_code = handle.xcp_program_write.call_args[0]
     assert int(handle.ffi.cast('uintptr_t', address)) == 0x4000, \
         'a failed PROGRAM_MAX write must not have advanced the MTA either'
+
+
+# ---------------------------------------------------------------------------------------------
+# Task 4: PROGRAM_NEXT and master block mode (DD63).
+# ---------------------------------------------------------------------------------------------
+
+
+def test_program_next_is_refused_err_sequence_before_program_start_succeeds():
+    """1.1/1.6.5.1.1 lists PROGRAM_NEXT as the fourth of the four commands refused until
+    PROGRAM_START has succeeded, beside PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX above -- this is
+    that gate's fourth real user. pgm_program_handle() connects but never sends PROGRAM_START, so
+    pgm_state is XCP_PGM_IDLE here by construction, and no block can possibly be open either."""
+    handle = pgm_program_handle()
+
+    assert send(handle, (0xCA, 0x01, 0xAA))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
+    assert handle.xcp_program_write.call_count == 0, 'the integrator must not be reached either'
+
+
+def test_program_next_without_an_open_block_is_refused_err_sequence_expecting_zero():
+    """1.1/1.6.5.2.5: PROGRAM_NEXT is only legal following a PROGRAM (or a preceding PROGRAM_NEXT)
+    that left a block open. No PROGRAM has been sent here, so Xcp_BlockTransferIsActive() is
+    FALSE -- 1.7.3.2.5's own PROGRAM_NEXT row lists ERR_SEQUENCE for this, the same code the
+    session gate above answers, and PROGRAM_NEXT's negative response always carries the number of
+    elements the slave expects (1.1/1.6.5.2.5) -- 0 here, since no block was ever requested at
+    all. Distinguished from the session-gate test above by pgm_state: the session IS active here
+    (_active_session_with_mta), so this pins Xcp_DTOCmdPgmProgramNext's OWN
+    Xcp_BlockTransferIsActive() check, not the outer pgm_state gate it shares with the other three
+    commands."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle)
+
+    assert send(handle, (0xCA, 0x01, 0xAA))[0:3] == (0xFE, 0x29, 0x00), \
+        'ERR_SEQUENCE, expecting 0 elements'
+    assert handle.xcp_program_write.call_count == 0
+
+
+def test_program_next_accumulates_a_multi_frame_block_into_one_contiguous_write():
+    """DD63: 'PROGRAM opens a block and its payload is copied into Xcp_Internal.pgm_block. Each
+    PROGRAM_NEXT appends.' Three frames (6, 6 and 2 elements, at MAX_CTO=8's own 6-byte-per-frame
+    ceiling) must reach Xcp_ProgramWrite as ONE call carrying all 14 bytes concatenated in order,
+    at the MTA the block opened at -- not the address of whichever frame happened to arrive last.
+
+    Asserts the concatenation itself, not merely a byte count or the final response: a handler
+    that let a later frame overwrite earlier ones (keeping only the tail of the block) would still
+    answer 0xFF with call_count 1 and even the right LENGTH, and only the actual bytes would catch
+    it.
+
+    Mutation (fix round verification): making the copy in Xcp_DTOCmdPgmProgramNext start at index
+    0 instead of Xcp_Internal.pgm_block.length -- i.e. each frame overwriting the buffer instead of
+    appending to it -- makes the final bytes equal the LAST frame's own 2 bytes rather than all 14,
+    which the equality assertion below catches directly."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2000)
+
+    payload = tuple(range(0x01, 0x0F))  # 14 recognisable, distinct bytes: 0x01..0x0E
+    handle.can_if_transmit.reset_mock()
+
+    program(handle, 0x0E, data=payload[0:6])           # frame 1 (PROGRAM): 6 of 14, 8 remaining
+    program_next(handle, 0x08, data=payload[6:12])      # frame 2 (PROGRAM_NEXT): 6 of 8, 2 remaining
+    program_next(handle, 0x02, data=payload[12:14])     # frame 3 (PROGRAM_NEXT): the last 2, completes
+
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.xcp_program_write.call_count == 1, 'once per BLOCK, not once per frame'
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x2000, 'the MTA the block opened at'
+    assert length == 0x0E, 'the true total length of the whole block'
+    assert bytes(p_data[0:length]) == bytes(payload), 'the exact concatenation, in order'
+    assert transmitted(handle)[0] == 0xFF
+
+
+def test_program_next_intermediate_frame_transmits_nothing():
+    """DD63: 'Intermediate frames answer nothing and complete entirely in receive context ... They
+    set *responseExpected = FALSE, copy their bytes, and return -- no callback, no polling, no
+    pending slot.' 1.1/1.6.5.1.3: 'The slave device will acknowledge only the last PROGRAM_NEXT
+    command packet.'
+
+    Deliberately NOT asserted by transmitted(handle) is None alone right after the frame arrives --
+    that is true whatever the module did with the bytes, since Xcp_CanIfRxIndication itself never
+    transmits (task brief's own trap). Xcp_MainFunction is pumped twice after the intermediate
+    frame and CanIf_Transmit's own call_count is asserted to still be zero, which is what actually
+    distinguishes 'correctly withheld' from 'not attempted yet'. Xcp_ProgramWrite's own call_count
+    is asserted alongside it: the block is not yet complete (2 of 14 bytes still outstanding), so
+    the integrator must not have been reached either. Completing the block afterwards, and getting
+    a real response then, is the contrast that proves the module is not simply broken."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2100)
+
+    program(handle, 0x0E, data=tuple(range(0x01, 0x07)))       # frame 1: 6 of 14, 8 remaining
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_program_write.reset_mock()
+
+    program_next(handle, 0x08, data=tuple(range(0x07, 0x0D)))  # frame 2: 6 of 8, 2 remaining -- NOT last
+
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_count == 0, \
+        'an intermediate PROGRAM_NEXT must transmit nothing, even after Xcp_MainFunction runs'
+    assert handle.xcp_program_write.call_count == 0, \
+        'the integrator must not be reached until the block completes'
+
+    program_next(handle, 0x02, data=(0x0D, 0x0E))               # frame 3: the last 2, completes
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'the completing frame DOES answer, unlike the ones before it'
+
+
+def test_program_next_short_final_frame_completes_the_block_and_writes_the_true_length():
+    """A final PROGRAM_NEXT frame carrying fewer bytes than a full frame's own capacity (1 of a
+    possible 6, at MAX_CTO=8) must still complete the block and report the TRUE accumulated
+    length (7), not the frame's own physical capacity and not merely the first frame's 6."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2200)
+
+    program(handle, 0x07, data=tuple(range(0x01, 0x07)))  # frame 1: 6 of 7, 1 remaining
+    handle.can_if_transmit.reset_mock()
+
+    program_next(handle, 0x01, data=(0x07,))               # short final frame: 1 byte, not 6
+
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x2200
+    assert length == 0x07, 'the true total length, not the last frames own capacity'
+    assert bytes(p_data[0:length]) == bytes(range(0x01, 0x08))
+    assert transmitted(handle)[0] == 0xFF
+
+
+def test_program_next_wrong_element_count_answers_err_sequence_with_the_expected_count():
+    """1.1/1.6.5.2.5: 'It contains the remaining number of data elements to transmit. The slave
+    device will use this information to detect lost packets. If a sequence error has been
+    detected, the error code ERR_SEQUENCE will be returned. The negative response will contain the
+    expected number of data elements.' 4 elements remain (10 declared, 6 sent by the opening
+    PROGRAM); this PROGRAM_NEXT declares 3 instead. Xcp_FillErrorPacketWithData is the same
+    mechanism Xcp_DTOCmdCalDownloadNext already uses for the identical shape of response
+    (source/Xcp_Cal.c).
+
+    Asserted on byte 2 itself, not merely on the ERR_SEQUENCE code: a handler that answered
+    ERR_SEQUENCE with the WRONG count (the just-received 3, say, instead of the still-expected 4)
+    would still pass an assertion that stopped at byte 1."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2300)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # frame 1: 6 of 10, 4 remaining
+    handle.can_if_transmit.reset_mock()
+
+    response = send(handle, (0xCA, 0x03, 0xAA, 0xBB, 0xCC))  # declares 3; 4 are actually expected
+
+    assert response[0:3] == (0xFE, 0x29, 0x04), 'ERR_SEQUENCE, carrying the expected count (4)'
+    assert handle.xcp_program_write.call_count == 0, 'a rejected frame must not reach the integrator'
+
+
+def test_program_next_wrong_element_count_discards_the_block_rather_than_resuming_it():
+    """DD63: a block that goes wrong is discarded, not resumed -- 1.7.3.2.5 gives PROGRAM_NEXT the
+    pre-action SYNCH+PROGRAM, so the master restarts from its own PROGRAM rather than retrying the
+    failed PROGRAM_NEXT. Pinned here by sending a well-formed PROGRAM_NEXT (matching the count the
+    aborted block was still expecting) right after the sequence error: were the block still
+    considered open, this would look like a valid continuation and be accepted; discarded, it is
+    instead just another PROGRAM_NEXT with no block open at all, refused ERR_SEQUENCE expecting 0."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2350)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # frame 1: 6 of 10, 4 remaining
+    assert send(handle, (0xCA, 0x03, 0xAA, 0xBB, 0xCC))[0:2] == (0xFE, 0x29), \
+        'setup: wrong count -- aborts the block'
+    # PROGRAM_NEXT's own Xcp_CTOErrorMatrix entry carries XCP_INTERNAL_ERR_CMD_BUSY, so this
+    # response must be confirmed before the exchange under test, exactly as _active_session_with_mta
+    # confirms PROGRAM_START's and SET_MTA's own responses -- otherwise the SECOND PROGRAM_NEXT
+    # below is answered ERR_CMD_BUSY (or, before the pending one is even inspected, transmits
+    # nothing at all this cycle), not the ERR_SEQUENCE this test means to pin.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xCA, 0x04, 0x01, 0x02, 0x03, 0x04))[0:3] == (0xFE, 0x29, 0x00), \
+        'the block is gone, not merely paused: this now-well-formed continuation finds nothing open'
+    assert handle.xcp_program_write.call_count == 0
+
+
+def test_program_next_declaring_more_bytes_than_the_frame_actually_carries_answers_err_cmd_syntax():
+    """Mirrors PROGRAM's own
+    test_program_declaring_more_bytes_than_the_frame_actually_carries_answers_err_cmd_syntax,
+    exercised against Xcp_DTOCmdPgmProgramNext's own identical guard (source/Xcp_Pgm.c): without
+    it, the handler would copy whatever follows the received PDU into pgm_block, and from there
+    into flash. 4 elements remain (10 declared, 6 already sent by the opening PROGRAM); this
+    PROGRAM_NEXT correctly DECLARES 4 (matching what is actually expected, so the wrong-count
+    branch above is not what answers this) but only actually sends 1 data byte."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2900)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # frame 1: 6 of 10, 4 remaining
+    handle.can_if_transmit.reset_mock()
+
+    assert send(handle, (0xCA, 0x04, 0x11))[0:2] == (0xFE, 0x21), 'ERR_CMD_SYNTAX'
+    assert handle.xcp_program_write.call_count == 0
+
+    # DD63: this failed frame discards the block too, exactly as the wrong-count case does above --
+    # confirmed the same way, by a well-formed follow-up PROGRAM_NEXT finding nothing open.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    assert send(handle, (0xCA, 0x04, 0x01, 0x02, 0x03, 0x04))[0:3] == (0xFE, 0x29, 0x00)
+
+
+def test_program_declaring_a_block_longer_than_the_buffer_answers_err_memory_overflow():
+    """DD63: 'A block whose declared length exceeds MAX_BS_PGM x (MAX_CTO - 2) is refused
+    ERR_MEMORY_OVERFLOW, which Section 1.7.3.2.5 lists for PROGRAM.' programming_max_block_size=1
+    sizes the buffer to MAX(1*(8-2), 8-1) = 7 bytes (source/Xcp_Internal.h); 10 declared elements
+    is 3 more than that, so the block must be refused up front, on the OPENING PROGRAM itself,
+    before a single PROGRAM_NEXT is ever needed.
+
+    call_count == 0 is what distinguishes this from a handler that accepted the first 6 bytes
+    anyway and only discovered the overflow on a later PROGRAM_NEXT -- DD63 requires the refusal
+    on the declared total, checked before anything is copied."""
+    handle = pgm_program_handle(programming_max_block_size=1, max_cto=8)
+    _active_session_with_mta(handle, address=0x2400)
+
+    assert send(handle, (0xD0, 0x0A) + tuple(range(6)))[0:2] == (0xFE, 0x30), 'ERR_MEMORY_OVERFLOW'
+    assert handle.xcp_program_write.call_count == 0, 'nothing written'
+
+
+def test_program_max_inside_an_open_block_is_refused_err_sequence():
+    """DD65 (H1): 1.6.5.2.6, 'This command does not support block transfer and it may not be used
+    within a block transfer sequence.' Xcp_DTOCmdPgmProgramMax's own Xcp_BlockTransferIsActive()
+    guard (source/Xcp_Pgm.c) existed since Task 3 but had no PROGRAM in the build that could ever
+    leave it TRUE -- Task 4's own PROGRAM_NEXT is what finally drives it. A block is opened (10
+    declared, 6 sent, 4 still outstanding) and PROGRAM_MAX is sent into the middle of it.
+
+    Mutation: deleting (or inverting) the `Xcp_BlockTransferIsActive() == TRUE` branch in
+    Xcp_DTOCmdPgmProgramMax falls through to its own length/copy logic and answers 0xFF instead of
+    (0xFE, 0x29) -- caught directly below, and confirmed by actually performing this deletion
+    (task report)."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2500)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # opens a block, 4 elements still outstanding
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_program_write.reset_mock()
+
+    assert send(handle, (0xC9,) + tuple(range(7)))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
+    assert handle.xcp_program_write.call_count == 0, 'the integrator must not be reached either'
+
+
+def test_program_block_of_max_bs_pgm_frames_succeeds():
+    """H3: PROGRAM_START's own response advertises programming.max_block_size (8, this suite's
+    default) as MAX_BS_PGM, and 1.1/1.6.5.1.3 makes that value, together with MIN_ST_PGM, the bound
+    on how many packets a master block mode PROGRAM sequence may contain. At this suite's default
+    MAX_CTO=8, AG=BYTE, a single frame carries at most 6 elements, so a block declaring the
+    advertised maximum of MAX_BS_PGM(8) frames' worth -- 48 elements -- needs exactly 1 PROGRAM
+    plus 7 PROGRAM_NEXT frames, and this is the first test in the suite that sends that many and
+    confirms the advertised number is actually achievable end to end, not merely reported."""
+    handle = pgm_program_handle()  # defaults: programming_max_block_size=8, max_cto=8
+    _active_session_with_mta(handle, address=0x2600)
+
+    total = 8 * (8 - 2)  # MAX_BS_PGM * (MAX_CTO - 2) == 48, exactly 8 frames of 6 bytes each
+    payload = tuple(range(total))
+    handle.can_if_transmit.reset_mock()
+
+    program(handle, total, data=payload[0:6])
+    remaining, offset, frame_count = total - 6, 6, 1
+    while remaining > 0:
+        chunk = payload[offset:offset + 6]
+        program_next(handle, remaining, data=chunk)
+        remaining -= len(chunk)
+        offset += len(chunk)
+        frame_count += 1
+
+    assert frame_count == 8, 'setup: exactly MAX_BS_PGM frames must have been sent'
+
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.xcp_program_write.call_count == 1
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x2600
+    assert length == total
+    assert bytes(p_data[0:length]) == bytes(payload)
+    assert transmitted(handle)[0] == 0xFF, \
+        'a block of exactly the advertised MAX_BS_PGM frames must succeed, not overflow'
+
+
+def test_program_next_defers_through_the_pending_slot_and_keeps_passing_the_whole_block():
+    """The completing PROGRAM_NEXT frame defers through the identical pending-command machinery
+    PROGRAM's own test_program_defers_through_the_pending_slot_and_keeps_passing_the_same_bytes
+    pins, exercised through the command that adds a NEW case to Xcp_PgmPollPendingCommand's and
+    Xcp_PgmCompletePendingCommand's own switches (source/Xcp_Pgm.c). A module that stored the wrong
+    PID in Xcp_Internal.pending_command, or that failed to add PROGRAM_NEXT's own case to either
+    switch, would either dispatch to the wrong completion function on the next poll or fall into
+    the `default` branch, which returns E_OK immediately without ever presenting the accumulated
+    bytes again -- caught here by asserting the FULL 14-byte block is still what the LAST poll
+    presents to the integrator, not just that a response eventually arrives."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x2700)
+
+    state = dict(calls=0)
+
+    def busy_then_complete(_address, _p_data, _length, p_status_code):
+        state['calls'] += 1
+        if state['calls'] <= 1:
+            return handle.define('E_NOT_OK')
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_program_write.side_effect = busy_then_complete
+
+    payload = tuple(range(0x01, 0x0F))
+    program(handle, 0x0E, data=payload[0:6])
+    program_next(handle, 0x08, data=payload[6:12])
+    handle.can_if_transmit.reset_mock()
+
+    program_next(handle, 0x02, data=payload[12:14])  # completes; first Xcp_ProgramWrite call is busy
+
+    assert transmitted(handle) is None, 'withheld while the integrator is still busy (DD53)'
+
+    handle.lib.Xcp_MainFunction()  # second call completes
+
+    assert transmitted(handle)[0] == 0xFF, 'the deferred PROGRAM_NEXT response arrives'
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args_list[-1][0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x2700
+    assert length == 0x0E
+    assert bytes(p_data[0:length]) == bytes(payload), \
+        'the same, complete, concatenated block must still be presented on the completing poll'
+
+
+def test_program_a_second_block_does_not_accumulate_onto_the_first():
+    """Companion to test_xcp_init_clears_a_half_open_program_block below, and the test that
+    actually catches the mutation that one's own docstring first claimed to (task report corrects
+    that claim; this test is the fix). Two ordinary, independent single-frame PROGRAM commands, 3
+    bytes then 2, in the SAME session -- no Xcp_Init between them. Xcp_DTOCmdPgmProgram's opening
+    frame sets Xcp_Internal.pgm_block.length by direct assignment, not by accumulating onto
+    whatever it already held (source/Xcp_Pgm.c), so the second block's own write must present
+    length 2, not 5.
+
+    Mutation: changing that assignment from `pgm_block.length = frame_length` to
+    `pgm_block.length += frame_length` makes the second call's own length 3+2=5 instead of 2,
+    caught directly below -- confirmed by actually performing this mutation (task report). The
+    SAME mutation does NOT make test_xcp_init_clears_a_half_open_program_block below fail: an
+    Xcp_Init sits between that test's two PROGRAM calls, and its OWN (unmutated)
+    `pgm_block.length = 0x0000u` already re-zeroes the field before the mutated line ever runs
+    again, masking it completely. This test has no Xcp_Init in the way, so it is the one that
+    actually exercises PROGRAM's own opening-frame assignment twice in a row."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x1500)
+
+    program(handle, 0x03, data=(0x11, 0x22, 0x33))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    handle.xcp_program_write.reset_mock()
+
+    program(handle, 0x02, data=(0x44, 0x55))
+    handle.lib.Xcp_MainFunction()
+
+    _address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert length == 0x02, 'must not have accumulated the first blocks own 3 bytes on top'
+    assert bytes(p_data[0:length]) == bytes((0x44, 0x55))
+
+
+def test_xcp_init_clears_a_half_open_program_block():
+    """H2. Task 1 added Xcp_Internal.pgm_block.length's own clearing to Xcp_Init and disclosed
+    that nothing exercised it, because nothing read the field across sessions before block mode
+    existed to make PROGRAM_NEXT's own append depend on where a previous block left off.
+
+    A block is opened and left half-open (7 declared, only the first 6 sent -- 1 element still
+    outstanding, no completing PROGRAM_NEXT ever sent). Xcp_Init runs, the module reconnects and
+    opens a brand new session, and a FRESH single-frame block is programmed. The integrator must
+    receive exactly that fresh block's own 2 bytes at its own new MTA -- not the earlier session's
+    address, length, or leftover bytes.
+
+    Measured, not assumed (task report): this test passes whether or not Xcp_Init's own clearing
+    of pgm_block.length actually runs, and stays passing even with that line deleted outright.
+    Xcp_DTOCmdPgmProgram's opening frame sets Xcp_Internal.pgm_block.length by direct assignment
+    rather than by accumulating onto whatever it already held, so a fresh PROGRAM always
+    re-establishes the block from index 0 itself regardless of what Xcp_Init did or did not clear
+    first -- Xcp_Init's own clearing is therefore not independently load-bearing THROUGH this
+    particular path, and this test does not prove it is. What IS still real, and still caught by a
+    test, is the underlying property Xcp_Init's clear defends alongside PROGRAM's own assignment:
+    test_program_a_second_block_does_not_accumulate_onto_the_first above pins the identical
+    'a fresh block must not inherit an earlier one's bytes' invariant with no Xcp_Init in the way,
+    and IS killed by mutating PROGRAM's own opening-frame assignment from `=` to `+=` -- see its
+    own docstring. Xcp_Init's clear is kept regardless, as the same kind of documented,
+    currently-unreachable defence in depth Xcp_Internal.h already keeps for the buffer-overflow
+    guards below Task 3's own PROGRAM_MAX: a second, independent line protecting the same
+    invariant is not dead code merely because one test cannot distinguish its presence from its
+    absence."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x7000)
+
+    program(handle, 0x07, data=(0x11, 0x22, 0x33, 0x44, 0x55, 0x66))  # half-open: 1 element outstanding
+
+    handle.lib.Xcp_Init(handle.ffi.cast('const Xcp_Type *', handle.config.lib.Xcp))
+
+    connect(handle)
+    _active_session_with_mta(handle, address=0x9000)
+    handle.xcp_program_write.reset_mock()
+    handle.can_if_transmit.reset_mock()
+
+    program(handle, 0x02, data=(0xAA, 0xBB))
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x9000
+    assert length == 0x02, 'must not have inherited the half-open blocks own declared/remaining length'
+    assert bytes(p_data[0:length]) == bytes((0xAA, 0xBB)), 'must not have inherited its leftover bytes'
+    assert transmitted(handle)[0] == 0xFF

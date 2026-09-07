@@ -948,6 +948,19 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
 uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM_NEXT, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.5.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. Gated on Xcp_Internal.pgm_state exactly as PROGRAM, PROGRAM_CLEAR
+ * and PROGRAM_MAX are (1.1/1.6.5.1.1 lists this as the fourth of the four commands refused until
+ * PROGRAM_START has succeeded), and additionally on Xcp_BlockTransferIsActive(): unlike
+ * PROGRAM_MAX's identical-looking check above, this one must find a block OPEN to proceed, since
+ * this command exists only to continue one PROGRAM began (DD63). Produces no new integrator
+ * callback of its own -- every completing frame, whichever command received it, writes through
+ * the identical Xcp_ProgramWrite contract PROGRAM and PROGRAM_MAX already use.
+ */
+uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in

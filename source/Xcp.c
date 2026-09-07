@@ -335,7 +335,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_MAX 0xC9 */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xCA */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramNext, /* PROGRAM_NEXT 0xCA, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_NEXT 0xCA, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xCB */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramPrepare, /* PROGRAM_PREPARE 0xCC, optional */

@@ -53,15 +53,17 @@ static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode);
 static void Xcp_PgmCompleteProgramClear(uint8 statusCode);
 
 /**
- * @brief Finishes PROGRAM and PROGRAM_MAX, building the positive response or ERR_ACCESS_DENIED
- * from statusCode, and advancing the MTA on success only (DD66).
+ * @brief Finishes PROGRAM, PROGRAM_MAX and PROGRAM_NEXT, building the positive response or
+ * ERR_ACCESS_DENIED from statusCode, and advancing the MTA on success only (DD66).
  * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
- * Xcp_DTOCmdPgmProgram and Xcp_DTOCmdPgmProgramMax below both call it directly for an integrator
- * whose work completes instantaneously (spec Section 4) -- the same function
- * Xcp_PgmCompletePendingCommand dispatches to when either command instead completes on a later
- * Xcp_MainFunction poll. Shared between the two commands (Task 3) because both write through the
- * identical Xcp_ProgramWrite contract, from the identical Xcp_Internal.pgm_block standing state --
- * there is nothing left to distinguish once the write itself has been issued.
+ * Xcp_DTOCmdPgmProgram, Xcp_DTOCmdPgmProgramMax and Xcp_DTOCmdPgmProgramNext below all call it
+ * directly for an integrator whose work completes instantaneously (spec Section 4) -- the same
+ * function Xcp_PgmCompletePendingCommand dispatches to when any of the three instead completes on
+ * a later Xcp_MainFunction poll. Shared between all three commands (PROGRAM and PROGRAM_MAX since
+ * Task 3; PROGRAM_NEXT joins them in Task 4, DD63) because all three write through the identical
+ * Xcp_ProgramWrite contract, from the identical Xcp_Internal.pgm_block standing state -- there is
+ * nothing left to distinguish once the write itself has been issued, whether that buffer holds one
+ * frame's own bytes or several PROGRAM_NEXT frames' accumulated ones.
  */
 static void Xcp_PgmCompleteProgramWrite(uint8 statusCode);
 
@@ -305,85 +307,131 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
             const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
             const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
             const uint8 frame_elements = Xcp_BlockTransferFrameElements(number_of_data_elements, element_size);
-            const uint16 length = (uint16)(frame_elements * element_size);
+            const uint16 frame_length = (uint16)(frame_elements * element_size);
+            const uint16 total_length = (uint16)(number_of_data_elements * element_size);
 
-            /* Task 3 is "PROGRAM without block mode" (design doc title): a declared count this
-             * module cannot receive within the one frame it arrived on is refused up front, the
-             * same choice Xcp_DTOCmdCalDownload makes through Xcp_DataTransferInitialize when ITS
-             * OWN masterBlockModeSupported is FALSE (source/Xcp.c) --
-             * test_download_returns_err_out_of_range_when_the_count_exceeds_a_single_packet
-             * (test/download_test.py) pins the identical condition for that sibling command.
-             * Task 4's PROGRAM_NEXT is what turns this into an opened block instead of a refusal;
-             * nothing here touches Xcp_Internal.block_transfer, which stays entirely Task 4's to
-             * introduce. Checked before anything past the header is read, so an oversized count
-             * never reaches the checks below on a false pretense. */
-            if (frame_elements != number_of_data_elements)
+            /* Task 3 was "PROGRAM without block mode" (design doc title): a declared count this
+             * module cannot receive within the one frame it arrived on was refused up front,
+             * unconditionally. Task 4/DD63 makes that refusal conditional on master block mode
+             * actually being unsupported -- when it IS supported (Xcp_Ptr->general->
+             * masterBlockModeSupported, the same flag Xcp_DTOCmdCalDownload's own
+             * Xcp_DataTransferInitialize call reads for DOWNLOAD, and the one
+             * Xcp_PgmCompleteProgramStart above reports as COMM_MODE_PGM's own MASTER_BLOCK_MODE
+             * bit), an oversized count instead OPENS a block below and waits for PROGRAM_NEXT to
+             * continue it, mirroring Xcp_DTOCmdCalDownload's own identical choice when ITS OWN
+             * masterBlockModeSupported IS TRUE.
+             * test_program_declaring_more_elements_than_fit_a_single_frame_is_refused_err_out_of_range_without_master_block_mode
+             * (test/pgm_program_test.py) is Task 3's own original test, now pinning this exact
+             * condition explicitly (master_block_mode=False) rather than by construction. Checked
+             * before anything past the header is read, so an oversized count never reaches the
+             * checks below on a false pretense. */
+            if ((frame_elements != number_of_data_elements) &&
+                (Xcp_Ptr->general->masterBlockModeSupported == FALSE))
             {
                 Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
             }
             /* The buffer this write stages through is sized (source/Xcp_Internal.h) as the LARGER
-             * of XCP_PGM_MAX_BLOCK_SIZE*(XCP_MAX_CTO-2) and XCP_MAX_CTO-1, so it always holds at
-             * least one full PROGRAM frame's own (MAX_CTO-2)-byte ceiling -- this condition is
-             * unreachable for every schema-legal programming.max_block_size (fix round 1, finding
-             * 1) and is kept anyway: a handler must never trust a generated bound merely because
-             * the formula that produced it is believed correct, and deleting a guard because
-             * analysis says it cannot fire is exactly how the sizing bug this round found would
-             * have gone unnoticed a second time. Answers the one code 1.7.3.2.5's own PROGRAM row
-             * shares with DD63's own multi-frame overflow -- the same fact, that this module cannot
-             * hold what was declared, reached here (were it ever reached) by configuration rather
-             * than by accumulation. */
-            else if (length > (uint16)sizeof(Xcp_Internal.pgm_block.data))
+             * of XCP_PGM_MAX_BLOCK_SIZE*(XCP_MAX_CTO-2) and XCP_MAX_CTO-1 -- DD63's own bound on a
+             * whole BLOCK's declared length, checked here against the FULL count this frame
+             * declares (total_length), not merely against what THIS frame alone carries
+             * (frame_length, checked below): a block that will never fit is refused on the
+             * opening PROGRAM itself, before a single byte of it is copied anywhere, exactly as
+             * DD63 requires. Still unreachable for every schema-legal programming.max_block_size
+             * when block mode is OFF (fix round 1, finding 1's own single-frame case, preserved),
+             * and kept anyway for the reason that finding gives: a handler must never trust a
+             * generated bound merely because the formula that produced it is believed correct.
+             * Answers the one code 1.7.3.2.5's own PROGRAM row shares with DD63's own multi-frame
+             * overflow -- the same fact, that this module cannot hold what was declared, reached
+             * here by configuration rather than by accumulation across PROGRAM_NEXT frames. */
+            else if (total_length > (uint16)sizeof(Xcp_Internal.pgm_block.data))
             {
                 Xcp_FillErrorPacket(XCP_E_ASAM_MEMORY_OVERFLOW, &Xcp_Internal.cto_response.pdu_info);
             }
-            else if (pPduInfo->SduLength < (PduLengthType)(0x02u + alignment + length))
+            else if (pPduInfo->SduLength < (PduLengthType)(0x02u + alignment + frame_length))
             {
-                /* The frame is shorter than the payload it announces -- mirrors
-                 * Xcp_DTOCmdCalDownload's own identical guard (source/Xcp_Cal.c). Without this the
-                 * handler copies whatever follows the received PDU into pgm_block, and from there
-                 * into flash. */
+                /* The frame is shorter than the payload it actually carries -- mirrors
+                 * Xcp_DTOCmdCalDownload's own identical guard (source/Xcp_Cal.c), checked against
+                 * frame_length (THIS frame's own share of a possibly larger block), not
+                 * total_length: a multi-frame block's opening PROGRAM never carries the whole
+                 * declared count in one packet by design, so checking against total_length here
+                 * would refuse every legitimate block-opening frame. Without this the handler
+                 * copies whatever follows the received PDU into pgm_block, and from there into
+                 * flash. */
                 Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
             }
             else
             {
                 uint8_least idx;
-                uint8 status_code = 0x00u;
 
-                /* DD63/design Section 5: copied into pgm_block even though this one frame is the
-                 * whole block by itself here -- Task 4 changes only how many frames contribute
-                 * before this same write fires, never the write itself. */
-                for (idx = 0x00u; idx < length; idx++)
+                /* DD63/design Section 5: copied into pgm_block from index 0 by direct assignment,
+                 * not accumulated onto whatever the buffer already held -- this IS the opening
+                 * frame of a (possibly new) block, so it always starts one, the same way it did in
+                 * Task 3 when this one frame was the whole block by itself. Xcp_DTOCmdPgmProgramNext
+                 * below is the only handler that ever appends past this point. */
+                for (idx = 0x00u; idx < frame_length; idx++)
                 {
                     Xcp_Internal.pgm_block.data[idx] = pPduInfo->SduDataPtr[0x02u + alignment + idx];
                 }
 
-                Xcp_Internal.pgm_block.length = length;
+                Xcp_Internal.pgm_block.length = frame_length;
 
-                /* The FIRST call happens here, not on the next Xcp_MainFunction, for the same
-                 * reason PROGRAM_CLEAR's own first call does above: an integrator whose work is
-                 * instantaneous returns E_OK from it and the master is answered on this very
-                 * exchange. Spec Section 4. */
-                if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                     Xcp_Internal.pgm_block.data,
-                                     Xcp_Internal.pgm_block.length,
-                                     &status_code) == E_OK)
+                /* DD63: the counters come from Xcp_Internal.block_transfer, exactly as
+                 * DOWNLOAD/DOWNLOAD_NEXT's own Xcp_DataTransferInitialize +
+                 * Xcp_BlockTransferAcknowledgeFrame pair already establish and consume it -- set to
+                 * the FULL declared count here, then immediately brought down by this frame's own
+                 * contribution. A count that fits entirely within this one frame drives
+                 * requested_elements back to 0 in the same handler call that set it, so
+                 * Xcp_BlockTransferIsActive() is never observably TRUE for a single-frame PROGRAM --
+                 * Task 3's own single-frame behaviour is therefore unaffected by this task, and
+                 * PROGRAM_MAX's own DD65 guard below only ever sees TRUE once a PROGRAM_NEXT is
+                 * genuinely awaited. */
+                Xcp_Internal.block_transfer.requested_elements = number_of_data_elements;
+                Xcp_Internal.block_transfer.frame_elements = frame_elements;
+                Xcp_BlockTransferAcknowledgeFrame();
+
+                if (Xcp_Internal.block_transfer.requested_elements == 0x00u)
                 {
-                    Xcp_PgmCompleteProgramWrite(status_code);
+                    uint8 status_code = 0x00u;
+
+                    /* The block is complete -- whether because it fit entirely in this one frame
+                     * (Task 3's own original shape) or because number_of_data_elements was small
+                     * enough that this single opening frame already satisfies it under block mode
+                     * too. Either way this is the ONLY call to Xcp_ProgramWrite for this block, the
+                     * FIRST one happening here rather than on the next Xcp_MainFunction, for the
+                     * same reason PROGRAM_CLEAR's own first call does above: an integrator whose
+                     * work is instantaneous returns E_OK from it and the master is answered on this
+                     * very exchange. Spec Section 4. */
+                    if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
+                                         Xcp_Internal.pgm_block.data,
+                                         Xcp_Internal.pgm_block.length,
+                                         &status_code) == E_OK)
+                    {
+                        Xcp_PgmCompleteProgramWrite(status_code);
+                    }
+                    else
+                    {
+                        Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM;
+                        Xcp_Internal.pending_command.active = TRUE;
+                        Xcp_Internal.pending_command.abandoned = FALSE;
+                        Xcp_Internal.pending_command.event_outstanding = FALSE;
+                        /* Neither pData nor length needs a slot in pending_command.args the way
+                         * PROGRAM_PREPARE's codeSize and PROGRAM_CLEAR's clear range do:
+                         * Xcp_Internal.pgm_block IS that standing state here, re-read directly by
+                         * Xcp_PgmPollPendingCommand on every poll -- stable for the duration, since
+                         * DD55's ERR_CMD_BUSY gate refuses any interloping command that could touch
+                         * it, the same reason the MTA needs no slot of its own either. */
+
+                        /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+                        *responseExpected = FALSE;
+                    }
                 }
                 else
                 {
-                    Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM;
-                    Xcp_Internal.pending_command.active = TRUE;
-                    Xcp_Internal.pending_command.abandoned = FALSE;
-                    Xcp_Internal.pending_command.event_outstanding = FALSE;
-                    /* Neither pData nor length needs a slot in pending_command.args the way
-                     * PROGRAM_PREPARE's codeSize and PROGRAM_CLEAR's clear range do:
-                     * Xcp_Internal.pgm_block IS that standing state here, re-read directly by
-                     * Xcp_PgmPollPendingCommand on every poll -- stable for the duration, since
-                     * DD55's ERR_CMD_BUSY gate refuses any interloping command that could touch
-                     * it, the same reason the MTA needs no slot of its own either. */
-
-                    /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+                    /* DD63: the block is open but not yet complete -- more PROGRAM_NEXT frames are
+                     * expected. "Intermediate frames answer nothing and complete entirely in
+                     * receive context ... no callback, no polling, no pending slot." This opening
+                     * PROGRAM frame is exactly such an intermediate frame whenever it does not
+                     * complete the block by itself. */
                     *responseExpected = FALSE;
                 }
             }
@@ -402,13 +450,17 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
-    /* DD65. 1.6.5.2.6: "This command does not support block transfer and it may not be used
-     * within a block transfer sequence." Its own 1.7.3.2.5 row lists ERR_SEQUENCE for it. No
-     * PROGRAM in this build ever leaves Xcp_BlockTransferIsActive() TRUE: Task 3's own
-     * Xcp_DTOCmdPgmProgram above never opens one, and Task 4's PROGRAM_NEXT, which does, does not
-     * exist yet -- so this branch has no test that can reach it today (task report). Implemented
-     * ahead of its user regardless, the same relationship PROGRAM_CLEAR's own pgm_state gate had
-     * with SP4a before this task existed to call it (design doc Section 2). */
+    /* DD65 (H1). 1.6.5.2.6: "This command does not support block transfer and it may not be used
+     * within a block transfer sequence." Its own 1.7.3.2.5 row lists ERR_SEQUENCE for it. Task 3
+     * left this branch untested: nothing yet opened a block, so Xcp_BlockTransferIsActive() could
+     * never be TRUE here on the way in. Task 4's own Xcp_DTOCmdPgmProgram and
+     * Xcp_DTOCmdPgmProgramNext (below) are what finally drive Xcp_Internal.block_transfer for a
+     * PGM block, reusing the identical requested_elements/frame_elements pair DOWNLOAD/
+     * DOWNLOAD_NEXT already share this same state with -- no change was needed HERE, since this
+     * guard already read the correct state; it simply had nothing to read before now.
+     * test_program_max_inside_an_open_block_is_refused_err_sequence (test/pgm_program_test.py) is
+     * this guard's first real test, and mutation-verified: deleting this branch falls through to
+     * the length/copy logic below and answers 0xFF instead of ERR_SEQUENCE (task report). */
     else if (Xcp_BlockTransferIsActive() == TRUE)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
@@ -518,6 +570,163 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    *responseExpected = TRUE;
+
+    /* Same session gate Xcp_DTOCmdPgmProgram's own handler carries above, and for the identical
+     * reason: 1.1/1.6.5.1.1 lists PROGRAM_NEXT as the fourth of the four commands refused until
+     * PROGRAM_START has succeeded. Checked BEFORE Xcp_BlockTransferIsActive() below, not merely
+     * beside it: Xcp_Internal.block_transfer is the same state CAL's own DOWNLOAD/DOWNLOAD_NEXT
+     * share (Xcp_DTOCmdCalDownload, source/Xcp_Cal.c), so relying on Xcp_BlockTransferIsActive()
+     * alone, with no pgm_state test, would let a PROGRAM_NEXT arriving with no PGM session open
+     * continue whatever CAL block transfer last left active -- writing calibration-download bytes
+     * into flash under a session that was never opened. */
+    if (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* DD63. 1.1/1.6.5.2.5: "It contains the remaining number of data elements to transmit. The
+     * slave device will use this information to detect lost packets. If a sequence error has been
+     * detected, the error code ERR_SEQUENCE will be returned." Mirrors Xcp_DTOCmdCalDownloadNext's
+     * own identical shape (source/Xcp_Cal.c), which is the worked precedent this handler follows
+     * throughout -- with one structural difference explained at the point of use below:
+     * Xcp_BlockTransferWriteSlaveMemory is not reusable here, because it writes RAM through
+     * Xcp_WriteSlaveMemoryTable synchronously, and flash is neither (design Section 2). */
+    else if (Xcp_BlockTransferIsActive() == TRUE)
+    {
+        const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+        const uint8 alignment = (uint8)Xcp_GetNumberOfAlignmentBytes(0x02u, element_size, Xcp_Ptr->general->maxCto);
+        const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
+        const uint8 expected = Xcp_Internal.block_transfer.requested_elements;
+
+        if (number_of_data_elements != expected)
+        {
+            /* PROGRAM_NEXT's negative response is distinctive: ERR_SEQUENCE carrying the number
+             * of elements the slave expected, in byte 2 -- Xcp_FillErrorPacketWithData is exactly
+             * this shape, and Xcp_DTOCmdCalDownloadNext already uses it for the identical
+             * condition. */
+            Xcp_FillErrorPacketWithData(XCP_E_ASAM_SEQUENCE,
+                                        &expected,
+                                        0x01u,
+                                        &Xcp_Internal.cto_response.pdu_info);
+
+            /* DD63: a block that goes wrong is discarded, not resumed -- 1.7.3.2.5 gives
+             * PROGRAM_NEXT the pre-action SYNCH+PROGRAM, so the master restarts from its own
+             * PROGRAM rather than retrying the failed PROGRAM_NEXT, and this module keeps no
+             * partial-block state to reconcile. Mirrors Xcp_DTOCmdCalDownloadNext's own identical
+             * call for the identical reason. */
+            Xcp_BlockTransferAbort();
+        }
+        else
+        {
+            const uint8 frame_elements = Xcp_BlockTransferFrameElements(number_of_data_elements, element_size);
+            const uint16 frame_length = (uint16)(frame_elements * element_size);
+
+            if (pPduInfo->SduLength < (PduLengthType)(0x02u + alignment + frame_length))
+            {
+                /* The frame is shorter than the payload it actually carries -- mirrors
+                 * Xcp_DTOCmdCalDownloadNext's own identical guard (source/Xcp_Cal.c). Without this
+                 * the handler copies whatever follows the received PDU into pgm_block, and from
+                 * there into flash. Aborted for the identical reason the wrong-count branch above
+                 * is: this frame is unusable, and the block it would have continued is discarded,
+                 * not left open for whatever the master sends next. */
+                Xcp_BlockTransferAbort();
+
+                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
+            }
+            else
+            {
+                /* DD63: "Each PROGRAM_NEXT appends." Unlike Xcp_DTOCmdPgmProgram's own opening
+                 * frame above, which always starts a block from index 0, this copy begins at
+                 * Xcp_Internal.pgm_block.length -- wherever the block's accumulated bytes so far
+                 * end -- and grows it by this frame's own contribution. Bounded safely without a
+                 * separate overflow check here: the opening PROGRAM already refused any block
+                 * whose FULL declared length would not fit the buffer, and the sum of every
+                 * frame's own frame_length can never exceed that same declared length. */
+                const uint16 offset = Xcp_Internal.pgm_block.length;
+                uint8_least idx;
+
+                for (idx = 0x00u; idx < frame_length; idx++)
+                {
+                    Xcp_Internal.pgm_block.data[offset + idx] = pPduInfo->SduDataPtr[0x02u + alignment + idx];
+                }
+
+                Xcp_Internal.pgm_block.length = (uint16)(offset + frame_length);
+
+                Xcp_Internal.block_transfer.frame_elements = frame_elements;
+                Xcp_BlockTransferAcknowledgeFrame();
+
+                if (Xcp_Internal.block_transfer.requested_elements == 0x00u)
+                {
+                    uint8 status_code = 0x00u;
+
+                    /* This is the frame that completes the block (1.1/1.6.5.1.3: "The slave
+                     * device will acknowledge only the last PROGRAM_NEXT command packet"), and the
+                     * ONLY call to Xcp_ProgramWrite for the whole block -- exactly as
+                     * Xcp_DTOCmdPgmProgram's own single-frame completion above calls it, from the
+                     * identical Xcp_Internal.pgm_block standing state, now carrying every frame's
+                     * accumulated contribution rather than only the first one's. The FIRST call
+                     * happens here, not on the next Xcp_MainFunction, for the same reason it does
+                     * there: an integrator whose work is instantaneous returns E_OK from it and
+                     * the master is answered on this very exchange. Spec Section 4. */
+                    if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
+                                         Xcp_Internal.pgm_block.data,
+                                         Xcp_Internal.pgm_block.length,
+                                         &status_code) == E_OK)
+                    {
+                        Xcp_PgmCompleteProgramWrite(status_code);
+                    }
+                    else
+                    {
+                        Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_NEXT;
+                        Xcp_Internal.pending_command.active = TRUE;
+                        Xcp_Internal.pending_command.abandoned = FALSE;
+                        Xcp_Internal.pending_command.event_outstanding = FALSE;
+                        /* Neither pData nor length needs a slot in pending_command.args, for the
+                         * identical reason Xcp_DTOCmdPgmProgram's own identical comment gives
+                         * above: Xcp_Internal.pgm_block IS that standing state here. */
+
+                        /* Withheld; Xcp_MainFunction answers, however long the integrator takes.
+                         * DD53. */
+                        *responseExpected = FALSE;
+                    }
+                }
+                else
+                {
+                    /* DD63: "Intermediate frames answer nothing and complete entirely in receive
+                     * context ... They set *responseExpected = FALSE, copy their bytes, and return
+                     * -- no callback, no polling, no pending slot." This is the property that
+                     * makes master block mode work at all: were a callback triggered on every
+                     * frame instead, a master pacing frames by MIN_ST_PGM would deliver the next
+                     * one while a write was still pending, and SP4a's ERR_CMD_BUSY guard would
+                     * refuse it -- breaking a block-transfer sequence with an error that exists to
+                     * protect a response buffer. */
+                    *responseExpected = FALSE;
+                }
+            }
+        }
+    }
+    else
+    {
+        /* No block is open -- either none was ever requested, or DD63's own discard above (or
+         * Xcp_Init) closed the one that was. 1.7.3.2.5's own PROGRAM_NEXT row lists ERR_SEQUENCE
+         * for this, the same code the session gate above answers, and this command's negative
+         * response always carries the expected element count (1.1/1.6.5.2.5) -- 0 here, since
+         * none was ever requested. Mirrors Xcp_DTOCmdCalDownloadNext's own identical `else` for
+         * the identical condition (source/Xcp_Cal.c), down to reporting the same expected value
+         * of 0 through the same Xcp_FillErrorPacketWithData call. */
+        const uint8 expected = 0x00u;
+
+        Xcp_FillErrorPacketWithData(XCP_E_ASAM_SEQUENCE,
+                                    &expected,
+                                    0x01u,
+                                    &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* deferred-response machinery, called from Xcp_MainFunction (DD53).                              */
 /*------------------------------------------------------------------------------------------------*/
@@ -528,8 +737,9 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
 
     /* A switch on the pending PID, not a function pointer stored in the slot: this keeps each
      * command's poll and its response shape (built by the matching *Complete* function below)
-     * adjacent in this one file instead of splitting them across a pointer and its target. Tasks 4
-     * and 5 add one case each here; a hard-coded single-command function would block both. */
+     * adjacent in this one file instead of splitting them across a pointer and its target. Task 4
+     * adds the PROGRAM_NEXT case below; Task 5 adds one more; a hard-coded single-command function
+     * would have blocked both. */
     switch (Xcp_Internal.pending_command.pid)
     {
         case XCP_PID_CMD_PROGRAM_START:
@@ -569,15 +779,16 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
         }
         case XCP_PID_CMD_PROGRAM:
         case XCP_PID_CMD_PROGRAM_MAX:
+        case XCP_PID_CMD_PROGRAM_NEXT:
         {
-            /* Both commands write through the identical Xcp_ProgramWrite contract, from the
-             * identical Xcp_Internal.pgm_block standing state (Task 3) -- pData and length are
-             * re-read directly from it on every poll, exactly as the MTA is re-read from
-             * Xcp_Internal.memory_transfer.address just below, and for the same reason: stable
-             * for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping command
-             * that could touch either. Neither handler stores anything in pending_command.args --
-             * pgm_block already IS that storage, and a union member here would only duplicate
-             * it. */
+            /* All three commands write through the identical Xcp_ProgramWrite contract, from the
+             * identical Xcp_Internal.pgm_block standing state (Task 3; PROGRAM_NEXT joins it in
+             * Task 4, DD63) -- pData and length are re-read directly from it on every poll, exactly
+             * as the MTA is re-read from Xcp_Internal.memory_transfer.address just below, and for
+             * the same reason: stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any
+             * interloping command that could touch either. None of the three handlers stores
+             * anything in pending_command.args -- pgm_block already IS that storage, and a union
+             * member here would only duplicate it. */
             result = Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
                                       Xcp_Internal.pgm_block.data,
                                       Xcp_Internal.pgm_block.length,
@@ -638,6 +849,7 @@ void Xcp_PgmCompletePendingCommand(uint8 statusCode)
             }
             case XCP_PID_CMD_PROGRAM:
             case XCP_PID_CMD_PROGRAM_MAX:
+            case XCP_PID_CMD_PROGRAM_NEXT:
             {
                 Xcp_PgmCompleteProgramWrite(statusCode);
                 break;
@@ -945,7 +1157,13 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
          * recovering from a failure re-points the MTA itself -- a slave that had already advanced
          * it would have moved a pointer the master believes it still controls, and a master
          * trusting the slave's position instead of re-setting it would resume one block further
-         * on, leaving a hole in the programmed image that no error reported. */
+         * on, leaving a hole in the programmed image that no error reported.
+         *
+         * Unchanged by Task 4: Xcp_Internal.pgm_block.length already holds the block's TRUE total
+         * length by the time this runs, whether it was set once by a single-frame PROGRAM/
+         * PROGRAM_MAX (Task 3) or accumulated across a PROGRAM plus however many PROGRAM_NEXT
+         * frames a master block mode sequence needed (DD63) -- this line has no way to tell the
+         * two shapes apart, and does not need to. */
         Xcp_Internal.memory_transfer.address += Xcp_Internal.pgm_block.length;
 
         /* 1.1/1.6.5.1.3 and 1.6.5.2.6 both specify no response payload beyond the standard
@@ -977,7 +1195,13 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
          * is kept as the recorded deviation: the same code, and the same reasoning, PROGRAM's own
          * (non-deviating) row already gives for the identical situation -- a write the integrator
          * could not complete because the memory was not reachable -- which sharing one completion
-         * function between the two commands makes the natural, and now documented, choice. */
+         * function between the two commands makes the natural, and now documented, choice.
+         *
+         * For PROGRAM_NEXT, joining this shared completion in Task 4 is NOT a deviation, unlike
+         * PROGRAM_MAX just above: its own 1.7.3.2.5 row (Xcp_CTOErrorMatrix[0xCA], source/Xcp.c)
+         * already lists ERR_ACCESS_DENIED alongside ERR_SEQUENCE, ERR_MEMORY_OVERFLOW and the
+         * others -- the same code PROGRAM's own row gives for the identical situation, so no new
+         * recorded exception is needed for this third command to reach it. */
         Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_DENIED, &Xcp_Internal.cto_response.pdu_info);
     }
 
