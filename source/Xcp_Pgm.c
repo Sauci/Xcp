@@ -812,6 +812,42 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    /* 1.0/1.6.5.2.1: "This command returns general information on programming." No request
+     * parameters beyond the command code, no gate on Xcp_Internal.pgm_state, and no integrator
+     * call -- this function's own @details in Xcp_Internal.h explains why, and unlike every other
+     * handler above in this file, this is the only path it ever takes: Xcp_CTOErrorMatrix[0xCE]
+     * (source/Xcp.c) carries neither XCP_INTERNAL_ERR_SEQUENCE nor XCP_INTERNAL_ERR_PGM_ACTIVE, and
+     * §1.6.5.1.1's "not allowed until PROGRAM_START" list names PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX
+     * and PROGRAM_NEXT, not this command. DD68.
+     *
+     * PGM_PROPERTIES: XCP_PGM_PROPERTIES_ABSOLUTE_MODE (bit 0) set, every other bit clear. The
+     * mode-bit table (1.0/1.6.5.2.1) reads FUNCTIONAL_MODE:ABSOLUTE_MODE = "0 1" as "Only Absolute
+     * mode supported" -- the one mode this module offers, and the promise
+     * Xcp_DTOCmdPgmProgramClear's own mode-byte refusal (DD67, above in this file) keeps: every
+     * mode byte but 0x00 (absolute) is refused ERR_OUT_OF_RANGE there. Bits 2..7 -- the
+     * COMPRESSION_SUPPORTED/_REQUIRED, ENCRYPTION_SUPPORTED/_REQUIRED and
+     * NON_SEQ_PGM_SUPPORTED/_REQUIRED pairs (Xcp_Internal.h) -- all stay clear: none of the three
+     * is implemented, and 1.0/1.6.5.2.4's PROGRAM_FORMAT, where a slave would accept any of them,
+     * is SP4c's (design doc §8). */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = XCP_PGM_PROPERTIES_ABSOLUTE_MODE;
+
+    /* MAX_SECTOR: 0. Truthful for a slave with no sector description (DD68) -- GET_SECTOR_INFO
+     * (still unimplemented; SP4c) answers ERR_OUT_OF_RANGE for a sector that is not available
+     * (1.0/1.6.5.2.2), and every sector number is out of range when MAX_SECTOR itself is 0. */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+
+    Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* deferred-response machinery, called from Xcp_MainFunction (DD53).                              */
 /*------------------------------------------------------------------------------------------------*/
@@ -823,8 +859,12 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
     /* A switch on the pending PID, not a function pointer stored in the slot: this keeps each
      * command's poll and its response shape (built by the matching *Complete* function below)
      * adjacent in this one file instead of splitting them across a pointer and its target. Task 4
-     * adds the PROGRAM_NEXT case below; Task 5 adds one more; a hard-coded single-command function
-     * would have blocked both. */
+     * adds the PROGRAM_NEXT case below; a hard-coded single-command function would have blocked it.
+     * Task 5 adds none: GET_PGM_PROCESSOR_INFO (Xcp_DTOCmdPgmGetPgmProcessorInfo below) reports this
+     * build's own fixed configuration synchronously and never defers, so there is nothing of its
+     * own for this switch to ever poll. Design doc §5's "one case each" sketch predates DD68, which
+     * settles this -- the same way PROGRAM_MAX and PROGRAM_NEXT already share PROGRAM's own case
+     * just below rather than each getting a distinct one. */
     switch (Xcp_Internal.pending_command.pid)
     {
         case XCP_PID_CMD_PROGRAM_START:

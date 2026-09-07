@@ -232,6 +232,25 @@ extern "C" {
 #define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_DAQ (0x01u << 0x06u)
 #define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_EVENT (0x01u << 0x07u)
 
+/* PGM_PROPERTIES, GET_PGM_PROCESSOR_INFO's own response byte, 1.0/1.6.5.2.1 (confirmed against
+ * 1.0's own pdftotext -layout dump, since the 1.1 OCR garbles tables -- design doc §0). Defined
+ * unconditionally, the same convention the PID defines above follow, and for the same reason nothing
+ * in this block depends on XCP_FLASH_PROGRAMMING_ENABLED: these are names for bit positions, not
+ * state, and cost nothing to leave visible in a gate-off build. Task 5 (source/Xcp_Pgm.c) sets only
+ * XCP_PGM_PROPERTIES_ABSOLUTE_MODE -- this module offers absolute mode alone (DD68) -- and leaves
+ * every other bit clear; the rest are named here regardless, both because 1.0's own table defines
+ * the whole byte at once and because SP4c (design doc §8) will need FUNCTIONAL_MODE and the
+ * COMPRESSION_x/ENCRYPTION_x/NON_SEQ_PGM_x pairs by these exact names once it implements what they
+ * advertise. */
+#define XCP_PGM_PROPERTIES_ABSOLUTE_MODE (0x01u << 0x00u)
+#define XCP_PGM_PROPERTIES_FUNCTIONAL_MODE (0x01u << 0x01u)
+#define XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED (0x01u << 0x02u)
+#define XCP_PGM_PROPERTIES_COMPRESSION_REQUIRED (0x01u << 0x03u)
+#define XCP_PGM_PROPERTIES_ENCRYPTION_SUPPORTED (0x01u << 0x04u)
+#define XCP_PGM_PROPERTIES_ENCRYPTION_REQUIRED (0x01u << 0x05u)
+#define XCP_PGM_PROPERTIES_NON_SEQ_PGM_SUPPORTED (0x01u << 0x06u)
+#define XCP_PGM_PROPERTIES_NON_SEQ_PGM_REQUIRED (0x01u << 0x07u)
+
 /**
  * @brief BIT_OFFSET value meaning "this entry is a normal element, ignore the field".
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2.
@@ -994,10 +1013,30 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
 uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief GET_PGM_PROCESSOR_INFO, XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.1.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. Unlike every other handler in this group, it carries no gate on
+ * Xcp_Internal.pgm_state at all, and calls no integrator function: Xcp_CTOErrorMatrix[0xCE]
+ * (source/Xcp.c) carries neither XCP_INTERNAL_ERR_SEQUENCE nor XCP_INTERNAL_ERR_PGM_ACTIVE, matching
+ * §1.7.3.2.5's own row for this command (ERR_CMD_BUSY, ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX only), and
+ * §1.6.5.1.1's "not allowed until PROGRAM_START" list names PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX and
+ * PROGRAM_NEXT, not this command -- so it answers identically from XCP_PGM_IDLE and XCP_PGM_ACTIVE
+ * (DD68). It reports this build's own fixed configuration (PGM_PROPERTIES, MAX_SECTOR), never
+ * defers, and therefore adds no case to Xcp_PgmPollPendingCommand or Xcp_PgmCompletePendingCommand
+ * below -- design doc §5's "one case each" sketch predates DD68, which settles this command as pure
+ * report-what-is-configured with no integrator round trip, the same refinement Task 3/4 already made
+ * when PROGRAM_MAX and PROGRAM_NEXT joined PROGRAM's shared case rather than each getting a distinct
+ * one.
+ */
+uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
- * the slot, so Tasks 4 and 5 add a case each instead of a hard-coded single-command function.
+ * the slot, so Task 4 adds a case for PROGRAM_NEXT instead of a hard-coded single-command function.
+ * Task 5's own GET_PGM_PROCESSOR_INFO adds none: it never defers (Xcp_DTOCmdPgmGetPgmProcessorInfo's
+ * own @details above), so there is nothing pending for this function to ever poll on its behalf.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK.
  * @retval E_OK the integrator callback has finished, successfully or not.
  * @retval E_NOT_OK the integrator callback has not finished; pStatusCode is not read.
