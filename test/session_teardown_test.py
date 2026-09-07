@@ -7,7 +7,7 @@ not tear down the whole session. XCP part 2 - Protocol Layer Specification 1.1/1
 CONNECT the start of a session, and Xcp_CTOCmdStdConnect's own comment (source/Xcp_Std.c) already
 argues that no state of the previous session may survive into the next -- it was written when an
 earlier task made CONNECT clear pgm_state for exactly this reason. Until this task's own fix,
-CONNECT cleared pgm_state and called Xcp_PgmBlockAbort(), and nothing else. Three more pieces of
+CONNECT cleared pgm_state and called Xcp_PgmBlockAbort(), and nothing else. Four more pieces of
 session state survived a reconnect:
 
 - An open block transfer (Xcp_Internal.block_transfer): a slave block mode (UPLOAD) transfer left
@@ -17,12 +17,23 @@ session state survived a reconnect:
   fewer, left standing, lets a new session's UNLOCK complete it with only the still-missing bytes.
 - The MTA (Xcp_Internal.memory_transfer): a DOWNLOAD with no SET_MTA in the new session writes at
   the previous session's address.
+- A half-fetched seed (Xcp_Internal.seed): a GET_SEED(mode=0) whose continuation frames were never
+  requested lets a new session's very first GET_SEED(mode=1) collect the tail of the previous
+  session's seed. Not among DD74's own three measured consequences -- the fix resets the seed
+  anyway, and the reset turns out to be load-bearing; see below.
 
 test_an_open_block_transfer_does_not_survive_a_reconnect, test_a_partial_key_does_not_survive_a_
-reconnect and test_the_mta_does_not_survive_a_reconnect below are the direct reproductions, one
-per item, each across a real DISCONNECT/CONNECT. test_a_normal_session_still_works_end_to_end_
-after_a_reconnect is the neighbour every one of the three resets endangers: a teardown that clears
+reconnect, test_the_mta_does_not_survive_a_reconnect and
+test_a_partially_transmitted_seed_does_not_survive_a_reconnect below are the direct reproductions,
+one per item, each across a real DISCONNECT/CONNECT. test_a_normal_session_still_works_end_to_end_
+after_a_reconnect is the neighbour every one of the four resets endangers: a teardown that clears
 too much breaks exactly the ordinary session it exists to protect.
+
+The seed item is the one DD74's own task reported as untestable -- "the seed reset has no dedicated
+test, traced by mutation to nothing depending on it, because every legitimate GET_SEED(mode=0)
+overwrites the field unconditionally" (task-4-report.md). True of mode=0; GET_SEED(mode=1) is the
+other reader and overwrites nothing. Added by the acceptance pass that re-derived it rather than
+accepting the disclosure (task-6-report.md).
 
 Two upstream tasks change what "surviving" actually looks like on this branch, and both are
 accounted for rather than assumed:
@@ -61,7 +72,7 @@ from .parameter import *
 from .conftest import XcpTest
 from .download_test import connect, set_mta, capture_writes
 from .block_transfer_disclosure_test import poison_reads
-from .seed_key_test import get_seed_side_effect_copy_ok, calc_key_side_effect_copy_ok
+from .seed_key_test import get_seed_key_slices, get_seed_side_effect_copy_ok, calc_key_side_effect_copy_ok
 from .seed_key_defects_test import exchange
 
 CAL_PAG = 0x01
@@ -312,8 +323,70 @@ def test_the_mta_does_not_survive_a_reconnect():
                 written, 0xDEADBEEF))
 
 
+def test_a_partially_transmitted_seed_does_not_survive_a_reconnect():
+    """DD74's fourth reset -- the seed -- which the task that made it reported as having no
+    dedicated test, "traced by mutation to nothing depending on it, because every legitimate
+    GET_SEED(mode=0) overwrites the field unconditionally" (task-4-report.md). That reasoning
+    holds only for mode=0, which does indeed reset seed.total_length/current_index before doing
+    anything else. GET_SEED(mode=1) is the OTHER reader, and it does not overwrite either
+    field: it reads them. So the reset IS observable, and this is the test.
+
+    XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.4 splits a seed too long for one frame
+    across a GET_SEED(mode=0) followed by GET_SEED(mode=1) continuations, and makes a mode=1
+    arriving without a preceding mode=0 an ERR_SEQUENCE. Xcp_DTOCmdStdGetSeed (source/Xcp_Std.c)
+    implements that gate as `if (Xcp_Internal.seed.total_length != 0x00u)` -- "is a seed currently
+    held". Session 1 here asks for a 10-byte seed at MAX_CTO=8, receives the 6 bytes that fit in
+    one frame, and vanishes without ever asking for the remaining 4. Without CONNECT's own reset
+    of that field, session 2's very first command can be a GET_SEED(mode=1) that satisfies the
+    gate on session 1's leftovers and is answered with the tail of the PREVIOUS session's seed.
+
+    Measured on this branch with only the two `Xcp_Internal.seed.*` lines of
+    Xcp_CTOCmdStdConnect's DD74 block removed, everything else fixed: the continuation below is
+    answered (0xFF, 0x04, 0x77, 0x88, 0x99, 0xAA) -- session 1's remaining seed bytes, in
+    session 2. With the reset in place it is (0xFE, 0x29) ERR_SEQUENCE, as it is for any other
+    master that never asked for a seed at all.
+
+    DD73 did not open this route. That task stopped total_length being zeroed once GET_SEED's
+    final chunk goes out -- but this seed's final chunk is exactly what never goes out, so the
+    field was already left non-zero here on pre-DD73 code too. The route is pre-existing, like
+    every other item in this file."""
+    max_cto = 8
+    seed = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA]
+
+    slices = get_seed_key_slices(seed, max_cto=max_cto)
+    # The whole scenario is "a seed that one frame cannot carry, left half-fetched", so a
+    # single-frame seed would make this test pin nothing at all.
+    assert len(slices) > 1, 'setup: this seed must not fit in one GET_SEED frame'
+    withheld = seed[len(slices[0]):]
+
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
+    connect(handle)
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+
+    first_frame = exchange(handle, (0xF8, 0x00, CAL_PAG), length=max_cto)
+    assert first_frame[0:2] == (0xFF, len(seed)), (
+        'setup: GET_SEED(mode=0) answered {}, expected (0xFF, {}) -- the whole seed still to '
+        'come'.format(first_frame, len(seed)))
+    assert list(first_frame[2:2 + len(slices[0])]) == slices[0], (
+        'setup: GET_SEED(mode=0) carried {}, expected the seed\'s first {} bytes {} -- without '
+        'this the "half-fetched" state below is not the one this test claims to build'.format(
+                list(first_frame[2:2 + len(slices[0])]), len(slices[0]), slices[0]))
+
+    # Session 1 ends here, with `withheld` never requested and never transmitted.
+    assert disconnect(handle)[0] == 0xFF, 'setup: DISCONNECT must succeed cleanly here'
+    connect(handle)
+
+    continuation = exchange(handle, (0xF8, 0x01, CAL_PAG), length=max_cto)
+
+    assert continuation[0:2] == (0xFE, 0x29), (
+        'GET_SEED(mode=1) as session 2\'s first command answered {} -- expected (0xFE, 0x29) '
+        'ERR_SEQUENCE, since session 2 has never sent a GET_SEED(mode=0) of its own. Session 1 '
+        'withheld {}, and a positive answer here means CONNECT left seed.total_length standing '
+        'for this new session to continue against'.format(continuation, withheld))
+
+
 def test_a_normal_session_still_works_end_to_end_after_a_reconnect():
-    """The neighbour every one of the three resets above endangers, and DD74's own brief names as
+    """The neighbour every one of the four resets above endangers, and DD74's own brief names as
     the most likely way to get this task wrong: a teardown that clears too much breaks exactly the
     ordinary session it exists to protect. CONNECT, SET_MTA, DOWNLOAD, GET_SEED, UNLOCK -- a
     complete, legitimate sequence, run entirely in the SECOND of two sessions so that every one of
