@@ -170,6 +170,33 @@ The suite exercises `AG = BYTE` almost exclusively, where the two formulas coinc
 distinguishes them, and the choice is recorded here rather than left to be re-derived by whoever
 first configures `WORD` or `DWORD` granularity.
 
+**`PROGRAM_MAX` answers two codes its §1.7.3.2.5 row does not list, and unlike DD67's case the
+deviation is forced.** The row for 0xC9 gives `ERR_CMD_BUSY`, `ERR_CMD_UNKNOWN`, `ERR_SEQUENCE` and
+`ERR_MEMORY_OVERFLOW` — nothing for an integrator that reports a failed write, and nothing for a
+request too short to carry its fixed payload. So:
+
+- a failed write answers **`ERR_ACCESS_DENIED`**, on the same reasoning DD67 gives for
+  `PROGRAM_CLEAR` — the error table defines it as "The memory location is not accessible", which is
+  what the integrator has just reported. It is simply not listed here, where it is listed there.
+- a short request answers **`ERR_CMD_SYNTAX`**, the module's answer everywhere else for a request
+  that cannot be parsed.
+
+This is DD57's situation rather than DD67's, and the distinction is the rule: where a listed code
+fits, use it and take no deviation; where the row offers nothing for a condition that can actually
+arise, deviate and record it. Refusing to answer at all, or forcing the condition into
+`ERR_MEMORY_OVERFLOW` because it happens to be listed, would both be worse — the first leaves a
+master waiting on t5, the second tells it something false about why.
+
+**The block buffer is sized `MAX(MAX_BS_PGM × (MAX_CTO − 2), MAX_CTO − 1)`.** DD63 sizes it for a
+`PROGRAM` block, but `PROGRAM_MAX` carries `MAX_CTO − AG` bytes in one frame, which is the larger
+demand whenever `MAX_BS_PGM` is small — so at `max_block_size = 1`, a schema-legal value, a buffer
+sized for blocks alone would refuse every `PROGRAM_MAX` with `ERR_MEMORY_OVERFLOW` while `CONNECT`
+advertised it. That is defect D10's shape inside the sub-project that fixes D10. `max_block_size`
+has a schema minimum of **1**, not 2: a single-frame block is `PROGRAM` with no `PROGRAM_NEXT`,
+which is a real configuration, while 0 is not a block size at all. The two overflow guards in the
+handlers are kept and are unreachable for any schema-legal configuration, which is the correct
+relationship between a size and a bound rather than dead code.
+
 ### DD66 — the MTA post-increments only on a successful write
 
 §1.6.5.1.3: *"The MTA will be post-incremented by the number of data bytes."* It advances when the
