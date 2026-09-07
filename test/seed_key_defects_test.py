@@ -22,6 +22,21 @@ scenario and is sensitive to the last_pid leg; test_a_failed_get_seed_does_not_l
 admission_grant_the_resource_it_requested isolates the requested_protected_resource leg, which the
 first test cannot -- see its own docstring. Both are mutation-verified in task-2-report.md.
 
+DD73 -- a second, independent pre-existing defect in the same shipped seed-and-key code: the key
+calculation must receive the seed's actual length, not the "bytes left to send" bookkeeping
+Xcp_DTOCmdStdGetSeed (source/Xcp_Std.c) used to leave behind once GET_SEED's own final chunk had
+gone out. Xcp_DTOCmdStdUnlock (source/Xcp_Std.c) reads that same total_length field as the seed
+LENGTH it passes to Xcp_CalcKey -- so on unfixed code Xcp_CalcKey was called with seedLength=0 for
+every seed, every session, and an integrator honouring that parameter (test/stub/Xcp_SeedKey.h)
+computed its key from a zero-length seed: the key was not bound to the challenge, which XCP part 2
+- Protocol Layer Specification 1.1/1.6.1.1.6 and 1.1/1.6.1.1.7 both require it to be (the same key
+would then be valid in every session). Nothing caught this because calc_key_side_effect_copy_ok
+(test/seed_key_test.py), the only double UNLOCK's key check ever went through, ignores the
+seedLength argument -- a double that cannot observe the value under test cannot fail when that
+value is wrong. test_unlock_computes_the_key_from_the_seeds_actual_length below uses
+calc_key_side_effect_recording_seed_length instead, defined in this file, which records what it
+actually receives. Mutation-verified in task-3-report.md.
+
 Xcp_Internal is not reachable from this CFFI harness (interface/Xcp.h does not include
 Xcp_Internal.h), so every assertion below observes through GET_SEED/UNLOCK/GET_STATUS's own wire
 responses -- never through Xcp_Internal directly -- following test/clear_daq_list_test.py's own
@@ -49,11 +64,33 @@ def get_seed_side_effect_fail(handle):
     return wrapper
 
 
-def exchange(handle, request):
-    """Sends one CTO request and returns the first three response bytes -- enough for every
-    assertion in this file: byte 0 is always the PID (0xFF/0xFE), byte 1 is the error code
-    (GET_SEED/UNLOCK error responses) or session_status (GET_STATUS), byte 2 is protection_status
-    (GET_STATUS only; unused trailing_value padding elsewhere).
+def calc_key_side_effect_recording_seed_length(handle, key, received_seed_lengths):
+    """DD73's own double. calc_key_side_effect_copy_ok (test/seed_key_test.py) -- the only
+    Xcp_CalcKey double used anywhere else in this suite -- names its seedLength parameter
+    `_seed_length`, the underscore marking it deliberately unread: it is why DD73 shipped, since a
+    double that never looks at the parameter under test cannot fail when the module gets it wrong.
+    This wrapper is otherwise identical (same unconditional E_OK, same unconditional copy of `key`
+    into the slave key buffer, so it isolates DD73 from the master/slave key comparison exactly as
+    calc_key_side_effect_copy_ok does) except that it appends the seedLength it actually received
+    to received_seed_lengths, letting the calling test assert on it directly rather than reaching
+    into handle.xcp_calc_key's own MagicMock call history."""
+    def wrapper(_p_seed_buffer, seed_length, p_key_buffer, _max_key_length, p_key_length):
+        received_seed_lengths.append(seed_length)
+        for i, b in enumerate(key):
+            p_key_buffer[i] = b
+        p_key_length[0] = len(key)
+        return handle.define('E_OK')
+    return wrapper
+
+
+def exchange(handle, request, length=3):
+    """Sends one CTO request and returns the first `length` response bytes -- 3 is enough for
+    every status-code assertion in this file: byte 0 is always the PID (0xFF/0xFE), byte 1 is the
+    error code (GET_SEED/UNLOCK error responses) or session_status (GET_STATUS), byte 2 is
+    protection_status (GET_STATUS only; unused trailing_value padding elsewhere). A caller that
+    needs to check the transmitted DATA too -- GET_SEED's own seed bytes, task-3-brief.md step 4 --
+    passes a larger length; SduDataPtr always holds a full MAX_CTO-sized frame, so any length up to
+    MAX_CTO is safe to read regardless of how many of those bytes this particular response filled.
 
     Resets the transmit mock before sending, so a prior exchange's still-buffered response can
     never be misread as this one's, and asserts exactly one transmission happened -- catching a
@@ -67,7 +104,7 @@ def exchange(handle, request):
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(request))
     handle.lib.Xcp_MainFunction()
     assert handle.can_if_transmit.call_count == 1, 'no response was transmitted for {}'.format(request)
-    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:3])
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:length])
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
     return response
 
@@ -154,6 +191,49 @@ def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_
                 second_unlock_response))
 
 
+def test_unlock_computes_the_key_from_the_seeds_actual_length():
+    """DD73's own measured scenario, single-frame: the seed 0x11 0x22 0x33 0x44 is the design
+    doc's own example, and both it and the one-byte key fit in one CTO at the default MAX_CTO=8.
+    A legitimate GET_SEED/UNLOCK exchange -- checking not UNLOCK's own response, which does not
+    depend on seedLength at all here (calc_key_side_effect_recording_seed_length below returns
+    E_OK and a fixed key unconditionally, whatever it is told the seed's length is) -- but what
+    Xcp_CalcKey was actually called with.
+
+    On unfixed code, Xcp_DTOCmdStdGetSeed (source/Xcp_Std.c) reset Xcp_Internal.seed.total_length
+    to 0x00u once this single frame had carried the whole seed, and Xcp_DTOCmdStdUnlock
+    (source/Xcp_Std.c) then read that same field as the seed length passed to Xcp_CalcKey:
+    received_seed_lengths == [0], for every seed -- matching the design doc's own measurement
+    exactly. test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the_resource
+    below makes the same assertion for a seed spanning more than one frame -- task-3-brief.md's
+    own neighbour (step 4), since total_length's pacing role is exactly what the fix changes."""
+    seed = [0x11, 0x22, 0x33, 0x44]
+    key = [0x99]
+
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    received_seed_lengths = []
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_recording_seed_length(
+            handle, key, received_seed_lengths)
+
+    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+    assert get_seed_response[0:2] == (0xFF, len(seed))
+    assert list(get_seed_response[2:2 + len(seed)]) == seed, (
+        'GET_SEED transmitted {}, expected the configured seed {}'.format(
+                list(get_seed_response[2:2 + len(seed)]), seed))
+
+    unlock_response = exchange(handle, (0xF7, len(key), *key))
+    assert unlock_response[0:2] == (0xFF, CAL_PAG), (
+        'UNLOCK was not admitted ({}) for a legitimate single-frame seed/key exchange'.format(
+                unlock_response))
+
+    assert received_seed_lengths == [len(seed)], (
+        'Xcp_CalcKey received seedLength={} for a {}-byte seed {} -- the key was not computed '
+        'from the seed actually transmitted on the wire'.format(
+                received_seed_lengths, len(seed), seed))
+
+
 @pytest.mark.parametrize('resource', resources)
 def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the_resource(resource):
     """The neighbour this task's fix most endangers (task-2-brief.md step 4): both legs tighten an
@@ -162,7 +242,17 @@ def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the
     sequence gets broken. max_cto=8 with a 10-byte seed forces both GET_SEED and UNLOCK across two
     frames each (6 + 4), so this exercises the mode=1 seed continuation and the split-key
     continuation together, then checks the grant took effect through GET_STATUS rather than
-    trusting UNLOCK's own final response alone."""
+    trusting UNLOCK's own final response alone.
+
+    Also DD73's own neighbour (task-3-brief.md step 4): Xcp_Internal.seed.total_length is what
+    paces this multi-frame GET_SEED transmission -- the response byte reporting how much is left,
+    and the boundary between "the rest fits in this frame" and "one more frame is needed" both
+    read it -- which is exactly the field DD73's fix stops resetting mid-sequence. So this
+    reconstructs the seed from every GET_SEED frame's own transmitted bytes, not merely each
+    frame's reported length or the frame count (either of which the fix could satisfy by
+    accident), and confirms Xcp_CalcKey's own double received seedLength == len(seed) -- the value
+    the pre-fix code zeroed out -- here in the multi-frame case, complementing
+    test_unlock_computes_the_key_from_the_seeds_actual_length's single-frame one above."""
     max_cto = 8
     seed = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA]
     key = seed
@@ -170,8 +260,10 @@ def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
     connect(handle)
 
+    received_seed_lengths = []
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
-    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, key)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_recording_seed_length(
+            handle, key, received_seed_lengths)
 
     seed_slices = get_seed_key_slices(seed, max_cto=max_cto)
     key_slices = get_seed_key_slices(key, max_cto=max_cto)
@@ -180,15 +272,28 @@ def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the
     assert len(seed_slices) > 1
     assert len(key_slices) > 1
 
-    for mode, _ in zip([0] + [1] * (len(seed_slices) - 1), seed_slices):
-        response = exchange(handle, (0xF8, mode, resource))
-        assert response[0] == 0xFF
+    actual_seed = []
+    remaining_seed_length = len(seed)
+    for mode, seed_slice in zip([0] + [1] * (len(seed_slices) - 1), seed_slices):
+        response = exchange(handle, (0xF8, mode, resource), length=max_cto)
+        assert response[0:2] == (0xFF, remaining_seed_length)
+        actual_seed += list(response[2:2 + len(seed_slice)])
+        remaining_seed_length -= len(seed_slice)
+
+    assert actual_seed == seed, (
+        'GET_SEED transmitted {} across {} frames, expected the configured seed {}'.format(
+                actual_seed, len(seed_slices), seed))
 
     remaining_key_length = len(key)
     for key_slice in key_slices:
         response = exchange(handle, (0xF7, remaining_key_length, *key_slice))
         assert response[0] == 0xFF
         remaining_key_length -= len(key_slice)
+
+    assert received_seed_lengths == [len(seed)], (
+        'Xcp_CalcKey received seedLength={} for a {}-byte seed {} transmitted across {} frames -- '
+        'the key was not computed from the seed actually transmitted on the wire'.format(
+                received_seed_lengths, len(seed), seed, len(seed_slices)))
 
     status_response = exchange(handle, GET_STATUS)
     assert status_response[2] == resource, (

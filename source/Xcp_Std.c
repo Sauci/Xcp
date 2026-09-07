@@ -956,10 +956,27 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.seed.total_length - Xcp_Internal.seed.current_index;
 
+        /* DD73 (key not bound to the seed, pre-existing). This branch used to also set
+         * Xcp_Internal.seed.total_length to 0x00u right here, once the final chunk of the seed
+         * had been queued for this response, to mean "nothing left to send" for GET_SEED's own
+         * pacing. Xcp_DTOCmdStdUnlock above reads that very same field as the seed's LENGTH when
+         * it calls Xcp_CalcKey, once the master's key has fully arrived -- so an integrator
+         * honouring that parameter always computed its key from a zero-length seed, regardless of
+         * what had actually been transmitted: XCP part 2 - Protocol Layer Specification
+         * 1.1/1.6.1.1.6 and 1.1/1.6.1.1.7 both depend on the key being a function of the seed the
+         * slave issued, which a length of zero cannot be. The two meanings cannot share one
+         * field. total_length now always holds the seed's true, constant length once
+         * Xcp_GetSeed has produced it; every line below already computes what remains to be sent
+         * from current_index, so removing the reset here does not change GET_SEED's own
+         * multi-frame pacing -- nor GET_SEED(mode=1)'s own sequence gate above, which only asks
+         * whether a seed is currently held at all, never whether its transmission has finished.
+         * Xcp_DTOCmdStdUnlock's own reset of this same field, a few lines above (after
+         * Xcp_CalcKey has already been called), is what actually discards the seed once its key
+         * has been consumed, and still enforces a new seed being required before the next UNLOCK.
+         * See test/seed_key_defects_test.py. */
         if ((Xcp_Internal.seed.total_length - Xcp_Internal.seed.current_index) <= (Xcp_Ptr->general->maxCto - (uint8)0x02u))
         {
             num_of_bytes_to_copy = (Xcp_Internal.seed.total_length - Xcp_Internal.seed.current_index);
-            Xcp_Internal.seed.total_length = 0x00u;
         }
         else
         {
