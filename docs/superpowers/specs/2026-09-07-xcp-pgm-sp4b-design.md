@@ -412,7 +412,26 @@ happened, and never scan `call_args_list` for content.
 
 ## 9. Acceptance
 
-1. A build with `XCP_FLASH_PROGRAMMING_ENABLED` off is byte-for-byte identical to SP4a's.
+1. A build with `XCP_FLASH_PROGRAMMING_ENABLED` off is **behaviourally** identical to SP4a's, its
+   compiled objects byte-identical, and no programming-keyed value reaches the generated
+   configuration.
+
+   **The original wording said "byte-for-byte" of the whole build, and that was never achievable —
+   it is corrected here rather than reported as met.** Adding any generated macro changes the
+   generated header, so the criterion forbade the very thing DD62 requires: `Xcp_Cfg.h` gains
+   `XCP_MAX_CTO` and `XCP_PGM_MAX_BLOCK_SIZE`, purely additive and inert with the gate off, and
+   `Xcp_Cfg.c` gains two comment lines. SP4a's own Task 6 accepted the same shape of difference
+   against the same wording; stating the intent plainly is better than a criterion every future
+   sub-project must quietly round.
+
+   What the criterion protects is real and is now checked three ways: the compiled objects and
+   `libXcp.a` are byte-identical with the gate off (verified for SP4a by direct comparison); the
+   generated configuration's *functional* content is invariant, enforced by the property test in
+   `test/pgm_configuration_test.py` that generates with the gate off while varying every other
+   programming setting; and the suite is unchanged. That property test exists because a
+   programming-keyed `ctoInfo` value leaked into gate-off output twice — Task 3 fixed it for
+   `PROGRAM`, Task 4 reintroduced it for `PROGRAM_NEXT` — and two hand-written per-row siblings
+   provably did not prevent a third.
 2. `CONNECT` advertises flash programming, and `PROGRAM_CLEAR`, `PROGRAM` and `PROGRAM_MAX` answer
    it — D10 stays fixed in the direction SP4a could not test.
 3. A multi-frame block reaches the integrator as one contiguous write of the right length at the
