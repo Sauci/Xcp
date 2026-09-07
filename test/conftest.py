@@ -518,6 +518,13 @@ class XcpTest(object):
         # constructor must supply the attribute unconditionally rather than let it depend on which
         # build a given test happens to be.
         self.xcp_program_prepare = MagicMock()
+        # Task 2 (PROGRAM_CLEAR): same reasoning as xcp_program_prepare immediately above --
+        # Xcp_ProgramClear is declared in interface/Xcp.h only (not mirrored into
+        # test/stub/Xcp_MemoryAccess.h; design Section 4 -- cffi's cdef() rejects a second
+        # declaration reachable from the same header with FFIError: multiple declarations), so this
+        # constructor must supply the attribute unconditionally rather than let it depend on which
+        # build a given test happens to be.
+        self.xcp_program_clear = MagicMock()
         # Xcp_GetDaqTimestamp reaches self.code.mocked on its own once Xcp_DaqTimestamp.h is
         # pulled in under XCP_DAQ_TIMESTAMP_SUPPORTED -- pcpp discovers any `extern`-declared
         # function reachable from interface/Xcp.h without help. What it does not do is invent this
@@ -559,6 +566,7 @@ class XcpTest(object):
         self.xcp_program_start.return_value = self.define('E_OK')
         self.xcp_program_reset.return_value = self.define('E_OK')
         self.xcp_program_prepare.return_value = self.define('E_OK')
+        self.xcp_program_clear.return_value = self.define('E_OK')
         # Fix round 1: MagicMock pre-configures __int__/__index__ to return 1, so a call reaching
         # this mock through the real CFFI boundary (extern "Python+C", uint32 return) coerces
         # successfully to 1 instead of raising -- _guarded_callback only records an exception the

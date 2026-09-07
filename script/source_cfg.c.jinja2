@@ -918,34 +918,41 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC5 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC6 */
         ({% if configuration.apis.xcp_write_daq_multiple_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_write_daq_multiple_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x02u, /* WRITE_DAQ_MULTIPLE 0xC7, optional */
-{#- Final-review finding 3. PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and PROGRAM_MAX (0xC9) are exactly
-    the three commands Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads to decide CONNECT's RESOURCE
-    bit 4, because 1.0/1.6.1.1.1 defines that bit by naming them: "1 = Flash programming available.
-    The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are available." None of the three is
-    implemented until SP4b -- Xcp_PIDTable (source/Xcp.c) routes all three to
-    Xcp_CmdNotImplemented -- so enabling their keys in a build with the feature gated on makes
-    CONNECT advertise flash programming while all three answer ERR_CMD_UNKNOWN.
+{#- Final-review finding 3, narrowed by SP4b Task 2 (DD69). PROGRAM_CLEAR (0xD1), PROGRAM (0xD0)
+    and PROGRAM_MAX (0xC9) are exactly the three commands Xcp_CTOCmdStdConnect (source/Xcp_Std.c)
+    reads to decide CONNECT's RESOURCE bit 4, because 1.0/1.6.1.1.1 defines that bit by naming
+    them: "1 = Flash programming available. The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are
+    available." None of the three was implemented before SP4b -- Xcp_PIDTable (source/Xcp.c)
+    routed all three to Xcp_CmdNotImplemented -- so enabling their keys in a build with the feature
+    gated on made CONNECT advertise flash programming while all three answered ERR_CMD_UNKNOWN.
 
-    That is defect D10 verbatim, the defect this sub-project exists to close, one configuration
+    That was defect D10 verbatim, the defect this sub-project exists to close, one configuration
     flag away. DD58 closes it "by construction" for the DEFAULT build only, where the gate is off
-    and every PGM row generates disabled; the moment programming.enabled is true these three rows
-    follow their own keys, which config/xcp.json used to ship enabled. It is also DD59's own stated
+    and every PGM row generates disabled; the moment programming.enabled is true these rows follow
+    their own keys, which config/xcp.json used to ship enabled. It is also DD59's own stated
     principle -- "a command whose handler is not compiled must not be advertised as enabled" --
-    applied to the three rows that are visible on the wire.
+    applied to the rows that are visible on the wire.
 
     Refused rather than merely defaulted false, because a default is a trap for whoever flips it:
-    the keys stay in the schema for SP4b, and an integrator who sets one gets an explanation here
-    instead of a slave that lies to its master. Self-removing -- SP4b deletes each command's term
-    from this condition as it implements it, and the condition disappears with the last one.
+    the keys stay in the schema throughout SP4b, and an integrator who sets one before its command
+    lands gets an explanation here instead of a slave that lies to its master. Self-removing --
+    SP4b deletes each command's term from this condition as it implements it, and the condition
+    disappears with the last one. PROGRAM_CLEAR's term is the first to go: Xcp_DTOCmdPgmProgramClear
+    now exists (source/Xcp_Pgm.c) and config/xcp.json sets xcp_program_clear_api_enable true. The
+    other two stay refused until PROGRAM and PROGRAM_MAX are implemented in turn -- CONNECT's
+    RESOURCE bit 4 needs all three ctoInfo entries enabled at once (Xcp_CTOCmdStdConnect ANDs them),
+    so enabling PROGRAM_CLEAR alone cannot yet make that bit true, and the advertisement stays
+    honest in the meantime.
 
     The other five PGM rows (PROGRAM_VERIFY 0xC8, PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB,
     GET_SECTOR_INFO 0xCD, GET_PGM_PROCESSOR_INFO 0xCE) are equally unimplemented and are NOT
     refused here, deliberately: they have no configuration key of their own, nothing reads their
     ctoInfo bit except the dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN for an enabled
     row pointing at Xcp_CmdNotImplemented exactly as it does for a disabled one. No master is told
-    anything untrue about them. It is the CONNECT advertisement that makes these three different. #}
-{%- if configuration.programming.enabled | default(false) and (configuration.apis.xcp_program_clear_api_enable.enabled or configuration.apis.xcp_program_api_enable.enabled or configuration.apis.xcp_program_max_api_enable.enabled) %}
-{{ raise('programming.enabled is true and at least one of xcp_program_clear_api_enable, xcp_program_api_enable and xcp_program_max_api_enable is enabled, but none of PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and PROGRAM_MAX (0xC9) is implemented before SP4b -- Xcp_PIDTable (source/Xcp.c) routes all three to Xcp_CmdNotImplemented, while Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads exactly these three ctoInfo entries to set CONNECT\'s RESOURCE bit 4, so the slave would advertise "Flash programming available" (XCP part 2 1.0/1.6.1.1.1) and then answer ERR_CMD_UNKNOWN to all three; set the three keys to false until SP4b implements the commands (defect D10; final-review finding 3 in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/final-review.md)') }}
+    anything untrue about them. It is the CONNECT advertisement that makes the remaining two
+    different. #}
+{%- if configuration.programming.enabled | default(false) and (configuration.apis.xcp_program_api_enable.enabled or configuration.apis.xcp_program_max_api_enable.enabled) %}
+{{ raise('programming.enabled is true and at least one of xcp_program_api_enable and xcp_program_max_api_enable is enabled, but neither PROGRAM (0xD0) nor PROGRAM_MAX (0xC9) is implemented yet in SP4b -- Xcp_PIDTable (source/Xcp.c) routes both to Xcp_CmdNotImplemented, while Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads their ctoInfo entries, together with PROGRAM_CLEAR\'s, to set CONNECT\'s RESOURCE bit 4, so the slave would advertise "Flash programming available" (XCP part 2 1.0/1.6.1.1.1) and then answer ERR_CMD_UNKNOWN to at least one of the three; set both keys to false until SP4b implements the commands (defect D10; final-review finding 3 in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/final-review.md; narrowed by Task 2, DD69, in .superpowers/sdd/2026-09-07-xcp-pgm-sp4b/)') }}
 {%- endif %}
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_max_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* PROGRAM_MAX 0xC9, optional */

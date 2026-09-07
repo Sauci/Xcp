@@ -346,7 +346,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* PROGRAM_RESET 0xCF */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xD0 */
-    Xcp_CmdNotImplemented, /* 0xD1 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramClear, /* PROGRAM_CLEAR 0xD1 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_CLEAR 0xD1 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramStart, /* PROGRAM_START 0xD2 */
 #else
@@ -934,7 +938,15 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_RESET 0xCF */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* PROGRAM 0xD0 */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_CLEAR 0xD1 */
+    /* Task 2. 1.7.3.2.5's own PROGRAM_CLEAR row lists exactly the first six of these seven bits --
+     * ERR_GENERIC is not one of them. Xcp_PgmCompleteProgramClear (Xcp_Pgm.c) answers it anyway
+     * when the integrator reports a non-zero status code, because none of the six listed codes
+     * fits an integrator that tried to erase and could not; ADDED here as the recorded deviation,
+     * exactly as Xcp_CTOErrorMatrix[0xCF] two hundred lines above adds it for PROGRAM_RESET's own
+     * identically-shaped gap (DD57). This bit is documentary only, like every bit here but
+     * CMD_BUSY/CMD_SYNTAX/PGM_ACTIVE (Xcp_CanIfRxIndication reads only those three from this
+     * table) -- kept accurate anyway, the same discipline the rest of this table follows. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_CLEAR 0xD1 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_START 0xD2 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* ALLOC_ODT_ENTRY 0xD3, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* ALLOC_ODT 0xD4, optional */

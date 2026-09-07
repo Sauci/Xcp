@@ -432,18 +432,31 @@ typedef struct {
         boolean event_outstanding;
 
         /**
-         * @brief PROGRAM_PREPARE's own Codesize argument, valid only while pid ==
-         * XCP_PID_CMD_PROGRAM_PREPARE.
-         * @details Xcp_ProgramPrepare's contract (interface/Xcp.h) takes address and codeSize on
-         * EVERY call, not only the first -- unlike the single-pStatusCode-argument PROGRAM_START/
-         * PROGRAM_RESET callbacks, which need nothing beyond this struct's existing fields.
-         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) re-reads the MTA itself from
-         * Xcp_Internal.memory_transfer.address on every poll -- stable for the duration, since
-         * DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- but has no such standing
-         * field for Codesize, which this one exists to hold across the poll cycles the switch-based
-         * Xcp_PgmPollPendingCommand does not otherwise have the original request to re-read from.
+         * @brief per-command arguments a poll needs but the handler that parsed them has already
+         * returned by the time it runs, valid only while pid names the matching command.
+         * @details A union keyed by pid, not a growing set of flat fields. PROGRAM_PREPARE's own
+         * Codesize (uint16) was the first member here, added as a single flat field because it was
+         * the only one that existed yet; SP4a's final review anticipated exactly this growth and
+         * asked for a union before a second command needed one. PROGRAM_CLEAR's clear range
+         * (uint32, Task 2) is that second member, and Tasks 3 and 4 both add their own -- a second
+         * flat field beside the first would have invited a third. Both callbacks take address and
+         * a second argument on EVERY call, not only the first -- unlike the single-pStatusCode-
+         * argument PROGRAM_START/PROGRAM_RESET callbacks, which need nothing beyond this struct's
+         * other fields. Only one member is ever live at a time, exactly like pid itself, so this
+         * union costs nothing a struct holding every member unconditionally would not already have
+         * wasted on padding, and it makes the keyed-by-pid discipline visible in the type instead
+         * of only in this comment.
+         * @note The MTA needs no member here at all, for either command: Xcp_PgmPollPendingCommand
+         * (Xcp_Pgm.c) re-reads it directly from Xcp_Internal.memory_transfer.address on every poll
+         * -- stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping
+         * SET_MTA -- which is standing state neither Codesize nor the clear range has anywhere
+         * else once the handler that parsed the request has returned.
          */
-        uint16 program_prepare_code_size;
+        union
+        {
+            uint16 program_prepare_code_size;
+            uint32 program_clear_range;
+        } args;
     } pending_command; /* DD52 */
 
     /**
@@ -882,6 +895,18 @@ uint8 Xcp_DTOCmdPgmProgramReset(boolean *responseExpected, const PduInfoType *pP
  * step within one, so it is legal from XCP_PGM_IDLE and from XCP_PGM_ACTIVE alike.
  */
 uint8 Xcp_DTOCmdPgmProgramPrepare(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_CLEAR, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.2.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdPgmProgramStart above documents -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ * Unlike PROGRAM_PREPARE just above, this one IS gated on Xcp_Internal.pgm_state (DD67, Task 2):
+ * 1.1/1.6.5.1.1 requires it refused ERR_SEQUENCE until PROGRAM_START has succeeded -- the same gate
+ * PROGRAM, PROGRAM_NEXT and PROGRAM_MAX will share once later tasks implement them, and this is its
+ * first user.
+ */
+uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.

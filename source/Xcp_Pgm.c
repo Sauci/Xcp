@@ -42,6 +42,15 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode);
  */
 static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode);
 
+/**
+ * @brief Finishes PROGRAM_CLEAR, building the positive response or ERR_GENERIC from statusCode.
+ * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
+ * Xcp_DTOCmdPgmProgramClear below calls it directly for an integrator whose work completes
+ * instantaneously (spec Section 4) -- the same function Xcp_PgmCompletePendingCommand dispatches
+ * to when the same command instead completes on a later Xcp_MainFunction poll.
+ */
+static void Xcp_PgmCompleteProgramClear(uint8 statusCode);
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
@@ -171,10 +180,74 @@ uint8 Xcp_DTOCmdPgmProgramPrepare(boolean *responseExpected, const PduInfoType *
          * Xcp_PgmPollPendingCommand (below) has no other way to recover it once this handler
          * returns -- the MTA needs no equivalent, since Xcp_Internal.memory_transfer.address is
          * itself standing state it can re-read directly. */
-        Xcp_Internal.pending_command.program_prepare_code_size = code_size;
+        Xcp_Internal.pending_command.args.program_prepare_code_size = code_size;
 
         /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
         *responseExpected = FALSE;
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    *responseExpected = TRUE;
+
+    /* 1.1/1.6.5.1.1 requires PROGRAM_CLEAR, PROGRAM, PROGRAM_NEXT and PROGRAM_MAX refused until
+     * PROGRAM_START has succeeded -- SP4a implemented pgm_state for exactly this gate and had no
+     * command yet to test it against (design doc Section 2); this is that gate's first real user.
+     * 1.7.3.2.5 lists ERR_SEQUENCE on PROGRAM_CLEAR's own row for exactly this condition, unlike
+     * PROGRAM_START's own ERR_GENERIC two hundred lines above -- the two commands fail closed in
+     * different directions, and Xcp_DTOCmdPgmProgramStart's own comment above already explains why
+     * the two codes must not be conflated. */
+    if (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* DD67: 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default) and
+     * 0x01 (functional access mode) -- this slave offers only the first (DD68's PGM_PROPERTIES
+     * says so on the wire too), and 0x01 is refused ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row
+     * lists the action "retry other parameter". Checked, and refused, BEFORE the clear range is
+     * even read below: 1.6.5.1.2 gives that same DWORD field completely different readings
+     * depending on the mode -- a length in absolute mode, a bit mask of memory areas in functional
+     * mode -- so a handler that read it as a length first would already have called
+     * Xcp_ProgramClear with whatever 0x00000001 means as a length, when the master's 0x01 meant
+     * "clear all the calibration data area(s)". */
+    else if (pPduInfo->SduDataPtr[0x01u] == 0x01u)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        uint8 status_code = 0x00u;
+        uint32 clear_range;
+
+        Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &clear_range, Xcp_Ptr->general->byteOrder);
+
+        /* The FIRST call happens here, not on the next Xcp_MainFunction, for the same reason
+         * PROGRAM_PREPARE's own first call does above: an integrator whose work is instantaneous
+         * returns E_OK from it and the master is answered on this very exchange. Spec Section 4. */
+        if (Xcp_ProgramClear(Xcp_Internal.memory_transfer.address, clear_range, &status_code) == E_OK)
+        {
+            Xcp_PgmCompleteProgramClear(status_code);
+        }
+        else
+        {
+            Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_CLEAR;
+            Xcp_Internal.pending_command.active = TRUE;
+            Xcp_Internal.pending_command.abandoned = FALSE;
+            Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* Xcp_ProgramClear's contract takes the clear range on every call, not only this
+             * first one, and Xcp_PgmPollPendingCommand (below) has no other way to recover it once
+             * this handler returns -- the same reason PROGRAM_PREPARE's own codeSize is held in
+             * this union (source/Xcp_Internal.h). The MTA needs no equivalent, since
+             * Xcp_Internal.memory_transfer.address is itself standing state it can re-read
+             * directly. */
+            Xcp_Internal.pending_command.args.program_clear_range = clear_range;
+
+            /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+            *responseExpected = FALSE;
+        }
     }
 
     return E_OK;
@@ -212,8 +285,21 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
              * interloping SET_MTA -- and codeSize comes from the slot, which is the only place
              * left holding it once the handler that parsed it from the request has returned. */
             result = Xcp_ProgramPrepare(Xcp_Internal.memory_transfer.address,
-                                        Xcp_Internal.pending_command.program_prepare_code_size,
+                                        Xcp_Internal.pending_command.args.program_prepare_code_size,
                                         pStatusCode);
+            break;
+        }
+        case XCP_PID_CMD_PROGRAM_CLEAR:
+        {
+            /* Xcp_ProgramClear's contract also takes address and clearRange on every call, the
+             * same shape Xcp_ProgramPrepare's own case just above has and for the same reason: the
+             * MTA is re-read from Xcp_Internal.memory_transfer.address directly -- stable for the
+             * duration, since DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- and the
+             * clear range comes from the slot, the only place left holding it once the handler
+             * that parsed it has returned. */
+            result = Xcp_ProgramClear(Xcp_Internal.memory_transfer.address,
+                                      Xcp_Internal.pending_command.args.program_clear_range,
+                                      pStatusCode);
             break;
         }
         default:
@@ -261,6 +347,11 @@ void Xcp_PgmCompletePendingCommand(uint8 statusCode)
             case XCP_PID_CMD_PROGRAM_PREPARE:
             {
                 Xcp_PgmCompleteProgramPrepare(statusCode);
+                break;
+            }
+            case XCP_PID_CMD_PROGRAM_CLEAR:
+            {
+                Xcp_PgmCompleteProgramClear(statusCode);
                 break;
             }
             default:
@@ -518,6 +609,35 @@ static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode)
         /* 1.1/1.6.5.2.3: "The slave device has to make sure that the target memory area is
          * available and it is in a operational state which permits the download of code. If not,
          * a ERR_GENERIC will be returned." */
+        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */
+    Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
+}
+
+static void Xcp_PgmCompleteProgramClear(uint8 statusCode)
+{
+    if (statusCode == 0x00u)
+    {
+        /* 1.1/1.6.5.1.2 specifies no response payload beyond the standard positive response --
+         * matching PROGRAM_RESET's and PROGRAM_PREPARE's own success responses above. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        /* 1.7.3.2.5's own PROGRAM_CLEAR row lists six codes -- ERR_CMD_BUSY, ERR_CMD_SYNTAX,
+         * ERR_OUT_OF_RANGE, ERR_ACCESS_DENIED, ERR_ACCESS_LOCKED, ERR_SEQUENCE -- and ERR_GENERIC
+         * is not one of them, unlike PROGRAM_START's and PROGRAM_PREPARE's own rows above, which
+         * both list it. The polled contract (spec Section 4, copied from
+         * Xcp_StoreCalibrationDataToNonVolatileMemory) still lets the integrator report failure
+         * after E_OK, though, and none of the row's own six codes fits an integrator that tried to
+         * erase and could not -- ERR_SEQUENCE least of all, since nothing about the request was out
+         * of sequence. ERR_GENERIC is kept as the recorded deviation, exactly the one
+         * Xcp_PgmCompleteProgramReset's own comment above records (DD57) for PROGRAM_RESET's
+         * identically-shaped gap, applied here to a second command for the identical reason. */
         Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
     }
 

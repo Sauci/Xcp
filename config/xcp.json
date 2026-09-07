@@ -189,7 +189,7 @@
           "protected": false
         },
         "xcp_program_clear_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_program_api_enable": {

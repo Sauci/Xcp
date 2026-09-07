@@ -497,6 +497,36 @@ extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
  */
 extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *pStatusCode);
 
+/**
+ * @brief Clears (erases) a part of non-volatile memory prior to reprogramming.
+ * @param [in] address The current MTA (set by SET_MTA), which points to the start of the memory
+ * sector to be cleared. XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.2: "The MTA points to
+ * the start of a memory sector inside the slave. Memory sectors are described in the ASAM MCD 2MC
+ * slave device description file."
+ * @param [in] clearRange The request's own Clear Range: the length, in bytes, of the memory part to
+ * be cleared. 1.1/1.6.5.1.2: "The Clear Range indicates the length of the memory part to be
+ * cleared. The PROGRAM_CLEAR service clears a complete sector or multiple sectors at once." Always
+ * a length -- this module implements absolute access mode only (DD67, DD68), so the alternative
+ * reading functional access mode gives the same field (a bit mask of memory areas) never reaches
+ * this callback; a request naming that mode is refused ERR_OUT_OF_RANGE before this is called.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero for failure.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
+ * the PROGRAM_CLEAR handler to start the work and then once per Xcp_MainFunction until it reports
+ * completion. An implementation whose work is instantaneous returns E_OK from the first call and
+ * the command is answered without ever deferring -- though erasing non-volatile memory is normally
+ * the slowest operation this module asks an integrator to perform, which is why XCP part 2 -
+ * Protocol Layer Specification 1.1/1.7.3.2.5 gives PROGRAM_CLEAR the longer t4 timeout where an
+ * ordinary command gets t1, and why deferring is expected to be the common case rather than the
+ * exception @ref Xcp_ProgramStart and @ref Xcp_ProgramPrepare above tend to be.
+ * @note Unlike @ref Xcp_ProgramPrepare above, this callback is reachable only once a programming
+ * session is open (1.1/1.6.5.1.1): a request arriving before PROGRAM_START has succeeded is refused
+ * ERR_SEQUENCE by the handler and never reaches this callback at all.
+ */
+extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *pStatusCode);
+
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
 /** @} */

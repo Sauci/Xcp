@@ -18,15 +18,22 @@ PGM_PIDS = ((0xD2, 'PROGRAM_START'), (0xD1, 'PROGRAM_CLEAR'), (0xD0, 'PROGRAM'),
             (0xCC, 'PROGRAM_PREPARE'), (0xCB, 'PROGRAM_FORMAT'), (0xCA, 'PROGRAM_NEXT'),
             (0xC9, 'PROGRAM_MAX'), (0xC8, 'PROGRAM_VERIFY'))
 
-#: The three PGM commands CONNECT's RESOURCE bit 4 is defined by (1.0/1.6.1.1.1), none of them
-#: implemented before SP4b, and therefore the three keys script/source_cfg.c.jinja2 refuses to see
-#: enabled alongside `programming.enabled` (final-review finding 3).
-CONNECT_ADVERTISED_KEYS = ('xcp_program_clear_api_enable',
-                           'xcp_program_api_enable',
+#: The two PGM commands still unimplemented, of the three CONNECT's RESOURCE bit 4 is defined by
+#: (1.0/1.6.1.1.1) and therefore the two keys script/source_cfg.c.jinja2 still refuses to see
+#: enabled alongside `programming.enabled` (final-review finding 3, narrowed by SP4b Task 2/DD69).
+#: PROGRAM_CLEAR's own key is deliberately absent: Task 2 implemented the command, deleted its term
+#: from the generator's guard, and set xcp_program_clear_api_enable true in config/xcp.json, so
+#: enabling it alone no longer raises -- pgm_clear_test.py covers PROGRAM_CLEAR's own generation
+#: and wire behaviour now that it has one to cover.
+CONNECT_ADVERTISED_KEYS = ('xcp_program_api_enable',
                            'xcp_program_max_api_enable')
 
-#: The only gate-on shape that generates: the feature on, the three unimplemented commands off.
-#: Mirrors pgm_deferred_test.py's own pgm_handle() and exists for the same reason.
+#: A gate-on shape that generates: the feature on, the two still-unimplemented commands off, and
+#: PROGRAM_CLEAR off too so every PGM test sharing this dict keeps reading exactly as it did before
+#: Task 2 (pgm_clear_test.py builds its own handle with PROGRAM_CLEAR enabled instead). Mirrors
+#: pgm_deferred_test.py's own pgm_handle() and exists for the same reason -- no longer the ONLY
+#: gate-on shape that generates, since xcp_program_clear_api_enable=True now also generates
+#: cleanly, but still the shape every test below except the PROGRAM_CLEAR-specific ones wants.
 GATE_ON = dict(programming_enabled=True,
                xcp_program_clear_api_enable=False,
                xcp_program_api_enable=False,
@@ -72,20 +79,23 @@ def test_the_default_configuration_does_not_advertise_flash_programming():
 
 @pytest.mark.parametrize('key', CONNECT_ADVERTISED_KEYS)
 def test_generation_refuses_each_unimplemented_pgm_key_on_its_own(key):
-    """Final-review finding 3, and D11's successor.
+    """Final-review finding 3, and D11's successor. Narrowed by SP4b Task 2 (DD69): originally
+    parametrised over three keys, now two, since PROGRAM_CLEAR's own term left this guard once
+    Xcp_DTOCmdPgmProgramClear existed to answer it -- see pgm_clear_test.py for what replaced its
+    case here.
 
     Until this guard, `programming.enabled: true` generated eight of the eleven PGM ctoInfo rows
-    ENABLED with Xcp_PIDTable routing them to Xcp_CmdNotImplemented -- and three of the eight are
+    ENABLED with Xcp_PIDTable routing them to Xcp_CmdNotImplemented -- and three of the eight were
     exactly the three Xcp_CTOCmdStdConnect reads for RESOURCE bit 4 (1.0/1.6.1.1.1 defines the bit
     by naming PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX). So CONNECT advertised "Flash programming
     available" while all three answered ERR_CMD_UNKNOWN: defect D10 verbatim, one configuration
     flag away from the branch that exists to close it, and this file previously asserted it as
     correct.
 
-    Parametrised over the key that is the SOLE one enabled, so each of the three terms in the
-    generator's condition is the only possible cause of the refusal in exactly one case. A guard
-    written against `xcp_program_max_api_enable` alone -- D11's original defect, in which that was
-    the only key the generator read -- would fail two of these three cases.
+    Parametrised over the key that is the SOLE one enabled, so each of the two remaining terms in
+    the generator's condition is the only possible cause of the refusal in exactly one case. A
+    guard written against `xcp_program_max_api_enable` alone -- D11's original defect, in which
+    that was the only key the generator read -- would fail the other of these two cases.
 
     Asserts only that generation fails, never on the message: raise(...) is not a registered Jinja
     global, so every guard in source_cfg.c.jinja2 aborts with the same "'raise' is undefined"
@@ -126,11 +136,18 @@ def test_the_three_unimplemented_commands_answer_err_cmd_unknown_with_the_gate_o
     implementation rather than merely that both are absent.
 
     test_the_default_configuration_does_not_advertise_flash_programming makes this claim for the
-    gate-OFF build, where every PGM command is unimplemented. Here the gate is ON and three of the
-    eleven commands really do exist -- PROGRAM_START, PROGRAM_RESET and PROGRAM_PREPARE, exercised
-    at length in pgm_deferred_test.py and pgm_session_test.py -- so the sweep is over the three
-    CONNECT reads instead: they must answer ERR_CMD_UNKNOWN, which is what makes the withheld
-    advertisement above the truth about this build and not an accident of it."""
+    gate-OFF build, where every PGM command is unimplemented. Here the gate is ON and four of the
+    eleven commands really do exist -- PROGRAM_START, PROGRAM_RESET, PROGRAM_PREPARE and, since
+    SP4b Task 2, PROGRAM_CLEAR itself, exercised at length in pgm_deferred_test.py,
+    pgm_session_test.py and pgm_clear_test.py -- so the sweep is over the three CONNECT reads
+    instead: they must answer ERR_CMD_UNKNOWN, which is what makes the withheld advertisement
+    above the truth about this build and not an accident of it. PROGRAM_CLEAR's own answer here is
+    ERR_CMD_UNKNOWN for a different reason than PROGRAM's and PROGRAM_MAX's: GATE_ON leaves
+    xcp_program_clear_api_enable False, so its ctoInfo entry is disabled and dispatch never
+    reaches its (real) handler at all -- the same wire answer a genuinely unimplemented command
+    gets, which is the property test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off's
+    own docstring names directly. pgm_clear_test.py is where PROGRAM_CLEAR's handler is actually
+    exercised, on a handle that enables it."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, **GATE_ON))
     connect(handle)
 
@@ -205,10 +222,12 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     this suite -- all of it runs with the gate off -- and still violate 'byte-for-byte identical',
     which is a claim about the whole file, not about the eleven rows this sub-project added.
 
-    Named for eleven rows until final-review finding 3; eight of them now, since PROGRAM_CLEAR,
-    PROGRAM and PROGRAM_MAX cannot be enabled in a gate-on build at all. The claim is unchanged --
-    nothing outside the PGM block may move when the gate flips -- and is asserted below as the
-    exact set rather than as a number.
+    Named for eleven rows until final-review finding 3; eight of them here, since this comparison's
+    `on` config is GATE_ON, which forces PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX off deliberately --
+    PROGRAM_CLEAR no longer because the generator refuses it (SP4b Task 2 lifted its own term,
+    DD69), but PROGRAM and PROGRAM_MAX still do. The claim is unchanged -- nothing outside the PGM
+    block may move when the gate flips -- and is asserted below as the exact set rather than as a
+    number.
 
     Diffs the current generator's own output for the gate on vs off, rather than reaching back into
     git history for the comparison. The two questions are the same one as long as the template's
@@ -228,11 +247,14 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     on_lines = on.splitlines()
     assert len(off_lines) == len(on_lines), 'the gate must not add or remove any generated line'
 
-    # Eight, not eleven, since final-review finding 3: PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX
-    # cannot be enabled in a gate-on build at all, so their rows are identical on both sides and
-    # the ceiling on what the gate may touch drops to the other eight. Asserting the exact set
-    # rather than a count keeps the claim from weakening as that number moves: SP4b puts each of
-    # the three back as it implements it, and this list is where that shows up.
+    # Eight, not eleven, since final-review finding 3: this comparison's `on` config is GATE_ON,
+    # which forces PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX off deliberately, so their rows are
+    # identical on both sides and the ceiling on what the gate may touch drops to the other eight.
+    # Asserting the exact set rather than a count keeps the claim from weakening as that number
+    # moves: SP4b puts each of the three back as it implements it, and this list is where that
+    # shows up -- PROGRAM_CLEAR's own generator refusal is already gone (Task 2, DD69), and only
+    # GATE_ON's own choice to still pass xcp_program_clear_api_enable=False keeps its row in this
+    # particular set.
     unchanged = {'PROGRAM_CLEAR 0xD1', 'PROGRAM 0xD0', 'PROGRAM_MAX 0xC9'}
     pgm_markers = ['%s 0x%02X' % (name, pid) for pid, name in PGM_PIDS]
     differing = [i for i, (o, n) in enumerate(zip(off_lines, on_lines)) if o != n]
