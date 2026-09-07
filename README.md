@@ -19,6 +19,7 @@ The following definitions might be set by the user, depending on the needs.
 | ```XCP_PAGING_SUPPORTED```    | ```ON```/```OFF```               | derived                    | enables/disables the **PAG** command group. Normally left alone: the value follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a segment, and keeps following it when that file changes — editing the configuration re-runs the configure step and updates this entry in place, in the build directory you already have. An explicit ```-D``` overrides it and survives reconfiguring. Configure from a clean build directory after upgrading: a cache entry written before this became an option holds ```STD_OFF```, which reads as ON and is indistinguishable from a deliberate override |
 | ```XCP_DAQ_TIMESTAMP_SUPPORTED``` | ```ON```/```OFF```           | derived                    | enables/disables the data acquisition clock: the DAQ timestamp field, the `GET_DAQ_CLOCK` command, and `interface/Xcp.h`'s inclusion of `Xcp_DaqTimestamp.h`. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a ```protocol_layer.timestamp``` block, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below — this one is **not** optional there |
 | ```XCP_DAQ_TIMESTAMP_SIZE```  | ```0```/```1```/```2```/```4```  | derived                    | the DAQ timestamp field's width in bytes, as transmitted. Normally left alone: the default is the largest ```protocol_layer.timestamp.size``` any configuration in ```XCP_CONFIG_FILEPATH``` declares (```BYTE```/```WORD```/```DWORD``` → 1/2/4), or 0 when none does, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below |
+| ```XCP_FLASH_PROGRAMMING_ENABLED``` | ```ON```/```OFF```         | derived                    | enables/disables the **PGM** command group: the commands, the integrator callbacks `interface/Xcp.h` declares for them, and the programming-session state. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` sets ```programming.enabled```, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Flash programming* below |
 
 To use this feature, simply add ```-D<definition>=<value>``` when configuring the build with CMake.
 
@@ -302,6 +303,64 @@ Whether FREEZE may be requested at all is a module-level property, `freeze_suppo
 the master through bit 0 of `PAG_PROPERTIES` in the `GET_PAG_PROCESSOR_INFO` response. Requesting FREEZE on a slave that
 does not support it is answered with `ERR_MODE_NOT_VALID`.
 
+## Flash programming
+The **PGM** command group is compiled out by default and is turned on by `programming.enabled` in the *JSON*
+configuration, exactly the way a declared segment turns on **PAG**. The generator then defines
+`XCP_FLASH_PROGRAMMING_ENABLED` as `STD_ON`, `interface/Xcp.h` pulls in the programming callbacks, and the commands
+listed below are compiled in. With the flag clear they are compiled out and their dispatch entries answer
+`ERR_CMD_UNKNOWN`, which is also what an individually disabled command answers.
+
+Three commands exist today. Each has its own `apis.xcp_program_*_api_enable` key, so a build may compile the group in
+and still withhold one:
+
+| command                | key                                | purpose                                                                       |
+|:-----------------------|:-----------------------------------|:-------------------------------------------------------------------------------|
+| ```PROGRAM_START```    | `xcp_program_start_api_enable`     | opens the programming sequence, and reports the programming-mode communication parameters |
+| ```PROGRAM_PREPARE```  | `xcp_program_prepare_api_enable`   | declares the target and size of a code download, before or during a sequence  |
+| ```PROGRAM_RESET```    | `xcp_program_reset_api_enable`     | ends the sequence, answers, and disconnects                                   |
+
+The work behind each is delegated to the integrator through three functions, whose prototypes are declared directly in
+[Xcp.h](./interface/Xcp.h) — unlike the paging and seed/key callbacks, which live in their own headers — under the same
+`XCP_FLASH_PROGRAMMING_ENABLED` guard, so a build with the group compiled out neither declares nor requires them:
+
+| function                 | called by         | purpose                                                                        |
+|:-------------------------|:------------------|:--------------------------------------------------------------------------------|
+| ```Xcp_ProgramStart```   | `PROGRAM_START`   | enter programming mode                                                          |
+| ```Xcp_ProgramPrepare``` | `PROGRAM_PREPARE` | make the target memory area ready for a code download of the announced size     |
+| ```Xcp_ProgramReset```   | `PROGRAM_RESET`   | leave programming mode, and perform a device reset if the ECU wants one         |
+
+All three are **polled**, copying `Xcp_StoreCalibrationDataToNonVolatileMemory`'s contract: the command handler calls
+the function once, and `Xcp_MainFunction` keeps calling it until it returns `E_OK`. An implementation whose work is
+instantaneous returns `E_OK` from the first call and the master is answered on that very exchange, with no deferral at
+all; one that erases flash returns `E_NOT_OK` for as long as it needs, and the response is withheld until it finishes.
+While it is unfinished the slave emits `EV_CMD_PENDING` to keep the master's time-out from expiring — one event at a
+time, re-emitted after each is confirmed rather than on a schedule — and answers any other command with `ERR_CMD_BUSY`,
+except `SYNCH`, which the specification requires to stay available. A `SYNCH` in that window abandons the response, not
+the operation: the integrator is still polled to completion, and its answer is discarded rather than sent to a master
+that has moved on. The `pStatusCode` output is read only on the `E_OK` call; a non-zero value there means the work
+finished unsuccessfully and is answered `ERR_GENERIC`.
+
+A successful `PROGRAM_START` opens a session, and `PROGRAM_RESET` is what ends it. While one is open, every command
+carrying `ERR_PGM_ACTIVE` in the specification's error matrix is refused with it — which includes `DISCONNECT`,
+`GET_SEED` and `UNLOCK` — while the commands XCP part 2 §1.6.5.1.1 requires throughout a programming sequence
+(`SET_MTA`, `UPLOAD`, `BUILD_CHECKSUM` and the **PGM** commands themselves) stay available. A second `PROGRAM_START`
+inside an open session is answered `ERR_GENERIC`, the code §1.6.5.1.1 names for a slave "not in a state which permits
+programming".
+
+No device reset is performed by this module. §1.6.5.1.4 suggests a hardware reset "usually" happens at `PROGRAM_RESET`;
+AUTOSAR SWS_Xcp_00856 overrides that, so the slave goes to the disconnected state and nothing else. An integrator who
+wants a reset performs it from inside `Xcp_ProgramReset`, which is the only place that knows what else is running on
+the ECU. Because the module declines the reset, it takes on what the reset would have cleared: a `CONNECT` returns the
+programming session to idle, so a master that disappears mid-sequence — or a build with no `PROGRAM_RESET` compiled in
+— leaves nothing behind for the next session.
+
+The remaining eight **PGM** commands (`PROGRAM_CLEAR`, `PROGRAM`, `PROGRAM_MAX`, `PROGRAM_NEXT`, `PROGRAM_FORMAT`,
+`PROGRAM_VERIFY`, `GET_SECTOR_INFO`, `GET_PGM_PROCESSOR_INFO`) are not implemented and answer `ERR_CMD_UNKNOWN`. Three
+of them define `CONNECT`'s "flash programming available" resource bit, so enabling
+`xcp_program_clear_api_enable`, `xcp_program_api_enable` or `xcp_program_max_api_enable` in a build with
+`programming.enabled` set is refused at code generation rather than shipped as an advertisement with nothing behind it.
+`resource_protection.programming` is refused in the same build for a different reason, given under *Limitations* below.
+
 
 # Limitations
 - The `GET_SLAVE_ID` command (CTO = `TRANSPORT_LAYER_CMD`, sub-command = `0xFF`) returns the PDU ID of the 
@@ -329,6 +388,18 @@ does not support it is answered with `ERR_MODE_NOT_VALID`.
 - Synchronous data stimulation is implemented (SP3), less `BIT_STIM` and `EV_STIM_TIMEOUT`, and less runtime
   protection of the `STIM` resource — a configuration that is stimulation-capable *and* declares `STIM` protected
   is refused at generation rather than shipped with a gate that does nothing.
+- Flash programming (see *Flash programming* above) covers `PROGRAM_START`, `PROGRAM_PREPARE` and `PROGRAM_RESET`.
+  The other eight **PGM** commands answer `ERR_CMD_UNKNOWN`; `PROGRAM_CLEAR`, `PROGRAM` and `PROGRAM_MAX` are the
+  three `CONNECT`'s flash-programming resource bit is defined by, so enabling their API keys in a programming build
+  is refused at generation and that bit is never set until they exist. Until they do, the group can open, prepare
+  and end a programming sequence, but nothing in it transfers or erases code.
+- The `PGM` resource cannot be protected: `resource_protection.programming` is refused at generation in any build
+  with `programming.enabled` set. An `UNLOCK` is spent by the single command following it (see *Key lifetime*
+  above), so `PROGRAM_START` consumes it, and once the session is open the specification requires `GET_SEED` and
+  `UNLOCK` to be refused `ERR_PGM_ACTIVE` — leaving `PROGRAM_RESET`, the only command that ends the session, locked
+  with no way to unlock it. Every refusal in that chain is conformant on its own; the composition is a slave that
+  cannot leave programming mode, so the configuration is refused rather than shipped. Fixing it means changing the
+  key lifetime for every resource group, not the **PGM** group alone.
 - At most one DTO frame is in flight at a time (SP2c): `Xcp_StartNextTransmission` arbitrates a single transmit
   slot across command responses, event packets and DAQ frames alike, and starts the next one only once the
   current one is confirmed. This is mandatory rather than a simplification, not merely a design choice this

@@ -30,6 +30,21 @@
 
 #endif /* #ifndef XCP_PAGING_SUPPORTED */
 
+{%- set programming = namespace(enabled=false) %}
+{%- for configuration in configurations %}
+{%- if configuration.programming.enabled | default(false) %}
+{%- set programming.enabled = true %}
+{%- endif %}
+{%- endfor %}
+#ifndef XCP_FLASH_PROGRAMMING_ENABLED
+
+/* One macro gates the whole module, so it is on when ANY configuration enables programming --
+ * the same rule XCP_PAGING_SUPPORTED above follows, for the same reason: the sources are compiled
+ * once for all configurations. ECUC_Xcp_00181 (XcpFlashProgrammingEnabled) is pre-compile-time. */
+#define XCP_FLASH_PROGRAMMING_ENABLED ({% if programming.enabled %}STD_ON{% else %}STD_OFF{% endif %})
+
+#endif /* #ifndef XCP_FLASH_PROGRAMMING_ENABLED */
+
 {%- set max_dto = namespace(value=0) %}
 {%- for configuration in configurations %}
 {%- if configuration.protocol_layer.max_dto > max_dto.value %}

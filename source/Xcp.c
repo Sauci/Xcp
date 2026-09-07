@@ -333,13 +333,25 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xC9 */
     Xcp_CmdNotImplemented, /* 0xCA */
     Xcp_CmdNotImplemented, /* 0xCB */
-    Xcp_CmdNotImplemented, /* 0xCC */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramPrepare, /* PROGRAM_PREPARE 0xCC, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_PREPARE 0xCC, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xCD */
     Xcp_CmdNotImplemented, /* 0xCE */
-    Xcp_CmdNotImplemented, /* 0xCF */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramReset, /* PROGRAM_RESET 0xCF */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_RESET 0xCF */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xD0 */
     Xcp_CmdNotImplemented, /* 0xD1 */
-    Xcp_CmdNotImplemented, /* 0xD2 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramStart, /* PROGRAM_START 0xD2 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_START 0xD2 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_DTOCmdDaqAllocOdtEntry, /* ALLOC_ODT_ENTRY 0xD3, optional */
     Xcp_DTOCmdDaqAllocOdt, /* ALLOC_ODT 0xD4, optional */
     Xcp_DTOCmdDaqAllocDaq, /* ALLOC_DAQ 0xD5, optional */
@@ -902,7 +914,25 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_PREPARE 0xCC, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_MODE_NOT_VALID | XCP_INTERNAL_ERR_SEGMENT_NOT_VALID, /* GET_SECTOR_INFO 0xCD, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* Neither PGM_ACTIVE nor SEQUENCE, unlike most of this block: DD57 makes PROGRAM_RESET the one
+     * PGM command not gated on a programming session in either direction -- accepted from
+     * XCP_PGM_IDLE (no ERR_SEQUENCE; unlike PROGRAM_START, Xcp_DTOCmdPgmProgramReset carries no
+     * pgm_state check of its own) and, just as importantly, from XCP_PGM_ACTIVE too (no generic
+     * ERR_PGM_ACTIVE refusal), since ending an active session is this command's entire purpose --
+     * a PGM_ACTIVE bit here would make the gate refuse the one command that is supposed to clear
+     * it. GENERIC is added because Xcp_PgmCompleteProgramReset (Xcp_Pgm.c) answers it when
+     * Xcp_ProgramReset reports a non-zero status code, mirroring PROGRAM_START's own failure path
+     * below. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_RESET 0xCF */
+#else
+    /* Fix round 1, finding 6: unlike Xcp_PIDTable's 0xCF entry two hundred lines above, this row
+     * has no behavioural reader with the gate off -- the enabled-bit check in Xcp_CanIfRxIndication
+     * precedes it and 0xCF generates disabled -- but acceptance criterion 1 ("byte-for-byte") means
+     * the CONSTANT itself, not merely the behaviour, so this restores exactly what the row was
+     * before SP4a touched it rather than leaving the ON-build's row exposed to an OFF build. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_RESET 0xCF */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* PROGRAM 0xD0 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* PROGRAM_CLEAR 0xD1 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_DAQ_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_GENERIC, /* PROGRAM_START 0xD2 */
@@ -938,10 +968,89 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* DOWNLOAD 0xF0 */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* USER_CMD 0xF1, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* TRANSPORT_LAYER_CMD 0xF2, optional */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* DD51/1.1/1.6.5.1.1: BUILD_CHECKSUM is one of the seven commands that "must always be
+     * available during a memory programming sequence" -- carrying PGM_ACTIVE here would make the
+     * new pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the
+     * command that section requires to stay reachable throughout one.
+     *
+     * Deliberate divergence from the OFF build below, worth recording so a future reader does not
+     * "fix" it back: one bit governs all four ERR_PGM_ACTIVE triggers per command (the gate ORs
+     * STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ/pgm_state==ACTIVE), so clearing it here to satisfy
+     * DD51 also stops BUILD_CHECKSUM being refused during an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ -- a refusal 1.1/1.7.3's error table does list for it, and which
+     * asam_error_matrix_test.py's TestBuildChecksumErrorHandling::test_returns_err_pgm_active
+     * still pins, but only for the OFF build (see that test's own DefaultConfig). DD51 requires
+     * this bit absent from all seven regardless, so this cost is the spec's choice, not a defect;
+     * no ON-build test currently asserts either side of it. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
+#else
+    /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
+     * the gate off. BUILD_CHECKSUM's own enabled bit does not depend on
+     * configuration.programming.enabled, so it dispatches in every build, and PGM_ACTIVE here
+     * still means what it always has for such a build: refused while session_status carries
+     * STORE_CAL_REQ (asam_error_matrix_test.py, TestBuildChecksumErrorHandling::
+     * test_returns_err_pgm_active pins exactly this). Unchanged from before this task, both
+     * because that behaviour is real and for acceptance criterion 1's byte-for-byte constant --
+     * only the ON-build's row above gains the pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* SHORT_UPLOAD 0xF4, optional */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* DD51/1.1/1.6.5.1.1: UPLOAD is one of the seven commands that "must always be available
+     * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
+     * pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the command
+     * that section requires to stay reachable throughout one.
+     *
+     * Deliberate divergence from the OFF build below, worth recording so a future reader does not
+     * "fix" it back: one bit governs all four ERR_PGM_ACTIVE triggers per command (the gate ORs
+     * STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ/pgm_state==ACTIVE), so clearing it here to satisfy
+     * DD51 also stops UPLOAD being refused during an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ -- a refusal 1.1/1.7.3's error table does list for it, and which
+     * asam_error_matrix_test.py's TestUploadErrorHandling::test_returns_err_pgm_active still pins,
+     * but only for the OFF build (see that test's own DefaultConfig). DD51 requires this bit
+     * absent from all seven regardless, so this cost is the spec's choice, not a defect; no
+     * ON-build test currently asserts either side of it. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
+#else
+    /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
+     * the gate off. UPLOAD's own enabled bit does not depend on
+     * configuration.programming.enabled, so it dispatches in every build, and PGM_ACTIVE here
+     * still means what it always has for such a build: refused while session_status carries
+     * STORE_CAL_REQ (asam_error_matrix_test.py, TestUploadErrorHandling::
+     * test_returns_err_pgm_active pins exactly this). Unchanged from before this task, both
+     * because that behaviour is real and for acceptance criterion 1's byte-for-byte constant --
+     * only the ON-build's row above gains the pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* DD51/1.1/1.6.5.1.1: SET_MTA is one of the seven commands that "must always be available
+     * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
+     * pgm_state disjunct in Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate refuse exactly the command
+     * that section requires to stay reachable throughout one; PROGRAM_NEXT's block transfer, and
+     * PROGRAM_PREPARE's own use of the MTA above, both depend on SET_MTA still working.
+     *
+     * Deliberate divergence from the OFF build below, worth recording so a future reader does not
+     * "fix" it back: one bit governs all four ERR_PGM_ACTIVE triggers per command (the gate ORs
+     * STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ/pgm_state==ACTIVE), so clearing it here to satisfy
+     * DD51 also stops SET_MTA being refused during an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ -- a refusal 1.1/1.7.3's error table does list for it, and which
+     * asam_error_matrix_test.py's TestSetMtaErrorHandling::test_returns_err_pgm_active still pins,
+     * but only for the OFF build (see that test's own DefaultConfig). DD51 requires this bit
+     * absent from all seven regardless, so this cost is the spec's choice, not a defect; no
+     * ON-build test currently asserts either side of it. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
+#else
+    /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
+     * the gate off. SET_MTA's own enabled bit does not depend on configuration.programming.
+     * enabled, so it dispatches in every build, and PGM_ACTIVE here still means what it always has
+     * for such a build: refused while session_status carries STORE_CAL_REQ
+     * (asam_error_matrix_test.py, TestSetMtaErrorHandling::test_returns_err_pgm_active pins
+     * exactly this). Unchanged from before this task, both because that behaviour is real and for
+     * acceptance criterion 1's byte-for-byte constant -- only the ON-build's row above gains the
+     * pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* UNLOCK 0xF7, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_SEED 0xF8, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_REQUEST 0xF9, optional */
@@ -1111,6 +1220,17 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.allocated_daq_count =
                     (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC) ? 0x0000u
                                                                      : Xcp_Ptr->general->daqCount;
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+            /* SP3 shipped a defect that was exactly this omission: state surviving into the next
+             * session because Xcp_Init did not reset it. pending_command's every member is reset,
+             * not only active -- a stale pid or event_outstanding read by code that trusted active
+             * alone would be a second copy of that same defect. */
+            Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+            Xcp_Internal.pending_command.pid = 0x00u;
+            Xcp_Internal.pending_command.active = FALSE;
+            Xcp_Internal.pending_command.abandoned = FALSE;
+            Xcp_Internal.pending_command.event_outstanding = FALSE;
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
             Xcp_Internal.last_pid = 0x00u;
@@ -1250,6 +1370,61 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     uint8 store_calibration_status;
+
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* Polled ahead of STORE_CAL_REQ below: a programming master is waiting on a response with a
+     * t3/t4/t5 timeout running, where a store-calibration request has nobody waiting on it at all.
+     * DD53. Xcp_MainFunction gains these four lines and no knowledge of any PGM command -- the
+     * poll, the response and EV_CMD_PENDING all live in Xcp_Pgm.c.
+     *
+     * Fix round 1, finding 3: withheld while cto_response.successful_transmission_pending is
+     * TRUE, not merely while polled. Xcp_Internal.cto_response.pdu_info is one buffer shared by
+     * every CTO response, including the ERR_CMD_BUSY packet DD55's own gate (Xcp_CanIfRxIndication)
+     * writes for an interloper arriving in this same window. That gate stops the interloper's
+     * HANDLER from touching the buffer, but says nothing about Xcp_MainFunction's own completion
+     * doing so an instant later -- and until here it did: polling to E_OK and completing
+     * unconditionally would let Xcp_PgmCompleteProgramStart overwrite an ERR_CMD_BUSY packet that
+     * is still unconfirmed, sitting in the exact frame CanIf is still holding for the master. One
+     * response is lost (its bytes silently become the other response's) and, if CanIf reads the
+     * buffer lazily rather than having copied it already, the other is malformed on the wire.
+     * Confirmed by direct observation: reading the buffer between an unconfirmed ERR_CMD_BUSY and
+     * an unguarded completing poll shows the positive PROGRAM_START response already sitting in
+     * it, in the frame the master will still match to its own, unrelated interloper command.
+     *
+     * Withholding the whole block, not polling and then discarding the completion, is deliberate:
+     * the integrator callback's contract (source/Xcp_Pgm.c's Xcp_PgmPollPendingCommand) defines
+     * E_OK as "the callback has finished" and says nothing about what a further call after that
+     * returns, so polling an already-finished operation again is unspecified behaviour, not a safe
+     * way to buy a cycle. Deferring the whole block costs at most one Xcp_MainFunction cycle --
+     * bounded by SWS_Xcp_00859's one-frame-at-a-time confirmation, not by this module's period,
+     * which Xcp_MainFunction may never depend on -- and keeps the poll loop's own contract intact:
+     * once polled to E_OK, it is completed on that same call, never re-polled first.
+     *
+     * Design §9 criterion 7 asks for a per-term mutation test on every new compound condition. The
+     * SECOND conjunct has one (Task 3 finding 3). The FIRST does not, and cannot: deleting
+     * `pending_command.active == TRUE` is behaviour-neutral today, because a poll with no pending
+     * command lands on Xcp_PgmPollPendingCommand's `default` case, which returns E_OK
+     * (source/Xcp_Pgm.c), and Xcp_PgmCompletePendingCommand's `default` then does nothing -- a
+     * silent no-op rather than an observable defect. It is kept as defence in depth, and the
+     * invariant it rests on is stated here rather than left to be rediscovered: it is safe to
+     * delete only while BOTH of those `default` cases stay inert. Change either -- to E_NOT_OK, say,
+     * which would turn every idle Xcp_MainFunction into an EV_CMD_PENDING push -- and this guard
+     * becomes load-bearing with no test to notice it was ever removed. Final-review finding 7. */
+    if ((Xcp_Internal.pending_command.active == TRUE) &&
+        (Xcp_Internal.cto_response.successful_transmission_pending == FALSE))
+    {
+        uint8 status_code = 0x00u;
+
+        if (Xcp_PgmPollPendingCommand(&status_code) == E_OK)
+        {
+            Xcp_PgmCompletePendingCommand(status_code);
+        }
+        else
+        {
+            Xcp_PgmRequestPending();
+        }
+    }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
      * The STORE_CAL_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
@@ -1495,6 +1670,93 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
                                      * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
                                      * return an error packet with the error code ERR_CMD_BUSY. */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                                    /* DD55. 1.1/1.7.3.2.5 -- the PGM error-handling matrix;
+                                     * §1.7.3.2.4 is DAQ's, and this citation said .4 until the
+                                     * final review corrected the numbering across the sub-project
+                                     * -- lists ERR_CMD_BUSY (action "wait t7,
+                                     * repeat infinitely times") for every PGM command; this extends
+                                     * it to every command, while pending_command.active is TRUE,
+                                     * regardless of that command's own Xcp_CTOErrorMatrix entry.
+                                     * The BUSY test just below does NOT already cover this case,
+                                     * which is the reason this term exists at all: it reads
+                                     * cto_response.successful_transmission_pending, which DD53
+                                     * leaves FALSE for the whole duration of a deferred operation
+                                     * -- precisely so that nothing is transmitted while it runs --
+                                     * so a command whose own matrix entry carries
+                                     * XCP_INTERNAL_ERR_CMD_BUSY would sail through that test
+                                     * unopposed. Dispatching it anyway would let its handler write
+                                     * cto_response.pdu_info -- the one buffer every CTO response
+                                     * shares, including the ERR_CMD_BUSY packet this gate itself
+                                     * produces -- while the pending command's own answer is still
+                                     * due to land in that same buffer. This gate stops only the
+                                     * interloper's HANDLER from doing that; Xcp_MainFunction's own
+                                     * completion of the pending command must separately not do it
+                                     * either, which is why its poll is withheld there whenever
+                                     * cto_response.successful_transmission_pending is TRUE (fix
+                                     * round 1, finding 3) -- without both halves, one response is
+                                     * lost and the other malformed regardless of which of the two
+                                     * writers loses the race.
+                                     *
+                                     * 1.1/1.7.1.1 exempts SYNCH: it is the master's only means of
+                                     * resynchronising, and one that cannot get through leaves a
+                                     * confused master with no way out. Exempted here, not answered
+                                     * here -- it falls through to dispatch below like any other
+                                     * command and gets its usual ERR_CMD_SYNCH from
+                                     * Xcp_CTOCmdStdSynch (Xcp_Std.c), which answers unconditionally
+                                     * whether or not anything is pending. */
+                                    if ((Xcp_Internal.pending_command.active == TRUE) && (pid != XCP_PID_CMD_SYNCH))
+                                    {
+                                        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
+                                        Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                    }
+                                    else
+                                    {
+                                        /* DD55: SYNCH must not clear pending_command.active.
+                                         * Xcp_MainFunction polls only while active is TRUE, so
+                                         * clearing it here would stop that polling and strand the
+                                         * integrator mid-operation -- its callback never called
+                                         * again, never reporting completion, and a later
+                                         * PROGRAM_START starting a second operation on top of one
+                                         * still running. Abandoning it instead lets the poll run to
+                                         * completion; Xcp_PgmCompletePendingCommand (Xcp_Pgm.c)
+                                         * discards the response instead of transmitting it.
+                                         *
+                                         * pid is not re-tested here: this else is reached only when
+                                         * (active == FALSE) or (pid == XCP_PID_CMD_SYNCH) (the
+                                         * negation of the if above), so active == TRUE by itself
+                                         * already rules out the first disjunct and leaves
+                                         * pid == XCP_PID_CMD_SYNCH the only way to be here. Fix
+                                         * round 1, finding 2: the repeated compare was dead code on
+                                         * the CTO receive path DD55's own risk note says must not
+                                         * pay for a feature most builds compile out, and it invited
+                                         * a reader to conclude this branch is reachable with
+                                         * pid != XCP_PID_CMD_SYNCH, which it is not.
+                                         *
+                                         * Final-review finding 7, the second of the two guards it
+                                         * names: this `active == TRUE` test is itself not
+                                         * mutation-testable, and design §9 criterion 7 records it
+                                         * here as a documented exception rather than leaving the
+                                         * criterion quietly unmet. Deleting it is behaviour-neutral
+                                         * because Xcp_PgmAbandonPendingCommand (Xcp_Pgm.c) now does
+                                         * one thing, `abandoned = TRUE`, and every handler that
+                                         * defers sets `abandoned = FALSE` as it fills the slot
+                                         * (Xcp_Pgm.c), so a stray TRUE written with nothing pending
+                                         * is overwritten before anything can read it --
+                                         * Xcp_PgmCompletePendingCommand is the only reader and runs
+                                         * only for a slot a handler filled. That is the invariant
+                                         * this guard rests on: it is safe to omit only while
+                                         * abandoning stays a single idempotent write that every
+                                         * deferring handler re-initialises. Give
+                                         * Xcp_PgmAbandonPendingCommand any other side effect --
+                                         * touching pgm_state again, say, as two earlier versions of
+                                         * it did -- and this guard becomes load-bearing on a path
+                                         * no test can reach. */
+                                        if (Xcp_Internal.pending_command.active == TRUE)
+                                        {
+                                            Xcp_PgmAbandonPendingCommand();
+                                        }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                                     if (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) == 0x00u) ||
                                         (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_CMD_BUSY) != 0x00u) && (Xcp_Internal.cto_response.successful_transmission_pending == FALSE)))
                                     {
@@ -1514,7 +1776,22 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                 (((Xcp_CTOErrorMatrix[pid] & XCP_INTERNAL_ERR_PGM_ACTIVE) != 0x00u) &&
                                                  ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_CAL_REQ) == 0x00u) &&
                                                  ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) == 0x00u) &&
-                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) == 0x00u)))
+                                                 ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) == 0x00u)
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                                                 /* DD51: a fourth disjunct beside the three session-status bits above, not a fourth bit
+                                                  * added to session_status -- 1.1/1.6.1.2.3's session status byte is a wire format GET_STATUS
+                                                  * reports, and a programming session is module state, not one of its bits. This is the
+                                                  * trigger the ERR_PGM_ACTIVE mechanism has lacked since before SP1: entering
+                                                  * XCP_PGM_ACTIVE (Xcp_PgmCompleteProgramStart, Xcp_Pgm.c) now makes every command whose own
+                                                  * Xcp_CTOErrorMatrix entry carries XCP_INTERNAL_ERR_PGM_ACTIVE refuse with ERR_PGM_ACTIVE,
+                                                  * exactly as an ongoing STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ already does. 1.1/1.6.5.1.1
+                                                  * constrains which commands may still carry that bit while this is true: SET_MTA,
+                                                  * PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX, PROGRAM_NEXT, and optionally UPLOAD and
+                                                  * BUILD_CHECKSUM "must always be available during a memory programming sequence", so none
+                                                  * of those seven rows may carry the bit (source/Xcp.c, Xcp_CTOErrorMatrix). */
+                                                 && (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+                                                ))
                                             {
                                                 if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
                                                     ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))
@@ -1555,6 +1832,9 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     }
 
                                     Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                                    }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                                 }
                             }
                             else
@@ -1658,8 +1938,31 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                 {
                     /* Fix round 2: only the pop and the flag it gates go inside -- same reasoning
                      * as the push in Xcp_MainFunction above; no external call sits in this branch
-                     * to keep out. */
+                     * to keep out. Fix round 3 (review finding 2): the PGM peek below reads the
+                     * same shared queue, under the same area, for the same reason. */
                     SchM_Enter_Xcp_DtoQueue();
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+                    {
+                        uint8 event_packet_id;
+                        uint8 event_code;
+
+                        /* Peeked before the pop below removes it, under the same exclusive area
+                         * so nothing can push or pop between the two. DD54's bound is "no
+                         * EV_CMD_PENDING FROM THIS PENDING COMMAND is still outstanding", not "no
+                         * event of any kind": this queue is shared with EV_STORE_CAL
+                         * (Xcp_MainFunction) and EV_DAQ_OVERLOAD (Xcp_TriggerEventChannel,
+                         * Xcp_DaqRuntime.c), so confirming one of those must not release the bound
+                         * on a still-queued, unconfirmed EV_CMD_PENDING -- that would make the
+                         * EV_CMD_PENDING rate a function of the other feature's event rate, which
+                         * is exactly the coupling DD54 forbids. */
+                        if ((Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                               &event_packet_id, &event_code) == E_OK) &&
+                            (event_code == XCP_EVENT_CMD_PENDING))
+                        {
+                            Xcp_Internal.pending_command.event_outstanding = FALSE;
+                        }
+                    }
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                     if (Xcp_EventQueuePop(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue) == E_OK) {
                         Xcp_Internal.event.successful_transmission_pending = FALSE;
                     }

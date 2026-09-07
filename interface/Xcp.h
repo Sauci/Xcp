@@ -429,6 +429,76 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment);
 
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+
+/**
+ * @brief Enters non-volatile memory programming mode.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero for a slave that cannot permit programming.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once
+ * from the PROGRAM_START handler to start the work and then once per Xcp_MainFunction until it
+ * reports completion. An implementation whose work is instantaneous returns E_OK from the first
+ * call and the command is answered without ever deferring.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1 permits implementation-specific
+ * preconditions -- "slave device in a secure physical state, additional code downloaded" -- and
+ * names ERR_GENERIC as the answer when they are unmet. A non-zero pStatusCode produces exactly
+ * that.
+ */
+extern Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
+
+/**
+ * @brief Ends a non-volatile memory programming sequence.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero for failure.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Copies @ref Xcp_StoreCalibrationDataToNonVolatileMemory's polled contract exactly, the
+ * same one @ref Xcp_ProgramStart above copies: called once from the PROGRAM_RESET handler to start
+ * the work and then once per Xcp_MainFunction until it reports completion. An implementation whose
+ * work is instantaneous returns E_OK from the first call and the command is answered without ever
+ * deferring.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.4 has the slave go to the
+ * disconnected state, suggesting a hardware reset is "usually" performed there. AUTOSAR
+ * SWS_Xcp_00856 overrides that for this module: disconnected state, but without forcing a device
+ * reset. This module performs no reset itself -- an integrator wanting one performs it from within
+ * this callback, which is the only place that knows what else is running on the ECU.
+ */
+extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
+
+/**
+ * @brief Prepares non-volatile memory programming by declaring a code download's target and size.
+ * @param [in] address The current MTA (set by SET_MTA), which points to the volatile memory
+ * location where the code about to be downloaded will be stored.
+ * @param [in] codeSize The request's Codesize: the size of the code that will be downloaded,
+ * expressed in BYTE, WORD or DWORD elements according to this slave's address granularity, NOT in
+ * bytes unconditionally. XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.3 says so in as many
+ * words -- "Codesize is expressed in BYTE, WORD or DWORD depending upon AG" -- and this module
+ * passes the wire value through verbatim rather than converting it, so an integrator on a WORD or
+ * DWORD granularity multiplies by the element size itself. AG is a configuration property
+ * (`protocol_layer.address_granularity`), constant for the build, and is also what CONNECT reports
+ * in COMM_MODE_BASIC bits 2:1.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero if the target memory area is not available.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
+ * the PROGRAM_PREPARE handler to start the work and then once per Xcp_MainFunction until it
+ * reports completion. An implementation whose work is instantaneous returns E_OK from the first
+ * call and the command is answered without ever deferring. Unlike @ref Xcp_ProgramStart above,
+ * this carries no dependency on the programming session's state: XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.5.2.3 makes PROGRAM_PREPARE a precondition FOR programming -- the master
+ * downloads code to volatile memory before PROGRAM_START -- so it legitimately precedes the
+ * session, and this callback is reached the same way whether or not one is open.
+ * @note 1.1/1.6.5.2.3: "The slave device has to make sure that the target memory area is available
+ * and it is in a operational state which permits the download of code." A non-zero pStatusCode
+ * answers ERR_GENERIC, exactly as it does for @ref Xcp_ProgramStart.
+ */
+extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *pStatusCode);
+
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/

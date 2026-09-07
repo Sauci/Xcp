@@ -1136,16 +1136,8 @@ uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduI
     return E_OK;
 }
 
-uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo)
+void Xcp_DisconnectSession(void)
 {
-    (void)pPduInfo;
-
-    *responseExpected = TRUE;
-
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-
-    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
-
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
 
     /* Release a dynamic allocation the disconnecting master never freed, so it cannot leak into
@@ -1169,11 +1161,29 @@ uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPdu
      * that model already has for its DAQ direction, where DISCONNECT leaves a running list running
      * and sampling. Stimulation inherits that behaviour rather than adding a class of its own, and
      * closing it means answering the Overview 2.3 question above for the whole static model, not
-     * for the slot alone. */
+     * for the slot alone.
+     *
+     * Shared with PROGRAM_RESET (Xcp_Pgm.c, DD57): factored out of Xcp_CTOCmdStdDisconnect below
+     * because a second door to XCP_CONNECTION_STATE_DISCONNECTED is a second place to forget this
+     * unwind -- which is exactly what happened before this function existed, fix round 1 finding
+     * 2. Sharing it is what makes the two doors structurally incapable of diverging again. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         Xcp_DaqFreeAll();
     }
+}
+
+uint8 Xcp_CTOCmdStdDisconnect(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    (void)pPduInfo;
+
+    *responseExpected = TRUE;
+
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+    Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+
+    Xcp_DisconnectSession();
 
     return E_OK;
 }
@@ -1290,6 +1300,51 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = XCP_TRANSPORT_LAYER_VERSION;
 
     Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* Final-review finding 1. A CONNECT begins a new session, and no state of the previous one may
+     * survive into it: XCP part 1 - Overview 1.0/2.3, quoted in full at Xcp_CanIfRxIndication's own
+     * disconnected-state gate (source/Xcp.c), has the session status, the DAQ lists and the
+     * protection status bits all reset between sessions. A programming session is exactly that kind
+     * of state, and until this line it was the one piece of it that outlived a reconnect.
+     *
+     * That is not a theoretical leak. PROGRAM_RESET is the only other writer that clears an ACTIVE
+     * pgm_state (Xcp_PgmCompleteProgramReset, Xcp_Pgm.c), and a master that dies mid-sequence never
+     * sends one: DISCONNECT is itself refused ERR_PGM_ACTIVE by DD51's gate while the session is
+     * open, so the shared unwind is never reached from that door either, and the next master
+     * inherited ~38 commands -- all of CAL, all of DAQ, GET_SEED, SET_REQUEST -- refused
+     * ERR_PGM_ACTIVE forever, with no command able to clear it. Two configurations reach the same
+     * place without any master dying: xcp_program_reset_api_enable disabled (DD59 makes each PGM
+     * command independently configurable, and nothing couples the two keys), and an
+     * Xcp_ProgramReset that reports failure.
+     *
+     * DD50 is why this is the module's job at all. 1.1/1.6.5.1.4 assumes a hardware reset ends the
+     * sequence; AUTOSAR SWS_Xcp_00856 makes this module decline that reset, so clearing the state
+     * falls to the module -- and it was cleared on exactly one of the paths the reset would have
+     * covered.
+     *
+     * CONNECT, and not Xcp_DisconnectSession above, deliberately. DISCONNECT is refused while the
+     * session is ACTIVE, so the shared unwind is not a door that can be relied upon to run; CONNECT
+     * is (its Xcp_CTOErrorMatrix row is 0x00u, and Xcp_CanIfRxIndication admits it from the
+     * disconnected state by name), which is why Xcp_Init already does the same thing here for the
+     * same reason. Putting it in Xcp_DisconnectSession instead would not fix the defect at all.
+     *
+     * This line does have one cost, and it is stated here rather than discovered later: it makes
+     * Xcp_PgmCompleteProgramReset's own reset (Xcp_Pgm.c, DD57) unobservable. A successful
+     * PROGRAM_RESET disconnects, the disconnected-state gate then admits nothing but CONNECT, and
+     * CONNECT arrives here -- so whichever of the two ran, the next session starts idle, and
+     * pgm_session_test.py's test_program_reset_leaves_pgm_state_ready_for_a_new_session no longer
+     * fails when DD57's reset is deleted (measured). That reset is kept regardless: the command
+     * that ends a sequence owning the sequence's state is not something to trade for a shorter
+     * function, and the alternative leaves Xcp_PgmCompleteProgramReset correct only because of a
+     * line in another file. It is recorded as a third documented-untestable guard beside the two
+     * in Xcp.c (design §9 criterion 7, final-review finding 7).
+     *
+     * No race with a PROGRAM_START still in flight: DD55's ERR_CMD_BUSY gate (Xcp.c) refuses every
+     * command but SYNCH while pending_command.active is TRUE, CONNECT included, so this line cannot
+     * run underneath a deferred operation. */
+    Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 
