@@ -167,8 +167,15 @@ generated constants the refusal tests against, so the two cannot drift apart.
 ### DD64 — `PROGRAM` with zero data elements ends the segment
 
 §1.6.5.1.3: *"The end of the memory segment is indicated, when the number of data elements is 0."*
-That is a distinct case from programming zero bytes: it flushes any block still open, ends the
-segment, and answers. It does not end the programming sequence — §1.6.5.1.3 gives that to
+That is a distinct case from programming zero bytes: it **aborts** any block still open, ends the
+segment, and answers.
+
+An earlier revision of this decision said "flushes", which is the wrong verb and would have been
+the wrong behaviour. §1.6.5.1.3 acknowledges only the last `PROGRAM_NEXT` of a block, so a block
+left incomplete has no response owed and nothing to flush *to* — writing its partial contents to
+flash on a zero-element `PROGRAM` would program bytes the master never finished sending. The block
+is discarded, which is also what §1.7.3.2.5's `SYNCH+PROGRAM` pre-action assumes when a block goes
+wrong (DD63). It does not end the programming sequence — §1.6.5.1.3 gives that to
 `PROGRAM_RESET`, which SP4a implements.
 
 ### DD65 — `PROGRAM_MAX` is refused inside an open block
@@ -414,7 +421,11 @@ happened, and never scan `call_args_list` for content.
 
 1. A build with `XCP_FLASH_PROGRAMMING_ENABLED` off is **behaviourally** identical to SP4a's, its
    compiled objects byte-identical, and no programming-keyed value reaches the generated
-   configuration.
+   configuration **source** — `Xcp_Cfg.c`, which is what the property test in
+   `test/pgm_configuration_test.py` reads. The generated *header* does gain
+   `XCP_PGM_MAX_BLOCK_SIZE` and `XCP_MAX_CTO`, which is the point of DD62 and is not something the
+   property test can see; the distinction is stated because an earlier revision of this criterion
+   claimed the stronger thing one sentence before admitting the exception.
 
    **The original wording said "byte-for-byte" of the whole build, and that was never achievable —
    it is corrected here rather than reported as met.** Adding any generated macro changes the
