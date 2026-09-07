@@ -1341,6 +1341,7 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.memory_transfer.extension = 0x00u;
             Xcp_Internal.block_transfer.requested_elements = 0x00u;
             Xcp_Internal.block_transfer.frame_elements = 0x00u;
+            Xcp_Internal.block_transfer.slave_block_mode = FALSE;
             for (idx = 0x00000000u; idx < (sizeof(Xcp_Internal.internal_buffer) / sizeof(Xcp_Internal.internal_buffer[0x00u])); idx ++) {
                 Xcp_Internal.internal_buffer[idx] = 0x00u;
             }
@@ -1945,7 +1946,14 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
                 if (result == E_OK)
                 {
-                    if (Xcp_BlockTransferIsActive() == TRUE)
+                    /* DD70. This used to ask Xcp_BlockTransferIsActive(), "is a block open",
+                     * which a master-block-mode DOWNLOAD also answers TRUE for while its own
+                     * response sits suppressed (1.1/1.6.2.1.1) awaiting DOWNLOAD_NEXT. Confirming
+                     * any OTHER command's response in that window read as "continue a slave block
+                     * mode UPLOAD" -- reading and transmitting slave memory nobody requested. The
+                     * question this confirmation actually needs answered is narrower: is the
+                     * slave the one who owes the master the next frame. */
+                    if (Xcp_SlaveBlockTransferIsActive() == TRUE)
                     {
                         Xcp_BlockTransferAcknowledgeFrame();
 
@@ -2388,7 +2396,37 @@ boolean Xcp_BlockTransferIsActive()
 }
 
 /**
+ * @brief Whether the SLAVE owes the master the next frame of the open block transfer.
+ * @details DD70. Narrower than Xcp_BlockTransferIsActive(): that predicate answers
+ * direction-agnostic "is a block open", which Xcp_Cal.c's ERR_SEQUENCE checks
+ * (1.1/1.6.2.2.1's lost-packet detection) legitimately ask regardless of direction, and stays
+ * unchanged for exactly that reason. This one additionally requires the open block to be slave
+ * block mode (UPLOAD) -- the only direction in which Xcp_CanIfTxConfirmation continuing the
+ * transfer on its own, by reading slave memory and transmitting it, is correct at all. A master
+ * block mode (DOWNLOAD) block leaves this FALSE while it sits open awaiting DOWNLOAD_NEXT.
+ */
+boolean Xcp_SlaveBlockTransferIsActive()
+{
+    boolean result = FALSE;
+
+    if ((Xcp_BlockTransferIsActive() == TRUE) && (Xcp_Internal.block_transfer.slave_block_mode == TRUE))
+    {
+        result = TRUE;
+    }
+
+    return result;
+}
+
+/**
  * @brief Initializes the internal memory transfer state.
+ * @param slaveBlockTransfer TRUE for a slave block mode transfer (UPLOAD, the slave sends the
+ * frames), FALSE for master block mode (DOWNLOAD, the master sends them via DOWNLOAD_NEXT). Both
+ * callers already know this unconditionally -- it is not derived from numberOfDataElements,
+ * blockModeSupported or any other parameter here, all of which vary independently of it (a
+ * transfer with block mode unsupported still opens exactly one direction's worth of state, per
+ * DD70). Recorded into Xcp_Internal.block_transfer.slave_block_mode below, alongside
+ * requested_elements/frame_elements, only once the request has actually validated -- an
+ * accepted transfer's direction must never be read from an aborted one's leftovers.
  * @retval E_OK: The provided parameters are valid, and the transfer will start.
  * @retval E_NOT_OK: The provided parameters are not valid, and the transfer will be discarded.
  */
@@ -2397,7 +2435,8 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
                                           uint8 alignment,
                                           uint8 budget,
                                           boolean blockModeSupported,
-                                          uint8 maxBlockSize)
+                                          uint8 maxBlockSize,
+                                          boolean slaveBlockTransfer)
 {
     Std_ReturnType result = E_OK;
     uint16 capacity;
@@ -2437,6 +2476,7 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
         {
             Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
             Xcp_Internal.block_transfer.frame_elements = 0x00u;
+            Xcp_Internal.block_transfer.slave_block_mode = slaveBlockTransfer;
         }
     }
     else
@@ -2449,7 +2489,23 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
 
 void Xcp_BlockTransferAcknowledgeFrame()
 {
-    Xcp_Internal.block_transfer.requested_elements -= Xcp_Internal.block_transfer.frame_elements;
+    /* DD71. requested_elements is a uint8; subtracting more than is outstanding would wrap it
+     * past zero rather than reach it, turning "the block is done" into "254 elements still to
+     * go". Every caller reachable today (Xcp_BlockTransferWriteSlaveMemory, source/Xcp.c) keeps
+     * frame_elements <= requested_elements by construction, computing the former from the
+     * latter immediately beforehand -- this held even for DD70's own scenario, whose runaway
+     * came from calling this function a second time on the same frame_elements via
+     * Xcp_CanIfTxConfirmation's now-fixed broad predicate, not from any caller here mismatching
+     * the two on its own. The guard stays regardless, for the reason DD70's own history is the
+     * evidence for: a shared counter's second reader is never guaranteed to stay the last one. */
+    if (Xcp_Internal.block_transfer.frame_elements > Xcp_Internal.block_transfer.requested_elements)
+    {
+        Xcp_Internal.block_transfer.requested_elements = 0x00u;
+    }
+    else
+    {
+        Xcp_Internal.block_transfer.requested_elements -= Xcp_Internal.block_transfer.frame_elements;
+    }
 }
 
 /**

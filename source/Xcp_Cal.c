@@ -97,7 +97,9 @@ uint8 Xcp_DTOCmdCalDownload(boolean *responseExpected, const PduInfoType *pPduIn
                                    alignment,
                                    (uint8)(Xcp_Ptr->general->maxCto - 0x02u),
                                    Xcp_Ptr->general->masterBlockModeSupported,
-                                   Xcp_Ptr->general->maxBS) == E_OK)
+                                   Xcp_Ptr->general->maxBS,
+                                   FALSE) == E_OK) /* DD70: DOWNLOAD is master block mode -- the
+                                                     * master sends the frames (DOWNLOAD_NEXT). */
     {
         if (pPduInfo->SduLength <
             (PduLengthType)(0x02u + alignment +

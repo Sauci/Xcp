@@ -409,6 +409,34 @@ typedef struct {
     struct {
         uint8 requested_elements;
         uint8 frame_elements;
+
+        /**
+         * @brief Direction of the currently open block transfer.
+         * @details DD70. TRUE for slave block mode (UPLOAD: the slave sends the frames), FALSE
+         * for master block mode (DOWNLOAD/DOWNLOAD_NEXT: the master sends them). Set by
+         * Xcp_DataTransferInitialize alongside requested_elements/frame_elements above, from a
+         * literal TRUE/FALSE at each of its two call sites -- Xcp_DTOCmdStdUpload passes TRUE
+         * (Xcp_Std.c), Xcp_DTOCmdCalDownload passes FALSE (Xcp_Cal.c). Fixed by which handler is
+         * calling, not read from slaveBlockModeSupported/masterBlockModeSupported or any other
+         * parameter here: both callers already know their own direction unconditionally, and a
+         * transfer with block mode unsupported still opens exactly one direction's worth of
+         * state, so this records a fact neither had to learn, only to stop discarding.
+         *
+         * Exists because requested_elements != 0 alone answers "is a block open", a question
+         * both directions share, while Xcp_CanIfTxConfirmation's own use of that predicate
+         * (source/Xcp.c) means something narrower: "is it my turn, as the slave, to send the
+         * next frame". Before this field the two readings were conflated, and confirming any
+         * OTHER command's response while a master-block-mode DOWNLOAD sat open -- suppressing
+         * its own response is exactly what leaves room for one, XCP part 2 1.1/1.6.2.1.1 -- was
+         * read as "continue a slave block mode UPLOAD", reading and transmitting slave memory
+         * nobody requested. Xcp_SlaveBlockTransferIsActive() (source/Xcp.c) is the narrowed
+         * predicate this field exists to answer; Xcp_BlockTransferIsActive() itself is
+         * unchanged, and stays the right, direction-agnostic question for
+         * DOWNLOAD/DOWNLOAD_NEXT/DOWNLOAD_MAX/SHORT_DOWNLOAD's own ERR_SEQUENCE checks
+         * (source/Xcp_Cal.c) -- 1.1/1.6.2.2.1's lost-packet detection does not care which
+         * direction is open, only whether one is.
+         */
+        boolean slave_block_mode;
     } block_transfer;
 
     /**
@@ -608,7 +636,8 @@ void Xcp_CopyFromU32WithOrder(const uint32 src, uint8 *pDest, Xcp_ByteOrderType 
 void Xcp_CopyToU16WithOrder(const uint8 *pSrc, uint16 *pDest, Xcp_ByteOrderType endianness);
 void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrderType endianness);
 boolean Xcp_BlockTransferIsActive(void);
-Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment, uint8 budget, boolean blockModeSupported, uint8 maxBlockSize);
+boolean Xcp_SlaveBlockTransferIsActive(void);
+Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment, uint8 budget, boolean blockModeSupported, uint8 maxBlockSize, boolean slaveBlockTransfer);
 void Xcp_BlockTransferAcknowledgeFrame(void);
 Std_ReturnType Xcp_BlockTransferReadSlaveMemory(void);
 Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize);

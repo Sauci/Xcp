@@ -729,7 +729,9 @@ uint8 Xcp_DTOCmdStdUpload(boolean *responseExpected, const PduInfoType *pPduInfo
                                        (uint8)alignment,
                                        (uint8)(Xcp_Ptr->general->maxCto - 0x01u),
                                        Xcp_Ptr->general->slaveBlockModeSupported,
-                                       0x00u) == E_OK)
+                                       0x00u,
+                                       TRUE) == E_OK) /* DD70: UPLOAD is slave block mode -- the
+                                                        * slave sends the frames. */
         {
             if (Xcp_BlockTransferReadSlaveMemory() == E_NOT_OK) {
                 /* Do nothing, last frame is waiting for TX confirmation. */
