@@ -20,9 +20,18 @@ mutable member of `Xcp_InternalType` followed, and found five more.
 ## 0. Specification numbering
 
 Citations are to **XCP Part 2 — Protocol Layer Specification 1.1** unless a citation names 1.0.
-Seed-and-key is §1.6.1.1.6 (`GET_SEED`) and §1.6.1.1.7 (`UNLOCK`); the resource protection model is
-§1.6.1.1.1's `RESOURCE` byte and §1.6.1.2.3's `GET_STATUS`. Block transfer is §1.6.2.2 for
-`UPLOAD` and §1.6.2.1 for `DOWNLOAD`.
+Seed-and-key is **§1.6.1.2.4** (`GET_SEED`) and **§1.6.1.2.5** (`UNLOCK`); the resource protection
+model is §1.6.1.1.1's `RESOURCE` byte and **§1.6.1.1.3**'s `GET_STATUS`. `UPLOAD` is **§1.6.1.2.7**,
+`SET_MTA` **§1.6.1.2.6**, `GET_ID` **§1.6.1.2.2**. `DOWNLOAD` is §1.6.2.1.1 and its block, fixed-size
+and short forms are §1.6.2.2.1 through §1.6.2.2.3. All identical in both revisions, checked against
+each table of contents.
+
+**Every number in the sentence above was wrong when this section was first written** — `GET_SEED`
+and `UNLOCK` were given as §1.6.1.1.6/§1.6.1.1.7, `GET_STATUS` as §1.6.1.2.3, and §1.6.2.2 was
+labelled `UPLOAD` when it is `DOWNLOAD`'s optional subsection. The wrong seed-and-key numbers
+reached four places in source and tests before Task 5's implementer checked them against both
+tables of contents rather than repeating them, and they have been corrected there too. A citation
+nobody verifies is worse than none: it looks like evidence.
 
 ---
 

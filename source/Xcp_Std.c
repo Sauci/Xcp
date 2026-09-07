@@ -963,7 +963,7 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
          * it calls Xcp_CalcKey, once the master's key has fully arrived -- so an integrator
          * honouring that parameter always computed its key from a zero-length seed, regardless of
          * what had actually been transmitted: XCP part 2 - Protocol Layer Specification
-         * 1.1/1.6.1.1.6 and 1.1/1.6.1.1.7 both depend on the key being a function of the seed the
+         * 1.1/1.6.1.2.4 and 1.1/1.6.1.2.5 both depend on the key being a function of the seed the
          * slave issued, which a length of zero cannot be. The two meanings cannot share one
          * field. total_length now always holds the seed's true, constant length once
          * Xcp_GetSeed has produced it; every line below already computes what remains to be sent

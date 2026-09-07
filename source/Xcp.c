@@ -1838,7 +1838,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                      * GET_SEED", not merely "the previous command was GET_SEED". A GET_SEED that
                                                      * answered ERR_OUT_OF_RANGE (no seed produced) left that read wrong, and UNLOCK
                                                      * admitted a key against a seed that was never issued -- XCP part 2 - Protocol Layer
-                                                     * Specification 1.1/1.6.1.1.7 makes UNLOCK meaningful only against a seed the slave
+                                                     * Specification 1.1/1.6.1.2.5 makes UNLOCK meaningful only against a seed the slave
                                                      * actually issued.
                                                      *
                                                      * Every error response in this module is built by Xcp_FillErrorPacket or

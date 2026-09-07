@@ -29,7 +29,7 @@ gone out. Xcp_DTOCmdStdUnlock (source/Xcp_Std.c) reads that same total_length fi
 LENGTH it passes to Xcp_CalcKey -- so on unfixed code Xcp_CalcKey was called with seedLength=0 for
 every seed, every session, and an integrator honouring that parameter (test/stub/Xcp_SeedKey.h)
 computed its key from a zero-length seed: the key was not bound to the challenge, which XCP part 2
-- Protocol Layer Specification 1.1/1.6.1.1.6 and 1.1/1.6.1.1.7 both require it to be (the same key
+- Protocol Layer Specification 1.1/1.6.1.2.4 and 1.1/1.6.1.2.5 both require it to be (the same key
 would then be valid in every session). Nothing caught this because calc_key_side_effect_copy_ok
 (test/seed_key_test.py), the only double UNLOCK's key check ever went through, ignores the
 seedLength argument -- a double that cannot observe the value under test cannot fail when that
@@ -143,7 +143,7 @@ def test_a_failed_get_seed_leaves_the_resource_locked():
 
 def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_requested():
     """Isolates the requested_protected_resource leg. A GET_SEED/UNLOCK exchange for CAL_PAG
-    completes legitimately first, which -- 1.1/1.6.1.1.7's own multi-frame KEY continuation
+    completes legitimately first, which -- 1.1/1.6.1.2.5's own multi-frame KEY continuation
     support, admitting a further UNLOCK whenever last_pid is already UNLOCK's own pid -- leaves
     last_pid sitting on a value Xcp_DTOCmdStdUnlock accepts. A second GET_SEED, for PGM this time,
     is then made to fail: with only the last_pid leg fixed, that failure does not touch last_pid,
