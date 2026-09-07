@@ -205,16 +205,23 @@ uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pP
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
-    /* DD67: 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default) and
-     * 0x01 (functional access mode) -- this slave offers only the first (DD68's PGM_PROPERTIES
-     * says so on the wire too), and 0x01 is refused ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row
-     * lists the action "retry other parameter". Checked, and refused, BEFORE the clear range is
-     * even read below: 1.6.5.1.2 gives that same DWORD field completely different readings
-     * depending on the mode -- a length in absolute mode, a bit mask of memory areas in functional
-     * mode -- so a handler that read it as a length first would already have called
-     * Xcp_ProgramClear with whatever 0x00000001 means as a length, when the master's 0x01 meant
-     * "clear all the calibration data area(s)". */
-    else if (pPduInfo->SduDataPtr[0x01u] == 0x01u)
+    /* Fix round 2. 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default)
+     * and 0x01 (functional access mode), as a table -- an enumeration of the values this command
+     * recognises, not a bit field with reserved-but-harmless positions -- and this slave offers
+     * only the first (DD68's PGM_PROPERTIES says so on the wire too). There is therefore exactly
+     * one mode byte to ACCEPT, not one to refuse: testing `!= 0x00u` refuses 0x01 and every value
+     * neither this slave nor the specification itself gives a meaning to (0x02..0xFF), where
+     * testing `== 0x01u` (the first form of this check) refused only 0x01 and silently accepted
+     * every one of those undefined values as if it were 0x00 -- absolute mode, on a field that is
+     * about to be read as a byte length and handed to an erase. Refused ERR_OUT_OF_RANGE, whose
+     * own 1.7.3.2.5 row lists the action "retry other parameter", correct for ANY mode byte this
+     * slave does not implement, not only for 0x01 specifically. Checked, and refused, BEFORE the
+     * clear range is even read below: 1.6.5.1.2 gives that same DWORD field completely different
+     * readings depending on the mode -- a length in absolute mode, a bit mask of memory areas in
+     * functional mode -- so a handler that read it as a length first would already have called
+     * Xcp_ProgramClear with whatever the DWORD means as a length, under a mode byte the master may
+     * not have meant as absolute at all. */
+    else if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }

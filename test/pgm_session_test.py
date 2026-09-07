@@ -562,10 +562,12 @@ def test_program_prepare_defers_through_the_pending_slot_and_keeps_passing_codes
     contract is pStatusCode alone. Xcp_ProgramPrepare's own contract additionally takes address
     and codeSize on EVERY call, not only the first (design §4), and the switch-based poll has no
     way back to the original request once the handler that parsed it has returned -- which is why
-    Task 5 adds pending_command.program_prepare_code_size (source/Xcp_Internal.h) to carry it. The
-    MTA needs no equivalent: Xcp_Internal.memory_transfer.address is already standing state the
-    poll re-reads directly, stable for the duration because DD55's ERR_CMD_BUSY gate refuses any
-    interloping SET_MTA.
+    Task 5 adds pending_command.program_prepare_code_size (source/Xcp_Internal.h) to carry it,
+    since widened into pending_command.args.program_prepare_code_size when SP4b Task 2 turned this
+    single field into a union keyed by pid, ahead of PROGRAM_CLEAR's own clear range needing a
+    second member. The MTA needs no equivalent: Xcp_Internal.memory_transfer.address is already
+    standing state the poll re-reads directly, stable for the duration because DD55's ERR_CMD_BUSY
+    gate refuses any interloping SET_MTA.
 
     A module that never persisted Codesize (leaving it at 0, or at whatever the slot's memory
     happened to hold) would still pass every existing PROGRAM_START/PROGRAM_RESET test in this

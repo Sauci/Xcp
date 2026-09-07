@@ -158,7 +158,10 @@ def test_program_clear_defers_through_the_pending_slot_and_keeps_passing_the_cle
     program_clear(handle, mode=0x00, clear_range=0x89ABCDEF)
 
     handle.lib.Xcp_MainFunction()
-    assert transmitted(handle)[0] != 0xFF, 'still busy on the second poll'
+    # Fix round 2: != 0xFF also passes on an ERROR response, not only on the intended 'still busy,
+    # no response yet, only DD54's own EV_CMD_PENDING went out'. == 0xFD asserts what this line
+    # actually means; a missing frame still TypeErrors rather than passing vacuously either way.
+    assert transmitted(handle)[0] == 0xFD, 'still busy on the second poll: only EV_CMD_PENDING (DD54)'
 
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
     handle.can_if_transmit.reset_mock()
@@ -188,17 +191,71 @@ def test_program_clear_functional_mode_is_refused_err_out_of_range_without_calli
     ordering bug; a wire-only assertion on the response alone would not -- a handler that cleared
     first and refused afterwards would still answer (0xFE, 0x22) here.
 
+    Fix round 2 correction: an earlier revision of this docstring argued the handler should test
+    `== 0x01u` rather than `!= 0x00u`, on the premise that DD67 names 0x01 specifically and
+    1.6.5.1.2 "defines no third mode byte for this slave to have an opinion about". That premise
+    was backwards, and the code briefly matched it: 1.6.5.1.2 gives the mode byte as a table with
+    exactly two rows, an ENUMERATION of the values this command recognises, not a bit field with
+    reserved-but-harmless positions -- so a slave that implements only absolute mode has exactly
+    one value to ACCEPT, and every other byte (0x01 included, but not only 0x01) is equally
+    unrecognised and must be equally refused. `== 0x01u` refuses the one documented alternative and
+    silently treats every undefined value (0x02..0xFF) as absolute mode instead, which is `!=
+    0x00u`'s failure mode exactly reversed: this command has no "unknown but harmless" value to let
+    through, because letting one through means erasing flash on its behalf.
+    test_program_clear_unrecognised_mode_is_refused_err_out_of_range_without_calling_the_integrator
+    below covers the values `== 0x01u` used to admit; this test stays because DD67 discusses 0x01
+    by name (the one alternative the specification itself defines) and this is where that specific
+    reasoning belongs.
+
     Mutation: deleting the mode check (or comparing against the wrong byte offset) makes the
     integrator's default E_OK/zero-status mock answer positively instead, changing both the
-    response code and call_count; comparing with `!= 0x00u` instead of `== 0x01u` would still catch
-    this specific request but is a different claim (DD67 names 0x01 specifically, and 1.6.5.1.2
-    defines no third mode byte for this slave to have an opinion about)."""
+    response code and call_count."""
     handle = pgm_clear_handle()
     _active_session_with_mta(handle)
 
     assert send(handle, (0xD1, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x22), \
         'ERR_OUT_OF_RANGE'
     assert handle.xcp_program_clear.call_count == 0, 'functional mode must never reach the integrator'
+
+
+@pytest.mark.parametrize('mode', (0x01, 0x02, 0x80, 0xFF))
+def test_program_clear_unrecognised_mode_is_refused_err_out_of_range_without_calling_the_integrator(mode):
+    """Fix round 2, task-2-review.md finding 1. 1.6.5.1.2's mode-byte table has exactly two rows,
+    0x00 and 0x01 -- an enumeration of the values this command recognises, not a bit field with
+    reserved-but-harmless positions -- and this slave implements only 0x00 (DD67, DD68). Every
+    value other than 0x00 is therefore equally unrecognised, not only 0x01: a master that sets a
+    vendor extension, a future ASAM revision's mode bit, or simply a mis-encoded frame is asking for
+    a mode this slave cannot honour, and a handler that fell through to absolute mode for anything
+    it did not specifically refuse would erase `clearRange` bytes at the MTA on that master's behalf
+    and report success -- confirmed against a build carrying exactly that bug (task-2-review.md):
+    modes 0x02, 0x03, 0x80 and 0xFF each reached Xcp_ProgramClear once and were answered (0xFF,).
+
+    Answered ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row lists the action 'retry other parameter' --
+    correct for any mode byte this slave does not implement, not only for 0x01. call_count == 0 is
+    the assertion that actually matters, per
+    test_program_clear_functional_mode_is_refused_err_out_of_range_without_calling_the_integrator's
+    own reasoning just above: a handler that erased first and refused afterwards would still pass a
+    wire-only assertion on the response code alone.
+
+    0x01 is included here alongside the three previously-unchecked values (0x02, 0x80, 0xFF) so
+    this test's own claim -- 'every mode but 0x00 is refused, and none of them reach the integrator'
+    -- is checked as one property over the whole non-zero byte range this parametrisation samples,
+    not asserted for 0x01 in one test and merely assumed to generalise. It duplicates no coverage:
+    the test above pins DD67's specific reasoning about 0x01, the named alternative the
+    specification itself defines; this one pins the general rule the handler's code actually
+    implements (`!= 0x00u`), which 0x01 is one instance of and not a special case within.
+
+    Mutation: reverting the handler's check from `!= 0x00u` to `== 0x01u` (the exact bug this fix
+    round corrects) leaves the 0x01 case failing here too, but is chiefly caught by the 0x02/0x80/
+    0xFF cases, none of which the pre-fix handler refused -- each would instead reach
+    Xcp_ProgramClear and answer (0xFF,), not (0xFE, 0x22), with call_count == 1, not 0."""
+    handle = pgm_clear_handle()
+    _active_session_with_mta(handle)
+
+    assert send(handle, (0xD1, mode, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x22), \
+        'ERR_OUT_OF_RANGE'
+    assert handle.xcp_program_clear.call_count == 0, \
+        'an unrecognised mode must never reach the integrator'
 
 
 def test_program_clear_answers_err_access_denied_on_a_non_zero_status_code():
