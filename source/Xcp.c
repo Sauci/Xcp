@@ -330,7 +330,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xC6 */
     Xcp_DTOCmdDaqWriteDaqMultiple, /* WRITE_DAQ_MULTIPLE 0xC7, new in 1.1, optional */
     Xcp_CmdNotImplemented, /* 0xC8 */
-    Xcp_CmdNotImplemented, /* 0xC9 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramMax, /* PROGRAM_MAX 0xC9 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_MAX 0xC9 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xCA */
     Xcp_CmdNotImplemented, /* 0xCB */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
@@ -345,7 +349,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_RESET 0xCF */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xD0 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgram, /* PROGRAM 0xD0 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM 0xD0 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramClear, /* PROGRAM_CLEAR 0xD1 */
 #else

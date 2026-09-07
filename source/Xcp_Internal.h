@@ -909,6 +909,25 @@ uint8 Xcp_DTOCmdPgmProgramPrepare(boolean *responseExpected, const PduInfoType *
 uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdPgmProgramStart documents above -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ * Gated on Xcp_Internal.pgm_state exactly as Xcp_DTOCmdPgmProgramClear above is (Task 3): 1.1/
+ * 1.6.5.1.1 requires it refused ERR_SEQUENCE until PROGRAM_START has succeeded.
+ */
+uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_MAX, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.6.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. Gated on Xcp_Internal.pgm_state the same way, and additionally on
+ * Xcp_BlockTransferIsActive() (DD65): this command does not support block transfer and may not be
+ * used within a block transfer sequence.
+ */
+uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in

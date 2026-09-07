@@ -533,6 +533,38 @@ extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *
  */
 extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *pStatusCode);
 
+/**
+ * @brief Writes a block of data into non-volatile memory.
+ * @param [in] address The current MTA (set by SET_MTA), which points to where the data is to be
+ * written. XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3: "The data block ... will be
+ * copied into memory, starting at the MTA."
+ * @param [in] pData The data to write, `length` bytes, taken directly from the request. Valid only
+ * for the duration of THIS call: the polled contract below presents the same underlying buffer on
+ * every subsequent call for the same operation, so an implementation that needs the bytes after
+ * returning E_NOT_OK must copy them itself rather than retain this pointer -- retaining it would be
+ * correct only by accident, since the module does not promise the pointer stays valid past the call
+ * that handed it over.
+ * @param [in] length Number of bytes pData holds.
+ * @param [out] pStatusCode Result of the write, read only when this function returns E_OK: zero for
+ * success, non-zero for failure.
+ * @retval E_OK: the write is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the write is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
+ * the PROGRAM or PROGRAM_MAX handler to start the work and then once per Xcp_MainFunction until it
+ * reports completion. An implementation whose work is instantaneous returns E_OK from the first call
+ * and the command is answered without ever deferring.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3: "The MTA will be post-incremented
+ * by the number of data bytes" -- but only when this call succeeds. A failed write leaves the MTA
+ * where the master left it, since 1.7.3.2.5 gives PROGRAM the pre-action SYNCH+SET_MTA, so a master
+ * recovering from a failure re-points the MTA itself.
+ * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, not ERR_GENERIC: neither PROGRAM's nor
+ * PROGRAM_MAX's own 1.7.3.2.5 row lists ERR_GENERIC at all, and ERR_ACCESS_DENIED is both one of
+ * the codes PROGRAM's row does list and, per the specification's own error-code definitions, the
+ * precise description of memory this callback could not write to -- the same choice
+ * @ref Xcp_ProgramClear above makes for a failed erase, generalised here to a failed write.
+ */
+extern Std_ReturnType Xcp_ProgramWrite(void *address, const uint8 *pData, uint16 length, uint8 *pStatusCode);
+
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
 /** @} */

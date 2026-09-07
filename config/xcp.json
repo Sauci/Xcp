@@ -193,11 +193,11 @@
           "protected": false
         },
         "xcp_program_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_program_max_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_program_start_api_enable": {
