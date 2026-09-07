@@ -175,7 +175,56 @@ which is a complete pointer, not an address. `Xcp_DTOCmdDaqGetDaqEventInfo`
 
 ---
 
+### DD76 — `UNLOCK`'s key-calculation failure had no branch at all
+
+**Found by the acceptance pass, and pre-existing.** `Xcp_DTOCmdStdUnlock`'s
+`if (Xcp_CalcKey(...) == E_OK)` had no `else`, so when the integrator's callback failed nothing was
+written to `cto_response.pdu_info` while `*responseExpected` stayed `TRUE` — and whatever the buffer
+held went out instead. Measured: an `UNLOCK` whose `Xcp_CalcKey` fails **retransmits the previous
+`GET_SEED` response as its own positive answer**, telling the master `0xFF` for an unlock that did
+not happen and handing back seed bytes it was not answering for.
+
+**This is the module's own D2/D7 class, which SP1 fixed twice**, and `GET_DAQ_ID`'s branch in
+`source/Xcp_Std.c` still carries the comment describing it: an empty branch "left the response
+buffer holding whatever the previous command wrote while responseExpected stayed TRUE".
+
+It answers `ERR_GENERIC` (0x31), a **recorded deviation**: §1.7.3.2.1's row for `UNLOCK` lists seven
+codes and none fits an integrator callback that cannot compute a key at all — `ERR_ACCESS_LOCKED`,
+which the sibling branch already answers, means the key was *wrong*, which is a different statement.
+Same shape and same treatment as DD57's `PROGRAM_RESET` deviation.
+
+**A prediction in its dispatch was wrong and is corrected here.** I expected a following `UNLOCK` to
+be refused `ERR_SEQUENCE` once the stale byte stopped corrupting `last_pid`. That is structurally
+impossible: `Xcp_DTOCmdStdUnlock`'s admission gate is a two-element set-membership test over
+`last_pid` and cannot distinguish which member it holds. What the fix guarantees is narrower and
+still worth having — a following `UNLOCK` re-answers the same honest `ERR_GENERIC`, never a stale
+positive.
+
+---
+
 ## 3. What the audit found sound
+
+**One entry no longer holds, and this fix batch is what invalidated it.** `cto_response.pdu_info`
+was judged sound because it is "a buffer, not a predicate". DD72's second leg made it a predicate,
+by reading its byte 0 to decide whether a dispatched command answered an error. That is what turned
+DD76's empty branch from a stale response into a corrupted gate as well, and it is a worked example
+of the audit's own lesson: a field's soundness is a property of its readers, so adding a reader can
+falsify it. Re-audit the readers of anything a fix teaches to answer a new question.
+
+Two further consequences of that leg, both measured, neither a reason to revert it:
+
+- An `UNLOCK` whose `Xcp_CalcKey` fails no longer corrupts `last_pid` — DD76 fixes the cause.
+- `SYNCH` between `GET_SEED` and `UNLOCK` no longer breaks the sequence, because `SYNCH` answers
+  `ERR_CMD_SYNCH` by design and the leg does not record erroring commands. This is a **deliberate
+  behaviour change, not a regression**: §1.7.1.1 makes `SYNCH` the master's means of resynchronising,
+  and a resynchronisation that silently invalidated an in-progress seed-and-key exchange would be a
+  worse reading than one that does not. Recorded because nobody decided it at the time — it fell out
+  of the leg.
+
+`key_slave.current_index`, which DD74 added to `CONNECT`'s reset, is read nowhere: a fourth
+write-only dead field alongside `connect_mode` and `event.successful_transmission_pending`.
+
+
 
 Recorded so the audit is not repeated from scratch. Each of these was traced writer-to-reader and
 found to have no reader inferring more than its writer answered:
@@ -194,6 +243,22 @@ cannot go out of bounds. `SET_DAQ_PTR(0,0,3)` → `0xFF`; a growing `ALLOC_ODT_E
 **`connect_mode` and `event.successful_transmission_pending` are write-only dead state** — no
 reader anywhere. Not defects; noted because a future reader would inherit whatever the last writer
 left, and the fields look meaningful.
+
+---
+
+## 3b. A seventh defect, reported and NOT fixed
+
+**`UNLOCK` never asks whether a seed is held.** Its only gate is `last_pid`, which is about
+*sequence*, not about whether the slave ever issued a challenge. Three routes were measured on the
+fixed tree, all reaching `Xcp_CalcKey` with `seedLength` 0 and all granting the resource; the
+sharpest is `GET_SEED(A)` succeeding, `GET_SEED(B)` being refused, then `UNLOCK` — DD72's own
+scenario one step further along.
+
+It is pre-existing and none of DD70–DD76 changed it. It is left unfixed deliberately: the remedy is
+a design decision about what "a seed is held" means — DD73 is what finally gives the module a
+`seed.total_length` capable of answering it — and taking that decision inside a batch of measured
+repairs would be reasoning in the wrong order. It belongs to whoever takes the seed-and-key work
+next, alongside the unlock-lifetime follow-up SP4a recorded.
 
 **The PGM fields are clean.** Nothing outside `source/Xcp_Pgm.c` reads `pgm_block`; `pgm_state` is
 read outside only at `source/Xcp.c:1824` and `pending_command` at `:1445`, `:1740`, `:1787` and
