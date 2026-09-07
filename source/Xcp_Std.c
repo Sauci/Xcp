@@ -831,6 +831,65 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                             Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
                         }
                     }
+                    else
+                    {
+                        /* Pre-existing, found by the acceptance pass over this branch's own
+                         * earlier shared-state fixes (task 7,
+                         * .superpowers/sdd/2026-09-07-xcp-shared-state-defects/task-7-report.md),
+                         * not introduced by any of them. This `if` used to have no `else`: when
+                         * the integrator's Xcp_CalcKey fails, nothing was written to
+                         * cto_response.pdu_info and responseExpected (set TRUE at this function's
+                         * entry) stayed TRUE, so whatever the previous command had left in that
+                         * shared response buffer -- measured as GET_SEED's own positive answer,
+                         * seed bytes included -- was transmitted as THIS UNLOCK's answer instead.
+                         * The GET_DAQ_ID sub-command above (dtoCount == 0 branch) names this exact
+                         * defect class in its own comment: D2/D7, fixed twice in SP1 -- an empty
+                         * branch with responseExpected TRUE is a stale positive response, not a
+                         * no-op, whether or not the branch is easy to reach.
+                         *
+                         * It also fed a stale non-error byte 0 to Xcp_CanIfRxIndication's last_pid
+                         * gate (source/Xcp.c, DD72), which only advances last_pid when byte 0 is
+                         * NOT XCP_PID_ERROR: a failed UNLOCK was indistinguishable from a
+                         * successful one, so last_pid recorded a success this dispatch never
+                         * earned. Filling a real error packet here, before that gate runs, is what
+                         * a fix for either half needs -- there is only the one buffer and the one
+                         * flag.
+                         *
+                         * XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.1's UNLOCK row
+                         * (verified against the 1.0 PDF -- pdftotext -layout extracts it cleanly,
+                         * the 1.1 copy does not) lists seven codes: ERR_CMD_BUSY, ERR_PGM_ACTIVE,
+                         * ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE, ERR_ACCESS_LOCKED and
+                         * ERR_SEQUENCE. None fits an integrator's key-derivation callback failing
+                         * outright: this is not a busy/active/unknown/syntax condition; the
+                         * master's own key bytes are not what is "out of range" (the slave never
+                         * got as far as evaluating them); ERR_ACCESS_LOCKED is the sibling branch
+                         * immediately above, for a KEY MISMATCH -- 1.0/1.6.1.2.5's own "the key is
+                         * checked ... if the key is not accepted" presupposes a key WAS computed
+                         * and compared, which did not happen here, and reusing it would also pull
+                         * in a disconnect this condition never reached that check to earn;
+                         * ERR_SEQUENCE is the row's OTHER UNLOCK user, for the master's own
+                         * chunking mistake -- nothing about this request is out of sequence, the
+                         * master sent a well-formed UNLOCK after a genuine GET_SEED.
+                         *
+                         * This is the identical shape DD57 already recorded for PROGRAM_RESET's own
+                         * integrator-callback failure (source/Xcp_Pgm.c, Xcp_PgmCompleteProgramReset):
+                         * PROGRAM_RESET's own 1.7.3.2.5 row lists no ERR_GENERIC either (only
+                         * ERR_CMD_BUSY, ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_SEQUENCE -- checked
+                         * against the same 1.0 PDF), and that comment records "of the listed [codes]
+                         * only ERR_SEQUENCE could be pressed into service -- a worse fit, since
+                         * nothing about the request is out of sequence", the same reasoning that
+                         * rules it out here. The same deviation is kept: XCP_E_ASAM_GENERIC, matching
+                         * 1.0/1.1.3.3's own description of that code ("the error packet contains an
+                         * implementation specific slave device error code"). This is NOT the same as
+                         * PROGRAM_START/PROGRAM_PREPARE's own use of it (source/Xcp_Pgm.c,
+                         * interface/Xcp.h) -- checked, and their own 1.7.3.2.5 rows list ERR_GENERIC
+                         * directly, so answering it there is direct compliance, not a deviation; only
+                         * PROGRAM_RESET's row is the genuine precedent for "listed nowhere, chosen
+                         * anyway", and this UNLOCK branch follows that one specifically, rather than a
+                         * listed code that would misattribute an internal failure to the master's own
+                         * request. */
+                        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+                    }
 
                     /* Discard the key buffer, as we received a full key. */
                     Xcp_Internal.key_master.total_length = 0x00u;

@@ -37,6 +37,26 @@ value is wrong. test_unlock_computes_the_key_from_the_seeds_actual_length below 
 calc_key_side_effect_recording_seed_length instead, defined in this file, which records what it
 actually receives. Mutation-verified in task-3-report.md.
 
+Task 7 (.superpowers/sdd/2026-09-07-xcp-shared-state-defects/task-7-report.md) -- a third,
+independent pre-existing defect in the same shipped seed-and-key code, found by the acceptance
+pass over DD70-DD75 (task-6-report.md's own "SEVENTH DEFECT FOUND... route C") rather than by the
+original design document. Xcp_DTOCmdStdUnlock's `if (Xcp_CalcKey(...) == E_OK)` (source/Xcp_Std.c)
+had no `else`: when the integrator's own key-derivation callback fails outright -- not a key
+MISMATCH, DD72's own concern above, but Xcp_CalcKey itself returning E_NOT_OK -- responseExpected
+stays TRUE regardless and nothing overwrote the shared response buffer, so the previous command's
+own answer (typically GET_SEED's) was retransmitted as this UNLOCK's. This also fed a stale
+non-error byte 0 to the last_pid gate DD72 added (source/Xcp.c), so a failed UNLOCK could record a
+success there too, though Xcp_DTOCmdStdUnlock's own admission test cannot tell last_pid's two
+admitted values apart, which bounds what that second consequence can be observed to do -- see
+test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_next's own docstring.
+Fixed by filling XCP_E_ASAM_GENERIC (0x31), a recorded deviation -- 1.7.3.2.1's own UNLOCK row
+lists no code for an integrator callback failing outright -- matching the identical deviation
+source/Xcp_Pgm.c's DD57 already recorded for PROGRAM_RESET's own integrator-callback completion.
+test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_positive_response below is
+the direct reproduction; test_a_key_mismatch_still_answers_access_locked_not_the_calc_key_failure_
+code is the neighbour DD72's own sibling `else` (ERR_ACCESS_LOCKED, a key MISMATCH) must not be
+confused with. Mutation-verified in task-7-report.md.
+
 Xcp_Internal is not reachable from this CFFI harness (interface/Xcp.h does not include
 Xcp_Internal.h), so every assertion below observes through GET_SEED/UNLOCK/GET_STATUS's own wire
 responses -- never through Xcp_Internal directly -- following test/clear_daq_list_test.py's own
@@ -80,6 +100,19 @@ def calc_key_side_effect_recording_seed_length(handle, key, received_seed_length
             p_key_buffer[i] = b
         p_key_length[0] = len(key)
         return handle.define('E_OK')
+    return wrapper
+
+
+def calc_key_side_effect_fail(handle):
+    """Models an integrator's Xcp_CalcKey that cannot derive a key from the seed it was given at
+    all -- E_NOT_OK, touching neither pKeyBuffer nor pKeyLength -- as distinct from
+    calc_key_side_effect_copy_ok's E_OK-but-wrong-key and Xcp_CheckMasterSlaveKeyMatch's own
+    mismatch: here the slave never produces a key to compare in the first place. This is task 7's
+    own double (.superpowers/sdd/2026-09-07-xcp-shared-state-defects/task-7-report.md): the
+    condition behind Xcp_DTOCmdStdUnlock's missing `else` (source/Xcp_Std.c, the `if
+    (Xcp_CalcKey(...) == E_OK)` opened at the time of writing around line 806)."""
+    def wrapper(_p_seed_buffer, _seed_length, _p_key_buffer, _max_key_length, _p_key_length):
+        return handle.define('E_NOT_OK')
     return wrapper
 
 
@@ -299,3 +332,170 @@ def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the
     assert status_response[2] == resource, (
         'GET_STATUS reported protection_status=0x{:02X}, expected the requested resource 0x{:02X} '
         'to be granted'.format(status_response[2], resource))
+
+
+def test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_positive_response():
+    """Task 7 (.superpowers/sdd/2026-09-07-xcp-shared-state-defects/task-7-report.md) -- a
+    pre-existing defect, found by the acceptance pass over this branch's own six shared-state
+    fixes (DD70-DD75) and unchanged by any of them, though the last_pid leg of DD72 (source/Xcp.c)
+    now depends on the field this defect corrupts. See
+    test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_next below for that
+    second consequence.
+
+    Xcp_DTOCmdStdUnlock's `if (Xcp_CalcKey(...) == E_OK)` (source/Xcp_Std.c) used to have no
+    `else`. calc_key_side_effect_fail models an integrator whose key-derivation callback itself
+    fails outright -- E_NOT_OK, touching neither output parameter -- which is a different
+    condition from a KEY MISMATCH (Xcp_CheckMasterSlaveKeyMatch failing after Xcp_CalcKey
+    successfully produces a key that just does not match the master's own -- see
+    test_a_key_mismatch_still_answers_access_locked_not_the_calc_key_failure_code below, the
+    sibling branch this one must not be confused with). responseExpected stays TRUE regardless
+    (set at this function's own entry), so with no else nothing overwrote
+    cto_response.pdu_info: the previous command's own response was retransmitted as this UNLOCK's
+    answer instead.
+
+    Measured on the unfixed code, this exact scenario: GET_SEED answered
+    (0xFF, 0x04, 0x11, 0x22, 0x33, 0x44) -- a genuine, successful seed. UNLOCK, whose Xcp_CalcKey
+    then failed, answered (0xFF, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00): PID 0xFF (RESPONSE,
+    not ERR), byte 1 the number 0x04 -- not a protection status this UNLOCK ever computed, but
+    GET_SEED's own remaining-length byte, left over in the shared buffer -- and bytes 2.. zeroed by
+    this UNLOCK's own Xcp_FinalizeResPacket(2) call (source/Xcp.c; it pads from index 2 onward and
+    never touches byte 0 or byte 1, which is exactly why they were still GET_SEED's). GET_STATUS
+    afterwards still reported protection_status=0x00 -- nothing was actually granted -- so the
+    defect is the master being told a false positive, not (by itself) a privilege grant.
+
+    After the fix: UNLOCK answers (0xFE, 0x31) -- ERR_GENERIC. See source/Xcp_Std.c's own comment
+    at the XCP_E_ASAM_GENERIC call for why none of XCP part 2 - Protocol Layer Specification
+    1.0/1.7.3.2.1's seven listed UNLOCK error codes (verified against the 1.0 PDF, which
+    pdftotext -layout extracts cleanly) fits an integrator callback failing outright, and why
+    ERR_GENERIC is the same recorded deviation DD57 already uses for PROGRAM_RESET's identical
+    shape of problem (source/Xcp_Pgm.c)."""
+    seed = [0x11, 0x22, 0x33, 0x44]
+    key = [0x99]
+
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_fail(handle)
+
+    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+    assert get_seed_response[0:2] == (0xFF, len(seed))
+
+    unlock_response = exchange(handle, (0xF7, len(key), *key), length=8)
+    assert unlock_response[0] != 0xFF, (
+        'UNLOCK answered a positive PID (0xFF) although its own Xcp_CalcKey returned E_NOT_OK -- '
+        'the previous command\'s (GET_SEED\'s) response is still sitting in the shared buffer and '
+        'was retransmitted as this UNLOCK\'s own answer: {}'.format(unlock_response))
+    assert unlock_response[0:2] == (0xFE, 0x31), (
+        'UNLOCK answered {} for a failed Xcp_CalcKey, expected (0xFE, 0x31) [ERR_GENERIC]'.format(
+                unlock_response))
+
+    status_response = exchange(handle, GET_STATUS)
+    assert status_response[2] == 0x00, (
+        'protection_status=0x{:02X} after a GET_SEED/UNLOCK exchange whose Xcp_CalcKey failed -- '
+        'nothing should have been granted'.format(status_response[2]))
+
+
+def test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_next():
+    """Task 7's second consequence. Xcp_CanIfRxIndication's last_pid gate (source/Xcp.c, DD72)
+    only advances Xcp_Internal.last_pid past a dispatch whose own response byte 0 is NOT
+    XCP_PID_ERROR -- so a failed UNLOCK that (pre-fix) left a stale, non-error byte 0 behind was
+    indistinguishable from a successful one, and last_pid recorded a success this dispatch never
+    earned. Xcp_Internal is not reachable from this CFFI harness (interface/Xcp.h does not include
+    Xcp_Internal.h -- see this file's own module docstring), so last_pid's value cannot be read
+    directly; this observes the fix's effect through consequences instead.
+
+    What last_pid actually gates in Xcp_DTOCmdStdUnlock is membership in
+    {GET_SEED, UNLOCK} (source/Xcp_Std.c's own `if ((last_pid == GET_SEED) || (last_pid ==
+    UNLOCK))`), by design admitting a FURTHER unlock attempt whenever last_pid is already UNLOCK's
+    own pid -- 1.0/1.6.1.2.5's own multi-frame key continuation, and the same mechanism
+    test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_requested above
+    already exercises. Reaching Xcp_DTOCmdStdUnlock's own Xcp_CalcKey call at all -- pre-fix or
+    post-fix -- already requires last_pid to be GET_SEED or UNLOCK, and whichever of those two
+    member values it ends up as afterwards, a following UNLOCK is equally admitted through that
+    same membership test either way: last_pid landing on the WRONG one of its two admitted values
+    is not something Xcp_DTOCmdStdUnlock's own gate can ever tell apart (confirmed by direct trace
+    and empirically, both ways, while investigating this task -- see task-7-report.md). So a bare
+    "does a following UNLOCK get admitted" probe cannot isolate this leg the way
+    DD72's own two tests isolate its two legs -- unlike GET_SEED failing, which (immediately after
+    CONNECT) can flip last_pid from OUTSIDE that set to inside it, UNLOCK failing never can, since
+    reaching its own failure path already means last_pid was inside the set to begin with.
+
+    What the fix actually guarantees, and what this test pins instead: every dispatch that reads
+    byte 0 next -- including DD72's own gate, and including the following UNLOCK's own answer --
+    now sees the truth. A chain of failing UNLOCK attempts (fresh key bytes each time, no new
+    GET_SEED reissued in between -- Xcp_DTOCmdStdUnlock discards the seed once a full key has been
+    received, success or failure, so none would even be honoured) never again shows the stale
+    positive response the defect used to produce, on the first attempt or any later one, and
+    GET_STATUS confirms nothing is ever granted across the whole chain."""
+    seed = [0x11, 0x22, 0x33, 0x44]
+
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_fail(handle)
+
+    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+    assert get_seed_response[0:2] == (0xFF, len(seed))
+
+    for attempt, key in enumerate(([0x99], [0x55], [0x11, 0x22])):
+        unlock_response = exchange(handle, (0xF7, len(key), *key), length=8)
+        assert unlock_response[0:2] == (0xFE, 0x31), (
+            'UNLOCK attempt #{} (key={}) answered {}, expected (0xFE, 0x31) [ERR_GENERIC] again -- '
+            'a stale answer from an earlier exchange would show up here as something else, most '
+            'likely a positive (0xFF, ...) reply nobody computed'.format(attempt, key, unlock_response))
+
+    status_response = exchange(handle, GET_STATUS)
+    assert status_response[2] == 0x00, (
+        'protection_status=0x{:02X} after a chain of UNLOCK attempts whose Xcp_CalcKey always '
+        'failed -- nothing should ever have been granted'.format(status_response[2]))
+
+
+def test_a_key_mismatch_still_answers_access_locked_not_the_calc_key_failure_code():
+    """Task 7's own neighbour: Xcp_CalcKey failing outright (this file's own
+    calc_key_side_effect_fail, task 7's own condition, answered ERR_GENERIC -- see
+    test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_positive_response
+    above) is a different condition from Xcp_CalcKey SUCCEEDING with a key that then does not
+    match the master's own (Xcp_CheckMasterSlaveKeyMatch failing, source/Xcp_Std.c's sibling
+    `else` immediately above task 7's own new branch), which XCP part 2 - Protocol Layer
+    Specification 1.0/1.6.1.2.5 answers ERR_ACCESS_LOCKED and disconnects for. The two must not be
+    conflated -- easy to do by accident, since both are reached from the exact same `if
+    (Xcp_CalcKey(...) == E_OK)` this task edited. test_unlock_disconnects_the_master_if_key_is_
+    invalid (test/seed_key_test.py) already covers this scenario but pins it weakly (only
+    call_count, never UNLOCK's own response bytes); this is the same scenario with the same
+    exchange()-based rigor (reset_mock, exactly one transmission) the rest of this file already
+    uses, kept here rather than in that file because it exists specifically to guard task 7's own
+    new branch."""
+    seed = [0x11]
+
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    def calc_key_side_effect_mismatch(_p_seed_buffer, _seed_length, p_key_buffer, _max_key_length, p_key_length):
+        for i, b in enumerate(seed):
+            p_key_buffer[i] = (~b) & 0xFF
+        p_key_length[0] = len(seed)
+        return handle.define('E_OK')
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_mismatch
+
+    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+    assert get_seed_response[0:2] == (0xFF, len(seed))
+
+    unlock_response = exchange(handle, (0xF7, len(seed), *seed), length=8)
+    assert unlock_response[0:2] == (0xFE, 0x25), (
+        'UNLOCK answered {} for a KEY MISMATCH (Xcp_CalcKey succeeded), expected (0xFE, 0x25) '
+        '[ERR_ACCESS_LOCKED] -- not task 7\'s own (0xFE, 0x31) [ERR_GENERIC], which is for '
+        'Xcp_CalcKey failing outright, a different condition'.format(unlock_response))
+
+    # 1.0/1.6.1.2.5: "the slave device will then go to disconnected state" -- unlike task 7's own
+    # ERR_GENERIC branch, which does not disconnect (see source/Xcp_Std.c's own comment on why
+    # not). GET_STATUS must therefore go entirely unanswered here.
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(GET_STATUS))
+    handle.lib.Xcp_MainFunction()
+    assert handle.can_if_transmit.call_count == 0, (
+        'GET_STATUS was answered after a key-mismatch UNLOCK, but 1.0/1.6.1.2.5 disconnects the '
+        'session on a rejected key -- a disconnected slave processes nothing but CONNECT')
