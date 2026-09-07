@@ -172,16 +172,23 @@ def test_the_positive_response_reports_the_live_communication_parameters():
 
 
 def test_max_bs_pgm_reports_the_configured_block_size_not_the_live_max_bs():
-    """DD62, revising DD56. MAX_BS_PGM (byte 4) is programming.max_block_size -- sized, at compile
-    time, into Xcp_Internal.pgm_block (source/Xcp_Internal.h, XCP_PGM_MAX_BLOCK_SIZE) -- not the
-    ordinary protocol_layer.max_bs this module reported here before SP4b needed a buffer to size
-    (DD56, as SP4a left it).
+    """DD62, revising DD56. MAX_BS_PGM (byte 4) is programming.max_block_size, read at runtime from
+    Xcp_Ptr->general->maxBsPgm (script/source_cfg.c.jinja2) -- not the ordinary protocol_layer.max_bs
+    this module reported here before SP4b needed a buffer to size (DD56, as SP4a left it).
 
     max_bs and max_block_size are configured to DIFFERENT values on purpose: 5 and 12. Equal
     values would pass whether the module answered with the old field or the new one, pinning
     nothing -- exactly the plan's failure mode 5 ('a deferral test discarding the very value it
     meant to check'), one of six ways a test in this sub-project has already passed while proving
-    nothing. Asserting 12 and NOT 5 is what actually distinguishes DD62's field from DD56's."""
+    nothing. Asserting 12 and NOT 5 is what actually distinguishes DD62's field from DD56's.
+
+    Does NOT distinguish Xcp_Ptr->general->maxBsPgm (this configuration's own live value) from
+    XCP_PGM_MAX_BLOCK_SIZE (the compile-time macro Xcp_Internal.pgm_block is sized from, the
+    largest max_block_size across every configuration in the BUILD): with a single configuration
+    the two are always numerically equal, which is exactly the trap final-review finding F4 caught
+    -- MAX_BS_PGM read the macro here until that fix, and this test could not have told the
+    difference either way. test_max_bs_pgm_reports_the_active_configurations_own_value_not_the_
+    build_wide_maximum below, the one that needs two configurations, is what actually pins F4."""
     handle = pgm_handle(max_bs=5, programming_max_block_size=12)
     busy_then(handle, 0x00, busy_calls=0)
     handle.can_if_transmit.reset_mock()
@@ -192,6 +199,40 @@ def test_max_bs_pgm_reports_the_configured_block_size_not_the_live_max_bs():
 
     assert frame[0] == 0xFF
     assert frame[4] == 12, 'MAX_BS_PGM must be programming.max_block_size (12), not max_bs (5)'
+
+
+def test_max_bs_pgm_reports_the_active_configurations_own_value_not_the_build_wide_maximum():
+    """Final review F4. Xcp_Internal.pgm_block is sized once for a module compiled once for every
+    configuration in the build, so XCP_PGM_MAX_BLOCK_SIZE (script/header_cfg.h.jinja2) is
+    deliberately the LARGEST programming.max_block_size across all of them -- but DD62, design
+    Section 9 criterion 5, and this sub-project's own ledger ruling on the identical
+    macro-versus-runtime-field question for maxCto all say MAX_BS_PGM is the value THIS
+    configuration declares, not the build-wide bound. Before this fix, PROGRAM_START read the
+    compile-time macro directly (source/Xcp_Pgm.c), so a configuration declaring the SMALLER of two
+    values in one build advertised the LARGER one instead -- a promise about a block size this
+    configuration's own master was never told to expect.
+
+    Two configurations in one generated file, 5 and 200 apart on purpose (matching the file-wide
+    convention every other DD62 test here already follows: equal values would pass whether the
+    module reported the per-configuration field or the build-wide macro, pinning nothing).
+    Configuration 0 (5) is run first: if MAX_BS_PGM still read the macro, this assertion would see
+    200, not 5 -- the direction the measured defect actually took, and the one a test that only
+    ever ran the build's OWN largest configuration could never catch."""
+    handle = XcpTest(MultiConfig(DefaultConfig(programming_enabled=True, programming_max_block_size=5),
+                                 DefaultConfig(programming_enabled=True, programming_max_block_size=200)),
+                     configuration_index=0)
+    connect(handle)
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+
+    frame = transmitted(handle)
+
+    assert frame[0] == 0xFF
+    assert frame[4] == 5, \
+        "MAX_BS_PGM must be THIS configuration's own max_block_size (5), not the build-wide " \
+        'maximum across every configuration (200)'
 
 
 @pytest.mark.parametrize('master_block_mode, interleaved_mode, slave_block_mode, expected', (

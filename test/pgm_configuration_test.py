@@ -310,7 +310,18 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     historical comparison was run by hand instead, twice: task-6-report.md carries Task 1's, and
     final-fix-report.md carries this round's, where the default build's generated Xcp_Cfg.c,
     Xcp_Cfg.h, Xcp_Rt.c and Xcp_Rt.h were confirmed byte-identical to 35c4877's despite
-    config/xcp.json's PGM defaults changing and two guards being added to the template."""
+    config/xcp.json's PGM defaults changing and two guards being added to the template.
+
+    Nine differing lines, not eight, since final review F4: Xcp_GeneralType's own maxBsPgm row
+    (script/source_cfg.c.jinja2) is a second, genuine gate-on/gate-off difference outside the
+    ctoInfo table entirely -- MAX_BS_PGM's per-configuration value, 0 whenever programming.enabled
+    is false (F4's own gate-off invariant, guarded separately by
+    test_gate_off_output_does_not_depend_on_any_other_programming_setting) and the real configured
+    value once it is true. Caught here the moment F4's own fix landed: keying this row on
+    programming.enabled alone (matching the ctoInfo rows) still left it differing between GATE_ON
+    and gate-off, since GATE_ON's own programming.enabled IS true -- a real, correctly-gated
+    difference this test's own pre-F4 assertion (`== len(PGM_PIDS) - len(unchanged)`, silently
+    assuming every differing line is a ctoInfo row) was not yet written to expect."""
     off = _generated_source(DefaultConfig())
     on = _generated_source(DefaultConfig(xcp_program_start_api_enable=True,
                                          xcp_program_reset_api_enable=True,
@@ -330,12 +341,18 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     # keeps their rows in this particular set.
     unchanged = {'PROGRAM_CLEAR 0xD1', 'PROGRAM 0xD0', 'PROGRAM_MAX 0xC9'}
     pgm_markers = ['%s 0x%02X' % (name, pid) for pid, name in PGM_PIDS]
+    # Final review F4: the one non-ctoInfo row this gate is now also allowed to touch, named
+    # explicitly (not folded into pgm_markers, which greps for a PID name/hex pair this row does
+    # not carry) so the loop below can tell "an expected second kind of difference" apart from "an
+    # unrelated byte the gate should never move".
+    other_expected_markers = ['maxBsPgm']
     differing = [i for i, (o, n) in enumerate(zip(off_lines, on_lines)) if o != n]
 
-    assert len(differing) == len(PGM_PIDS) - len(unchanged), \
-        'the gate must change exactly the eight enableable PGM ctoInfo rows, no more and no fewer'
+    assert len(differing) == len(PGM_PIDS) - len(unchanged) + len(other_expected_markers), \
+        'the gate must change exactly the eight enableable PGM ctoInfo rows plus maxBsPgm, no ' \
+        'more and no fewer'
     for i in differing:
-        assert any(marker in off_lines[i] for marker in pgm_markers), \
+        assert any(marker in off_lines[i] for marker in pgm_markers + other_expected_markers), \
             'line %d differs but names no PGM PID: %r' % (i, off_lines[i])
         assert not any(marker in off_lines[i] for marker in unchanged), \
             'line %d is one of the three commands SP4a cannot enable, yet the gate changed it: %r' \

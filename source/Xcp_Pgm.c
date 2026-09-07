@@ -9,6 +9,17 @@
 
 #include "Xcp_Internal.h"
 
+/* Xcp_PgmRequestPending (below) reads Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, the same way
+ * Xcp.c/Xcp_Pag.c/Xcp_Daq.c/Xcp_DaqRuntime.c each already do -- and, like them, needs its own
+ * #include: Xcp_Internal.h does not carry one, and interface/Xcp.h's own `extern Xcp_RtType
+ * Xcp_Rt[];` is wrapped in `#ifdef CFFI_ENABLE`, invisible to a real (non-CFFI) build. Found
+ * while proving final-review F1's fix compiles for real: XCP_MAX_CTO/XCP_PGM_MAX_BLOCK_SIZE were
+ * the only undeclared identifiers the review's own repro reached (Xcp_Internal.h is the first
+ * thing every translation unit includes, so the build stopped there before make ever reached this
+ * file), but this file alone was still one #include short of compiling once that fix let the
+ * build get this far. */
+#include "Xcp_Rt.h"
+
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
 
 /*------------------------------------------------------------------------------------------------*/
@@ -88,16 +99,6 @@ static boolean Xcp_PgmBlockIsActive(void);
  * above for why the two must not share state.
  */
 static void Xcp_PgmBlockAcknowledgeFrame(void);
-
-/**
- * @brief Discards whatever PGM block is open, without touching the buffer's own bytes (DD63: a
- * block that goes wrong is discarded, not resumed -- the master restarts from a fresh PROGRAM,
- * which overwrites pgm_block.data/length itself; nothing here needs to).
- * @details Task 4 fix round 1, finding 1. Mirrors Xcp_BlockTransferAbort()'s own shape exactly,
- * against Xcp_Internal.pgm_block instead of block_transfer -- see Xcp_PgmBlockIsActive above for
- * why the two must not share state.
- */
-static void Xcp_PgmBlockAbort(void);
 
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
@@ -323,13 +324,31 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
     {
         const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
 
-        /* DD64. 1.1/1.6.5.1.3: "The end of the memory segment is indicated, when the number of
-         * data elements is 0." Distinct from programming zero bytes: there is no block open to
-         * flush (Task 3 never opens one -- that is Task 4's PROGRAM_NEXT), so this simply ends the
-         * segment and answers, without ever reaching Xcp_ProgramWrite. It does NOT end the
-         * programming sequence -- 1.6.5.1.3 gives that to PROGRAM_RESET, which SP4a implements. */
+        /* DD64, corrected by final-review finding 3. 1.1/1.6.5.1.3: "The end of the memory
+         * segment is indicated, when the number of data elements is 0." Distinct from programming
+         * zero bytes.
+         *
+         * DD64 originally said this "flushes" a block still open, written when Task 3 could never
+         * open one (that is Task 4's PROGRAM_NEXT, added afterward without revisiting this
+         * branch) -- so the word was never implemented and, on inspection, was also the wrong
+         * word: §1.6.5.1.3 has the slave acknowledge only the LAST PROGRAM_NEXT, so a partial
+         * block has no data the master ever agreed was final, and writing it to flash regardless
+         * would be worse than leaving it alone. Aborting it, not flushing it, is what actually
+         * matches "ends the segment": Xcp_PgmBlockAbort() (shared with PROGRAM_NEXT's own
+         * wrong-count and short-frame paths, and now with Xcp_CTOCmdStdConnect/
+         * Xcp_PgmCompleteProgramReset, final-review F2) is a harmless no-op when no block is open,
+         * so it is called unconditionally rather than behind its own Xcp_PgmBlockIsActive() check.
+         * Measured before this fix: with 4 elements of an open block still outstanding, `D0 00`
+         * answered FF while leaving the block open, so a following PROGRAM_MAX was refused
+         * ERR_SEQUENCE (DD65) and a following PROGRAM_NEXT could still resume the very segment
+         * this response had just claimed was ended.
+         *
+         * Still does NOT end the programming sequence -- 1.6.5.1.3 gives that to PROGRAM_RESET,
+         * which SP4a implements. */
         if (number_of_data_elements == 0x00u)
         {
+            Xcp_PgmBlockAbort();
+
             Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
             Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
@@ -1093,10 +1112,21 @@ static void Xcp_PgmBlockAcknowledgeFrame(void)
     Xcp_Internal.pgm_block.requested_elements -= Xcp_Internal.pgm_block.frame_elements;
 }
 
-static void Xcp_PgmBlockAbort(void)
+void Xcp_PgmBlockAbort(void)
 {
     Xcp_Internal.pgm_block.requested_elements = 0x00u;
     Xcp_Internal.pgm_block.frame_elements = 0x00u;
+
+    /* Final review F2/F3: length is cleared too, unlike this function's original two fields alone.
+     * PROGRAM_NEXT's own two callers (wrong count, short frame) never needed it -- a following
+     * PROGRAM always overwrites pgm_block.length by direct assignment, never accumulation, so a
+     * stale value between an abort and the next PROGRAM was harmless there. It is not harmless at
+     * a session boundary: DD63's own cross-session hygiene note in Xcp_Internal.h already clears
+     * this same field from Xcp_Init for exactly that reason, and this function is now ALSO the
+     * one Xcp_CTOCmdStdConnect (Xcp_Std.c, F2), Xcp_PgmCompleteProgramReset (F2) and
+     * Xcp_DTOCmdPgmProgram's own zero-element branch (F3) call, so it has to leave the same
+     * complete, empty state Xcp_Init does. */
+    Xcp_Internal.pgm_block.length = 0x0000u;
 }
 
 static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
@@ -1130,13 +1160,27 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = comm_mode_pgm;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = (uint8)Xcp_Ptr->general->maxCto;
 
-        /* DD62, revising DD56: MAX_BS_PGM is its own configured value (XCP_PGM_MAX_BLOCK_SIZE),
-         * not the live protocol_layer maxBS -- unlike MAX_CTO_PGM just above and MIN_ST_PGM/
-         * QUEUE_SIZE_PGM just below, which stay the live Xcp_Ptr->general fields exactly as DD56
-         * left them. A compile-time macro, not a runtime field, because it is what Xcp_Internal
-         * .pgm_block (source/Xcp_Internal.h) is actually sized from -- reporting anything else
-         * here would let this response promise a block the buffer cannot hold. */
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = XCP_PGM_MAX_BLOCK_SIZE;
+        /* DD62, revising DD56, corrected by final-review F4: MAX_BS_PGM is its own configured
+         * value (programming.max_block_size), not the live protocol_layer maxBS -- exactly like
+         * MAX_CTO_PGM just above and MIN_ST_PGM/QUEUE_SIZE_PGM just below, all four now the live
+         * Xcp_Ptr->general field for THIS configuration, not a value shared across every
+         * configuration in the build.
+         *
+         * Xcp_Ptr->general->maxBsPgm (script/source_cfg.c.jinja2), not the compile-time
+         * XCP_PGM_MAX_BLOCK_SIZE macro this byte read until F4: that macro is deliberately the
+         * LARGEST programming.max_block_size across every configuration, because
+         * Xcp_Internal.pgm_block is sized once for a module compiled once for all of them -- so on
+         * a build holding a max_block_size=1 configuration beside a max_block_size=200 one, the
+         * macro reported 200 from the FIRST configuration's own response, a block its own master
+         * was never told to expect and this build's buffer would still have refused
+         * ERR_MEMORY_OVERFLOW had it actually tried. The runtime field is the per-configuration
+         * value DD62/§9 criterion 5 always meant; the macro stays exactly what it was for sizing
+         * the buffer (Xcp_Internal.h), which must still be at least as large as the largest
+         * configuration's own advertised maximum -- reporting anything larger than the runtime
+         * field here would still be the promise-a-block-the-buffer-cannot-hold hazard this
+         * comment used to warn about, and the buffer macro's own bound is exactly what keeps this
+         * field from ever exceeding it. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->maxBsPgm;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = Xcp_Ptr->general->minST;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->ctoQueueSize;
 
@@ -1228,6 +1272,16 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
          *
          * No device reset is performed here or anywhere else in this module: DD50. */
         Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+
+        /* Final review F2, the same defence-in-depth reasoning the paragraph above already gives
+         * for pgm_state itself: PROGRAM_RESET mid-block disconnects without this, and the CONNECT
+         * that necessarily follows (DISCONNECT is refused ERR_PGM_ACTIVE while ACTIVE, so CONNECT
+         * is the only door back) already clears it on its own door (Xcp_CTOCmdStdConnect,
+         * Xcp_Std.c, F2) -- making this line as unobservable on its own as the pgm_state write
+         * above already is, and kept for the identical reason: the command that ends a sequence is
+         * where that sequence's state belongs, not correct only by virtue of a line in another
+         * file. */
+        Xcp_PgmBlockAbort();
         Xcp_DisconnectSession();
     }
     else

@@ -1344,6 +1344,18 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
      * command but SYNCH while pending_command.active is TRUE, CONNECT included, so this line cannot
      * run underneath a deferred operation. */
     Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+
+    /* Final review F2. A block left open by an abandoned session is state exactly like pgm_state
+     * itself -- "no state of the previous one may survive into it" (this function's own reasoning
+     * two paragraphs up) applies to it precisely because it is not covered by the pgm_state write
+     * alone: Xcp_PgmBlockIsActive() reads Xcp_Internal.pgm_block.requested_elements, a separate
+     * field this function never touched before. Measured before this fix: PROGRAM declaring 10
+     * with 6 delivered, then CONNECT, then a fresh PROGRAM_START and SET_MTA -- a PROGRAM_NEXT
+     * carrying the abandoned block's own still-expected count was accepted, and the integrator was
+     * handed the previous session's 6 leftover bytes at the new session's MTA. Xcp_Init (Xcp.c)
+     * already clears this on its own door into a fresh session; this is the same clearing on the
+     * other one. */
+    Xcp_PgmBlockAbort();
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;

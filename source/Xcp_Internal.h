@@ -1072,6 +1072,25 @@ void Xcp_PgmRequestPending(void);
  */
 void Xcp_PgmAbandonPendingCommand(void);
 
+/**
+ * @brief Empties whatever PGM master block mode block is open: no bytes still accumulated, no
+ * elements still expected, no frame just acknowledged.
+ * @details Defined in Xcp_Pgm.c. Was `static` and private to that file (Task 4 fix round 1,
+ * finding 1 -- against Xcp_Internal.pgm_block, deliberately never Xcp_Internal.block_transfer,
+ * which Xcp_CanIfTxConfirmation also reads for an unrelated purpose); exported here by
+ * final-review finding 2/3, since a block left open must be emptied wherever a session boundary
+ * clears Xcp_Internal.pgm_state -- Xcp_CTOCmdStdConnect (Xcp_Std.c) and
+ * Xcp_PgmCompleteProgramReset (Xcp_Pgm.c) alike, not only Xcp_Init (Xcp.c), which already did --
+ * and wherever DD64's zero-element PROGRAM ends a segment with a block still open
+ * (Xcp_DTOCmdPgmProgram, Xcp_Pgm.c, final-review finding 3). A stale, non-zero
+ * pgm_block.requested_elements surviving any of those doors leaves Xcp_PgmBlockIsActive()
+ * reporting a block open that no PROGRAM in the NEW session or segment ever started, misdirecting
+ * PROGRAM_NEXT's own count check and PROGRAM_MAX's own DD65 guard alike -- and, measured directly
+ * (final-review F2), lets a PROGRAM_NEXT carrying the abandoned block's own expected count be
+ * accepted, writing the previous session's leftover bytes into flash at the new session's MTA.
+ */
+void Xcp_PgmBlockAbort(void);
+
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
 

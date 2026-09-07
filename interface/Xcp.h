@@ -549,10 +549,12 @@ extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *
  * success, non-zero for failure.
  * @retval E_OK: the write is finished (no matter if it was successfully terminated or not)
  * @retval E_NOT_OK: the write is not finished
- * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
- * the PROGRAM or PROGRAM_MAX handler to start the work and then once per Xcp_MainFunction until it
- * reports completion. An implementation whose work is instantaneous returns E_OK from the first call
- * and the command is answered without ever deferring.
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once to
+ * start the work -- from the PROGRAM or PROGRAM_MAX handler directly, or, for a master block mode
+ * block spanning more than one frame, from the PROGRAM_NEXT frame that completes it, since
+ * 1.1/1.6.5.1.3 has the slave acknowledge only that last frame -- and then once per Xcp_MainFunction
+ * until it reports completion. An implementation whose work is instantaneous returns E_OK from the
+ * first call and the command is answered without ever deferring.
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3: "The MTA will be post-incremented
  * by the number of data bytes" -- but only when this call succeeds. A failed write leaves the MTA
  * where the master left it, since 1.7.3.2.5 gives PROGRAM the pre-action SYNCH+SET_MTA, so a master

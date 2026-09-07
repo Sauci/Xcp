@@ -4,7 +4,7 @@
 from .parameter import DefaultConfig, u32_to_array
 from .conftest import XcpTest
 from .download_test import connect
-from .pgm_deferred_test import program_start, transmitted
+from .pgm_deferred_test import program_start, program_reset, transmitted
 from .pgm_session_test import send
 
 
@@ -221,9 +221,19 @@ def test_program_with_master_block_mode_off_still_succeeds_when_the_count_fits_a
     keyed on masterBlockModeSupported alone) would refuse every single PROGRAM whenever block mode
     is off, fitting or not -- and nothing above would notice, since the term's own deletion changes
     nothing for an already-oversized count. A 3-element count, well under the 6-byte single-frame
-    capacity at this suite's default MAX_CTO=8, must still succeed with block mode off."""
+    capacity at this suite's default MAX_CTO=8, must still succeed with block mode off.
+
+    Final review F5, the eleventh stale-frame instance: this test's own final assertion used to
+    read _active_session_with_mta's own leftover SET_MTA response (also PID 0xFF) rather than this
+    PROGRAM's, since nothing reset can_if_transmit between the helper and the exchange under test --
+    the identical hazard this same file already fixes at three other call sites (fix round 1,
+    finding 3), each citing this reasoning by name. The xcp_program_write.call_args unpack two
+    lines below still kills the mutation this test's own docstring names either way (it raises
+    first if the handler refuses), but the transmitted() assertion itself proved nothing without
+    this reset -- it would have passed whether or not this PROGRAM transmitted anything at all."""
     handle = pgm_program_handle(master_block_mode=False)
     _active_session_with_mta(handle, address=0x2800)
+    handle.can_if_transmit.reset_mock()
 
     program(handle, 0x03, data=(0x11, 0x22, 0x33))
     handle.lib.Xcp_MainFunction()
@@ -1008,3 +1018,148 @@ def test_a_fresh_block_works_end_to_end_after_reinit_even_though_the_previous_on
     assert length == 0x02, 'must not have inherited the half-open blocks own declared/remaining length'
     assert bytes(p_data[0:length]) == bytes((0xAA, 0xBB)), 'must not have inherited its leftover bytes'
     assert transmitted(handle)[0] == 0xFF
+
+
+# ---------------------------------------------------------------------------------------------
+# Final review F2/F3 (.superpowers/sdd/2026-09-07-xcp-pgm-sp4b/final-review.md): a block left open
+# must not survive a session boundary, and DD64's zero-element PROGRAM must genuinely close one.
+# ---------------------------------------------------------------------------------------------
+
+
+def _half_open_block(handle, address):
+    """Opens a session, points the MTA, and leaves a block genuinely half-open: 10 elements
+    declared, 6 delivered, 4 still outstanding, no completing PROGRAM_NEXT ever sent. Shared setup
+    for the three tests below, mirroring
+    test_a_fresh_block_works_end_to_end_after_reinit_even_though_the_previous_one_was_left_half_open's
+    own construction above, which pins the identical hazard against Xcp_Init instead of
+    CONNECT/PROGRAM_RESET."""
+    _active_session_with_mta(handle, address=address)
+    program(handle, 0x0A, data=(0x01, 0x02, 0x03, 0x04, 0x05, 0x06))  # 6 of 10, 4 outstanding
+
+
+def test_connect_clears_a_block_left_open_by_the_previous_session():
+    """Final review F2. Xcp_CTOCmdStdConnect (Xcp_Std.c) resets Xcp_Internal.pgm_state to
+    XCP_PGM_IDLE -- added by SP4a's own final review specifically because "no state of the
+    previous [session] may survive into it" -- but never touched Xcp_Internal.pgm_block, a second
+    and equally real piece of session state Task 4 introduced afterward. Xcp_Init (source/Xcp.c)
+    already clears it on ITS OWN door into a fresh session; this is the same clearing on the door a
+    master that never sends DISCONNECT (refused ERR_PGM_ACTIVE while ACTIVE, so it cannot) actually
+    walks through -- reachable with no Xcp_Init in the way at all, unlike the test above.
+
+    Measured before the fix, and reproduced here: a PROGRAM_NEXT carrying the ABANDONED block's own
+    still-expected count (4) was ACCEPTED in the brand-new session, and Xcp_ProgramWrite was called
+    with the previous session's own 6 leftover bytes concatenated onto the new frame's 4 -- flash
+    programmed with data from a block this master never opened.
+
+    Mutation: deleting Xcp_PgmBlockAbort() from Xcp_CTOCmdStdConnect makes the PROGRAM_NEXT below
+    answer 0xFF instead of (0xFE, 0x29, 0x00), and reaches the integrator with the stale bytes."""
+    handle = pgm_program_handle()
+    _half_open_block(handle, address=0x5500)
+
+    connect(handle)  # a fresh master, or the same one, starting an entirely new session
+    _active_session_with_mta(handle, address=0x6600)
+    handle.xcp_program_write.reset_mock()
+
+    # The abandoned block's own still-expected count -- if any block were still open, this would
+    # look like a valid continuation.
+    assert send(handle, (0xCA, 0x04, 0xAA, 0xBB, 0xCC, 0xDD))[0:3] == (0xFE, 0x29, 0x00), \
+        'no block may still be open in the new session: refused ERR_SEQUENCE expecting 0'
+    assert handle.xcp_program_write.call_count == 0, \
+        "the previous session's leftover bytes must never reach the integrator"
+    # PROGRAM_NEXT's own Xcp_CTOErrorMatrix entry carries XCP_INTERNAL_ERR_CMD_BUSY (source/Xcp.c),
+    # so this response has to be confirmed before the fresh PROGRAM below -- SWS_Xcp_00859's
+    # one-frame transmit pipeline, the same reasoning _active_session_with_mta's own two
+    # confirmations follow -- or that PROGRAM is answered ERR_CMD_BUSY instead of reaching
+    # Xcp_ProgramWrite at all.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    # The new session must still be able to conduct an entirely fresh block of its own, unaffected
+    # -- not merely refuse the stale continuation while some other corner of pgm_block stays wrong.
+    program(handle, 0x02, data=(0x11, 0x22))
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x6600
+    assert length == 0x02
+    assert bytes(p_data[0:length]) == bytes((0x11, 0x22))
+    assert transmitted(handle)[0] == 0xFF
+
+
+def test_program_reset_clears_a_block_left_open_by_the_session_it_ends():
+    """Final review F2's second door, defence in depth. PROGRAM_RESET mid-block disconnects (DD57)
+    without ever completing the block, and the CONNECT that necessarily follows (DISCONNECT is
+    refused ERR_PGM_ACTIVE while a session is ACTIVE, so CONNECT is the master's only way back in)
+    inherits whatever pgm_block held -- test_connect_clears_a_block_left_open_by_the_previous_session
+    above already proves CONNECT's own door closes it regardless of how the previous session ended.
+
+    Honestly documented rather than overclaimed: because the disconnected-state gate admits nothing
+    but CONNECT (source/Xcp.c), there is no way to probe pgm_block after PROGRAM_RESET without going
+    through CONNECT first -- so this test cannot, by construction, distinguish
+    Xcp_PgmCompleteProgramReset's own Xcp_PgmBlockAbort() call from CONNECT's independent one a
+    moment later. That is the identical situation Xcp_PgmCompleteProgramReset's own pgm_state reset
+    is already in (pgm_session_test.py's test_program_reset_leaves_pgm_state_ready_for_a_new_session
+    documents it by name), and the reason given there is the reason repeated here: the command that
+    ends a sequence is where that sequence's state belongs, not correct only by virtue of a line in
+    another file. Measured, not assumed (task report): deleting ONLY the PROGRAM_RESET-side call,
+    CONNECT's own left in place, leaves this test passing."""
+    handle = pgm_program_handle()
+    _half_open_block(handle, address=0x5700)
+
+    handle.can_if_transmit.reset_mock()
+    program_reset(handle)  # answers, then disconnects (DD57), block still declared half-open
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, 'setup: PROGRAM_RESET must answer'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    connect(handle)
+    _active_session_with_mta(handle, address=0x6700)
+    handle.xcp_program_write.reset_mock()
+
+    assert send(handle, (0xCA, 0x04, 0xAA, 0xBB, 0xCC, 0xDD))[0:3] == (0xFE, 0x29, 0x00), \
+        'no block may still be open in the new session: refused ERR_SEQUENCE expecting 0'
+    assert handle.xcp_program_write.call_count == 0, \
+        "the previous session's leftover bytes must never reach the integrator"
+
+
+def test_program_with_zero_elements_aborts_a_block_still_open():
+    """Final review F3, correcting DD64. 1.1/1.6.5.1.3 has the slave acknowledge only the LAST
+    PROGRAM_NEXT of a block, so a block PROGRAM(0) finds still open has no data the master ever
+    confirmed as final -- DD64 said this "flushes" it, which was never implemented (Task 3 wrote
+    this branch before Task 4's own PROGRAM_NEXT could ever leave a block open, and Task 4 did not
+    revisit it) and, on inspection, was also the wrong word: aborting the block, not writing a
+    partial one to flash, is what "ends the segment" actually means here.
+
+    Measured before the fix: with 4 elements of a 10-declared/6-delivered block still outstanding,
+    `PROGRAM 00` answered 0xFF while pgm_block stayed open, so a following PROGRAM_MAX answered
+    (0xFE, 0x29) ERR_SEQUENCE (DD65's own block-active guard) instead of being genuinely available
+    again, and a following PROGRAM_NEXT carrying the stale block's own expected count could still
+    have resumed the very segment this response had just claimed was ended.
+
+    Both symptoms are checked: PROGRAM_MAX must now succeed (the block is gone, not merely
+    unavailable to check), and a well-formed PROGRAM_NEXT carrying the old block's own expected
+    count must be refused ERR_SEQUENCE expecting 0 (nothing is left to resume).
+
+    Mutation: deleting Xcp_PgmBlockAbort() from Xcp_DTOCmdPgmProgram's zero-element branch leaves
+    Xcp_PgmBlockIsActive() TRUE, and the PROGRAM_MAX assertion below fails directly: (0xFE, 0x29)
+    instead of 0xFF."""
+    handle = pgm_program_handle()
+    _half_open_block(handle, address=0x5800)
+
+    assert send(handle, (0xD0, 0x00))[0] == 0xFF, 'setup: PROGRAM ends the segment'
+    # PROGRAM's own Xcp_CTOErrorMatrix entry carries XCP_INTERNAL_ERR_CMD_BUSY (source/Xcp.c), so
+    # this response has to be confirmed before PROGRAM_MAX below -- SWS_Xcp_00859's one-frame
+    # transmit pipeline -- or PROGRAM_MAX is answered ERR_CMD_BUSY instead of reaching
+    # Xcp_ProgramWrite, and the assertion below would fail for an unrelated reason.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    data = tuple(range(0x01, 0x08))  # 7 bytes = MAX_CTO(8) - 1
+    program_max(handle, data)
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, \
+        'PROGRAM_MAX must be genuinely available again, not refused ERR_SEQUENCE by a stale open block'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xCA, 0x04, 0xAA, 0xBB, 0xCC, 0xDD))[0:3] == (0xFE, 0x29, 0x00), \
+        'nothing may be left to resume: refused ERR_SEQUENCE expecting 0'
