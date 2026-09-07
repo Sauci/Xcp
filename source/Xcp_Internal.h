@@ -462,12 +462,32 @@ typedef struct {
     /**
      * @brief One master block mode block of PROGRAM data, accumulated as frames arrive.
      * @details DD63. Intermediate PROGRAM_NEXT frames copy here and answer nothing; the frame that
-     * completes the block is what calls the integrator, once, through pending_command. Sized from
-     * XCP_PGM_MAX_BLOCK_SIZE, the same constant PROGRAM_START reports as MAX_BS_PGM, so the value
-     * the master programs against and the space actually available cannot drift apart.
+     * completes the block is what calls the integrator, once, through pending_command.
+     *
+     * Sized as the LARGER of two demands, not from XCP_PGM_MAX_BLOCK_SIZE alone (task 3 review,
+     * fix round 1, finding 1). A block of XCP_PGM_MAX_BLOCK_SIZE frames needs
+     * XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 2) bytes, the value PROGRAM_START reports as
+     * MAX_BS_PGM (DD62) -- but PROGRAM_MAX carries no element-count byte of its own, so its fixed
+     * transfer needs XCP_MAX_CTO - 1 bytes at AG BYTE regardless of the configured block size, one
+     * byte more than a single PROGRAM frame's own (XCP_MAX_CTO - 2)-byte ceiling
+     * (Xcp_DTOCmdPgmProgramMax, source/Xcp_Pgm.c). Sizing from the first demand alone made
+     * PROGRAM_MAX permanently refused ERR_MEMORY_OVERFLOW at programming.max_block_size's own
+     * (former) schema minimum of 1 -- CONNECT advertising a command that then answered every
+     * single request with the same error, the D10 shape this sub-project exists to close, reached
+     * from a schema-legal configuration. The second term is the floor that keeps that from
+     * happening at any block size the schema now permits (minimum raised to 1 for the same
+     * finding: 0 is not a block size at all, and made this array a zero-length one, a GCC
+     * extension and an ISO C 6.7.6.2p1 constraint violation); the first term is what lets an
+     * integrator who raises max_block_size actually get the bigger buffer a real multi-frame block
+     * needs. The two guards at the point of use in Xcp_DTOCmdPgmProgram and
+     * Xcp_DTOCmdPgmProgramMax (source/Xcp_Pgm.c) stay regardless -- a handler must never trust a
+     * generated bound merely because the formula that produced it is believed correct -- and are
+     * now unreachable for every schema-legal configuration, which is the right relationship
+     * between a size and the bound guarding it: don't delete them as dead code.
      */
     struct {
-        uint8 data[XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u)];
+        uint8 data[(XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u) > (XCP_MAX_CTO - 0x01u)) ?
+                   (XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u)) : (XCP_MAX_CTO - 0x01u)];
         uint16 length;
     } pgm_block;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */

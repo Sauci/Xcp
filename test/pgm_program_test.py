@@ -104,6 +104,13 @@ def test_program_mta_post_increments_by_the_bytes_written_on_success():
     handle = pgm_program_handle()
     _active_session_with_mta(handle, address=0x1000)
 
+    # Fix round 1, finding 3. Without this, transmitted() reads _active_session_with_mta's own
+    # leftover SET_MTA response (also PID 0xFF, XCP_PID_RESPONSE, on any successful command) rather
+    # than PROGRAM's own -- the setup assertion below would then pass whether or not this PROGRAM
+    # transmitted anything at all, which review's own probe proved directly: the identical assertion
+    # passes with no PROGRAM sent and no Xcp_MainFunction call in between.
+    handle.can_if_transmit.reset_mock()
+
     program(handle, 0x03, data=(0x11, 0x22, 0x33))
     handle.lib.Xcp_MainFunction()
     assert transmitted(handle)[0] == 0xFF, 'setup: the first PROGRAM must succeed'
@@ -227,19 +234,6 @@ def test_program_below_two_bytes_answers_err_cmd_syntax():
     assert send(handle, (0xD0,))[0:2] == (0xFE, 0x21), 'ERR_CMD_SYNTAX'
 
 
-def test_program_refuses_err_memory_overflow_when_the_configured_block_size_cannot_hold_it():
-    """PROGRAM's own analogue of PROGRAM_MAX's identically-named test above -- config/xcp.schema.json
-    admits programming.max_block_size down to 0, at which Xcp_Internal.pgm_block.data is a
-    zero-length buffer (XCP_PGM_MAX_BLOCK_SIZE * (MAX_CTO-2) = 0*(8-2)) that cannot hold even a
-    single byte. A single-element PROGRAM, otherwise entirely ordinary, is refused
-    ERR_MEMORY_OVERFLOW rather than writing past it."""
-    handle = pgm_program_handle(programming_max_block_size=0, max_cto=8)
-    _active_session_with_mta(handle)
-
-    assert send(handle, (0xD0, 0x01, 0xAA))[0:2] == (0xFE, 0x30), 'ERR_MEMORY_OVERFLOW'
-    assert handle.xcp_program_write.call_count == 0
-
-
 def test_program_defers_through_the_pending_slot_and_keeps_passing_the_same_bytes():
     """Xcp_ProgramWrite's contract presents pData on EVERY call, not only the first (design Section
     4) -- Xcp_Internal.pgm_block is what makes that possible across poll cycles: standing state the
@@ -295,6 +289,13 @@ def test_program_max_programs_max_cto_minus_one_elements_from_the_mta():
     handle = pgm_program_handle()
     _active_session_with_mta(handle, address=0x2000)
 
+    # Fix round 1, finding 3 -- same hazard and same fix as
+    # test_program_mta_post_increments_by_the_bytes_written_on_success above: without this,
+    # transmitted()'s own final assertion below reads _active_session_with_mta's leftover SET_MTA
+    # response (also 0xFF) rather than PROGRAM_MAX's, and would pass whether or not PROGRAM_MAX
+    # transmitted anything.
+    handle.can_if_transmit.reset_mock()
+
     data = tuple(range(0x01, 0x08))  # 7 bytes = MAX_CTO(8) - 1
     program_max(handle, data)
     handle.lib.Xcp_MainFunction()
@@ -321,23 +322,39 @@ def test_program_max_short_frame_answers_err_cmd_syntax_without_calling_the_inte
     assert handle.xcp_program_write.call_count == 0
 
 
-def test_program_max_refuses_err_memory_overflow_when_the_configured_block_size_cannot_hold_it():
-    """The buffer PROGRAM and PROGRAM_MAX both stage their write through, Xcp_Internal.pgm_block,
-    is sized at compile time from programming.max_block_size (XCP_PGM_MAX_BLOCK_SIZE, DD62/DD63):
-    XCP_PGM_MAX_BLOCK_SIZE * (MAX_CTO-2) bytes. config/xcp.schema.json admits max_block_size down to
-    0, and PROGRAM_MAX's own fixed transfer -- MAX_CTO-1 bytes at AG=BYTE, since it carries no
-    element-count byte of its own to reserve a position for -- is one byte longer than a single
-    PROGRAM frame's own (MAX_CTO-2)-byte ceiling. So max_block_size=1 already overflows the buffer
-    here (1*(8-2)=6 bytes available, 7 needed) where it would not for PROGRAM's own single frame.
+def test_program_max_succeeds_at_the_minimum_schema_legal_block_size():
+    """Task 3 review, fix round 1, finding 1. Before this fix round,
+    Xcp_Internal.pgm_block.data was sized from XCP_PGM_MAX_BLOCK_SIZE*(MAX_CTO-2) alone -- a
+    PROGRAM frame's own unit -- and PROGRAM_MAX's fixed transfer (MAX_CTO-1 bytes at AG=BYTE, since
+    it carries no element-count byte of its own reserving a position) is one byte longer than that,
+    so programming.max_block_size=1 (then schema-legal) overflowed the buffer on EVERY PROGRAM_MAX
+    request: CONNECT advertised the command while it answered ERR_MEMORY_OVERFLOW unconditionally --
+    the D10 shape this sub-project exists to close, reachable from a schema-legal configuration.
+    This test replaces the one that used to pin that (now corrected) permanent refusal.
 
-    Refused ERR_MEMORY_OVERFLOW, which PROGRAM_MAX's own 1.7.3.2.5 row lists, rather than
-    corrupting adjacent memory. call_count == 0 is what proves the guard runs BEFORE the copy, not
-    merely that something eventually answered an error."""
+    The buffer is now sized as the LARGER of that same PROGRAM-frame unit and MAX_CTO-1
+    (source/Xcp_Internal.h), so at max_block_size=1 -- also now the schema's own raised minimum, 0
+    no longer being legal -- it is exactly MAX_CTO-1 (8-1=7) bytes: precisely what this command
+    needs, with nothing to spare. Asserted the same way
+    test_program_max_programs_max_cto_minus_one_elements_from_the_mta above is: the integrator
+    receives the full 7-byte payload at the current MTA, and the wire answers 0xFF, not
+    ERR_MEMORY_OVERFLOW."""
     handle = pgm_program_handle(programming_max_block_size=1, max_cto=8)
-    _active_session_with_mta(handle)
+    _active_session_with_mta(handle, address=0x5000)
+    handle.can_if_transmit.reset_mock()  # fix round 1, finding 3's own hazard: without this,
+    # transmitted() below could read _active_session_with_mta's leftover SET_MTA response instead
+    # of PROGRAM_MAX's own.
 
-    assert send(handle, (0xC9,) + tuple(range(7)))[0:2] == (0xFE, 0x30), 'ERR_MEMORY_OVERFLOW'
-    assert handle.xcp_program_write.call_count == 0
+    data = tuple(range(0x01, 0x08))  # 7 bytes = MAX_CTO(8) - 1
+    program_max(handle, data)
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x5000
+    assert length == 0x07
+    assert bytes(p_data[0:length]) == bytes(data)
+    assert transmitted(handle)[0] == 0xFF, \
+        'PROGRAM_MAX must succeed at the minimum legal block size, not answer ERR_MEMORY_OVERFLOW'
 
 
 def test_program_max_defers_through_the_pending_slot():

@@ -321,13 +321,17 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
             {
                 Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
             }
-            /* The buffer this write stages through, sized at compile time from
-             * programming.max_block_size (XCP_PGM_MAX_BLOCK_SIZE, DD62/DD63): the schema admits it
-             * down to 0, smaller than even one frame's worth. Answers the one code 1.7.3.2.5's own
-             * PROGRAM row shares with DD63's own multi-frame overflow -- the same fact, that this
-             * module cannot hold what was declared, reached here by configuration rather than by
-             * accumulation. Unreachable at the shipped default (8): 8*(MAX_CTO-2) is never smaller
-             * than one frame's own (MAX_CTO-2)-byte ceiling. */
+            /* The buffer this write stages through is sized (source/Xcp_Internal.h) as the LARGER
+             * of XCP_PGM_MAX_BLOCK_SIZE*(XCP_MAX_CTO-2) and XCP_MAX_CTO-1, so it always holds at
+             * least one full PROGRAM frame's own (MAX_CTO-2)-byte ceiling -- this condition is
+             * unreachable for every schema-legal programming.max_block_size (fix round 1, finding
+             * 1) and is kept anyway: a handler must never trust a generated bound merely because
+             * the formula that produced it is believed correct, and deleting a guard because
+             * analysis says it cannot fire is exactly how the sizing bug this round found would
+             * have gone unnoticed a second time. Answers the one code 1.7.3.2.5's own PROGRAM row
+             * shares with DD63's own multi-frame overflow -- the same fact, that this module cannot
+             * hold what was declared, reached here (were it ever reached) by configuration rather
+             * than by accumulation. */
             else if (length > (uint16)sizeof(Xcp_Internal.pgm_block.data))
             {
                 Xcp_FillErrorPacket(XCP_E_ASAM_MEMORY_OVERFLOW, &Xcp_Internal.cto_response.pdu_info);
@@ -411,16 +415,23 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
     }
     else if (pPduInfo->SduLength < (PduLengthType)Xcp_Ptr->general->maxCto)
     {
-        /* PROGRAM_MAX's own 1.7.3.2.5 row carries no ERR_CMD_SYNTAX bit at all -- unlike
-         * DOWNLOAD_MAX's, which does -- so the generic pre-dispatch length gate
-         * (Xcp_CanIfRxIndication, source/Xcp.c) never consults this command's ctoInfo minimum and
-         * dispatches regardless of how short the frame actually is. This check is therefore the
-         * ONLY protection against reading past the received PDU below, not merely a stylistic
-         * mirror of Xcp_DTOCmdCalDownloadMax's identical-looking one for DOWNLOAD_MAX
-         * (source/Xcp_Cal.c). Answered ERR_CMD_SYNTAX regardless of the matrix's own omission: the
-         * matrix gates the three generic pre-dispatch checks, not what a handler itself may
-         * answer, and Xcp_DTOCmdCalDownloadMax's own choice for the identical condition is the
-         * precedent followed here. */
+        /* A second recorded deviation, in DD57's own form, task 3 review fix round 1 finding 2:
+         * PROGRAM_MAX's own 1.7.3.2.5 row is exactly ERR_CMD_BUSY, ERR_CMD_UNKNOWN, ERR_SEQUENCE
+         * and ERR_MEMORY_OVERFLOW -- no ERR_CMD_SYNTAX, unlike DOWNLOAD_MAX's own row for the
+         * identical request shape, which lists it. None of the four listed codes fits a frame that
+         * arrived physically shorter than this fixed-size command needs: ERR_CMD_BUSY and
+         * ERR_CMD_UNKNOWN are dispatch-level conditions this point has already passed, ERR_SEQUENCE
+         * is this handler's own session and block-active gates above (a statement about ordering,
+         * not about this frame's own length), and ERR_MEMORY_OVERFLOW is the buffer-overflow guard
+         * below (a statement about the configured buffer, not about what was actually received) --
+         * so no listed code describes this condition without also misdescribing a different one
+         * this same handler already answers correctly. ERR_CMD_SYNTAX is kept as the deviation:
+         * Xcp_DTOCmdCalDownloadMax's own choice for the identical condition (source/Xcp_Cal.c), and
+         * exactly what the generic pre-dispatch length gate (Xcp_CanIfRxIndication, source/Xcp.c)
+         * would itself answer had PROGRAM_MAX's row carried the bit that lets that gate consult
+         * this command's ctoInfo minimum at all -- which it does not, so this handler's own check
+         * is the ONLY protection against reading past the received PDU below, not merely a
+         * stylistic mirror of DOWNLOAD_MAX's identical-looking one. */
         Xcp_FillErrorPacket(XCP_E_ASAM_CMD_SYNTAX, &Xcp_Internal.cto_response.pdu_info);
     }
     else
@@ -454,13 +465,17 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
 
         if (length > (uint16)sizeof(Xcp_Internal.pgm_block.data))
         {
-            /* Same buffer safety net as Xcp_DTOCmdPgmProgram above, and reachable at a SMALLER
-             * programming.max_block_size here than there: at AG BYTE this command's own fixed
-             * transfer (MAX_CTO-1 bytes) is one byte longer than a single PROGRAM frame's own
-             * (MAX_CTO-2)-byte ceiling, because PROGRAM_MAX carries no element-count byte of its
-             * own reserving that position -- so XCP_PGM_MAX_BLOCK_SIZE=1 already overflows the
-             * buffer here where it does not for PROGRAM. ERR_MEMORY_OVERFLOW is PROGRAM_MAX's own
-             * row's answer for exactly this shape of failure (1.7.3.2.5). */
+            /* Same buffer safety net as Xcp_DTOCmdPgmProgram above, and the demand this command's
+             * own fixed transfer places is what the buffer's XCP_MAX_CTO-1 floor
+             * (source/Xcp_Internal.h) exists for: at AG BYTE it needs MAX_CTO-1 bytes, one more
+             * than a single PROGRAM frame's own (MAX_CTO-2)-byte ceiling, because PROGRAM_MAX
+             * carries no element-count byte of its own reserving that position -- so before fix
+             * round 1 finding 1, XCP_PGM_MAX_BLOCK_SIZE=1 (then schema-legal) already overflowed
+             * the buffer here where it did not for PROGRAM, refusing every PROGRAM_MAX at that
+             * block size regardless of what the master sent. Sized correctly, this condition is
+             * unreachable for every schema-legal programming.max_block_size and is kept anyway,
+             * for the reason Xcp_DTOCmdPgmProgram's own identical comment gives. ERR_MEMORY_OVERFLOW
+             * is PROGRAM_MAX's own row's answer for exactly this shape of failure (1.7.3.2.5). */
             Xcp_FillErrorPacket(XCP_E_ASAM_MEMORY_OVERFLOW, &Xcp_Internal.cto_response.pdu_info);
         }
         else
@@ -942,12 +957,27 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
     }
     else
     {
-        /* PROGRAM's own 1.7.3.2.5 row lists ERR_ACCESS_DENIED and not ERR_GENERIC -- absent from
-         * that row entirely, unlike PROGRAM_START's and PROGRAM_PREPARE's own rows above -- exactly
-         * the asymmetry DD67 already records for PROGRAM_CLEAR's own failure path, generalised
-         * from a failed erase to a failed write: the memory that could not be reached is what
-         * failed, not the slave's own state. PROGRAM_MAX shares this completion and its own row
-         * carries no ERR_GENERIC either. */
+        /* For PROGRAM, no deviation: its own 1.7.3.2.5 row lists ERR_ACCESS_DENIED (and not
+         * ERR_GENERIC, absent from that row entirely, unlike PROGRAM_START's and PROGRAM_PREPARE's
+         * own rows above) -- exactly the asymmetry DD67 already records for PROGRAM_CLEAR's own
+         * failure path, generalised from a failed erase to a failed write: the memory that could
+         * not be reached is what failed, not the slave's own state.
+         *
+         * For PROGRAM_MAX, sharing this completion IS a deviation, task 3 review fix round 1
+         * finding 2 caught unrecorded, in DD57's own form (the deviation DD57 itself records for
+         * PROGRAM_RESET's ERR_GENERIC): PROGRAM_MAX's own 1.7.3.2.5 row is exactly ERR_CMD_BUSY,
+         * ERR_CMD_UNKNOWN, ERR_SEQUENCE and ERR_MEMORY_OVERFLOW -- no ERR_ACCESS_DENIED, and,
+         * unlike PROGRAM's row, no ERR_CMD_SYNTAX or ERR_ACCESS_LOCKED either. None of the four
+         * listed codes fits a write that reached the integrator and failed: ERR_CMD_BUSY and
+         * ERR_CMD_UNKNOWN are dispatch-level conditions this point in the code has already passed,
+         * ERR_SEQUENCE is this handler's own session and block-active gates above, and
+         * ERR_MEMORY_OVERFLOW is the buffer-overflow guard just above -- both already spoken for by
+         * conditions checked before the integrator is ever called, so pressing either into service
+         * here would make two structurally different failures answer identically. ERR_ACCESS_DENIED
+         * is kept as the recorded deviation: the same code, and the same reasoning, PROGRAM's own
+         * (non-deviating) row already gives for the identical situation -- a write the integrator
+         * could not complete because the memory was not reachable -- which sharing one completion
+         * function between the two commands makes the natural, and now documented, choice. */
         Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_DENIED, &Xcp_Internal.cto_response.pdu_info);
     }
 

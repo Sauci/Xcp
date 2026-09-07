@@ -784,10 +784,10 @@
       "properties": {
         "enabled": {"type": "boolean"},
         "max_block_size": {
-          "description": "MAX_BS_PGM: the maximum number of consecutive PROGRAM_NEXT command packets a master block mode PROGRAM sequence may contain (see XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1). Reported by PROGRAM_START and sized into a dedicated buffer at compile time (DD62); independent of the ordinary protocol_layer.max_bs, which this module does not use in programming mode.",
+          "description": "MAX_BS_PGM: the maximum number of consecutive PROGRAM_NEXT command packets a master block mode PROGRAM sequence may contain (see XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1). Reported by PROGRAM_START and sized into a dedicated buffer at compile time (DD62); independent of the ordinary protocol_layer.max_bs, which this module does not use in programming mode. Minimum 1, not 0 (task 3 review, fix round 1, finding 1): 0 is not a block size at all -- a single frame with no PROGRAM_NEXT is PROGRAM_MAX_BLOCK_SIZE 1, exactly the configuration this sub-project's own PROGRAM (no block mode) implements, and 0 made Xcp_Internal.pgm_block.data a zero-length array, a GCC extension and an ISO C 6.7.6.2p1 constraint violation.",
           "type": "integer",
           "default": 8,
-          "minimum": 0,
+          "minimum": 1,
           "maximum": 255
         }
       },

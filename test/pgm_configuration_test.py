@@ -170,6 +170,31 @@ def test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off():
             '%s must generate disabled with the gate off: %r' % (marker, matches[0])
 
 
+def test_program_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off():
+    """Task 3 review, fix round 1, finding 4. Design doc Section 9, acceptance criterion 1's
+    byte-for-byte claim is about the whole generated file, not merely the enable bit the test
+    above and test_the_gate_touches_only_pgm_ctoinfo_rows below both check -- neither would have
+    caught PROGRAM's own ctoInfo minimum-request nibble (the trailing 4 bits of the row) being
+    emitted unconditionally at Task 3's new value (2), outside the programming.enabled
+    conditional that already gates the enable and protected bits on the same line, so a gate-off
+    build's generated Xcp_Cfg.c differed from a pre-Task-3 tree by that one byte even though the
+    row stayed disabled and unread either way (source/Xcp.c tests the enable bit before ever
+    reading this nibble). Fixed by keying the nibble on the identical conjunction the enable bit
+    already tests, so a gate-off build (this test) and GATE_ON with PROGRAM's own key left False
+    (test_the_gate_touches_only_pgm_ctoinfo_rows's own `unchanged` set) both keep the pre-Task-3
+    value, 4 -- and only a build where PROGRAM is truly reachable renders the corrected value, 2.
+
+    Checked directly against the generated line's own trailing token, which neither of this
+    file's two other generator tests reads at all."""
+    source = _generated_source(DefaultConfig())
+
+    matches = [line for line in source.splitlines() if 'PROGRAM 0xD0' in line]
+    assert len(matches) == 1, 'PROGRAM 0xD0 must appear exactly once in the generated ctoInfo table'
+    assert '0x04u, /* PROGRAM 0xD0' in matches[0], \
+        'the gate-off minimum nibble must stay the pre-Task-3 value (4), not become 2 merely ' \
+        'because the row is unreachable either way: %r' % matches[0]
+
+
 def test_the_gate_touches_only_pgm_ctoinfo_rows():
     """The other half of acceptance criterion 1: not merely that the disabled state above is
     correct, but that turning the gate on touches NOTHING else. A generator defect that shifted
