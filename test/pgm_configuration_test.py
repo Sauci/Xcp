@@ -195,6 +195,33 @@ def test_program_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off():
         'because the row is unreachable either way: %r' % matches[0]
 
 
+def test_program_next_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off():
+    """Task 4 review, fix round 1, finding 2. The exact mistake
+    test_program_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off above exists to catch,
+    reintroduced for a different row: PROGRAM_NEXT's own ctoInfo minimum-request nibble was
+    corrected from the SP4a-era placeholder 4 to the true value 3 (task-4-report.md), but emitted
+    unconditionally, outside the `programming.enabled` conditional that already gates this row's
+    own enable bit on the same line -- so a gate-off build's generated Xcp_Cfg.c differed from
+    SP4a's by this one byte even though the row stayed disabled and unread either way (source/Xcp.c
+    tests the enable bit before ever reading this nibble). Unlike PROGRAM 0xD0's own key, this row
+    has no per-command api_enable term to conjoin (DD69/design Section 4: PROGRAM_NEXT adds no new
+    callback), so the correct key is `programming.enabled` alone -- the identical condition its own
+    enable bit already tests, one column to its own left.
+
+    Fixed by keying the nibble on that same condition, so a gate-off build (this test) keeps the
+    pre-Task-4 value, 4, and only a build where `programming.enabled` is true renders the corrected
+    value, 3 (test_generation_accepts_the_pgm_resource_on_a_build_that_cannot_program and friends
+    below exercise that side indirectly; the value itself, 3, is not in question here -- only its
+    conditional placement is)."""
+    source = _generated_source(DefaultConfig())
+
+    matches = [line for line in source.splitlines() if 'PROGRAM_NEXT 0xCA' in line]
+    assert len(matches) == 1, 'PROGRAM_NEXT 0xCA must appear exactly once in the generated ctoInfo table'
+    assert '0x04u, /* PROGRAM_NEXT 0xCA' in matches[0], \
+        'the gate-off minimum nibble must stay the pre-Task-4 value (4), not become 3 merely ' \
+        'because the row is unreachable either way: %r' % matches[0]
+
+
 def test_the_gate_touches_only_pgm_ctoinfo_rows():
     """The other half of acceptance criterion 1: not merely that the disabled state above is
     correct, but that turning the gate on touches NOTHING else. A generator defect that shifted

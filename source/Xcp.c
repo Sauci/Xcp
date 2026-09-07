@@ -1250,6 +1250,14 @@ void Xcp_Init(const Xcp_Type *pConfig)
              * own buffers -- a fill level surviving into the next session because Xcp_Init did not
              * reset it. Only length needs clearing: data is never read past it. */
             Xcp_Internal.pgm_block.length = 0x0000u;
+            /* Task 4 fix round 1, finding 1: pgm_block's own block-open counters, added alongside
+             * length above for the same cross-session hygiene, and now carrying more weight than
+             * length ever did -- a stale non-zero requested_elements surviving into a fresh session
+             * would leave Xcp_PgmBlockIsActive() reporting a block open that no PROGRAM ever
+             * started, misdirecting PROGRAM_NEXT's own count check and PROGRAM_MAX's own DD65
+             * guard alike. */
+            Xcp_Internal.pgm_block.requested_elements = 0x00u;
+            Xcp_Internal.pgm_block.frame_elements = 0x00u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;

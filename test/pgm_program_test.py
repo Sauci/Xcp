@@ -397,16 +397,27 @@ def test_program_max_succeeds_at_the_minimum_schema_legal_block_size():
 def test_program_max_defers_through_the_pending_slot():
     """The same deferral mechanism PROGRAM's own test above pins, exercised through PROGRAM_MAX
     instead: a module that answered synchronously regardless of what Xcp_ProgramWrite's first call
-    reports would transmit before the busy integrator ever completes, which the withheld-response
-    assertion below catches directly."""
+    reports would transmit before the busy integrator ever completes.
+
+    Review, fix round 1, finding 4: an earlier version of this test asserted
+    `transmitted(handle) is None` immediately after program_max(), before any Xcp_MainFunction()
+    call -- true unconditionally, since Xcp_CanIfRxIndication never transmits regardless of what
+    the module did, the exact vacuous shape test_program_next_intermediate_frame_transmits_nothing
+    documents avoiding. busy_calls is now 2 (the synchronous attempt inside the handler itself, plus
+    one further poll that is STILL busy), so Xcp_MainFunction() actually runs once with a real
+    chance to transmit and the EV_CMD_PENDING frame it answers with (DD54) is what proves nothing
+    else did -- mirrors test_program_defers_through_the_pending_slot_and_keeps_passing_the_same_bytes
+    above exactly."""
     handle = pgm_program_handle()
     _active_session_with_mta(handle)
 
     state = dict(calls=0)
 
     def busy_then_complete(_address, _p_data, _length, p_status_code):
+        # call 1: the fast path inside the handler itself (program_max() below); call 2: the first
+        # Xcp_MainFunction poll; only call 3, the second poll, completes.
         state['calls'] += 1
-        if state['calls'] <= 1:
+        if state['calls'] <= 2:
             return handle.define('E_NOT_OK')
         p_status_code[0] = 0x00
         return handle.define('E_OK')
@@ -415,8 +426,12 @@ def test_program_max_defers_through_the_pending_slot():
     handle.can_if_transmit.reset_mock()
 
     program_max(handle, tuple(range(7)))
-    assert transmitted(handle) is None, 'withheld while the integrator is still busy (DD53)'
 
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFD, 'still busy on the second poll: only EV_CMD_PENDING (DD54)'
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    handle.can_if_transmit.reset_mock()
     handle.lib.Xcp_MainFunction()
 
     assert transmitted(handle)[0] == 0xFF, 'the deferred PROGRAM_MAX response arrives'
@@ -471,13 +486,14 @@ def test_program_next_is_refused_err_sequence_before_program_start_succeeds():
 
 def test_program_next_without_an_open_block_is_refused_err_sequence_expecting_zero():
     """1.1/1.6.5.2.5: PROGRAM_NEXT is only legal following a PROGRAM (or a preceding PROGRAM_NEXT)
-    that left a block open. No PROGRAM has been sent here, so Xcp_BlockTransferIsActive() is
-    FALSE -- 1.7.3.2.5's own PROGRAM_NEXT row lists ERR_SEQUENCE for this, the same code the
-    session gate above answers, and PROGRAM_NEXT's negative response always carries the number of
-    elements the slave expects (1.1/1.6.5.2.5) -- 0 here, since no block was ever requested at
-    all. Distinguished from the session-gate test above by pgm_state: the session IS active here
-    (_active_session_with_mta), so this pins Xcp_DTOCmdPgmProgramNext's OWN
-    Xcp_BlockTransferIsActive() check, not the outer pgm_state gate it shares with the other three
+    that left a block open. No PROGRAM has been sent here, so Xcp_PgmBlockIsActive() is FALSE
+    (Xcp_Internal.pgm_block's own flag, not Xcp_BlockTransferIsActive()/block_transfer -- review,
+    fix round 1, finding 1) -- 1.7.3.2.5's own PROGRAM_NEXT row lists ERR_SEQUENCE for this, the
+    same code the session gate above answers, and PROGRAM_NEXT's negative response always carries
+    the number of elements the slave expects (1.1/1.6.5.2.5) -- 0 here, since no block was ever
+    requested at all. Distinguished from the session-gate test above by pgm_state: the session IS
+    active here (_active_session_with_mta), so this pins Xcp_DTOCmdPgmProgramNext's OWN
+    Xcp_PgmBlockIsActive() check, not the outer pgm_state gate it shares with the other three
     commands."""
     handle = pgm_program_handle()
     _active_session_with_mta(handle)
@@ -671,12 +687,13 @@ def test_program_declaring_a_block_longer_than_the_buffer_answers_err_memory_ove
 
 def test_program_max_inside_an_open_block_is_refused_err_sequence():
     """DD65 (H1): 1.6.5.2.6, 'This command does not support block transfer and it may not be used
-    within a block transfer sequence.' Xcp_DTOCmdPgmProgramMax's own Xcp_BlockTransferIsActive()
-    guard (source/Xcp_Pgm.c) existed since Task 3 but had no PROGRAM in the build that could ever
-    leave it TRUE -- Task 4's own PROGRAM_NEXT is what finally drives it. A block is opened (10
-    declared, 6 sent, 4 still outstanding) and PROGRAM_MAX is sent into the middle of it.
+    within a block transfer sequence.' Xcp_DTOCmdPgmProgramMax's own Xcp_PgmBlockIsActive() guard
+    (source/Xcp_Pgm.c; Xcp_BlockTransferIsActive() before fix round 1, finding 1 -- see the test
+    below) existed since Task 3 but had no PROGRAM in the build that could ever leave it TRUE --
+    Task 4's own PROGRAM_NEXT is what finally drives it. A block is opened (10 declared, 6 sent, 4
+    still outstanding) and PROGRAM_MAX is sent into the middle of it.
 
-    Mutation: deleting (or inverting) the `Xcp_BlockTransferIsActive() == TRUE` branch in
+    Mutation: deleting (or inverting) the `Xcp_PgmBlockIsActive() == TRUE` branch in
     Xcp_DTOCmdPgmProgramMax falls through to its own length/copy logic and answers 0xFF instead of
     (0xFE, 0x29) -- caught directly below, and confirmed by actually performing this deletion
     (task report)."""
@@ -689,6 +706,67 @@ def test_program_max_inside_an_open_block_is_refused_err_sequence():
 
     assert send(handle, (0xC9,) + tuple(range(7)))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
     assert handle.xcp_program_write.call_count == 0, 'the integrator must not be reached either'
+
+
+def test_confirming_a_response_while_a_program_block_is_open_does_not_leak_slave_memory():
+    """Review, fix round 1, finding 1 (critical). Xcp_CanIfTxConfirmation (source/Xcp.c,
+    ONGOING_TRANSMIT_TYPE_CTO) treats ANY active Xcp_Internal.block_transfer as a slave block mode
+    UPLOAD continuation still owed to the master: once a confirmed response's own
+    Xcp_BlockTransferIsActive() reads TRUE, it reads MAX_CTO-1 bytes at the current MTA through
+    Xcp_ReadSlaveMemoryU8, transmits them as an unrequested 0xFF frame, advances the MTA by that
+    many bytes, and repeats on the next confirmation too.
+
+    The first version of this task populated exactly that shared state for PGM's own, unrelated
+    block bookkeeping, on DD63's own advice to reuse it and because Xcp_DTOCmdPgmProgramMax's own
+    DD65 guard already read it. Neither reasoning noticed Xcp_CanIfTxConfirmation's own, different
+    reader: since a PGM block can stay open across several unrelated command/response exchanges --
+    this test's own PROGRAM_MAX, refused mid-block by the test immediately above, or a SET_MTA,
+    both of which 1.1/1.6.5.1.1 requires to stay available during a programming sequence --
+    confirming THEIR ordinary response also triggered the identical unsolicited-UPLOAD path:
+    slave memory disclosed on the wire, the MTA silently moved (breaching DD66), and the session
+    left wedged. Reproduced on the branch before this fix (task-4-report.md, 'Fix round 1',
+    finding 1).
+
+    Fixed by giving PGM its own, separate pair (Xcp_Internal.pgm_block.requested_elements/
+    frame_elements, source/Xcp_Internal.h) that Xcp_CanIfTxConfirmation never reads and
+    Xcp_Internal.block_transfer never touches again from this module -- so a PGM block being open
+    is now structurally invisible to the confirmation path, the same way it was before this
+    sub-project existed.
+
+    Exercises exactly the reproduction above: a block is opened (10 declared, 6 sent, 4 still
+    outstanding), PROGRAM_MAX is refused into the middle of it (an ordinary, unrelated response),
+    and THAT response is confirmed. No slave memory read, no further transmission, and the MTA
+    unmoved -- the last checked by completing the still-open block afterward with the correct
+    remaining count and confirming it still lands at the block's own original MTA, proof the
+    confirmation above did not silently advance it."""
+    handle = pgm_program_handle()
+    _active_session_with_mta(handle, address=0x3000)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # opens a block, 4 elements still outstanding
+
+    handle.can_if_transmit.reset_mock()
+    assert send(handle, (0xC9,) + tuple(range(7)))[0:2] == (0xFE, 0x29), 'setup: PROGRAM_MAX refused'
+
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_read_slave_memory_u8.reset_mock()
+
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert handle.xcp_read_slave_memory_u8.call_count == 0, \
+        'confirming an ordinary response must never read slave memory for an unsolicited UPLOAD'
+    assert handle.can_if_transmit.call_count == 0, \
+        'confirming an ordinary response must not trigger any further, unsolicited transmission'
+
+    # the block itself must still be exactly as it was: completed with the correct remaining count,
+    # it must write at the ORIGINAL MTA -- proof the confirmation above did not silently advance it.
+    program_next(handle, 0x04, data=(0x07, 0x08, 0x09, 0x0A))
+    handle.lib.Xcp_MainFunction()
+
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x3000, 'the MTA must not have moved'
+    assert length == 0x0A
+    assert bytes(p_data[0:length]) == bytes(range(0x01, 0x0B))
+    assert transmitted(handle)[0] == 0xFF
 
 
 def test_program_block_of_max_bs_pgm_frames_succeeds():
@@ -737,15 +815,26 @@ def test_program_next_defers_through_the_pending_slot_and_keeps_passing_the_whol
     switch, would either dispatch to the wrong completion function on the next poll or fall into
     the `default` branch, which returns E_OK immediately without ever presenting the accumulated
     bytes again -- caught here by asserting the FULL 14-byte block is still what the LAST poll
-    presents to the integrator, not just that a response eventually arrives."""
+    presents to the integrator, not just that a response eventually arrives.
+
+    Review, fix round 1, finding 4: an earlier version of this test asserted
+    `transmitted(handle) is None` immediately after the completing program_next(), before any
+    Xcp_MainFunction() call -- true unconditionally, since Xcp_CanIfRxIndication never transmits
+    regardless of what the module did, the exact vacuous shape
+    test_program_next_intermediate_frame_transmits_nothing (230 lines above at the time of review)
+    documents avoiding. busy_calls is now 2, so the first Xcp_MainFunction() poll is still busy and
+    answers a real, checkable frame (EV_CMD_PENDING, DD54) instead of nothing at all -- mirrors
+    test_program_max_defers_through_the_pending_slot's own identical fix above."""
     handle = pgm_program_handle()
     _active_session_with_mta(handle, address=0x2700)
 
     state = dict(calls=0)
 
     def busy_then_complete(_address, _p_data, _length, p_status_code):
+        # call 1: the fast path inside the handler itself (the completing program_next() below);
+        # call 2: the first Xcp_MainFunction poll; only call 3, the second poll, completes.
         state['calls'] += 1
-        if state['calls'] <= 1:
+        if state['calls'] <= 2:
             return handle.define('E_NOT_OK')
         p_status_code[0] = 0x00
         return handle.define('E_OK')
@@ -759,9 +848,12 @@ def test_program_next_defers_through_the_pending_slot_and_keeps_passing_the_whol
 
     program_next(handle, 0x02, data=payload[12:14])  # completes; first Xcp_ProgramWrite call is busy
 
-    assert transmitted(handle) is None, 'withheld while the integrator is still busy (DD53)'
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFD, 'still busy on the second poll: only EV_CMD_PENDING (DD54)'
 
-    handle.lib.Xcp_MainFunction()  # second call completes
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_MainFunction()  # third call completes
 
     assert transmitted(handle)[0] == 0xFF, 'the deferred PROGRAM_NEXT response arrives'
 
@@ -773,22 +865,23 @@ def test_program_next_defers_through_the_pending_slot_and_keeps_passing_the_whol
 
 
 def test_program_a_second_block_does_not_accumulate_onto_the_first():
-    """Companion to test_xcp_init_clears_a_half_open_program_block below, and the test that
-    actually catches the mutation that one's own docstring first claimed to (task report corrects
-    that claim; this test is the fix). Two ordinary, independent single-frame PROGRAM commands, 3
-    bytes then 2, in the SAME session -- no Xcp_Init between them. Xcp_DTOCmdPgmProgram's opening
-    frame sets Xcp_Internal.pgm_block.length by direct assignment, not by accumulating onto
-    whatever it already held (source/Xcp_Pgm.c), so the second block's own write must present
-    length 2, not 5.
+    """Companion to
+    test_a_fresh_block_works_end_to_end_after_reinit_even_though_the_previous_one_was_left_half_open
+    below, and the test that actually catches the mutation that one's own docstring first claimed
+    to (task report corrects that claim; this test is the fix). Two ordinary, independent
+    single-frame PROGRAM commands, 3 bytes then 2, in the SAME session -- no Xcp_Init between them.
+    Xcp_DTOCmdPgmProgram's opening frame sets Xcp_Internal.pgm_block.length by direct assignment,
+    not by accumulating onto whatever it already held (source/Xcp_Pgm.c), so the second block's own
+    write must present length 2, not 5.
 
     Mutation: changing that assignment from `pgm_block.length = frame_length` to
     `pgm_block.length += frame_length` makes the second call's own length 3+2=5 instead of 2,
-    caught directly below -- confirmed by actually performing this mutation (task report). The
-    SAME mutation does NOT make test_xcp_init_clears_a_half_open_program_block below fail: an
-    Xcp_Init sits between that test's two PROGRAM calls, and its OWN (unmutated)
-    `pgm_block.length = 0x0000u` already re-zeroes the field before the mutated line ever runs
-    again, masking it completely. This test has no Xcp_Init in the way, so it is the one that
-    actually exercises PROGRAM's own opening-frame assignment twice in a row."""
+    caught directly below -- confirmed by actually performing this mutation (task report). The SAME
+    mutation does NOT make the test below fail: an Xcp_Init sits between that test's two PROGRAM
+    calls, and its OWN (unmutated) `pgm_block.length = 0x0000u` already re-zeroes the field before
+    the mutated line ever runs again, masking it completely. This test has no Xcp_Init in the way,
+    so it is the one that actually exercises PROGRAM's own opening-frame assignment twice in a
+    row."""
     handle = pgm_program_handle()
     _active_session_with_mta(handle, address=0x1500)
 
@@ -805,10 +898,15 @@ def test_program_a_second_block_does_not_accumulate_onto_the_first():
     assert bytes(p_data[0:length]) == bytes((0x44, 0x55))
 
 
-def test_xcp_init_clears_a_half_open_program_block():
-    """H2. Task 1 added Xcp_Internal.pgm_block.length's own clearing to Xcp_Init and disclosed
-    that nothing exercised it, because nothing read the field across sessions before block mode
-    existed to make PROGRAM_NEXT's own append depend on where a previous block left off.
+def test_a_fresh_block_works_end_to_end_after_reinit_even_though_the_previous_one_was_left_half_open():
+    """H2, renamed from test_xcp_init_clears_a_half_open_program_block (review, fix round 1,
+    finding 3): the old name claimed this test pins Xcp_Init's own clearing of
+    Xcp_Internal.pgm_block.length, and it cannot -- a future reader deleting that line would still
+    see this test green and mistake it for coverage. What it actually pins, honestly: a fresh
+    session's first block still works correctly end to end, after a reinit that happened to catch a
+    PREVIOUS block half-open. Task 1 added pgm_block.length's own clearing to Xcp_Init and
+    disclosed that nothing exercised it, because nothing read the field across sessions before
+    block mode existed to make PROGRAM_NEXT's own append depend on where a previous block left off.
 
     A block is opened and left half-open (7 declared, only the first 6 sent -- 1 element still
     outstanding, no completing PROGRAM_NEXT ever sent). Xcp_Init runs, the module reconnects and
@@ -816,22 +914,22 @@ def test_xcp_init_clears_a_half_open_program_block():
     receive exactly that fresh block's own 2 bytes at its own new MTA -- not the earlier session's
     address, length, or leftover bytes.
 
-    Measured, not assumed (task report): this test passes whether or not Xcp_Init's own clearing
-    of pgm_block.length actually runs, and stays passing even with that line deleted outright.
-    Xcp_DTOCmdPgmProgram's opening frame sets Xcp_Internal.pgm_block.length by direct assignment
-    rather than by accumulating onto whatever it already held, so a fresh PROGRAM always
-    re-establishes the block from index 0 itself regardless of what Xcp_Init did or did not clear
-    first -- Xcp_Init's own clearing is therefore not independently load-bearing THROUGH this
-    particular path, and this test does not prove it is. What IS still real, and still caught by a
-    test, is the underlying property Xcp_Init's clear defends alongside PROGRAM's own assignment:
-    test_program_a_second_block_does_not_accumulate_onto_the_first above pins the identical
-    'a fresh block must not inherit an earlier one's bytes' invariant with no Xcp_Init in the way,
-    and IS killed by mutating PROGRAM's own opening-frame assignment from `=` to `+=` -- see its
-    own docstring. Xcp_Init's clear is kept regardless, as the same kind of documented,
-    currently-unreachable defence in depth Xcp_Internal.h already keeps for the buffer-overflow
-    guards below Task 3's own PROGRAM_MAX: a second, independent line protecting the same
-    invariant is not dead code merely because one test cannot distinguish its presence from its
-    absence."""
+    Measured, not assumed (task report, confirmed independently by review): this test passes
+    whether or not Xcp_Init's own clearing of pgm_block.length actually runs, and stays passing
+    even with that line deleted outright. Xcp_DTOCmdPgmProgram's opening frame sets
+    Xcp_Internal.pgm_block.length by direct assignment rather than by accumulating onto whatever it
+    already held, so a fresh PROGRAM always re-establishes the block from index 0 itself regardless
+    of what Xcp_Init did or did not clear first -- Xcp_Init's own clearing is therefore not
+    independently load-bearing THROUGH this particular path, and this test does not prove it is.
+    What IS still real, and still caught by a test, is the underlying property Xcp_Init's clear
+    defends alongside PROGRAM's own assignment: test_program_a_second_block_does_not_accumulate_onto_the_first
+    above pins the identical 'a fresh block must not inherit an earlier one's bytes' invariant with
+    no Xcp_Init in the way, and IS killed by mutating PROGRAM's own opening-frame assignment from
+    `=` to `+=` -- see its own docstring. Xcp_Init's clear is kept regardless, as the same kind of
+    documented, currently-unreachable defence in depth Xcp_Internal.h already keeps for the
+    buffer-overflow guards below Task 3's own PROGRAM_MAX: a second, independent line protecting
+    the same invariant is not dead code merely because one test cannot distinguish its presence
+    from its absence."""
     handle = pgm_program_handle()
     _active_session_with_mta(handle, address=0x7000)
 

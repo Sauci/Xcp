@@ -489,6 +489,39 @@ typedef struct {
         uint8 data[(XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u) > (XCP_MAX_CTO - 0x01u)) ?
                    (XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u)) : (XCP_MAX_CTO - 0x01u)];
         uint16 length;
+
+        /**
+         * @brief How many elements a PGM block still needs, and how many the current frame
+         * contributed -- PGM's OWN pair, deliberately not Xcp_Internal.block_transfer.
+         * @details Task 4 fix round 1, finding 1 (critical). The first version of this task reused
+         * Xcp_Internal.block_transfer for these two counters, reasoning that DD63 says to reuse it
+         * and that Xcp_DTOCmdPgmProgramMax's own DD65 guard already reads it. Both were true and
+         * both missed the same fact: Xcp_CanIfTxConfirmation (source/Xcp.c) ALSO reads
+         * block_transfer, unconditionally, for a completely different purpose -- treating ANY
+         * active block_transfer as a slave block mode UPLOAD continuation still owed to the master,
+         * regardless of which command opened it. Before this task nothing could leave
+         * block_transfer active across a CTO confirmation except a genuine UPLOAD, so the two
+         * purposes never collided. Task 4 made PROGRAM leave it active for as long as a block
+         * stays open -- which can span several unrelated command/response exchanges, e.g. a
+         * PROGRAM_MAX refused mid-block, or a SET_MTA, both of which 1.1/1.6.5.1.1 requires to stay
+         * available during a programming sequence -- so confirming THEIR ordinary response also
+         * triggered the identical unsolicited-UPLOAD path: Xcp_ReadSlaveMemoryU8 read MAX_CTO-1
+         * bytes at the current MTA, transmitted them as an unrequested 0xFF frame, advanced the MTA
+         * by that many bytes (silently breaching DD66), and repeated -- disclosing slave memory on
+         * the wire and leaving the session wedged. Reviewed and reproduced on the branch before
+         * this fix; see task-4-report.md, "Fix round 1", finding 1.
+         *
+         * The fix is this pair: PGM's own block-open state, read only by this module
+         * (Xcp_PgmBlockIsActive/Xcp_PgmBlockAcknowledgeFrame/Xcp_PgmBlockAbort, source/Xcp_Pgm.c)
+         * and never touched by Xcp_Internal.block_transfer or anything that reads it. A PGM block
+         * being open is now structurally invisible to Xcp_CanIfTxConfirmation, the same way it was
+         * before this sub-project existed. Xcp_Internal.block_transfer itself is unchanged and
+         * untouched by PGM -- DD63's own text is corrected by a note next to it, not by this
+         * struct's own comment alone, so a future reader of DD63 does not re-discover the hazard by
+         * following its original advice.
+         */
+        uint8 requested_elements;
+        uint8 frame_elements;
     } pgm_block;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
