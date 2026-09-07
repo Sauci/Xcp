@@ -43,7 +43,8 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode);
 static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode);
 
 /**
- * @brief Finishes PROGRAM_CLEAR, building the positive response or ERR_GENERIC from statusCode.
+ * @brief Finishes PROGRAM_CLEAR, building the positive response or ERR_ACCESS_DENIED from
+ * statusCode.
  * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
  * Xcp_DTOCmdPgmProgramClear below calls it directly for an integrator whose work completes
  * instantaneously (spec Section 4) -- the same function Xcp_PgmCompletePendingCommand dispatches
@@ -628,17 +629,20 @@ static void Xcp_PgmCompleteProgramClear(uint8 statusCode)
     }
     else
     {
-        /* 1.7.3.2.5's own PROGRAM_CLEAR row lists six codes -- ERR_CMD_BUSY, ERR_CMD_SYNTAX,
-         * ERR_OUT_OF_RANGE, ERR_ACCESS_DENIED, ERR_ACCESS_LOCKED, ERR_SEQUENCE -- and ERR_GENERIC
-         * is not one of them, unlike PROGRAM_START's and PROGRAM_PREPARE's own rows above, which
-         * both list it. The polled contract (spec Section 4, copied from
-         * Xcp_StoreCalibrationDataToNonVolatileMemory) still lets the integrator report failure
-         * after E_OK, though, and none of the row's own six codes fits an integrator that tried to
-         * erase and could not -- ERR_SEQUENCE least of all, since nothing about the request was out
-         * of sequence. ERR_GENERIC is kept as the recorded deviation, exactly the one
-         * Xcp_PgmCompleteProgramReset's own comment above records (DD57) for PROGRAM_RESET's
-         * identically-shaped gap, applied here to a second command for the identical reason. */
-        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+        /* 1.1/1.6.5.1.2 names no error at all for a failed erase -- it describes the modes and
+         * parameters and stops -- so 1.7.3.2.5's own PROGRAM_CLEAR row is the only guide, and this
+         * answers a code that row actually lists: no deviation, unlike PROGRAM_RESET's DD57 two
+         * hundred lines above. ERR_ACCESS_DENIED, not ERR_GENERIC -- and not merely because it is
+         * one of the row's six (ERR_CMD_BUSY, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE, ERR_ACCESS_DENIED,
+         * ERR_ACCESS_LOCKED, ERR_SEQUENCE), but because its own definition in the 1.0 error-code
+         * table -- "The memory location is not accessible" -- is the precise description of an
+         * integrator that could not erase the sector the master asked for, where ERR_GENERIC is
+         * merely "Generic error". The asymmetry with PROGRAM_START's and PROGRAM_PREPARE's own
+         * ERR_GENERIC above is deliberate, not an oversight: 1.6.5.1.1 names ERR_GENERIC itself
+         * for a slave "not in a state which permits programming" -- a statement about the SLAVE --
+         * where a failed PROGRAM_CLEAR is a statement about the MEMORY, and ERR_ACCESS_DENIED is
+         * what the specification's own vocabulary calls that. DD67 (fix round 1) records this. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_DENIED, &Xcp_Internal.cto_response.pdu_info);
     }
 
     /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */

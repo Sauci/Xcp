@@ -201,19 +201,22 @@ def test_program_clear_functional_mode_is_refused_err_out_of_range_without_calli
     assert handle.xcp_program_clear.call_count == 0, 'functional mode must never reach the integrator'
 
 
-def test_program_clear_answers_err_generic_on_a_non_zero_status_code():
+def test_program_clear_answers_err_access_denied_on_a_non_zero_status_code():
     """Xcp_ProgramClear's own polled contract (design Section 4, copied from
     Xcp_StoreCalibrationDataToNonVolatileMemory): E_OK with a non-zero status code means the erase
-    finished, but failed. 1.7.3.2.5 does not list ERR_GENERIC on PROGRAM_CLEAR's own row -- the same
-    gap Xcp_PgmCompleteProgramReset's own comment (Xcp_Pgm.c) records for PROGRAM_RESET (DD57) -- and
-    the same reasoning applies here: none of the row's own six codes (ERR_CMD_BUSY, ERR_CMD_SYNTAX,
-    ERR_OUT_OF_RANGE, ERR_ACCESS_DENIED, ERR_ACCESS_LOCKED, ERR_SEQUENCE) fits an integrator that
-    tried to erase and could not, so this module answers ERR_GENERIC as the recorded deviation,
-    exactly as PROGRAM_RESET, PROGRAM_START and PROGRAM_PREPARE already do for the identical
-    situation.
+    finished, but failed. Fix round 1: 1.1/1.6.5.1.2 names no error at all for this case -- it
+    describes the modes and parameters and stops -- so 1.7.3.2.5's own PROGRAM_CLEAR row is the
+    only guide, and this module answers a code that row actually lists (ERR_CMD_BUSY,
+    ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE, ERR_ACCESS_DENIED, ERR_ACCESS_LOCKED, ERR_SEQUENCE): no
+    deviation, unlike PROGRAM_RESET's DD57. ERR_ACCESS_DENIED specifically, not merely because it
+    is one of the six: the 1.0 error-code table defines it as "The memory location is not
+    accessible", the precise statement of an integrator that could not erase the sector the master
+    asked for -- where PROGRAM_START's and PROGRAM_PREPARE's own ERR_GENERIC above answers a
+    different question (1.6.5.1.1 names it for a slave "not in a state which permits
+    programming", a statement about the slave, not the memory).
 
     Mutation: an Xcp_PgmCompleteProgramClear that ignores statusCode and always builds the positive
-    response makes this answer (0xFF,) instead of (0xFE, 0x31)."""
+    response makes this answer (0xFF,) instead of (0xFE, 0x24)."""
     handle = pgm_clear_handle()
     _active_session_with_mta(handle)
 
@@ -223,8 +226,8 @@ def test_program_clear_answers_err_generic_on_a_non_zero_status_code():
 
     handle.xcp_program_clear.side_effect = erase_failed
 
-    assert send(handle, (0xD1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x31), \
-        'ERR_GENERIC'
+    assert send(handle, (0xD1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x24), \
+        'ERR_ACCESS_DENIED'
 
 
 @pytest.mark.parametrize('payload', tuple((0xD1,) + (0x00,) * n for n in range(7)))

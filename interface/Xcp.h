@@ -524,6 +524,12 @@ extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *
  * @note Unlike @ref Xcp_ProgramPrepare above, this callback is reachable only once a programming
  * session is open (1.1/1.6.5.1.1): a request arriving before PROGRAM_START has succeeded is refused
  * ERR_SEQUENCE by the handler and never reaches this callback at all.
+ * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, unlike @ref Xcp_ProgramStart and
+ * @ref Xcp_ProgramPrepare above, which both answer ERR_GENERIC. PROGRAM_CLEAR's own error table
+ * (1.1/1.7.3.2.5) does not list ERR_GENERIC at all; ERR_ACCESS_DENIED is both one of the codes it
+ * does list and, per the specification's own error-code definitions, the precise description of
+ * memory this callback could not erase -- "the memory location is not accessible" -- where
+ * ERR_GENERIC would only be the closest available label.
  */
 extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *pStatusCode);
 
