@@ -492,24 +492,48 @@ typedef struct {
          * Codesize (uint16) was the first member here, added as a single flat field because it was
          * the only one that existed yet; SP4a's final review anticipated exactly this growth and
          * asked for a union before a second command needed one. PROGRAM_CLEAR's clear range
-         * (uint32, Task 2) is that second member, and Tasks 3 and 4 both add their own -- a second
-         * flat field beside the first would have invited a third. Both callbacks take address and
-         * a second argument on EVERY call, not only the first -- unlike the single-pStatusCode-
-         * argument PROGRAM_START/PROGRAM_RESET callbacks, which need nothing beyond this struct's
-         * other fields. Only one member is ever live at a time, exactly like pid itself, so this
-         * union costs nothing a struct holding every member unconditionally would not already have
-         * wasted on padding, and it makes the keyed-by-pid discipline visible in the type instead
-         * of only in this comment.
-         * @note The MTA needs no member here at all, for either command: Xcp_PgmPollPendingCommand
-         * (Xcp_Pgm.c) re-reads it directly from Xcp_Internal.memory_transfer.address on every poll
-         * -- stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping
-         * SET_MTA -- which is standing state neither Codesize nor the clear range has anywhere
-         * else once the handler that parsed the request has returned.
+         * (uint32, Task 2) is that second member. Both callbacks take address and a second argument
+         * on EVERY call, not only the first -- unlike the single-pStatusCode-argument
+         * PROGRAM_START/PROGRAM_RESET callbacks, which need nothing beyond this struct's other
+         * fields. Only one member is ever live at a time, exactly like pid itself, so this union
+         * costs nothing a struct holding every member unconditionally would not already have wasted
+         * on padding, and it makes the keyed-by-pid discipline visible in the type instead of only
+         * in this comment.
+         *
+         * SP4b Tasks 3 and 4 (PROGRAM, PROGRAM_MAX, PROGRAM_NEXT) never added a third member here,
+         * unlike what this comment used to predict: all three write through the identical
+         * Xcp_ProgramWrite contract from Xcp_Internal.pgm_block below, which is itself already the
+         * standing state a poll needs, so a slot here would only have duplicated it
+         * (Xcp_PgmPollPendingCommand's own comment, Xcp_Pgm.c, explains this for each of the three).
+         * SP4c Task 1's program_verify is this union's actual second growth: PROGRAM_VERIFY has no
+         * address of its own to fall back on the way every other PGM command's MTA does (design doc
+         * docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md, DD91 -- Xcp_ProgramVerify takes
+         * no address parameter at all), so all three of its request fields need a home here, not
+         * only the one PROGRAM_PREPARE's and PROGRAM_CLEAR's own members each needed.
+         * @note The MTA needs no member here at all, for PROGRAM_PREPARE or PROGRAM_CLEAR:
+         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) re-reads it directly from
+         * Xcp_Internal.memory_transfer.address on every poll -- stable for the duration, since
+         * DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- which is standing state
+         * neither Codesize nor the clear range has anywhere else once the handler that parsed the
+         * request has returned. PROGRAM_VERIFY has no MTA dependency to fall back on in the first
+         * place (design doc Section 1, "Consumes: nothing").
          */
         union
         {
             uint16 program_prepare_code_size;
             uint32 program_clear_range;
+
+            /**
+             * @brief PROGRAM_VERIFY's own three request fields (SP4c Task 1), all of which a poll
+             * needs on every call for the identical reason program_clear_range is here: none of
+             * the three is standing module state elsewhere, unlike the MTA.
+             */
+            struct
+            {
+                uint8 mode;
+                uint16 type;
+                uint32 value;
+            } program_verify;
         } args;
     } pending_command; /* DD52 */
 
@@ -1066,12 +1090,31 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
 uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM_VERIFY, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.7.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. SP4c Task 1. Unlike every other handler in this group, it carries
+ * no gate on Xcp_Internal.pgm_state at all (design doc
+ * docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md, Section 1: "Consumes: nothing") --
+ * 1.6.5.1.1's "not allowed until PROGRAM_START" list does not name it, so it answers identically
+ * from XCP_PGM_IDLE and XCP_PGM_ACTIVE, the same as GET_PGM_PROCESSOR_INFO just above. Unlike
+ * GET_PGM_PROCESSOR_INFO, though, it does call an integrator function -- Xcp_ProgramVerify,
+ * polled exactly like Xcp_ProgramClear's own contract (DD91) -- and does add a case to both
+ * Xcp_PgmPollPendingCommand and Xcp_PgmCompletePendingCommand below, one that reads its own three
+ * request fields from pending_command.args' new program_verify member rather than from any
+ * existing standing module state: unlike every other PGM command, PROGRAM_VERIFY has no address of
+ * its own to fall back on.
+ */
+uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
  * the slot, so Task 4 adds a case for PROGRAM_NEXT instead of a hard-coded single-command function.
  * Task 5's own GET_PGM_PROCESSOR_INFO adds none: it never defers (Xcp_DTOCmdPgmGetPgmProcessorInfo's
  * own @details above), so there is nothing pending for this function to ever poll on its behalf.
+ * SP4c Task 1's own PROGRAM_VERIFY adds a case the same way Task 4's PROGRAM_NEXT did: another
+ * command joining the switch, not a reason to change its shape.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK.
  * @retval E_OK the integrator callback has finished, successfully or not.
  * @retval E_NOT_OK the integrator callback has not finished; pStatusCode is not read.

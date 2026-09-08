@@ -79,6 +79,15 @@ static void Xcp_PgmCompleteProgramClear(uint8 statusCode);
 static void Xcp_PgmCompleteProgramWrite(uint8 statusCode);
 
 /**
+ * @brief Finishes PROGRAM_VERIFY, building the positive response or ERR_VERIFY from statusCode.
+ * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
+ * Xcp_DTOCmdPgmProgramVerify below calls it directly for an integrator whose work completes
+ * instantaneously (spec Section 4) -- the same function Xcp_PgmCompletePendingCommand dispatches to
+ * when the same command instead completes on a later Xcp_MainFunction poll.
+ */
+static void Xcp_PgmCompleteProgramVerify(uint8 statusCode);
+
+/**
  * @brief Whether a PGM master block mode block is currently open, awaiting a PROGRAM_NEXT.
  * @details Task 4 fix round 1, finding 1. Reads Xcp_Internal.pgm_block.requested_elements, PGM's
  * OWN counter -- deliberately not Xcp_BlockTransferIsActive()/Xcp_Internal.block_transfer, which
@@ -867,6 +876,74 @@ uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoT
     return E_OK;
 }
 
+uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 verification_type;
+
+    *responseExpected = TRUE;
+
+    /* verificationType (the WORD at bytes 2-3) has to be parsed before anything else in this
+     * handler runs: the one structural check 1.1/1.6.5.2.7 permits a slave to make (design doc
+     * DD91) is over this field's own reserved bits, and reading it out of order would either check
+     * stale bytes or, worse, read verificationValue's own bytes by mistake. No gate on
+     * Xcp_Internal.pgm_state, unlike PROGRAM_CLEAR/PROGRAM/PROGRAM_MAX/PROGRAM_NEXT above:
+     * 1.1/1.6.5.1.1's "not allowed until PROGRAM_START" list does not name PROGRAM_VERIFY, and
+     * design doc Section 1 records this command as consuming nothing from the rest of the module --
+     * no address, no session state -- unlike every other PGM command in this file. */
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &verification_type, Xcp_Ptr->general->byteOrder);
+
+    /* Design doc DD91: "1.6.5.2.7 marks verification types 0x0008...0x0080 reserved, so a master
+     * setting those bits is refused ERR_OUT_OF_RANGE (in the row)." Checked as a bit mask
+     * (0x00F8u covers exactly 0x0008, 0x0010, 0x0020, 0x0040 and 0x0080 together), not as five
+     * separate equality checks: 1.6.5.2.7 reserves the whole 0x0008..0x0080 range, and a master is
+     * free to combine a reserved bit with a defined one (e.g. 0x0001 | 0x0008) in the same request,
+     * which a chain of `== ` comparisons against only the single-bit values would not catch. Bits
+     * 0x0001/0x0002/0x0004 (calibration areas/code areas/complete flash) and 0x0100..0xFF00 (user
+     * defined) both pass this check untouched: the former are this specification's own defined
+     * values, and the latter are, by the same paragraph's own words, the integrator's to interpret,
+     * not this module's to refuse. */
+    if ((verification_type & 0x00F8u) != 0x0000u)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        uint8 status_code = 0x00u;
+        const uint8 verification_mode = pPduInfo->SduDataPtr[0x01u];
+        uint32 verification_value;
+
+        Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &verification_value, Xcp_Ptr->general->byteOrder);
+
+        /* The FIRST call happens here, not on the next Xcp_MainFunction, for the same reason
+         * PROGRAM_CLEAR's own first call does above: an integrator whose work is instantaneous
+         * returns E_OK from it and the master is answered on this very exchange. Spec Section 4. */
+        if (Xcp_ProgramVerify(verification_mode, verification_type, verification_value, &status_code) == E_OK)
+        {
+            Xcp_PgmCompleteProgramVerify(status_code);
+        }
+        else
+        {
+            Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_VERIFY;
+            Xcp_Internal.pending_command.active = TRUE;
+            Xcp_Internal.pending_command.abandoned = FALSE;
+            Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* Xcp_ProgramVerify's contract takes mode, type and value on every call, not only this
+             * first one, and Xcp_PgmPollPendingCommand (below) has no other way to recover any of
+             * the three once this handler returns -- unlike every other PGM command in this file,
+             * PROGRAM_VERIFY has no address of its own to fall back on either (source/Xcp_Internal.h,
+             * pending_command.args' own program_verify member). */
+            Xcp_Internal.pending_command.args.program_verify.mode = verification_mode;
+            Xcp_Internal.pending_command.args.program_verify.type = verification_type;
+            Xcp_Internal.pending_command.args.program_verify.value = verification_value;
+
+            /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+            *responseExpected = FALSE;
+        }
+    }
+
+    return E_OK;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* deferred-response machinery, called from Xcp_MainFunction (DD53).                              */
 /*------------------------------------------------------------------------------------------------*/
@@ -939,6 +1016,18 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
                                       pStatusCode);
             break;
         }
+        case XCP_PID_CMD_PROGRAM_VERIFY:
+        {
+            /* Xcp_ProgramVerify's contract also takes mode, type and value on every call, the same
+             * shape PROGRAM_PREPARE's and PROGRAM_CLEAR's own cases above have -- all three are
+             * re-read from pending_command.args directly, since none of them is standing module
+             * state elsewhere the way the MTA is for every other PGM command's own case here. */
+            result = Xcp_ProgramVerify(Xcp_Internal.pending_command.args.program_verify.mode,
+                                       Xcp_Internal.pending_command.args.program_verify.type,
+                                       Xcp_Internal.pending_command.args.program_verify.value,
+                                       pStatusCode);
+            break;
+        }
         default:
         {
             /* Unreachable: pending_command.pid is set only by a handler in this file, to one of
@@ -996,6 +1085,11 @@ void Xcp_PgmCompletePendingCommand(uint8 statusCode)
             case XCP_PID_CMD_PROGRAM_NEXT:
             {
                 Xcp_PgmCompleteProgramWrite(statusCode);
+                break;
+            }
+            case XCP_PID_CMD_PROGRAM_VERIFY:
+            {
+                Xcp_PgmCompleteProgramVerify(statusCode);
                 break;
             }
             default:
@@ -1409,6 +1503,33 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
          * others -- the same code PROGRAM's own row gives for the identical situation, so no new
          * recorded exception is needed for this third command to reach it. */
         Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_DENIED, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */
+    Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
+}
+
+static void Xcp_PgmCompleteProgramVerify(uint8 statusCode)
+{
+    if (statusCode == 0x00u)
+    {
+        /* 1.1/1.6.5.2.7 specifies no response payload beyond the standard positive response --
+         * matching PROGRAM_RESET's, PROGRAM_PREPARE's and PROGRAM_CLEAR's own success responses
+         * above. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        /* Design doc DD91: "ERR_VERIFY, also in the row, is answered when the integrator reports
+         * failure." Unlike PROGRAM_CLEAR's and PROGRAM_WRITE's own ERR_ACCESS_DENIED just above --
+         * both statements about memory that could not be reached -- a failed verification is a
+         * statement about content that WAS reached and read, but did not pass the check, which is
+         * the more precise condition XCP part 2 - Protocol Layer Specification 1.7.3.2.5's own
+         * ERR_VERIFY names directly for this row. No deviation: this is the listed code, not a
+         * substitute for one the row omits. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_VERIFY, &Xcp_Internal.cto_response.pdu_info);
     }
 
     /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */

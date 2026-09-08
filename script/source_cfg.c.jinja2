@@ -939,15 +939,23 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     test/connect_test.py's test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis is
     DD60's per-conjunct sweep, restored now that it has three real commands to sweep.
 
-    The other five PGM rows (PROGRAM_VERIFY 0xC8, PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB,
-    GET_SECTOR_INFO 0xCD, GET_PGM_PROCESSOR_INFO 0xCE) were never part of this guard, deliberately:
-    they have no configuration key of their own, nothing reads their ctoInfo bit except the
-    dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN for an enabled row pointing at
-    Xcp_CmdNotImplemented exactly as it does for a disabled one. No master is told anything untrue
-    about them. It was the CONNECT advertisement that made PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX
-    different, and that is also why lifting their own refusal here is what closes D10, not merely
-    what implements three more commands. #}
-        ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
+    The other four PGM rows (PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB, GET_SECTOR_INFO 0xCD,
+    GET_PGM_PROCESSOR_INFO 0xCE) were never part of this guard, deliberately: they have no
+    configuration key of their own, nothing reads their ctoInfo bit except the dispatcher, and the
+    dispatcher answers ERR_CMD_UNKNOWN for an enabled row pointing at Xcp_CmdNotImplemented exactly
+    as it does for a disabled one. No master is told anything untrue about them. It was the CONNECT
+    advertisement that made PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX different, and that is also why
+    lifting their own refusal here is what closes D10, not merely what implements three more
+    commands.
+
+    PROGRAM_VERIFY (0xC8) used to be a fifth row in that list -- SP4c Task 1 removes it, the first
+    of the three SP4c PIDs to gain both a handler and a configuration key of its own
+    (xcp_program_verify_api_enable, config/xcp.schema.json). Unlike PROGRAM_CLEAR/PROGRAM/PROGRAM_MAX
+    above, PROGRAM_VERIFY plays no part in CONNECT's own RESOURCE bit (Xcp_CTOCmdStdConnect,
+    source/Xcp_Std.c, reads exactly those three), so there is no D10-shaped advertisement to protect
+    here -- this key is conjoined with programming.enabled purely so a build that cannot program at
+    all does not enable a PGM command either, the same reason PROGRAM_MAX's own row just below does. #}
+        ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_verify_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_max_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* PROGRAM_MAX 0xC9, optional */
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | {% if configuration.programming.enabled | default(false) %}0x03u{% else %}0x04u{% endif %}, /* PROGRAM_NEXT 0xCA, optional. Task 4: 3 once truly enabled (the same conjunction as the enable bit immediately to its own left -- here just configuration.programming.enabled, since this row has no per-command api_enable key of its own to conjoin, DD69/design Section 4: "No new callback"), not the SP4a-era placeholder 4 -- unlike PROGRAM_MAX immediately above, this row's own Xcp_CTOErrorMatrix entry (source/Xcp.c) DOES carry XCP_INTERNAL_ERR_CMD_SYNTAX, so this nibble is a live bound the generic pre-dispatch gate (Xcp_CanIfRxIndication, source/Xcp.c) actually enforces before the handler ever runs, not an unused one. 1.1/1.6.5.2.5's own request is [PID, count, data...], and this command's own count is never legitimately 0 (Xcp_DTOCmdPgmProgramNext's own Xcp_PgmBlockIsActive() guard makes count meaningful only while a block is open, i.e. while at least one element remains) -- so a genuine minimum request always carries at least 1 data byte at AG=BYTE, the true floor being cmd+count+1data=3, mirroring DOWNLOAD_NEXT's own identical 3 immediately below (0xEF). Left at 4, a legitimate 3-byte completing PROGRAM_NEXT for a block's last remaining element was refused ERR_CMD_SYNTAX by this generic gate before Xcp_DTOCmdPgmProgramNext ever saw it -- test_program_next_is_refused_err_sequence_before_program_start_succeeds (test/pgm_program_test.py) caught this directly during this task's own RED phase (task report). Kept at the OLD value 4 whenever this row is not truly enabled -- fix round 1, finding 2: an earlier version of this nibble was an UNCONDITIONAL 3, so a gate-OFF build's generated Xcp_Cfg.c differed from SP4a's by this one byte even though the row stayed disabled and unread either way (source/Xcp.c tests the enable bit before ever reading this nibble) -- inert on the wire, but a real byte difference the design doc's own "byte-for-byte identical with the gate off" criterion (SP4b design Section 9, criterion 1) does not tolerate, exactly the mistake Task 3's own review round 1 finding 4 had already fixed for PROGRAM's own identical nibble on the row immediately above this one (that row's own name and hex are deliberately not spelled out adjacently in this sentence, unlike everywhere else in this comment: test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off, test/pgm_configuration_test.py, greps this generated file for each row's own "name 0xHH" marker and an earlier version of this sentence supplied a false second match for that other row's own marker by quoting it in full). */
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x05u, /* PROGRAM_FORMAT 0xCB, optional */

@@ -567,6 +567,39 @@ extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *
  */
 extern Std_ReturnType Xcp_ProgramWrite(void *address, const uint8 *pData, uint16 length, uint8 *pStatusCode);
 
+/**
+ * @brief Checks whether non-volatile memory content is valid.
+ * @param [in] verificationMode The request's own Mode byte. XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.5.2.7 gives this slave no meaning of its own to enforce on it, so it is
+ * passed through verbatim, for an integrator whose ASAM MCD-2 MC description defines what its own
+ * values mean.
+ * @param [in] verificationType The request's own Verification Type, a bit mask of the areas to
+ * verify. 1.1/1.6.5.2.7 defines bit 0x0001 (calibration areas), 0x0002 (code areas) and 0x0004
+ * (complete flash), reserves 0x0008..0x0080, and leaves 0x0100..0xFF00 user defined. A request
+ * naming a reserved bit is refused ERR_OUT_OF_RANGE before this callback is ever reached -- the one
+ * structural check 1.1/1.6.5.2.7 itself permits a slave to make -- so every value this callback
+ * actually receives already has every reserved bit clear.
+ * @param [in] verificationValue The request's own Verification Value, in the configured byte
+ * order. 1.1/1.6.5.2.7 leaves its meaning to the slave and its ASAM MCD-2 MC description; passed
+ * through verbatim, the same way verificationMode is.
+ * @param [out] pStatusCode Result of the verification, read only when this function returns E_OK:
+ * zero for success, non-zero for a verification that completed but did not pass.
+ * @retval E_OK: the verification is finished (no matter if it passed or not)
+ * @retval E_NOT_OK: the verification is not finished
+ * @details Polled, exactly as @ref Xcp_ProgramClear is: called once from the PROGRAM_VERIFY handler
+ * to start the work and then once per Xcp_MainFunction until it reports completion. An
+ * implementation whose work is instantaneous returns E_OK from the first call and the command is
+ * answered without ever deferring -- though checking newly programmed content against the rest of
+ * flash is exactly the kind of long-running work this module's polled contract exists for, the same
+ * reason @ref Xcp_ProgramClear tends to defer more often than @ref Xcp_ProgramStart or
+ * @ref Xcp_ProgramPrepare do.
+ * @note A non-zero pStatusCode answers ERR_VERIFY, XCP part 2 - Protocol Layer Specification
+ * 1.7.3.2.5's own code for a verification that completed but did not pass -- unlike @ref
+ * Xcp_ProgramClear and @ref Xcp_ProgramWrite above, which both answer ERR_ACCESS_DENIED for a
+ * failure of their own, different kind.
+ */
+extern Std_ReturnType Xcp_ProgramVerify(uint8 verificationMode, uint16 verificationType, uint32 verificationValue, uint8 *pStatusCode);
+
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
 /** @} */
