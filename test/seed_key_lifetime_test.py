@@ -144,8 +144,12 @@ def test_a_legitimate_multi_frame_key_is_still_admitted():
 def test_an_unlock_after_get_status_is_refused_despite_a_held_seed():
     """Isolates the last_pid conjunct alone -- coordinator ruling on task-2-report.md's mutation 2,
     which found that conjunct unpinned by every scenario in this file: dropping it left all seven
-    tests above passing regardless, because each one's seed.total_length happens to already agree
-    with what last_pid alone would have decided.
+    tests above passing regardless. In six of them the two conjuncts simply agree, so
+    seed.total_length alone decides exactly what last_pid alone would have decided. In the seventh,
+    test_a_second_unlock_without_a_fresh_seed_is_refused, they disagree -- last_pid is still
+    UNLOCK's own pid and so admits, while the seed was discarded by the UNLOCK that consumed it --
+    but the AND is false there only because the seed conjunct dominates, which is again a refusal
+    seed.total_length produces on its own.
 
     GET_STATUS is MASK_NONE (always reachable, this file's own module docstring) and
     Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) never reads or writes Xcp_Internal.seed -- so it
@@ -154,8 +158,9 @@ def test_an_unlock_after_get_status_is_refused_despite_a_held_seed():
     last_pid past any dispatch whose own response byte 0 is not XCP_PID_ERROR, advances it to
     GET_STATUS's own pid (0xFD). The UNLOCK that follows therefore satisfies the seed.total_length
     conjunct (a seed is genuinely held, untouched) and fails only the last_pid conjunct (0xFD is
-    outside {GET_SEED, UNLOCK}) -- the one scenario in this file where the two conjuncts disagree,
-    so only a gate that checks both refuses it. Confirmed empirically, not just by trace: with
+    outside {GET_SEED, UNLOCK}) -- the one scenario in this file where they disagree in THIS
+    direction, last_pid refusing what the seed conjunct would have admitted, so only a gate that
+    checks both refuses it. Confirmed empirically, not just by trace: with
     task-2-report.md's mutation 2 reapplied (last_pid terms dropped, only seed.total_length !=
     0x00u kept), this test fails -- see the report's update for that run.
 
@@ -199,7 +204,20 @@ def test_get_status_reports_nothing_protected_when_nothing_is_configured_protect
     initial condition: byte 2 reads 0x00 before any unlock on the defective code too, so the first
     assertion alone passes either way. It is kept as a precondition -- an UNLOCK that is refused
     would leave 0x00 standing for the wrong reason -- and the second assertion is the one that
-    measures the defect. UNLOCK's own answer is asserted positive for the same reason."""
+    measures the defect. UNLOCK's own answer is asserted positive for the same reason.
+
+    That precondition checks TWO bytes, not just the PID. On a DD76-shaped regression -- UNLOCK's
+    handler writing nothing into the shared cto_response buffer while responseExpected stays TRUE
+    (source/Xcp_Std.c; the exact defect test/seed_key_defects_test.py's
+    test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_positive_response
+    exists for) -- the frame transmitted here is the PREVIOUS command's, i.e. GET_SEED's own
+    (0xFF, 0x02, 0x11, 0x22, ...). Its byte 0 is 0xFF too, so a PID-only guard admits it, the
+    UNLOCK never ran, and the closing assertion below would then pass vacuously: on this build
+    byte 2 is 0x00 whether anything was granted or not, which is precisely the state this test is
+    supposed to be measuring against. exchange()'s own reset_mock cannot catch that -- the
+    staleness is in the C-side buffer, not the Python mock. UNLOCK's byte 1 is the remaining
+    protection mask, 0x00 on a build that protects nothing, while GET_SEED's byte 1 is len(SEED)
+    == 2, so the pair tells the two frames apart."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     connect(handle)
 
@@ -208,8 +226,8 @@ def test_get_status_reports_nothing_protected_when_nothing_is_configured_protect
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, SEED)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, KEY)
 
-    assert exchange(handle, (0xF8, 0x00, 0x10))[0] == 0xFF, 'GET_SEED(mode=0, PGM)'
-    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0] == 0xFF, 'UNLOCK(PGM)'
+    assert exchange(handle, (0xF8, 0x00, 0x10))[0:2] == (0xFF, len(SEED)), 'GET_SEED(mode=0, PGM)'
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFF, 0x00), 'UNLOCK(PGM)'
 
     assert exchange(handle, GET_STATUS, length=3)[2] == 0x00, \
         'PGM was reported protected on a build that does not protect it'

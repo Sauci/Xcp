@@ -26,9 +26,23 @@ Two independent legs, both fixed here:
   successful GET_SEED from a refused one.
 
 test_a_failed_get_seed_leaves_the_resource_locked below is the direct reproduction of the measured
-scenario and is sensitive to the last_pid leg; test_a_failed_get_seed_does_not_let_a_stale_
-admission_grant_the_resource_it_requested isolates the requested_protected_resource leg, which the
-first test cannot -- see its own docstring. Both are mutation-verified in task-2-report.md.
+scenario, and is kept for that. It no longer isolates either leg, and neither did the test that
+used to sit beside it: DD81 (docs/superpowers/specs/2026-09-08-xcp-seed-key-hardening-design.md)
+added a `seed.total_length != 0x00u` conjunct to Xcp_DTOCmdStdUnlock's own admission test
+(source/Xcp_Std.c), and a GET_SEED that produced no seed fails that conjunct first -- so the UNLOCK
+is refused whatever last_pid and requested_protected_resource hold, and reverting either DD72 leg
+leaves every byte those two tests assert unchanged. The module is not weaker for it, DD81 subsumes
+DD72 for that shape of scenario; but a test named for a property it cannot fail on is not coverage.
+
+Both legs are therefore pinned by scenarios in which a seed IS genuinely held, so that DD81's
+conjunct is satisfied and DD72's two legs are the only things left that can decide the outcome:
+test_a_refused_get_seed_does_not_re_arm_the_unlock_sequence isolates the last_pid leg, and
+test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_requested isolates the
+requested_protected_resource leg. Each is insensitive to the other leg by construction -- see their
+own docstrings -- and both use get_seed_side_effect_fail_with_length below, an Xcp_GetSeed that
+writes the seed length and only then refuses. Both are mutation-verified in
+.superpowers/sdd/2026-09-08-xcp-seed-key-hardening/final-fix-report.md; the original DD72
+measurements are in task-2-report.md.
 
 DD73 -- a second, independent pre-existing defect in the same shipped seed-and-key code: the key
 calculation must receive the seed's actual length, not the "bytes left to send" bookkeeping
@@ -89,6 +103,29 @@ def get_seed_side_effect_fail(handle):
     makes Xcp_DTOCmdStdGetSeed's own two checks refuse the request with ERR_OUT_OF_RANGE; both are
     true here for one realistic cause, not to double up on the trigger."""
     def wrapper(_p_seed_buffer, _max_seed_length, _p_seed_length):
+        return handle.define('E_NOT_OK')
+    return wrapper
+
+
+def get_seed_side_effect_fail_with_length(handle, seed):
+    """The other realistic way an integrator's Xcp_GetSeed can refuse: it fills pSeedBuffer and
+    pSeedLength -- so Xcp_Internal.seed.total_length, which Xcp_DTOCmdStdGetSeed passes by pointer
+    (source/Xcp_Std.c), is left non-zero -- and only THEN decides it cannot serve the request and
+    returns E_NOT_OK. Xcp_DTOCmdStdGetSeed still refuses with ERR_OUT_OF_RANGE, because it checks
+    the return value as well as the length, and the seed bytes never leave the slave: the handler
+    fills an error packet instead of transmitting them.
+
+    That is exactly what makes this double, and not get_seed_side_effect_fail above, the one that
+    can isolate either leg of DD72. get_seed_side_effect_fail leaves total_length at the 0
+    Xcp_DTOCmdStdGetSeed itself reset it to, which trips DD81's own seed conjunct
+    (Xcp_DTOCmdStdUnlock, source/Xcp_Std.c) and refuses every following UNLOCK before either DD72
+    leg can decide anything -- the masking this file's own module docstring records. With a seed
+    genuinely held, DD81's conjunct is satisfied and the two DD72 legs are the only things left
+    that can change the outcome."""
+    def wrapper(p_seed_buffer, _max_seed_length, p_seed_length):
+        for i, b in enumerate(seed):
+            p_seed_buffer[i] = b
+        p_seed_length[0] = len(seed)
         return handle.define('E_NOT_OK')
     return wrapper
 
@@ -165,7 +202,15 @@ def test_a_failed_get_seed_leaves_the_resource_locked():
     configured protected -- buildable since DD83 -- because on a build that protects nothing, "the
     resource is still locked" is not a property this byte can express: it reads 0x00 whether the
     bypass happened or not. GET_STATUS byte 2 is the Current Resource Protection Mask of
-    1.0/1.6.1.1.3, 1 = still protected, so "PGM is still locked" is 0x10 here."""
+    1.0/1.6.1.1.3, 1 = still protected, so "PGM is still locked" is 0x10 here.
+
+    This test is the measured reproduction and nothing more: it can no longer fail on DD72's
+    last_pid leg. get_seed_side_effect_fail never writes pSeedLength, so seed.total_length is left
+    at the 0 Xcp_DTOCmdStdGetSeed itself reset it to, and DD81's own conjunct (source/Xcp_Std.c)
+    refuses the UNLOCK below before last_pid can matter -- every byte asserted here is identical
+    with that leg reverted. That leg is pinned instead by
+    test_a_refused_get_seed_does_not_re_arm_the_unlock_sequence below, which holds a seed while the
+    refusal happens. See this file's own module docstring."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, resource_protection_programming=True))
     connect(handle)
 
@@ -190,30 +235,113 @@ def test_a_failed_get_seed_leaves_the_resource_locked():
                 status_response[2], PGM, get_seed_response, unlock_response))
 
 
+def test_a_refused_get_seed_does_not_re_arm_the_unlock_sequence():
+    """Isolates the last_pid leg -- the one DD72's own measured scenario above can no longer fail
+    on, since DD81 refuses that scenario's UNLOCK on the seed conjunct first.
+
+    The shape that still discriminates needs a seed genuinely HELD while a GET_SEED is refused, and
+    needs last_pid to have been moved OUT of {GET_SEED, UNLOCK} before the refusal, so that writing
+    it back in is a change the wire can see:
+
+      GET_SEED(mode=0, CAL_PAG) succeeds  -> seed held, last_pid = GET_SEED's pid (0xF8)
+      GET_STATUS                          -> answers positively, so DD72's gate advances last_pid
+                                             to 0xFD; Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c)
+                                             never touches Xcp_Internal.seed, so the seed survives
+      GET_SEED(mode=0, CAL_PAG) refused   -> get_seed_side_effect_fail_with_length above writes the
+                                             length and then returns E_NOT_OK, so this answers
+                                             ERR_OUT_OF_RANGE with a seed still held
+      UNLOCK                              -> must be refused ERR_SEQUENCE
+
+    With the leg intact, the refused GET_SEED's own error response stops DD72's gate advancing
+    last_pid, it stays at GET_STATUS's 0xFD, and the UNLOCK is refused. With the leg reverted --
+    last_pid written for every dispatched command, refused or not (source/Xcp.c) -- the refusal
+    itself puts 0xF8 back, both conjuncts pass, Xcp_CalcKey runs over the held seed and CAL_PAG is
+    granted: a key admitted against a GET_SEED the slave refused, which is DD72 exactly. This is
+    the one shape in which a REFUSED command re-arms the sequence gate.
+
+    Insensitive to the other leg by construction: both GET_SEEDs name CAL_PAG, so
+    requested_protected_resource is CAL_PAG whether it is committed before or after
+    Xcp_DTOCmdStdGetSeed's own checks, and reverting that leg cannot change any byte below.
+
+    CAL_PAG is the build's only protected group, so GET_STATUS byte 2 -- the Current Resource
+    Protection Mask of 1.0/1.6.1.1.3, 1 = still protected -- reads 0x01 while the refusal holds and
+    0x00 the moment a grant leaks through. xcp_calc_key is armed with a matching key rather than
+    left unconfigured, so a broken gate answers an unambiguous positive instead of an artifact of
+    an unconfigured mock. Mutation-verified in
+    .superpowers/sdd/2026-09-08-xcp-seed-key-hardening/final-fix-report.md."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   resource_protection_calibration_paging=True))
+    connect(handle)
+
+    seed = [0x11, 0x22]
+    key = [0xAA, 0xBB]
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, key)
+
+    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG))
+    assert get_seed_response[0:2] == (0xFF, len(seed)), (
+        'GET_SEED(mode=0, CAL_PAG) answered {}, expected a genuine seed -- the whole scenario needs '
+        'one to be held'.format(get_seed_response))
+
+    status_response = exchange(handle, GET_STATUS)
+    assert status_response[0] == 0xFF, 'GET_STATUS'
+    assert status_response[2] == CAL_PAG, (
+        'protection mask=0x{:02X} before any UNLOCK, expected CAL_PAG (0x{:02X}) protected'.format(
+                status_response[2], CAL_PAG))
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_fail_with_length(handle, [0x33, 0x44])
+
+    refused_get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG))
+    assert refused_get_seed_response[0:2] == (0xFE, 0x22), (
+        'GET_SEED(mode=0, CAL_PAG) answered {}, expected (0xFE, 0x22) [ERR_OUT_OF_RANGE] -- an '
+        'Xcp_GetSeed returning E_NOT_OK is refused however much it wrote first'.format(
+                refused_get_seed_response))
+
+    unlock_response = exchange(handle, (0xF7, len(key), *key))
+    assert unlock_response[0:2] == (0xFE, 0x29), (
+        'UNLOCK answered {}, expected (0xFE, 0x29) [ERR_SEQUENCE] -- the command before it was a '
+        'REFUSED GET_SEED, and before that a GET_STATUS, so no successful GET_SEED precedes it; a '
+        'positive answer here means the refused GET_SEED re-armed the sequence gate'.format(
+                unlock_response))
+
+    status_response = exchange(handle, GET_STATUS)
+    assert status_response[2] == CAL_PAG, (
+        'protection mask=0x{:02X} after an UNLOCK admitted only by a REFUSED GET_SEED -- expected '
+        'CAL_PAG (0x{:02X}) still protected (GET_SEED: {}, UNLOCK: {})'.format(
+                status_response[2], CAL_PAG, refused_get_seed_response, unlock_response))
+
+
 def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_requested():
-    """Isolates the requested_protected_resource leg. A GET_SEED/UNLOCK exchange for CAL_PAG
-    completes legitimately first, which -- 1.1/1.6.1.2.5's own multi-frame KEY continuation
-    support, admitting a further UNLOCK whenever last_pid is already UNLOCK's own pid -- leaves
-    last_pid sitting on a value Xcp_DTOCmdStdUnlock accepts. A second GET_SEED, for PGM this time,
-    is then made to fail: with only the last_pid leg fixed, that failure does not touch last_pid,
-    so it is still left at UNLOCK's pid from the CAL_PAG exchange above rather than CONNECT's --
-    and an immediately following UNLOCK is admitted through that carryover regardless of the
-    last_pid leg's own state. What must not happen is that admission granting PGM: whether it
-    grants CAL_PAG again (a harmless re-grant of what was already legitimately obtained) or PGM
-    (the bypass) turns entirely on requested_protected_resource, which is this test's own target.
+    """Isolates the requested_protected_resource leg. GET_SEED(mode=0, CAL_PAG) succeeds, so a seed
+    is held, requested_protected_resource is CAL_PAG and last_pid is GET_SEED's own pid.
+    GET_SEED(mode=0, PGM) is then refused by an Xcp_GetSeed that has already written the seed
+    length (get_seed_side_effect_fail_with_length above) -- so the refusal leaves a seed held
+    rather than destroying the one CAL_PAG earned, which is what keeps DD81's own seed conjunct out
+    of the way, and its error response leaves last_pid on GET_SEED's pid. The UNLOCK that follows
+    is therefore admitted on both conjuncts and reaches Xcp_CalcKey, so a grant genuinely happens.
+    The only question left is WHICH group it releases, and that is requested_protected_resource
+    alone: CAL_PAG, whose GET_SEED succeeded, or PGM, whose GET_SEED was refused -- the bypass.
 
-    test_a_failed_get_seed_leaves_the_resource_locked above cannot show this: immediately after
-    CONNECT, last_pid is CONNECT's own pid, already outside {GET_SEED, UNLOCK}, so the last_pid leg
-    alone already refuses that test's UNLOCK regardless of what requested_protected_resource holds.
-    Mutation-verified in task-2-report.md.
+    This is also §1.2(k)'s own route in the final review: it is not exploitable in the field,
+    because the refused GET_SEED transmits no seed bytes and the master therefore cannot compute
+    the matching key. That is an argument about the attacker's information, not about the module's
+    bookkeeping; what this test pins is the bookkeeping, which is what DD72's rollback fixed.
 
-    DD78 configures PGM as protected (buildable since DD83) and inverts what the protection byte
-    means: 1 = the group IS protected, 1.0/1.6.1.1.3. So the harmless outcome and the bypass are
-    now told apart by whether PGM's own bit SURVIVES -- 0x10 throughout if requested_protected_
-    resource was never allowed to become PGM, 0x00 if it was and the stale admission cleared it.
-    CAL_PAG is not configured protected here, so unlocking it is legitimately a no-op on the mask;
-    it is the vehicle for leaving last_pid where the scenario needs it, not the thing measured."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, resource_protection_programming=True))
+    Both CAL_PAG and PGM are configured protected here, so the two outcomes are distinct values of
+    the same byte rather than one value and its absence. GET_STATUS byte 2 is the Current Resource
+    Protection Mask of 1.0/1.6.1.1.3, 1 = still protected: 0x10 means the grant went to CAL_PAG and
+    PGM survives, 0x01 means it went to PGM. UNLOCK's own byte 1 carries the same mask
+    (1.0/1.6.1.2.5) and is asserted for the same reason.
+
+    Insensitive to the other leg: the UNLOCK below is admitted on last_pid == GET_SEED's pid
+    whether or not a refused dispatch is allowed to write last_pid, since the refused command IS a
+    GET_SEED and the value it would write is the one already there.
+    test_a_refused_get_seed_does_not_re_arm_the_unlock_sequence above is where that leg is pinned.
+    Mutation-verified in
+    .superpowers/sdd/2026-09-08-xcp-seed-key-hardening/final-fix-report.md."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   resource_protection_calibration_paging=True,
+                                   resource_protection_programming=True))
     connect(handle)
 
     legitimate_seed = [0x11, 0x22]
@@ -225,29 +353,37 @@ def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, legitimate_seed)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, legitimate_key)
 
+    assert exchange(handle, GET_STATUS)[2] == CAL_PAG | PGM, (
+        'CAL_PAG (0x{:02X}) and PGM (0x{:02X}) are both configured protected and nothing has been '
+        'unlocked yet'.format(CAL_PAG, PGM))
+
     get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG))
     assert get_seed_response[0:2] == (0xFF, len(legitimate_seed))
 
-    unlock_response = exchange(handle, (0xF7, len(legitimate_key), *legitimate_key))
-    assert unlock_response[0:2] == (0xFF, PGM), (
-        'UNLOCK(CAL_PAG) answered {}, expected a positive response reporting PGM (0x{:02X}) still '
-        'protected -- CAL_PAG is not configured protected on this build, so unlocking it clears '
-        'nothing from the mask'.format(unlock_response, PGM))
-
-    handle.xcp_get_seed.side_effect = get_seed_side_effect_fail(handle)
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_fail_with_length(handle, [0x33, 0x44])
 
     failed_get_seed_response = exchange(handle, (0xF8, 0x00, PGM))
-    assert failed_get_seed_response[0:2] == (0xFE, 0x22)
+    assert failed_get_seed_response[0:2] == (0xFE, 0x22), (
+        'GET_SEED(mode=0, PGM) answered {}, expected (0xFE, 0x22) [ERR_OUT_OF_RANGE]'.format(
+                failed_get_seed_response))
 
-    second_unlock_response = exchange(handle, (0xF7, len(legitimate_key), *legitimate_key))
+    unlock_response = exchange(handle, (0xF7, len(legitimate_key), *legitimate_key))
+    assert unlock_response[0] == 0xFF, (
+        'UNLOCK answered {}, expected a positive response -- a seed is held and last_pid is still '
+        'GET_SEED\'s own pid, so this must reach Xcp_CalcKey and grant something; with nothing '
+        'granted there is no leg to isolate'.format(unlock_response))
+    assert unlock_response[1] == PGM, (
+        'UNLOCK reported 0x{:02X} still protected, expected PGM (0x{:02X}) -- the grant belongs to '
+        'CAL_PAG, whose GET_SEED succeeded, not to PGM, whose GET_SEED was refused'.format(
+                unlock_response[1], PGM))
 
     status_response = exchange(handle, GET_STATUS)
     assert status_response[2] == PGM, (
         'protection mask=0x{:02X} after PGM\'s own GET_SEED answered ERR_OUT_OF_RANGE -- expected '
-        'PGM (0x{:02X}) still protected; 0x00 means the stale admission granted the resource that '
-        'failed GET_SEED (first UNLOCK: {}, failed GET_SEED: {}, second UNLOCK: {})'.format(
-                status_response[2], PGM, unlock_response, failed_get_seed_response,
-                second_unlock_response))
+        'PGM (0x{:02X}) still protected; 0x{:02X} means the stale admission granted the resource '
+        'that failed GET_SEED instead of the one that succeeded (GET_SEED: {}, failed GET_SEED: '
+        '{}, UNLOCK: {})'.format(status_response[2], PGM, CAL_PAG, get_seed_response,
+                                 failed_get_seed_response, unlock_response))
 
 
 def test_unlock_computes_the_key_from_the_seeds_actual_length():

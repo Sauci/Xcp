@@ -28,10 +28,12 @@ script/source_cfg.c.jinja2 refused `resource_protection.programming` outright in
 `programming.enabled` set (final-review finding 2), for the reason described next.
 
 The wall, now dissolved (DD83): this module's README ('Key lifetime') used to document that an
-UNLOCK's effect 'is discarded after the command FOLLOWING the UNLOCK sequence has been executed',
-which source/Xcp.c implemented as Xcp_ClearProtectionStatus() running after every dispatched
-command except UNLOCK itself -- so one GET_SEED/UNLOCK round unlocked exactly the ONE command sent
-right after it, never more. PROGRAM_START was that one command, and dispatching it (immediately, in
+UNLOCK's effect 'is discarded after the command FOLLOWING the UNLOCK sequence has been executed'.
+It no longer does -- that section was rewritten alongside DD79 and now describes the session-long
+grant -- but source/Xcp.c did implement exactly that lifetime, as Xcp_ClearProtectionStatus() (a
+function DD78 has since deleted, along with the inverted field it wrote) running after every
+dispatched command except UNLOCK itself -- so one GET_SEED/UNLOCK round unlocked exactly the ONE
+command sent right after it, never more. PROGRAM_START was that one command, and dispatching it (immediately, in
 the handler, before it ever defers) is what spent it. By the time the session reached
 XCP_PGM_ACTIVE and PROGRAM_RESET was due, PGM was locked again, and there was no way to re-unlock
 it: GET_SEED and UNLOCK both carried XCP_INTERNAL_ERR_PGM_ACTIVE in their own Xcp_CTOErrorMatrix

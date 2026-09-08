@@ -401,9 +401,12 @@ def test_a_normal_session_still_works_end_to_end_after_a_reconnect():
     and turn this test into a protection test instead of the end-to-end session it is. No
     PGM-group command is sent here, so the flag is inert apart from the mask -- which is the point.
 
-    The mask is also a genuine reconnect check now: Xcp_CTOCmdStdConnect (source/Xcp_Std.c)
-    re-seeds it from the configuration at the session boundary, so PGM being protected at all in
-    this second session is itself one of this task's own resets having run correctly."""
+    What the mask here does NOT show is that Xcp_CTOCmdStdConnect's own re-seed of it
+    (source/Xcp_Std.c) ran: the first session unlocks nothing, so locked_resource holds PGM's bit
+    from Xcp_Init onward and every assertion below reads the same with that re-seed deleted. The
+    re-seed is pinned elsewhere, by
+    test/seed_key_lifetime_test.py::test_an_unlock_does_not_survive_a_reconnect, which unlocks in
+    the first session and requires the second to refuse the protected command again."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8,
                                    resource_protection_programming=True))
     connect(handle)

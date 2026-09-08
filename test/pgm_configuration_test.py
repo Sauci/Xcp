@@ -360,8 +360,9 @@ def test_generation_accepts_the_pgm_resource_on_a_build_that_can_program():
     """DD83. This test used to be the guard itself -- named for the refusal rather than the
     acceptance this rename now reflects -- and it made generation fail outright whenever
     `resource_protection.programming: true` was combined with `programming.enabled: true`,
-    because an UNLOCK was spent by the single command that followed it (source/Xcp.c, README.md's
-    old *Key lifetime* section) -- PROGRAM_START consumed the grant that admitted it, the session
+    because an UNLOCK was spent by the single command that followed it (source/Xcp.c, and
+    README.md's *Key lifetime* section as it read before DD79 rewrote it) -- PROGRAM_START consumed
+    the grant that admitted it, the session
     became XCP_PGM_ACTIVE, PROGRAM_RESET (the only command that ends it, and itself
     PGM-group-protected) was locked again, and GET_SEED/UNLOCK could not re-open it because DD51's
     ERR_PGM_ACTIVE gate refuses both while ACTIVE. A programming session, once opened, could never
