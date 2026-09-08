@@ -76,6 +76,7 @@ from .seed_key_test import get_seed_key_slices, get_seed_side_effect_copy_ok, ca
 from .seed_key_defects_test import exchange
 
 CAL_PAG = 0x01
+PGM = 0x10
 GET_STATUS = (0xFD,)
 
 
@@ -390,8 +391,24 @@ def test_a_normal_session_still_works_end_to_end_after_a_reconnect():
     the most likely way to get this task wrong: a teardown that clears too much breaks exactly the
     ordinary session it exists to protect. CONNECT, SET_MTA, DOWNLOAD, GET_SEED, UNLOCK -- a
     complete, legitimate sequence, run entirely in the SECOND of two sessions so that every one of
-    this task's own resets has already run at least once before any of these commands does."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
+    this task's own resets has already run at least once before any of these commands does.
+
+    DD78 configures PGM as protected and points the GET_SEED/UNLOCK round at PGM, so that UNLOCK's
+    own byte 1 -- the Current Resource Protection Mask of 1.0/1.6.1.1.3, 1 = still protected --
+    measures the grant rather than reading 0x00 on a build with nothing to protect. PGM rather than
+    CAL_PAG because DOWNLOAD above is MASK_CAL_PAG (Xcp_PIDToCmdGroupTable, source/Xcp.c) and is
+    deliberately sent BEFORE the unlock: protecting CAL_PAG would make it answer ERR_ACCESS_LOCKED
+    and turn this test into a protection test instead of the end-to-end session it is. No
+    PGM-group command is sent here, so the flag is inert apart from the mask -- which is the point.
+
+    What the mask here does NOT show is that Xcp_CTOCmdStdConnect's own re-seed of it
+    (source/Xcp_Std.c) ran: the first session unlocks nothing, so locked_resource holds PGM's bit
+    from Xcp_Init onward and every assertion below reads the same with that re-seed deleted. The
+    re-seed is pinned elsewhere, by
+    test/seed_key_lifetime_test.py::test_an_unlock_does_not_survive_a_reconnect, which unlocks in
+    the first session and requires the second to refuse the protected command again."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8,
+                                   resource_protection_programming=True))
     connect(handle)
     disconnect(handle)
     connect(handle)
@@ -414,13 +431,14 @@ def test_a_normal_session_still_works_end_to_end_after_a_reconnect():
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, key)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, key)
 
-    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG))
+    get_seed_response = exchange(handle, (0xF8, 0x00, PGM))
     assert get_seed_response[0:2] == (0xFF, len(key)), 'GET_SEED must still succeed'
 
     unlock_response = exchange(handle, (0xF7, len(key), *key))
-    assert unlock_response[0:2] == (0xFF, CAL_PAG), (
+    assert unlock_response[0:2] == (0xFF, 0x00), (
         'a legitimate GET_SEED/UNLOCK sequence must still grant the resource it requested after '
-        'a reconnect -- got {}'.format(unlock_response))
+        'a reconnect -- PGM is this build\'s only protected group, so an empty protection mask is '
+        'what a grant looks like; got {}'.format(unlock_response))
 
 
 def test_get_id_does_not_leak_the_previous_commands_address_extension():

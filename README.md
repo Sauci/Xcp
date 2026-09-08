@@ -74,8 +74,11 @@ Whenever the seed is requested by the master through the `GET_SEED` command, a n
 through the `Xcp_GetSeed` function. The reason is that otherwise the master could calculate a key for a single seed and 
 reuse it forever, which would weaken the resource protection.
 
-Whenever the master issues an `UNLOCK` command, the slave discards the seed as well, whether or not the command 
-succeeded. This implies a new `GET_SEED` request for each `UNLOCK` command.
+The slave discards the seed once an `UNLOCK` sequence has delivered the whole key, and on every outcome of that
+sequence alike: a key that matches, a key that does not, and an `Xcp_CalcKey` that fails to produce one at all. An
+intermediate frame of a key too long for one CTO keeps the seed, and an `UNLOCK` the slave refuses outright discards
+nothing, because it never gets as far as the key. This implies a new `GET_SEED` request for each completed `UNLOCK`
+sequence.
 
 The `Xcp_GetSeed` function implementation is left to the stack user. The target on which the stack is integrated could
 provide some random value generator, thus this is target-specific. The function's prototype is defined 
@@ -83,11 +86,33 @@ provide some random value generator, thus this is target-specific. The function'
 
 ## Key lifetime
 Whenever an `UNLOCK` command is issued by the master, the key is calculated by the slave using the last seed value
-requested by the master. Whether or not the keys match, the key is discarded after the command following the `UNLOCK`
-sequence has been executed.
+requested by the master. A key too long for one CTO is split over several `UNLOCK` frames; once the last of them has
+arrived the seed is discarded whatever the outcome, so the next `UNLOCK` sequence needs a `GET_SEED` of its own (see
+*Seed lifetime* above).
 
-If the master issues an `UNLOCK` command without calling `GET_SEED` first, the stack responds with an error packet
-identifier and the code `ERR_SEQUENCE`.
+The sequence itself has to be respected, and the slave answers an error packet identifier with the code `ERR_SEQUENCE`
+unless both of the following hold. First, the slave must currently hold a seed, which an `UNLOCK` with no `GET_SEED` in
+front of it at all does not satisfy. Second, the immediately preceding command must be that `GET_SEED` or a previous
+frame of the same key — any other command in between ends the sequence, including one that only reads status, and the
+master has to restart it with a fresh `GET_SEED`.
+
+A `GET_SEED` the integrator's `Xcp_GetSeed` refuses is answered `ERR_OUT_OF_RANGE` and transmits no seed bytes, but
+whether it also leaves the slave holding no seed is the integrator's own choice: the slave passes `pSeedLength` straight
+into its own bookkeeping, so an `Xcp_GetSeed` that returns `E_NOT_OK` without writing it leaves the slave seedless and
+the next `UNLOCK` refused, while one that writes a length and only then fails leaves a seed held, and a following
+`UNLOCK` can still be admitted. What a refused `GET_SEED` can never do is become the granted request: a grant releases
+the resource named by the last `GET_SEED` that actually succeeded, never the one that was refused. It is also no use to
+a master, since the refused request put no seed bytes on the wire to derive a key from. Returning `E_NOT_OK` without
+touching `pSeedLength` is nevertheless the cleaner contract, and the one to prefer.
+
+If the whole key arrives but does not match, the slave answers `ERR_ACCESS_LOCKED` and goes to the disconnected state.
+If `Xcp_CalcKey` fails outright, so that no key is ever compared, the slave answers `ERR_GENERIC` and stays connected.
+
+What a successful `UNLOCK` grants lasts for the whole XCP session, not for one command: the group stays accessible for
+as many commands as the master needs, and unrelated commands in between do not spend it. Grants accumulate — unlocking
+a second group leaves the first one granted — and `CONNECT` puts every group named in `resource_protection` back under
+protection, so a grant never outlives the session that earned it. `GET_STATUS` and `UNLOCK`'s own positive response
+both report the *Current Resource Protection Mask*, in which a bit that is **set** means the group is still protected.
 
 The implementation of the function responsible for key calculation, `Xcp_CalcKey` is left to the user. This is necessary,
 because the function must be shared between the master and the slave.
@@ -377,7 +402,11 @@ The remaining eight **PGM** commands (`PROGRAM_CLEAR`, `PROGRAM`, `PROGRAM_MAX`,
 of them define `CONNECT`'s "flash programming available" resource bit, so enabling
 `xcp_program_clear_api_enable`, `xcp_program_api_enable` or `xcp_program_max_api_enable` in a build with
 `programming.enabled` set is refused at code generation rather than shipped as an advertisement with nothing behind it.
-`resource_protection.programming` is refused in the same build for a different reason, given under *Limitations* below.
+`resource_protection.programming`, by contrast, is accepted in such a build. A granted resource lasts the whole XCP
+session (see *Key lifetime* above), so the `GET_SEED`/`UNLOCK` round that admits `PROGRAM_START` is still in effect when
+`PROGRAM_RESET` — itself a **PGM** command, and the only one that ends the session — is due. That is what makes a
+protected **PGM** group able to leave programming mode at all, given that `GET_SEED` and `UNLOCK` are themselves
+refused `ERR_PGM_ACTIVE` while the session is open.
 
 
 # Limitations
@@ -411,13 +440,6 @@ of them define `CONNECT`'s "flash programming available" resource bit, so enabli
   three `CONNECT`'s flash-programming resource bit is defined by, so enabling their API keys in a programming build
   is refused at generation and that bit is never set until they exist. Until they do, the group can open, prepare
   and end a programming sequence, but nothing in it transfers or erases code.
-- The `PGM` resource cannot be protected: `resource_protection.programming` is refused at generation in any build
-  with `programming.enabled` set. An `UNLOCK` is spent by the single command following it (see *Key lifetime*
-  above), so `PROGRAM_START` consumes it, and once the session is open the specification requires `GET_SEED` and
-  `UNLOCK` to be refused `ERR_PGM_ACTIVE` — leaving `PROGRAM_RESET`, the only command that ends the session, locked
-  with no way to unlock it. Every refusal in that chain is conformant on its own; the composition is a slave that
-  cannot leave programming mode, so the configuration is refused rather than shipped. Fixing it means changing the
-  key lifetime for every resource group, not the **PGM** group alone.
 - At most one DTO frame is in flight at a time (SP2c): `Xcp_StartNextTransmission` arbitrates a single transmit
   slot across command responses, event packets and DAQ frames alike, and starts the next one only once the
   current one is confirmed. This is mandatory rather than a simplification, not merely a design choice this

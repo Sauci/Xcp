@@ -319,7 +319,9 @@ SP1 removes `Xcp_DTODaqPacket` from the table entirely.
 Ordered. Each sub-project is independently shippable and leaves the suite green.
 
 **Progress:** SP1 is complete (#1). SP2a is complete (#2), with follow-ups in #3 and #4. SP2b is
-complete (#6), with a hygiene pass in #7. **SP2c is next.**
+complete (#6), with a hygiene pass in #7. SP2d is complete (#12). SP3 is complete. SP4a is complete
+(#16), and SP4b is in review. **SP2c remains deferred — see its own entry below for why, which is
+unchanged — so SP4c is next.**
 
 ### SP1 — Calibration and page switching (CAL + PAG) — **complete**
 
@@ -383,8 +385,8 @@ not:
   also differ in risk: prioritisation reorders what the ring already holds, while multiple
   outstanding frames changes the ring's own invariants. Consider splitting them.
 
-- **SP2d** — **next.** Dynamic DAQ list configuration (§1.6.4.2 in 1.0, renumbered in 1.1), the
-  `DAQ_CONFIG_TYPE` = dynamic branch, and the four remaining commands: `FREE_DAQ` (0xD6),
+- **SP2d** — **complete** (#12). Dynamic DAQ list configuration (§1.6.4.2 in 1.0, renumbered in
+  1.1), the `DAQ_CONFIG_TYPE` = dynamic branch, and the four remaining commands: `FREE_DAQ` (0xD6),
   `ALLOC_DAQ` (0xD5), `ALLOC_ODT` (0xD4) and `ALLOC_ODT_ENTRY` (0xD3). Chosen ahead of SP2c
   because it is additive to the dispatch surface, and because a master that cannot allocate its
   own lists is confined to whatever the generated static configuration happens to contain.
@@ -454,7 +456,7 @@ one design can carry, so SP4 is **three sub-projects**:
   continues past `PROGRAM_START` through a genuine `PROGRAM_CLEAR` and a multi-frame
   `PROGRAM`/`PROGRAM_NEXT` block before `PROGRAM_RESET`, composing SP4b's own contribution into
   the same end-to-end sequence SP4a's Task 6 began.
-- **SP4c — sectors, formats and verification.** `GET_SECTOR_INFO` (0xCD) and the flash sector
+- **SP4c — sectors, formats and verification. Next.** `GET_SECTOR_INFO` (0xCD) and the flash sector
   configuration model, `PROGRAM_FORMAT` (0xCB) with functional access mode and the block sequence
   counter, `PROGRAM_VERIFY` (0xC8).
 

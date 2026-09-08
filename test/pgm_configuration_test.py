@@ -3,10 +3,7 @@
 
 import os
 
-import pytest
-
 from bsw_code_gen import BSWCodeGen
-from jinja2.exceptions import UndefinedError
 
 from .parameter import *
 from .conftest import XcpTest
@@ -359,41 +356,46 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
             % (i, off_lines[i])
 
 
-def test_generation_refuses_the_pgm_resource_on_a_build_that_can_program():
-    """Final-review finding 2, and the exact analogue of DD48's STIM refusal
-    (daq_configuration_test.py's test_generation_refuses_the_stim_resource_on_a_configuration_that_
-    can_stimulate). The difference between the two is instructive: DD48 refuses a protection the
-    module does NOT enforce, this refuses one it enforces too well.
+def test_generation_accepts_the_pgm_resource_on_a_build_that_can_program():
+    """DD83. This test used to be the guard itself -- named for the refusal rather than the
+    acceptance this rename now reflects -- and it made generation fail outright whenever
+    `resource_protection.programming: true` was combined with `programming.enabled: true`,
+    because an UNLOCK was spent by the single command that followed it (source/Xcp.c, and
+    README.md's *Key lifetime* section as it read before DD79 rewrote it) -- PROGRAM_START consumed
+    the grant that admitted it, the session
+    became XCP_PGM_ACTIVE, PROGRAM_RESET (the only command that ends it, and itself
+    PGM-group-protected) was locked again, and GET_SEED/UNLOCK could not re-open it because DD51's
+    ERR_PGM_ACTIVE gate refuses both while ACTIVE. A programming session, once opened, could never
+    legitimately be left, so the configuration was refused at generation rather than shipped.
 
-    Measured on this branch before the guard existed, not reasoned. An UNLOCK is spent by the one
-    command that follows it -- Xcp_ClearProtectionStatus runs after every dispatched PID but UNLOCK
-    (source/Xcp.c), README.md's *Key lifetime* documents it, and even an unprotected interposed
-    GET_STATUS spends it -- so PROGRAM_START consumes the unlock that admitted it. The session is
-    then XCP_PGM_ACTIVE, and:
+    DD79 makes a granted resource last the whole session instead of the single command following
+    the unlock that grants it, so the GET_SEED/UNLOCK round that admits PROGRAM_START is still in
+    effect when PROGRAM_RESET needs it, and the dead end above no longer forms. This test only
+    proves the CONFIGURATION generates and advertises the resource correctly -- the same content
+    check test_generation_accepts_the_pgm_resource_on_a_build_that_cannot_program below makes, on
+    the build that test's own name says cannot exist. The sequence itself -- GET_SEED, UNLOCK,
+    PROGRAM_START, PROGRAM_CLEAR, PROGRAM, PROGRAM_RESET, every step confirmed positive, and
+    PROGRAM_START proven refused before the unlock so the protection is live rather than absent --
+    is walked end to end by
+    test/pgm_protected_acceptance_test.py::test_a_protected_pgm_resource_conducts_a_full_programming_sequence_end_to_end,
+    which is what actually discharges the claim this generation-level check only advertises.
 
-        PROGRAM_RESET   -> (0xFE, 0x25) ERR_ACCESS_LOCKED, the unlock having been spent
-        GET_SEED        -> (0xFE, 0x12) ERR_PGM_ACTIVE
-        UNLOCK          -> (0xFE, 0x12)
-        DISCONNECT      -> (0xFE, 0x12)
+    Kept, renamed and inverted rather than deleted: this stays the only GENERATION-level guard on
+    this configuration. If a refusal is ever reintroduced here -- for this reason or another -- it
+    fails this one test in a single line; a regression in the session-lifetime mechanism itself
+    would instead surface as a much noisier failure partway through the acceptance test's own
+    nine-step sequence."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   resource_protection_programming=True,
+                                   **GATE_ON))
 
-    Every one of those refusals is individually conformant -- 1.1/1.7.3.2.1 and 1.7.3.2.5 list
-    ERR_PGM_ACTIVE for GET_SEED, UNLOCK and DISCONNECT with the action "wait t7, repeat infinitely
-    times" -- and the composition is a slave that cannot leave a programming session at all: the
-    only door out is PROGRAM_RESET, PROGRAM_RESET is in the locked group, and the only way to
-    unlock the group is refused because the session is open.
-
-    Refused at generation rather than repaired here because repairing it means changing the unlock
-    LIFETIME, which is one mechanism shared by CAL_PAG, DAQ and PGM alike and needs its own design.
-    Asserts only that generation fails, never on the message: raise(...) is not a registered Jinja
-    global, so every guard in source_cfg.c.jinja2 aborts with the same "'raise' is undefined"
-    UndefinedError (daq_configuration_test.py carries the full explanation above its own four).
-    What makes this test discriminating is not the message but its companion below, which shows
-    the same GATE_ON configuration generates cleanly once resource_protection.programming is left
-    False."""
-    with pytest.raises(UndefinedError):
-        XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
-                              resource_protection_programming=True,
-                              **GATE_ON))
+    # Bit 4, PGM, in the resource layout of XCP part 2 1.1/1.5 -- written as the shift
+    # script/source_cfg.c.jinja2 emits rather than as a name, because
+    # XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM lives in source/Xcp_Internal.h, which the harness does
+    # not parse for defines. The same assertion
+    # test_generation_accepts_the_pgm_resource_on_a_build_that_cannot_program makes below, now also
+    # true of a build that CAN program.
+    assert handle.config.lib.Xcp[0].general.protectedResource == (0x01 << 0x04)
 
 
 def test_generation_accepts_the_pgm_resource_on_a_build_that_cannot_program():

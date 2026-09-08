@@ -1272,7 +1272,20 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pgm_block.requested_elements = 0x00u;
             Xcp_Internal.pgm_block.frame_elements = 0x00u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-            Xcp_Internal.protection_status = 0x00u;
+            /* DD78. Every configured-protected group starts protected, which is what
+             * `= protectedResource` says and what `= 0x00u` could not: on the old, inverted field
+             * 0 happened to mean "nothing granted", and that coincidence is exactly what let a
+             * granted bit be reported as a protected one. Xcp_CTOCmdStdConnect (Xcp_Std.c) re-seeds
+             * this same way at the session boundary; the two must agree, since a freshly
+             * initialised module and a freshly connected one owe the master the same answer.
+             *
+             * Xcp_Ptr is assigned at the top of this function, so the configuration is readable
+             * here. This used to be written TWICE -- this assignment, and a Xcp_ClearProtectionStatus()
+             * call further down past the buffer loops; redundant while both wrote zero, and a real
+             * hazard once they would not. The second is gone: this line, among the other
+             * Xcp_Internal field resets and beside requested_protected_resource, is the one place
+             * that seeds it. */
+            Xcp_Internal.locked_resource = Xcp_Ptr->general->protectedResource;
             Xcp_Internal.requested_protected_resource = 0x00u;
             Xcp_Internal.last_pid = 0x00u;
             Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_NONE;
@@ -1354,8 +1367,6 @@ void Xcp_Init(const Xcp_Type *pConfig)
             for (idx = 0x00000000u; idx < (sizeof(Xcp_Internal.internal_buffer) / sizeof(Xcp_Internal.internal_buffer[0x00u])); idx ++) {
                 Xcp_Internal.internal_buffer[idx] = 0x00u;
             }
-
-            Xcp_ClearProtectionStatus();
 
             Xcp_State = XCP_INITIALIZED;
         }
@@ -1679,35 +1690,57 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  * conditionally, since an optional command a build leaves out
                                  * generates a disabled entry. Remove
                                  * this condition and a frame on the CTO PDU whose first byte falls
-                                 * in the DTO range runs the whole dispatch body -- and THREE things
-                                 * happen there, not one:
+                                 * in the DTO range runs the whole dispatch body. Only ONE thing
+                                 * happens there today, and it is harmless -- two more used to, and
+                                 * are recorded below along with what stopped each:
                                  *
                                  * - Xcp_PIDTable[pid] resolves to Xcp_CmdNotImplemented, which
-                                 *   answers ERR_CMD_UNKNOWN. Harmless in itself, and the least of
-                                 *   the three; it used to be Xcp_DTODaqStimPacket, a no-op
-                                 *   returning E_OK without filling the response buffer, which
-                                 *   transmitted whatever stale bytes that buffer still held.
-                                 * - `Xcp_Internal.last_pid = pid` runs on the way out, overwriting
-                                 *   the record of the previous command. Xcp_DTOCmdStdUnlock
-                                 *   (source/Xcp_Std.c) admits a key only when last_pid is GET_SEED
-                                 *   or UNLOCK, so one such frame between the two breaks the
-                                 *   seed-and-key sequence gate.
-                                 * - `Xcp_ClearProtectionStatus()` runs too, because the guard on it
-                                 *   is `pid != XCP_PID_CMD_UNLOCK` and no DTO-range PID is UNLOCK.
-                                 *   **That silently revokes an unlock the master already completed,
-                                 *   mid-session**, and it is the worst of the three: the master's
-                                 *   next protected command is answered ERR_ACCESS_LOCKED with
-                                 *   nothing to say why.
+                                 *   answers ERR_CMD_UNKNOWN. Harmless in itself; it used to be
+                                 *   Xcp_DTODaqStimPacket, a no-op returning E_OK without filling the
+                                 *   response buffer, which transmitted whatever stale bytes that
+                                 *   buffer still held.
+                                 *
+                                 * A second bullet stood here before DD72: `Xcp_Internal.last_pid =
+                                 * pid` ran on the way out, unconditionally, overwriting the record of
+                                 * the previous command. Xcp_DTOCmdStdUnlock (source/Xcp_Std.c) admits
+                                 * a key only when last_pid is GET_SEED or UNLOCK, so this really did
+                                 * break the seed-and-key sequence gate. DD72 guarded that write on
+                                 * the handler's own response instead (later in this same function,
+                                 * `if (SduDataPtr[0x00u] != XCP_PID_ERROR)`), and
+                                 * Xcp_CmdNotImplemented's own ERR_CMD_UNKNOWN above already satisfies
+                                 * it -- Xcp_FillErrorPacket fills that same byte with XCP_PID_ERROR
+                                 * before DD72's check is ever reached -- so this write no longer
+                                 * runs. Named here, not only at DD72's own guard, because a reader
+                                 * who greps XCP_PID_CMD_UNLOCK lands on this block.
+                                 *
+                                 * A third bullet stood here before DD79: a clear of the whole granted
+                                 * set (`Xcp_ClearProtectionStatus()`, a function DD78 has since
+                                 * deleted along with the inverted field it wrote) ran too, because
+                                 * the guard on it was `pid != XCP_PID_CMD_UNLOCK` and no DTO-range
+                                 * PID is UNLOCK. That silently revoked an unlock the master had
+                                 * already completed, mid-session, and was the worst of the three:
+                                 * the master's next protected command was answered
+                                 * ERR_ACCESS_LOCKED with nothing to say why. DD79 deleted that call
+                                 * and its guard from the dispatch outright, not just from this
+                                 * hypothetical, so a frame reaching here no longer touches
+                                 * locked_resource at all.
                                  *
                                  * Those 192 entries HAVE since been re-pointed at
-                                 * Xcp_CmdNotImplemented, and that did NOT make this safe -- it is
-                                 * the trap worth naming, because the change looks like a fix and
-                                 * is not one. The last two bullets happen after the handler
-                                 * returns, whatever the handler was, so they run either way. The
-                                 * routing decision is the guard; the table's contents are not.
-                                 * They were changed only to delete a dead function and to stop the
-                                 * table claiming a stimulation handler this dispatch path has not
-                                 * had since DD46 moved STIM to the DTO PduId. */
+                                 * Xcp_CmdNotImplemented, and unlike DD79's deletion above, that
+                                 * repointing is genuinely part of why the second bullet no longer
+                                 * fires: DD72's guard tests the RESPONSE, so whether last_pid
+                                 * survives depends on what Xcp_PIDTable[pid] answers, and
+                                 * Xcp_CmdNotImplemented's answer happens to qualify. That is a
+                                 * property of what these entries currently point to, not of the
+                                 * routing decision -- a handler placed here that answered anything
+                                 * else would put last_pid back at risk, and nothing enforces that
+                                 * none ever will. Whether Xcp_PIDTable[pid] is reached AT ALL is
+                                 * still decided above, by the routing condition this whole comment
+                                 * is about, regardless of the table's contents -- that remains the
+                                 * actual fix, not any handler's good behaviour. These entries were
+                                 * changed only to delete a dead function and to stop the table
+                                 * claiming a stimulation handler this dispatch path has not had
+                                 * since DD46 moved STIM to the DTO PduId. */
                                 if ((Xcp_Ptr->general->ctoInfo[pid] & XCP_CTO_INFO_IS_CTO_MASK) != 0x00u) {
                                     /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.1
                                      * Check if the received CTO reacts to ERR_CMD_BUSY error. If so, check if the CTO response ongoing flag is set, and
@@ -1836,8 +1869,21 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
                                                 ))
                                             {
-                                                if (((Xcp_PIDToCmdGroupTable[pid] & Xcp_Ptr->general->protectedResource) == 0x00u) ||
-                                                    ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetProtectionStatus()) != 0x00u))
+                                                /* DD80. One term, because a resource that was never
+                                                 * configured protected is never in the mask, which
+                                                 * subsumes the old `(group & protectedResource) == 0`
+                                                 * disjunct.
+                                                 *
+                                                 * The equivalence was checked, not assumed: every
+                                                 * Xcp_PIDToCmdGroupTable entry carries exactly one
+                                                 * group bit or MASK_NONE, so this agrees with the old
+                                                 * form for every PID. They would diverge only on a
+                                                 * multi-bit entry -- the old form meant "any one of
+                                                 * its groups is unlocked", this means "all of them
+                                                 * are". Keep entries single-bit; if that ever has to
+                                                 * change, this is the safe reading and the old one
+                                                 * was not. */
+                                                if ((Xcp_PIDToCmdGroupTable[pid] & Xcp_GetLockedResources()) == 0x00u)
                                                 {
                                                     result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
 
@@ -1863,19 +1909,24 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                     {
                                                         Xcp_Internal.last_pid = pid;
                                                     }
-
-                                                    if (pid != XCP_PID_CMD_UNLOCK) {
-                                                        Xcp_ClearProtectionStatus();
-                                                    }
                                                 }
                                                 else
                                                 {
-                                                    /* XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.2
-                                                     * A command addressing a protected resource that has not been
-                                                     * unlocked answers ERR_ACCESS_LOCKED. Without this branch the
-                                                     * response buffer keeps whatever the previous command left in
-                                                     * it and is transmitted anyway, so the master reads a stale
-                                                     * positive response to a command the slave refused to run. */
+                                                    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3
+                                                     * states this rule once per resource group -- "all commands
+                                                     * of the CALibration/PAGing group are protected and will
+                                                     * return an ERR_ACCESS_LOCKED upon an attempt to execute the
+                                                     * command without a previous successful GET_SEED/UNLOCK
+                                                     * sequence", and likewise for DAQ/STIM and PGM. It was cited
+                                                     * here as 1.7.3.2.2, which is the CAL error TABLE: a narrow
+                                                     * citation for a rule that governs every group. 1.6.1.1.3 is
+                                                     * also where the mask this branch tests is defined, which is
+                                                     * the coherence DD78 relies on.
+                                                     *
+                                                     * Without this branch the response buffer keeps whatever the
+                                                     * previous command left in it and is transmitted anyway, so
+                                                     * the master reads a stale positive response to a command the
+                                                     * slave refused to run. */
                                                     Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_LOCKED,
                                                                         &Xcp_Internal.cto_response.pdu_info);
                                                 }
@@ -2638,16 +2689,22 @@ Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSi
     return result;
 }
 
-uint8 Xcp_GetProtectionStatus(void) {
-    return Xcp_Internal.protection_status;
+uint8 Xcp_GetLockedResources(void) {
+    return Xcp_Internal.locked_resource;
 }
 
-void Xcp_SetProtectionStatus(void) {
-    Xcp_Internal.protection_status = Xcp_Internal.requested_protected_resource;
-}
-
-void Xcp_ClearProtectionStatus(void) {
-    Xcp_Internal.protection_status = 0x00u;
+void Xcp_UnlockResources(uint8 mask) {
+    /* DD79: a masked CLEAR of the named bits, not an assignment. Once grants persist past the next
+     * command, assigning would make unlocking a second resource silently re-lock the first --
+     * invisible while a grant lasted one command, because there was never a second grant alive to
+     * lose. DD78 inverted what this field holds; clearing the requested bits out of the still-
+     * protected mask is the same accumulation the old `|=` expressed on the granted set.
+     *
+     * A group that was never configured protected is not in the mask to begin with, so unlocking
+     * it is a no-op here rather than a bit set claiming a protection the build does not have --
+     * which is the domain half of DD78, and the reason GET_STATUS could report 0x10 on a build
+     * where PGM is not protected at all. */
+    Xcp_Internal.locked_resource &= (uint8)(~mask);
 }
 
 uint8 Xcp_CmdNotImplemented(boolean *responseExpected, const PduInfoType *pPduInfo)
