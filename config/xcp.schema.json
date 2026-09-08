@@ -783,6 +783,19 @@
       "required": ["freeze_supported"],
       "additionalProperties": false
     },
+    "sector": {
+      "type": "object",
+      "properties": {
+        "start_address": {"type": "integer", "minimum": 0},
+        "length": {"type": "integer", "minimum": 0},
+        "clear_sequence_number": {"type": "integer", "minimum": 0, "maximum": 255},
+        "program_sequence_number": {"type": "integer", "minimum": 0, "maximum": 255},
+        "programming_method": {"type": "integer", "minimum": 0, "maximum": 255}
+      },
+      "required": ["start_address", "length", "clear_sequence_number",
+                   "program_sequence_number", "programming_method"],
+      "additionalProperties": false
+    },
     "programming": {
       "type": "object",
       "properties": {
@@ -793,6 +806,12 @@
           "default": 8,
           "minimum": 1,
           "maximum": 255
+        },
+        "sectors": {
+          "description": "Flash SECTORs GET_SECTOR_INFO reports (XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.2). MAX_SECTOR -- GET_PGM_PROCESSOR_INFO's own byte 2 -- is derived as this array's length (design doc DD87, docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md), so the two commands cannot drift apart. Capped at 255, one less than the 256 a naive count could reach, so MAX_SECTOR itself, and every valid SECTOR_NUMBER in [0, MAX_SECTOR), still fit the uint8 the wire carries them in -- the same reasoning `segments` above is capped at 255 for maxSegment.",
+          "type": "array",
+          "maxItems": 255,
+          "items": {"$ref": "#/definitions/sector"}
         }
       },
       "required": ["enabled", "max_block_size"],

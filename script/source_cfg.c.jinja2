@@ -480,6 +480,40 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 {%- endfor %}
+{#- Xcp_SectorType (interface/Xcp_Types.h) has no page/address_mapping-shaped children the way a
+    segment does -- every field is a scalar GET_SECTOR_INFO reports directly -- so this is one flat
+    array per configuration, mirroring the SegmentConfig array immediately above rather than its own
+    per-segment Page/AddressMapping sub-loops. `raise(...)` here is the same deliberately-undefined
+    Jinja global as every other guard in this file (see the FIRST_PID guard's own comment further
+    down for what that means); it enforces DD87's own build-time rule (design doc
+    docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md): 1.1/1.6.5.2.2 requires
+    "Length mod AG = 0" for the length GET_SECTOR_INFO mode 1 reports in bytes. #}
+{%- for configuration in configurations %}
+{%- set address_granularity_bytes = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[configuration.protocol_layer.address_granularity] %}
+{%- for sector in configuration.programming.sectors | default([]) %}
+{%- if (sector.length % address_granularity_bytes) != 0 %}
+{{ raise('sector {} (start_address 0x{:X}) has length {}, not a multiple of the {}-byte address_granularity ({}) -- XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.2: "Length mod AG = 0" (DD87, docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md)'.format(loop.index0, sector.start_address, sector.length, address_granularity_bytes, configuration.protocol_layer.address_granularity)) }}
+{%- endif %}
+{%- endfor %}
+#define Xcp_START_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+
+static const Xcp_SectorType Xcp_SectorConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % ((configuration.programming.sectors | default([]))|length + 1)}}] = {
+{%- for sector in configuration.programming.sectors | default([]) %}
+    {
+        {{'0x%08Xu' % sector.start_address}},
+        {{'0x%08Xu' % sector.length}},
+        {{'0x%02Xu' % sector.clear_sequence_number}},
+        {{'0x%02Xu' % sector.program_sequence_number}},
+        {{'0x%02Xu' % sector.programming_method}}
+    },
+{%- endfor %}
+    {0x00000000u, 0x00000000u, 0x00u, 0x00u, 0x00u} /* sentinel, keeps the array non-empty */
+};
+
+#define Xcp_STOP_SEC_CONST_UNSPECIFIED
+#include "Xcp_MemMap.h"
+{%- endfor %}
 {%- for configuration in configurations %}
     {%- set configuration_loop = loop %}
     {%- set daq_dynamic = configuration.protocol_layer.daq_config_type | default('STATIC') == 'DYNAMIC' %}
@@ -594,7 +628,8 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
     {{'0x%04Xu' % (configuration.daq_dynamic.daq_count if daq_dynamic else configuration.daqs | length)}},
     &Xcp_EventChannelConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpEventChannel */
     NULL_PTR, /* reference to XcpPdu */
-    &Xcp_SegmentConfig{{'%02X' % loop.index0}}[0x00u] /* reference to XcpSegment */
+    &Xcp_SegmentConfig{{'%02X' % loop.index0}}[0x00u], /* reference to XcpSegment */
+    &Xcp_SectorConfig{{'%02X' % loop.index0}}[0x00u] /* reference to XcpSector */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
@@ -939,14 +974,26 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     test/connect_test.py's test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis is
     DD60's per-conjunct sweep, restored now that it has three real commands to sweep.
 
-    The other four PGM rows (PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB, GET_SECTOR_INFO 0xCD,
-    GET_PGM_PROCESSOR_INFO 0xCE) were never part of this guard, deliberately: they have no
-    configuration key of their own, nothing reads their ctoInfo bit except the dispatcher, and the
-    dispatcher answers ERR_CMD_UNKNOWN for an enabled row pointing at Xcp_CmdNotImplemented exactly
-    as it does for a disabled one. No master is told anything untrue about them. It was the CONNECT
-    advertisement that made PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX different, and that is also why
-    lifting their own refusal here is what closes D10, not merely what implements three more
-    commands.
+    The other three PGM rows (PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB, GET_PGM_PROCESSOR_INFO 0xCE)
+    were never part of this guard, deliberately: they have no configuration key of their own,
+    nothing reads their ctoInfo bit except the dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN
+    for an enabled row pointing at Xcp_CmdNotImplemented exactly as it does for a disabled one. No
+    master is told anything untrue about them. It was the CONNECT advertisement that made
+    PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX different, and that is also why lifting their own refusal
+    here is what closes D10, not merely what implements three more commands.
+
+    GET_PGM_PROCESSOR_INFO (0xCE) already points at a real handler (SP4b), and PROGRAM_NEXT (0xCA)
+    has since SP4b Task 4 -- both predate this list being written down in this exact form and are
+    left as pre-existing staleness in this paragraph's second clause rather than patched here, since
+    neither is this task's own change (SP4c task-2-report.md records it as a concern instead).
+    GET_SECTOR_INFO (0xCD) is the one row in the original list SP4c Task 2 itself moves: it now
+    points at a real handler too (Xcp_DTOCmdPgmGetSectorInfo, source/Xcp_Pgm.c), so leaving it in
+    the list above would make this task repeat the exact mistake DD88 corrects a few lines below --
+    a comment predicting behaviour the code no longer has. Like PROGRAM_NEXT and
+    GET_PGM_PROCESSOR_INFO, it gains no configuration key of its own (no
+    xcp_get_sector_info_api_enable exists), so its own row just below is unchanged by this task,
+    conjoined with only programming.enabled -- the first clause of the paragraph above still holds
+    for it, only the second (Xcp_CmdNotImplemented) one no longer does.
 
     PROGRAM_VERIFY (0xC8) used to be a fifth row in that list -- SP4c Task 1 removes it, the first
     of the three SP4c PIDs to gain both a handler and a configuration key of its own
@@ -1086,6 +1133,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
     "{{configuration.protocol_layer.identification}}", /* identification */
     {{'0x%02Xu' % (configuration.segments | default([]))|length}}, /* maxSegment */
+    {{'0x%02Xu' % (configuration.programming.sectors | default([]))|length}}, /* maxSector */
     {% if configuration.paging is defined and configuration.paging.freeze_supported %}0x01u{% else %}0x00u{% endif %}, /* pagProperties */
     {% if (configuration.protocol_layer.overload_indication | default('EVENT')) == 'EVENT' %}TRUE{% else %}FALSE{% endif %}, /* overload indication by event packet */
 };

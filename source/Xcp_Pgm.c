@@ -866,10 +866,19 @@ uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoT
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = XCP_PGM_PROPERTIES_ABSOLUTE_MODE;
 
-    /* MAX_SECTOR: 0. Truthful for a slave with no sector description (DD68) -- GET_SECTOR_INFO
-     * (still unimplemented; SP4c) answers ERR_OUT_OF_RANGE for a sector that is not available
-     * (1.0/1.6.5.2.2), and every sector number is out of range when MAX_SECTOR itself is 0. */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+    /* MAX_SECTOR: the configured sector count (interface/Xcp_Types.h's Xcp_SectorType array,
+     * config/xcp.schema.json's programming.sectors, script/source_cfg.c.jinja2). SP4b's DD68
+     * hardcoded this at 0, with no sector configuration to derive it from yet, and predicted here
+     * that GET_SECTOR_INFO would answer ERR_OUT_OF_RANGE for a sector that is not available
+     * (1.0/1.6.5.2.2's own prose). SP4c's DD88
+     * (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) corrects that prediction before it
+     * ever shipped: 1.7.3.2.5's own row for GET_SECTOR_INFO lists ERR_MODE_NOT_VALID and
+     * ERR_SEGMENT_NOT_VALID, not ERR_OUT_OF_RANGE, and Xcp_DTOCmdPgmGetSectorInfo (below) answers
+     * accordingly. This is still a slave with no sector description whenever maxSector reads back
+     * 0, exactly as DD68 intended -- only the byte's SOURCE changed, from a literal to this count.
+     * (PGM_PROPERTIES, the byte immediately above, is untouched by this change -- later SP4c tasks
+     * make it config-driven and set a bit within it; see their own comments there.) */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->maxSector;
 
     Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
 
@@ -939,6 +948,71 @@ uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *p
             /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
             *responseExpected = FALSE;
         }
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdPgmGetSectorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 sector_number = pPduInfo->SduDataPtr[0x02u];
+
+    *responseExpected = TRUE;
+
+    /* 1.0/1.6.5.2.2: mode 0 = SECTOR_INFO is the SECTOR's start address, mode 1 = SECTOR_INFO is
+     * its length. No other mode byte is defined, and unlike PROGRAM_CLEAR's own mode byte a few
+     * functions above -- refused ERR_OUT_OF_RANGE, because its own 1.7.3.2.5 row has no
+     * ERR_MODE_NOT_VALID to answer with (DD67) -- this command's own row DOES list
+     * ERR_MODE_NOT_VALID, so that is what an undefined mode byte answers here, checked before
+     * SECTOR_NUMBER (below) so a request that gets both wrong is answered for the reason a reader
+     * checking the request top-to-bottom would expect. */
+    if ((mode != 0x00u) && (mode != 0x01u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_MODE_NOT_VALID, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* DD88 (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md): the specification
+     * contradicts itself on what an out-of-range SECTOR_NUMBER answers. 1.6.5.2.2's own prose says
+     * ERR_OUT_OF_RANGE; 1.7.3.2.5's row for this same command lists ERR_MODE_NOT_VALID and
+     * ERR_SEGMENT_NOT_VALID, and not ERR_OUT_OF_RANGE. DD65 (SP4b) already settled this class of
+     * contradiction, on PROGRAM_MAX's own self-contradictory length: where a listed code fits, use
+     * it and take no deviation. ERR_SEGMENT_NOT_VALID fits -- in a command whose only parameters
+     * are a mode and a sector number, it can mean nothing else -- so that is what this branch
+     * answers, not the prose's ERR_OUT_OF_RANGE. maxSector is this build's own configured sector
+     * count (Xcp_Ptr->general->maxSector, script/source_cfg.c.jinja2), so SECTOR_NUMBER in
+     * [0, maxSector) is exactly the valid range 1.6.5.2.2's own [0, MAX_SECTOR-1] describes. */
+    else if (sector_number >= Xcp_Ptr->general->maxSector)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEGMENT_NOT_VALID, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        const Xcp_SectorType *p_sector = &Xcp_Ptr->config->sector[sector_number];
+        const uint32 sector_info = (mode == 0x00u) ? p_sector->address : p_sector->length;
+
+        /* Bytes 1-3: the two SEQUENCE_NUMBERs and PROGRAMMING_METHOD, reported verbatim regardless
+         * of MODE (1.0/1.6.5.2.2's own response layout puts them ahead of SECTOR_INFO, unconditional
+         * on the mode byte that only selects what SECTOR_INFO itself, bytes 4-7, means). Neither
+         * derived nor enforced by this module -- Xcp_SectorType's own @note (interface/Xcp_Types.h)
+         * records why. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = p_sector->clearSequenceNumber;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = p_sector->programSequenceNumber;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_sector->programmingMethod;
+
+        /* SECTOR_INFO, bytes 4-7: the DWORD mode selects, in the configured byte order -- never
+         * converted against addressGranularity here, in either direction: p_sector->length is
+         * already in BYTES (Xcp_SectorType's own @note), and generation (script/source_cfg.c.jinja2)
+         * is what refuses a configured length that is not a multiple of AG, per DD87. A handler
+         * that instead divided by the element size for AG WORD/DWORD would report a DIFFERENT,
+         * smaller value here -- test/pgm_sector_test.py's own mode-1 test is deliberately run at an
+         * AG wider than BYTE so such a regression could not hide behind AG=BYTE's trivial equality
+         * of the two readings. */
+        Xcp_CopyFromU32WithOrder(sector_info,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return E_OK;

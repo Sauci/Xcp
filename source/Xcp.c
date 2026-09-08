@@ -350,7 +350,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_PREPARE 0xCC, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xCD */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmGetSectorInfo, /* GET_SECTOR_INFO 0xCD, optional */
+#else
+    Xcp_CmdNotImplemented, /* GET_SECTOR_INFO 0xCD, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmGetPgmProcessorInfo, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
 #else

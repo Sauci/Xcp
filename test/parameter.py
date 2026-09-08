@@ -134,6 +134,18 @@ def segment(name='CAL_SEG',
             "address_mappings": list(address_mappings) if address_mappings is not None else []}
 
 
+def sector(start_address=0,
+          length=0,
+          clear_sequence_number=0,
+          program_sequence_number=0,
+          programming_method=0):
+    return {"start_address": start_address,
+            "length": length,
+            "clear_sequence_number": clear_sequence_number,
+            "program_sequence_number": program_sequence_number,
+            "programming_method": programming_method}
+
+
 def daq(name='DAQ1',
         type='DAQ',
         max_odt=1,
@@ -225,6 +237,11 @@ class DefaultConfig(dict):
                  # own max_bs, which this module no longer reports in programming mode. Defaults
                  # to the schema's own default of 8.
                  programming_max_block_size=8,
+                 # GET_SECTOR_INFO's own config array (SP4c Task 2), threaded through the same way
+                 # `segments` above is: always present in the rendered configuration, empty by
+                 # default so every existing test that never mentions a sector keeps generating a
+                 # build with MAX_SECTOR 0, exactly as before this task.
+                 sectors=(),
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -360,7 +377,8 @@ class DefaultConfig(dict):
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
                 "programming": {"enabled": programming_enabled,
-                                "max_block_size": programming_max_block_size},
+                                "max_block_size": programming_max_block_size,
+                                "sectors": list(sectors)},
                 # event()'s own bare default omits "name" (see its docstring comment), and
                 # publish_names defaults to True two lines above -- so DefaultConfig's own
                 # fallback event needs a name of its own, or every test that builds DefaultConfig()

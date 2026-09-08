@@ -1107,6 +1107,27 @@ uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoT
 uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief GET_SECTOR_INFO, XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.2.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. SP4c Task 2. Like GET_PGM_PROCESSOR_INFO above and unlike every
+ * gated handler in this group, it carries no gate on Xcp_Internal.pgm_state at all and calls no
+ * integrator function: Xcp_CTOErrorMatrix[0xCD] (source/Xcp.c) carries neither
+ * XCP_INTERNAL_ERR_SEQUENCE nor XCP_INTERNAL_ERR_PGM_ACTIVE, matching §1.7.3.2.5's own row for this
+ * command (ERR_CMD_BUSY, ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_MODE_NOT_VALID and
+ * ERR_SEGMENT_NOT_VALID only), and §1.6.5.1.1's "not allowed until PROGRAM_START" list does not
+ * name it either. It reports one configured Xcp_SectorType entry (interface/Xcp_Types.h), selected
+ * by SECTOR_NUMBER and read out according to MODE -- never defers, and therefore adds no case to
+ * Xcp_PgmPollPendingCommand or Xcp_PgmCompletePendingCommand below, the same reasoning
+ * GET_PGM_PROCESSOR_INFO's own @details gives just above. An invalid SECTOR_NUMBER (>= MAX_SECTOR)
+ * answers XCP_E_ASAM_SEGMENT_NOT_VALID, not §1.6.5.2.2's own prose ERR_OUT_OF_RANGE -- the
+ * specification contradicts itself here, and DD88
+ * (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) resolves it in the listed code's
+ * favour, the same rule DD65 already established for PROGRAM_MAX's own self-contradiction in SP4b.
+ * An invalid MODE byte (neither 0 nor 1) answers XCP_E_ASAM_MODE_NOT_VALID.
+ */
+uint8 Xcp_DTOCmdPgmGetSectorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
