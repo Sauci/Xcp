@@ -134,13 +134,26 @@ PGM_RESOURCE = 0x10  # XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM, source/Xcp_Inter
 
 
 def unlock_pgm(handle, seed=(0x42,)):
-    """One full, confirmed GET_SEED/UNLOCK round for the PGM resource. Mechanically correct on any
-    handle -- the response reflects the resource the request named regardless of whether that
-    resource is actually configured as protected (seed_key_test.py's own
-    test_unlock_unlocks_the_requested_resource_if_the_key_is_valid runs with every
-    resource_protection_* flag at its False default and still gets back (0xFF, resource)) -- which
-    is what lets the sequence below carry a real exchange on a build where, by the module
-    docstring's finding, no build may configure the PGM resource as protected at all."""
+    """One full, confirmed GET_SEED/UNLOCK round for the PGM resource, carried on a build that
+    deliberately does not configure PGM as protected -- see the module docstring for why this file
+    keeps the rich sequence and the protection concern apart.
+
+    What that costs, stated rather than glossed. DD78 made UNLOCK's byte 1 the Current Resource
+    Protection Mask of XCP part 2 1.0/1.6.1.1.3 (1 = the group IS still protected), which is what
+    1.6.1.2.5 says it carries. On a build protecting nothing that mask is 0x00 before this round
+    and 0x00 after it, so the assertion below pins that the round is HONOURED -- a positive PID and
+    an empty mask, no error and no stale byte from GET_SEED -- and cannot pin that a grant was
+    made, because on this build there is no protection to grant relief from. That is the whole of
+    what this helper claims.
+
+    An earlier version of this docstring claimed the opposite: that the response "reflects the
+    resource the request named regardless of whether that resource is actually configured as
+    protected", citing seed_key_test.py's test_unlock_unlocks_the_requested_resource_if_the_key_is_
+    valid as running with every resource_protection_* flag False and still getting (0xFF, resource)
+    back. Both halves are now false -- the byte reports what remains protected, and that test
+    configures the resource under test as protected precisely so its own assertions mean something.
+    test/pgm_protected_acceptance_test.py is where a genuinely protected PGM resource is walked
+    end to end (DD83 having made that configuration buildable)."""
     seed = list(seed)
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, seed)
@@ -159,7 +172,9 @@ def unlock_pgm(handle, seed=(0x42,)):
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF7, len(seed)) + tuple(seed)))
     handle.lib.Xcp_MainFunction()
     frame = transmitted(handle)
-    assert frame[0:2] == (0xFF, PGM_RESOURCE), 'UNLOCK must succeed and report PGM unlocked'
+    assert frame[0:2] == (0xFF, 0x00), (
+        'UNLOCK must succeed and report an empty protection mask -- this build protects no '
+        'resource, so nothing is left protected either side of the round; got {}'.format(frame))
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
 
 

@@ -21,6 +21,7 @@ from .seed_key_defects_test import exchange
 
 
 PGM_RESOURCE = 0x10  # XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM, source/Xcp_Internal.h: 0x01u << 4.
+GET_STATUS = (0xFD,)
 
 
 def test_a_protected_pgm_resource_conducts_a_full_programming_sequence_end_to_end():
@@ -57,6 +58,15 @@ def test_a_protected_pgm_resource_conducts_a_full_programming_sequence_end_to_en
     assert exchange(handle, (0xD2,))[0:2] == (0xFE, 0x25), \
         'PROGRAM_START must be refused ERR_ACCESS_LOCKED before the PGM resource is unlocked'
 
+    # DD78. The same fact the refusal above demonstrates, read off the wire where a master would
+    # read it: GET_STATUS byte 2 is the Current Resource Protection Mask of 1.0/1.6.1.1.3, 1 = the
+    # group IS protected. Checked here and again through UNLOCK's own byte 1 below, so that the
+    # behaviour (refused, then admitted) and the report the master gets about it are pinned
+    # together -- a module whose gate and whose status byte disagreed would pass one and fail the
+    # other.
+    assert exchange(handle, GET_STATUS, length=3)[2] == PGM_RESOURCE, \
+        'GET_STATUS must report PGM protected on a build that configures it so, before any unlock'
+
     # One GET_SEED/UNLOCK round for the PGM resource -- the only one this test ever sends. Task 2's
     # held-seed admission gate makes this a genuine sequence: UNLOCK reads the seed GET_SEED just
     # produced, not merely last_pid's own set-membership.
@@ -68,7 +78,11 @@ def test_a_protected_pgm_resource_conducts_a_full_programming_sequence_end_to_en
     assert frame[0:3] == (0xFF, len(seed), seed[0]), 'GET_SEED must return the PGM seed'
 
     frame = exchange(handle, (0xF7, len(seed)) + tuple(seed), length=2)
-    assert frame[0:2] == (0xFF, PGM_RESOURCE), 'UNLOCK must succeed and report PGM unlocked'
+    assert frame[0:2] == (0xFF, 0x00), (
+        'UNLOCK must succeed and report an empty protection mask -- 1.0/1.6.1.2.5 makes byte 1 the '
+        'same Current Resource Protection Mask GET_STATUS reports, and PGM was this build\'s only '
+        'protected group; 0x10 here would mean the slave still calls PGM protected at the moment '
+        'it granted it (DD78). Got {}'.format(frame))
 
     # PROGRAM_START: polled, not immediate. Xcp_ProgramStart returns E_NOT_OK once (the status code
     # must not be read on that call -- DD54's poison value would surface as ERR_GENERIC-with-0xEE if

@@ -831,8 +831,15 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                                                          &Xcp_Internal.key_master.buffer[0x00u]) == E_OK)
                         {
                             Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-                            Xcp_SetProtectionStatus();
-                            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_GetProtectionStatus();
+                            Xcp_UnlockResources(Xcp_Internal.requested_protected_resource);
+                            /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.5: "The answer
+                             * upon UNLOCK contains the Current Resource Protection Mask as described
+                             * at GET_STATUS" -- so this byte reports what is STILL protected after
+                             * the grant above, not the resource just granted. DD78: it used to
+                             * report the granted set, which made a successful UNLOCK of CAL_PAG
+                             * answer 0x01, i.e. "CAL_PAG is protected", at the moment it stopped
+                             * being. */
+                            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_GetLockedResources();
 
                             Xcp_FinalizeResPacket(0x02u, &Xcp_Internal.cto_response.pdu_info);
                         }
@@ -917,7 +924,11 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                 else
                 {
                     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-                    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_GetProtectionStatus();
+                    /* An intermediate frame of a multi-frame key: nothing has been granted yet, so
+                     * this reports the mask unchanged -- the same Current Resource Protection Mask
+                     * (1.0/1.6.1.1.3) the completed sequence above reports, read at a moment when it
+                     * still holds everything it held before the sequence began. */
+                    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_GetLockedResources();
                 }
             }
             else
@@ -981,8 +992,8 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
             /* DD72 (authentication bypass, pre-existing). This used to assign
              * requested_protected_resource unconditionally, before either check above could
              * refuse the request, and never rolled it back on failure -- so a GET_SEED that never
-             * produced a seed still left this resource requestable. Xcp_SetProtectionStatus
-             * (source/Xcp.c) copies this field into protection_status verbatim once UNLOCK's key
+             * produced a seed still left this resource requestable. Xcp_UnlockResources
+             * (source/Xcp.c) clears this field's bits out of locked_resource once UNLOCK's key
              * matches, with no way to tell "GET_SEED succeeded for this resource" from "GET_SEED
              * was merely asked for this resource and refused". Committing the write only once
              * both checks above have passed is a true rollback rather than a reset to a fixed
@@ -1261,7 +1272,10 @@ uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduI
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.session_status;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_GetProtectionStatus();
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, byte 2: the Current Resource
+     * Protection Status -- a set bit means that group IS protected. Transmitted verbatim, because
+     * Xcp_Internal.locked_resource holds exactly that (DD78). */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_GetLockedResources();
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5: session configuration id.
      * 1.6.1.2.3 has it set by a prior SET_REQUEST carrying STORE_DAQ_REQ, held in non-volatile
@@ -1634,8 +1648,13 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
     /* DD79. With the clear-after-dispatch gone, this is the ONLY thing that re-locks a resource
      * inside a running module, and XCP part 1 - Overview 1.0/2.3 -- quoted in full at
      * Xcp_CanIfRxIndication (Xcp.c) -- names the protection status bits among what a DISCONNECTED
-     * slave has reset. A grant belongs to the session that earned it. */
-    Xcp_Internal.protection_status = 0x00u;
+     * slave has reset. A grant belongs to the session that earned it.
+     *
+     * DD78: re-seeded from the configuration rather than zeroed. Zero is now "nothing is
+     * protected", which would hand every new session an unconditional grant of every group; the
+     * configured mask is what a freshly initialised module holds (Xcp_Init, Xcp.c) and is what
+     * re-locking means on a field that stores what the wire means. */
+    Xcp_Internal.locked_resource = Xcp_Ptr->general->protectedResource;
 
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 

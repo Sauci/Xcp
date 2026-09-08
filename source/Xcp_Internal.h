@@ -356,7 +356,14 @@ typedef struct {
     uint8 connect_mode;
     Xcp_ConnectionState connection_status;
     uint8 session_status;
-    uint8 protection_status;
+    /* The Current Resource Protection Mask of XCP part 2 1.0/1.6.1.1.3: a set bit means the group
+     * IS still protected. This is the value transmitted verbatim by GET_STATUS byte 2 and UNLOCK
+     * response byte 1, so no reader inverts it and no reader can get the polarity wrong.
+     *
+     * DD78: this field used to hold the opposite -- the UNLOCKED set -- and was reported as if it
+     * were this mask, at three sites. It was renamed rather than redefined in place so that every
+     * existing reader became a compile error instead of silently correct-looking arithmetic. */
+    uint8 locked_resource;
     uint8 requested_protected_resource;
     uint8 last_pid;
 
@@ -649,9 +656,8 @@ Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSi
  */
 uint8 Xcp_BlockTransferFrameElements(uint8 numberOfDataElements, uint8 elementSize);
 void Xcp_BlockTransferAbort(void);
-uint8 Xcp_GetProtectionStatus(void);
-void Xcp_SetProtectionStatus(void);
-void Xcp_ClearProtectionStatus(void);
+uint8 Xcp_GetLockedResources(void);
+void Xcp_UnlockResources(uint8 mask);
 
 /**
  * @brief Hands CanIf the next packet awaiting transmission, if the module is idle.

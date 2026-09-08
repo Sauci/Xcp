@@ -171,3 +171,95 @@ def test_an_unlock_after_get_status_is_refused_despite_a_held_seed():
     assert exchange(handle, GET_STATUS)[0] == 0xFF, 'GET_STATUS'
 
     assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
+
+
+def test_get_status_reports_which_resources_are_still_protected():
+    """DD82. XCP part 2 1.0/1.6.1.1.3 defines the Current Resource Protection Status as a mask
+    where 1 = the group IS protected, and 1.6.1.2.5 makes UNLOCK's positive response carry that
+    same mask. The module reported the UNLOCKED set instead -- so after unlocking CAL_PAG it said
+    CAL_PAG was protected, at the moment it stopped being."""
+    handle = cal_protected_handle()
+
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x01, \
+        'CAL_PAG is configured protected and nothing has been unlocked'
+
+    unlock_cal_pag(handle)
+
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x00, \
+        'CAL_PAG was reported protected after being unlocked'
+
+
+def test_get_status_reports_nothing_protected_when_nothing_is_configured_protected():
+    """The domain half of the defect, not just the direction. In a build where no resource is
+    protected -- test/parameter.py's DefaultConfig, which is what almost the whole suite runs --
+    unlocking PGM used to make this byte report 0x10, claiming a protection the build does not
+    have.
+
+    The GET_SEED/UNLOCK round below is what makes this test the domain half rather than a restated
+    initial condition: byte 2 reads 0x00 before any unlock on the defective code too, so the first
+    assertion alone passes either way. It is kept as a precondition -- an UNLOCK that is refused
+    would leave 0x00 standing for the wrong reason -- and the second assertion is the one that
+    measures the defect. UNLOCK's own answer is asserted positive for the same reason."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x00
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, SEED)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, KEY)
+
+    assert exchange(handle, (0xF8, 0x00, 0x10))[0] == 0xFF, 'GET_SEED(mode=0, PGM)'
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0] == 0xFF, 'UNLOCK(PGM)'
+
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x00, \
+        'PGM was reported protected on a build that does not protect it'
+
+
+def test_unlock_answers_the_remaining_protection_mask():
+    """1.6.1.2.5: "The answer upon UNLOCK contains the Current Resource Protection Mask as
+    described at GET_STATUS." Byte 1 of UNLOCK's positive response, same polarity as above."""
+    handle = cal_protected_handle()
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, SEED)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, KEY)
+
+    assert exchange(handle, (0xF8, 0x00, 0x01))[0] == 0xFF
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFF, 0x00), \
+        'UNLOCK reported the granted resource instead of what remains protected'
+
+
+def test_unlocking_a_second_resource_keeps_the_first_one_granted():
+    """The mask ACCUMULATES grants: unlocking DAQ must clear only DAQ's own bit, leaving CAL_PAG's
+    grant standing. The inverted field's own writer was `|=` for exactly this reason (DD79); the
+    inversion turns that into `&= ~mask` (Xcp_UnlockResources, source/Xcp.c), and an implementation
+    that assigned instead would re-lock CAL_PAG here while still answering every single-resource
+    test in this file identically.
+
+    Both halves of "still granted" are checked, because they are two different readers of the same
+    mask and either could regress alone: the dispatch gate (a MASK_CAL_PAG command, DOWNLOAD, must
+    still be admitted) and GET_STATUS byte 2, which must read 0x00 -- nothing left protected -- and
+    not 0x01, CAL_PAG protected again.
+
+    Two full GET_SEED/UNLOCK rounds, not one seed stretched over two UNLOCKs: DD81 discards the
+    seed on every completed key, so the second unlock needs a seed of its own or it is refused
+    ERR_SEQUENCE before it ever reaches Xcp_CalcKey."""
+    handle = cal_protected_handle(resource_protection_data_acquisition=True)
+
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x05, \
+        'CAL_PAG (0x01) and DAQ (0x04) are both configured protected and nothing is unlocked yet'
+
+    unlock_cal_pag(handle)
+
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x04, \
+        'CAL_PAG was unlocked, so only DAQ must remain protected'
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, SEED)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, KEY)
+
+    assert exchange(handle, (0xF8, 0x00, 0x04))[0] == 0xFF, 'GET_SEED(mode=0, DAQ)'
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFF, 0x00), \
+        'UNLOCK(DAQ) must answer an empty remaining-protection mask, both groups now granted'
+
+    assert exchange(handle, DOWNLOAD)[0] == 0xFF, \
+        'the CAL_PAG grant was dropped by the DAQ unlock that followed it'
+    assert exchange(handle, GET_STATUS, length=3)[2] == 0x00, \
+        'GET_STATUS reported CAL_PAG protected again after DAQ was unlocked'

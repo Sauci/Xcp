@@ -4,14 +4,22 @@
 """DD72 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md) -- a pre-existing
 authentication bypass in shipped seed-and-key code, independent of any feature branch this
 repository carries. Measured on the unfixed code: GET_SEED for the PGM resource, made to fail,
-answered (0xFE, 0x22); UNLOCK then answered (0xFF, 0x10); GET_STATUS then reported
-protection_status = 0x10. The PGM resource was unlocked with no seed ever produced.
+answered (0xFE, 0x22); UNLOCK then answered (0xFF, 0x10); GET_STATUS's own protection byte then
+reported 0x10 as well. The PGM resource was unlocked with no seed ever produced.
+
+Read those two 0x10s with DD78 in mind: at the time of that measurement the module reported the
+UNLOCKED set in a byte the specification defines as the still-PROTECTED one (1.0/1.6.1.1.3), so
+0x10 meant "PGM granted". DD78 inverted the stored representation -- Xcp_Internal.locked_resource
+now IS the wire value -- and every assertion in this file reads the new polarity: 1 = the group is
+still protected. Each test below that asserts the byte configures PGM as protected
+(resource_protection_programming, buildable since DD83), because on a build protecting nothing the
+byte reads 0x00 whether the bypass happened or not.
 
 Two independent legs, both fixed here:
 - Xcp_DTOCmdStdGetSeed (source/Xcp_Std.c) used to commit requested_protected_resource before
-  Xcp_GetSeed ran and never rolled it back on failure, so Xcp_SetProtectionStatus (source/Xcp.c)
-  could later copy a resource whose own seed request had been refused straight into
-  protection_status.
+  Xcp_GetSeed ran and never rolled it back on failure, so a later successful UNLOCK
+  (Xcp_UnlockResources, source/Xcp.c) could grant a resource whose own seed request had been
+  refused.
 - The CTO dispatch in Xcp_CanIfRxIndication (source/Xcp.c) used to write last_pid for every
   dispatched command unconditionally, including one whose own handler refused it, so
   Xcp_DTOCmdStdUnlock's "last_pid == GET_SEED" admission check (source/Xcp_Std.c) could not tell a
@@ -65,7 +73,8 @@ precedent (test_clear_daq_list_invalidates_a_pointer_aimed_at_it)."""
 from .parameter import *
 from .conftest import XcpTest
 from .download_test import connect
-from .seed_key_test import get_seed_key_slices, get_seed_side_effect_copy_ok, calc_key_side_effect_copy_ok
+from .seed_key_test import (get_seed_key_slices, get_seed_side_effect_copy_ok,
+                            calc_key_side_effect_copy_ok, RESOURCE_PROTECTION_FLAG)
 
 CAL_PAG = 0x01
 PGM = 0x10
@@ -119,8 +128,8 @@ def calc_key_side_effect_fail(handle):
 def exchange(handle, request, length=3):
     """Sends one CTO request and returns the first `length` response bytes -- 3 is enough for
     every status-code assertion in this file: byte 0 is always the PID (0xFF/0xFE), byte 1 is the
-    error code (GET_SEED/UNLOCK error responses) or session_status (GET_STATUS), byte 2 is
-    protection_status (GET_STATUS only; unused trailing_value padding elsewhere). A caller that
+    error code (GET_SEED/UNLOCK error responses) or session_status (GET_STATUS), byte 2 is the
+    resource protection mask (GET_STATUS only; unused trailing_value padding elsewhere). A caller that
     needs to check the transmitted DATA too -- GET_SEED's own seed bytes, task-3-brief.md step 4 --
     passes a larger length; SduDataPtr always holds a full MAX_CTO-sized frame, so any length up to
     MAX_CTO is safe to read regardless of how many of those bytes this particular response filled.
@@ -150,8 +159,14 @@ def test_a_failed_get_seed_leaves_the_resource_locked():
     UNLOCK must still be refused, and GET_STATUS must still report the resource locked.
 
     Before the fix: GET_SEED -> (0xFE, 0x22) [XCP_E_ASAM_OUT_OF_RANGE], UNLOCK -> (0xFF, 0x10)
-    [granted], GET_STATUS -> protection_status 0x10. Recorded in task-2-report.md."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    [granted], GET_STATUS -> 0x10 in the protection byte. Recorded in task-2-report.md.
+
+    DD78 changed both the configuration and the expected value. The PGM resource is now genuinely
+    configured protected -- buildable since DD83 -- because on a build that protects nothing, "the
+    resource is still locked" is not a property this byte can express: it reads 0x00 whether the
+    bypass happened or not. GET_STATUS byte 2 is the Current Resource Protection Mask of
+    1.0/1.6.1.1.3, 1 = still protected, so "PGM is still locked" is 0x10 here."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, resource_protection_programming=True))
     connect(handle)
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect_fail(handle)
@@ -169,9 +184,10 @@ def test_a_failed_get_seed_leaves_the_resource_locked():
     assert unlock_response[0:2] == (0xFE, 0x29)  # XCP_E_ASAM_SEQUENCE
 
     status_response = exchange(handle, GET_STATUS)
-    assert status_response[2] == 0x00, (
-        'protection_status=0x{:02X} after a failed GET_SEED and a should-be-refused UNLOCK '
-        '(GET_SEED: {}, UNLOCK: {})'.format(status_response[2], get_seed_response, unlock_response))
+    assert status_response[2] == PGM, (
+        'protection mask=0x{:02X} after a failed GET_SEED and a should-be-refused UNLOCK, expected '
+        'PGM (0x{:02X}) to still be protected (GET_SEED: {}, UNLOCK: {})'.format(
+                status_response[2], PGM, get_seed_response, unlock_response))
 
 
 def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_requested():
@@ -189,8 +205,15 @@ def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_
     test_a_failed_get_seed_leaves_the_resource_locked above cannot show this: immediately after
     CONNECT, last_pid is CONNECT's own pid, already outside {GET_SEED, UNLOCK}, so the last_pid leg
     alone already refuses that test's UNLOCK regardless of what requested_protected_resource holds.
-    Mutation-verified in task-2-report.md."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    Mutation-verified in task-2-report.md.
+
+    DD78 configures PGM as protected (buildable since DD83) and inverts what the protection byte
+    means: 1 = the group IS protected, 1.0/1.6.1.1.3. So the harmless outcome and the bypass are
+    now told apart by whether PGM's own bit SURVIVES -- 0x10 throughout if requested_protected_
+    resource was never allowed to become PGM, 0x00 if it was and the stale admission cleared it.
+    CAL_PAG is not configured protected here, so unlocking it is legitimately a no-op on the mask;
+    it is the vehicle for leaving last_pid where the scenario needs it, not the thing measured."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, resource_protection_programming=True))
     connect(handle)
 
     legitimate_seed = [0x11, 0x22]
@@ -206,7 +229,10 @@ def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_
     assert get_seed_response[0:2] == (0xFF, len(legitimate_seed))
 
     unlock_response = exchange(handle, (0xF7, len(legitimate_key), *legitimate_key))
-    assert unlock_response[0:2] == (0xFF, CAL_PAG)
+    assert unlock_response[0:2] == (0xFF, PGM), (
+        'UNLOCK(CAL_PAG) answered {}, expected a positive response reporting PGM (0x{:02X}) still '
+        'protected -- CAL_PAG is not configured protected on this build, so unlocking it clears '
+        'nothing from the mask'.format(unlock_response, PGM))
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect_fail(handle)
 
@@ -216,11 +242,11 @@ def test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_
     second_unlock_response = exchange(handle, (0xF7, len(legitimate_key), *legitimate_key))
 
     status_response = exchange(handle, GET_STATUS)
-    assert status_response[2] == CAL_PAG, (
-        'protection_status=0x{:02X} after PGM\'s own GET_SEED answered ERR_OUT_OF_RANGE -- '
-        'expected CAL_PAG (0x{:02X}, already legitimately granted) or, if PGM leaked through, '
-        '0x{:02X} (first UNLOCK: {}, failed GET_SEED: {}, second UNLOCK: {})'.format(
-                status_response[2], CAL_PAG, PGM, unlock_response, failed_get_seed_response,
+    assert status_response[2] == PGM, (
+        'protection mask=0x{:02X} after PGM\'s own GET_SEED answered ERR_OUT_OF_RANGE -- expected '
+        'PGM (0x{:02X}) still protected; 0x00 means the stale admission granted the resource that '
+        'failed GET_SEED (first UNLOCK: {}, failed GET_SEED: {}, second UNLOCK: {})'.format(
+                status_response[2], PGM, unlock_response, failed_get_seed_response,
                 second_unlock_response))
 
 
@@ -238,11 +264,21 @@ def test_unlock_computes_the_key_from_the_seeds_actual_length():
     received_seed_lengths == [0], for every seed -- matching the design doc's own measurement
     exactly. test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the_resource
     below makes the same assertion for a seed spanning more than one frame -- task-3-brief.md's
-    own neighbour (step 4), since total_length's pacing role is exactly what the fix changes."""
+    own neighbour (step 4), since total_length's pacing role is exactly what the fix changes.
+
+    DD78 configures CAL_PAG as protected and inverts UNLOCK's own byte 1: it is the Current
+    Resource Protection Mask of 1.0/1.6.1.1.3, 1 = still protected, so a successful unlock of the
+    build's only protected group answers 0x00. That assertion is a precondition here rather than
+    the measurement -- this test is about what Xcp_CalcKey RECEIVED -- but it has to be a real one:
+    an UNLOCK that never completed would leave received_seed_lengths empty and the seedLength
+    assertion below would fail for the wrong reason. Protecting CAL_PAG is what keeps that
+    precondition able to fail; without it the byte reads 0x00 whether the sequence was honoured or
+    not."""
     seed = [0x11, 0x22, 0x33, 0x44]
     key = [0x99]
 
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   resource_protection_calibration_paging=True))
     connect(handle)
 
     received_seed_lengths = []
@@ -257,9 +293,10 @@ def test_unlock_computes_the_key_from_the_seeds_actual_length():
                 list(get_seed_response[2:2 + len(seed)]), seed))
 
     unlock_response = exchange(handle, (0xF7, len(key), *key))
-    assert unlock_response[0:2] == (0xFF, CAL_PAG), (
-        'UNLOCK was not admitted ({}) for a legitimate single-frame seed/key exchange'.format(
-                unlock_response))
+    assert unlock_response[0:2] == (0xFF, 0x00), (
+        'UNLOCK answered {} for a legitimate single-frame seed/key exchange, expected '
+        '(0xFF, 0x00) -- CAL_PAG is this build\'s only protected group and has just been '
+        'granted'.format(unlock_response))
 
     assert received_seed_lengths == [len(seed)], (
         'Xcp_CalcKey received seedLength={} for a {}-byte seed {} -- the key was not computed '
@@ -285,12 +322,21 @@ def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the
     frame's reported length or the frame count (either of which the fix could satisfy by
     accident), and confirms Xcp_CalcKey's own double received seedLength == len(seed) -- the value
     the pre-fix code zeroed out -- here in the multi-frame case, complementing
-    test_unlock_computes_the_key_from_the_seeds_actual_length's single-frame one above."""
+    test_unlock_computes_the_key_from_the_seeds_actual_length's single-frame one above.
+
+    DD78 configures the resource under test as protected (RESOURCE_PROTECTION_FLAG,
+    test/seed_key_test.py -- all four are buildable on DefaultConfig, PGM since DD83) and inverts
+    the protection byte: it is the Current Resource Protection Mask of 1.0/1.6.1.1.3, 1 = the group
+    IS protected. So "the grant took effect" is now byte 2 reading 0x00 with that resource the only
+    bit that was ever in the mask, which also proves the RIGHT group was released. On a build
+    protecting nothing the byte reads 0x00 from CONNECT onwards and could not have told a grant
+    from a refusal at all."""
     max_cto = 8
     seed = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA]
     key = seed
 
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto,
+                                   **{RESOURCE_PROTECTION_FLAG[resource]: True}))
     connect(handle)
 
     received_seed_lengths = []
@@ -329,9 +375,10 @@ def test_a_legitimate_multi_frame_get_seed_and_unlock_sequence_still_unlocks_the
                 received_seed_lengths, len(seed), seed, len(seed_slices)))
 
     status_response = exchange(handle, GET_STATUS)
-    assert status_response[2] == resource, (
-        'GET_STATUS reported protection_status=0x{:02X}, expected the requested resource 0x{:02X} '
-        'to be granted'.format(status_response[2], resource))
+    assert status_response[2] == 0x00, (
+        'GET_STATUS reported a protection mask of 0x{:02X} after a legitimate multi-frame '
+        'GET_SEED/UNLOCK for resource 0x{:02X}, which is the only group this build protects -- '
+        'expected 0x00, nothing left protected'.format(status_response[2], resource))
 
 
 def test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_positive_response():
@@ -368,17 +415,24 @@ def test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_posi
     1.0/1.7.3.2.1's seven listed UNLOCK error codes (verified against the 1.0 PDF, which
     pdftotext -layout extracts cleanly) fits an integrator callback failing outright, and why
     ERR_GENERIC is the same recorded deviation DD57 already uses for PROGRAM_RESET's identical
-    shape of problem (source/Xcp_Pgm.c)."""
+    shape of problem (source/Xcp_Pgm.c).
+
+    DD78 configures PGM as protected (buildable since DD83) and runs the sequence against PGM
+    rather than CAL_PAG, so that "nothing was granted" is a claim this build can actually falsify:
+    GET_STATUS byte 2 is the Current Resource Protection Mask of 1.0/1.6.1.1.3, 1 = still
+    protected, and it must still read PGM (0x10) at the end. A grant slipping through would clear
+    that bit to 0x00. On the old, unprotected build the byte read 0x00 whether the failed UNLOCK
+    granted anything or not."""
     seed = [0x11, 0x22, 0x33, 0x44]
     key = [0x99]
 
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, resource_protection_programming=True))
     connect(handle)
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_fail(handle)
 
-    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+    get_seed_response = exchange(handle, (0xF8, 0x00, PGM), length=2 + len(seed))
     assert get_seed_response[0:2] == (0xFF, len(seed))
 
     unlock_response = exchange(handle, (0xF7, len(key), *key), length=8)
@@ -391,9 +445,10 @@ def test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_posi
                 unlock_response))
 
     status_response = exchange(handle, GET_STATUS)
-    assert status_response[2] == 0x00, (
-        'protection_status=0x{:02X} after a GET_SEED/UNLOCK exchange whose Xcp_CalcKey failed -- '
-        'nothing should have been granted'.format(status_response[2]))
+    assert status_response[2] == PGM, (
+        'protection mask=0x{:02X} after a GET_SEED/UNLOCK exchange whose Xcp_CalcKey failed -- '
+        'nothing should have been granted, so PGM (0x{:02X}) must still be protected'.format(
+                status_response[2], PGM))
 
 
 def test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_next():
@@ -433,17 +488,23 @@ def test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_nex
     issued -- the same unconditional discard the reissuing above relies on -- so this is refused
     with ERR_SEQUENCE before ever reaching Xcp_CalcKey again. It documents DD81's own interaction
     with the defect this test is named for, in the place a reader of that defect would look for
-    it."""
+    it.
+
+    DD78 configures PGM as protected (buildable since DD83) and runs the whole chain against PGM
+    rather than CAL_PAG, so the closing "nothing was ever granted" assertion is one this build can
+    falsify: GET_STATUS byte 2 is the Current Resource Protection Mask of 1.0/1.6.1.1.3, 1 = still
+    protected, and PGM's own bit (0x10) must survive all four probes. Any grant leaking out of the
+    chain clears it to 0x00; on the old, unprotected build the byte read 0x00 either way."""
     seed = [0x11, 0x22, 0x33, 0x44]
 
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, resource_protection_programming=True))
     connect(handle)
 
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_fail(handle)
 
     for attempt, key in enumerate(([0x99], [0x55], [0x11, 0x22])):
-        get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+        get_seed_response = exchange(handle, (0xF8, 0x00, PGM), length=2 + len(seed))
         assert get_seed_response[0:2] == (0xFF, len(seed)), (
             'GET_SEED before attempt #{} answered {}, expected a genuine fresh seed (0xFF, {}) -- '
             'DD81 now requires one before every attempt below, so this is asserted rather than '
@@ -462,9 +523,10 @@ def test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_nex
         'UNLOCK (DD81, source/Xcp_Std.c)'.format(no_fresh_seed_response))
 
     status_response = exchange(handle, GET_STATUS)
-    assert status_response[2] == 0x00, (
-        'protection_status=0x{:02X} after a chain of UNLOCK attempts whose Xcp_CalcKey always '
-        'failed -- nothing should ever have been granted'.format(status_response[2]))
+    assert status_response[2] == PGM, (
+        'protection mask=0x{:02X} after a chain of UNLOCK attempts whose Xcp_CalcKey always '
+        'failed -- nothing should ever have been granted, so PGM (0x{:02X}) must still be '
+        'protected'.format(status_response[2], PGM))
 
 
 def test_a_key_mismatch_still_answers_access_locked_not_the_calc_key_failure_code():
