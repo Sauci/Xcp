@@ -91,6 +91,67 @@ def test_program_verify_refuses_each_reserved_verification_type_bit_without_call
         'a reserved verification-type bit must never reach the integrator'
 
 
+@pytest.mark.parametrize('verification_type', (0x0004, 0x0100))
+def test_program_verify_accepts_and_forwards_the_values_immediately_outside_the_reserved_span(verification_type):
+    """Task 1 review, fix round 1, Important finding: the reserved span's own boundaries were
+    unverified. test_program_verify_refuses_each_reserved_verification_type_bit_... below pins the
+    five reserved bits themselves (0x0008..0x0080), and every positive-path test elsewhere in this
+    file uses 0x0002 -- so nothing distinguished the correct mask (0x00F8u, exactly 0x0008..0x0080)
+    from an off-by-one neighbour that also swallows an adjacent, legal bit. 0x0004 is 'complete
+    flash', the highest DEFINED bit (1.6.5.2.7), immediately below the reserved span's own 0x0008
+    floor; 0x0100 is the lowest USER DEFINED bit, immediately above the reserved span's own 0x0080
+    ceiling. Neither is reserved, so both must reach the integrator, with the exact value intact --
+    not merely 'not refused', which a wire-only assertion could satisfy by accident if the module
+    answered positively without ever calling Xcp_ProgramVerify at all.
+
+    Mutation (measured for the review, task-1-report.md fix round 1): masking with 0x00FCu (0x00F8u
+    | 0x0004u) makes the 0x0004 case fail -- refused (0xFE, 0x22) instead of reaching the
+    integrator. Masking with 0x01F8u (0x00F8u | 0x0100u) makes the 0x0100 case fail the identical
+    way. Each mutation fails only its own case; the other passes unaffected, since 0x00FCu still
+    leaves 0x0100 alone and 0x01F8u still leaves 0x0004 alone -- confirming each boundary needs its
+    own case, not one shared value that fails to catch a defect in the OTHER direction."""
+    handle = pgm_verify_handle()
+
+    frame = send(handle, (0xC8, 0x00) + tuple(u16_to_array(verification_type, 'LITTLE_ENDIAN')) +
+                          tuple(u32_to_array(0x11223344, 'LITTLE_ENDIAN')))
+
+    assert frame[0] == 0xFF, \
+        'a value immediately outside the reserved span (0x%04X) must reach the integrator and ' \
+        'succeed, not be refused as if it were reserved' % verification_type
+    mode, actual_type, value, _p_status_code = handle.xcp_program_verify.call_args[0]
+    assert actual_type == verification_type, \
+        'the exact boundary value must reach the integrator, not a neighbouring one'
+    assert value == 0x11223344, 'verificationValue must still be forwarded exactly alongside it'
+
+
+def test_program_verify_refuses_a_reserved_bit_even_when_combined_with_a_defined_one():
+    """Task 1 review, fix round 1, Important finding's second half: 'consider also whether a
+    reserved bit combined with a defined one should be refused'. 0x0081 = 0x0080 (reserved) | 0x0001
+    (calibration areas, defined) -- chosen over the review's own suggested 0x0088, which on
+    inspection is 0x0080 | 0x0008, two RESERVED bits combined, not a reserved bit combined with a
+    defined one; it would not have exercised the case this test is actually for.
+
+    Closes a hole neither existing test can:
+    test_program_verify_refuses_each_reserved_verification_type_bit_... sends each reserved bit
+    ALONE, so a handler that checked verification_type against each reserved constant with `==`
+    (equality against a single value, mirroring the exact defect
+    test_program_clear_unrecognised_mode_is_refused_err_out_of_range_without_calling_the_integrator
+    in pgm_clear_test.py documents for PROGRAM_CLEAR's own mode byte) would still pass every one of
+    those five cases -- 0x0081 matches none of them by equality -- while wrongly admitting a
+    reserved bit that happens to arrive alongside a legal one. The bitmask check
+    (verification_type & 0x00F8u) catches this by construction; this test is what actually confirms
+    it does, on the wire."""
+    handle = pgm_verify_handle()
+
+    frame = send(handle, (0xC8, 0x00) + tuple(u16_to_array(0x0081, 'LITTLE_ENDIAN')) +
+                          tuple(u32_to_array(0x00000000, 'LITTLE_ENDIAN')))
+
+    assert frame[0:2] == (0xFE, 0x22), \
+        'ERR_OUT_OF_RANGE, even though 0x0001 (calibration areas) alone would be legal'
+    assert handle.xcp_program_verify.call_count == 0, \
+        'a reserved bit combined with a defined one must still never reach the integrator'
+
+
 def test_program_verify_answers_err_verify_on_a_failing_callback():
     """Brief test 3. Design doc DD91: 'ERR_VERIFY, also in the row, is answered when the
     integrator reports failure' -- the polled contract's ordinary E_OK-with-non-zero-statusCode
