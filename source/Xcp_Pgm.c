@@ -1062,7 +1062,7 @@ void Xcp_PgmAbandonPendingCommand(void)
      *
      * pgm_state is deliberately NOT touched here, and that is a correction to DD55 as written.
      * Two earlier forms of this function did touch it. The first reset it unconditionally, which
-     * silently ended an established session on any ordinary SYNCH -- 1.1/1.7.1.1 requires SYNCH to
+     * silently ended an established session on any ordinary SYNCH -- 1.1/1.7.1.2 requires SYNCH to
      * stay available throughout one -- because PROGRAM_RESET and PROGRAM_PREPARE can both be
      * pending while pgm_state is XCP_PGM_ACTIVE (PROGRAM_RESET legally from ACTIVE per DD57;
      * PROGRAM_PREPARE legally too, e.g. a second code block mid-session). The second reset it only

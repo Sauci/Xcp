@@ -84,7 +84,7 @@ def test_the_pending_response_still_arrives_after_an_err_cmd_busy():
 
 
 def test_synch_is_exempt_and_abandons_without_clearing_the_slot():
-    """1.1/1.7.1.1 makes SYNCH the master's means of resynchronising; a SYNCH that cannot get
+    """1.1/1.7.1.2 lists SYNCH among the master's Pre-Actions for error recovery; a SYNCH that cannot get
     through leaves a confused master with no way out, so it is answered ERR_CMD_SYNCH.
 
     It must NOT clear the slot. Xcp_MainFunction polls only while pending_command.active, so
@@ -349,7 +349,7 @@ def test_program_reset_answers_before_disconnecting():
     program_reset(handle)
 
     # Sent before Xcp_MainFunction ever runs, so nothing has flushed PROGRAM_RESET's own response
-    # to CanIf yet. 1.1/1.7.1.1 exempts SYNCH from every busy gate this module has, precisely so it
+    # to CanIf yet. 1.1/1.7.1.2 exempts SYNCH from every busy gate this module has, precisely so it
     # always gets through when the module is still connected -- the disconnected-state gate is a
     # different, earlier check, and is the one this frame is actually testing.
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFC,)))
@@ -716,7 +716,7 @@ def test_a_mid_session_synch_does_not_end_the_programming_session():
     already-established session -- since 1.1/1.6.5.2.3 allows it from ACTIVE too
     (test_program_prepare_is_also_accepted_from_xcp_pgm_active above; a second code block
     mid-session is the natural reason a master would send it there). The reset ended such a session
-    silently on any ordinary SYNCH, which 1.1/1.7.1.1 requires to stay available throughout one:
+    silently on any ordinary SYNCH, which 1.1/1.7.1.2 requires to stay available throughout one:
     DD51's new pgm_state disjunct would stop firing for the rest of the session, a second
     PROGRAM_START would be accepted where DD49 requires a refusal, and the master would be told
     nothing on the wire to suggest either.

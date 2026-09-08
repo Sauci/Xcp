@@ -1094,7 +1094,7 @@ void Xcp_PgmRequestPending(void);
 /**
  * @brief Abandons the pending PGM command without releasing its slot (DD55).
  * @details Defined in Xcp_Pgm.c and called from Xcp_CanIfRxIndication's ERR_CMD_BUSY gate when
- * SYNCH (1.1/1.7.1.1) arrives while Xcp_Internal.pending_command.active is TRUE. Sets `abandoned`
+ * SYNCH (1.1/1.7.1.2) arrives while Xcp_Internal.pending_command.active is TRUE. Sets `abandoned`
  * and returns pgm_state to XCP_PGM_IDLE; deliberately leaves `active` alone -- Xcp_MainFunction
  * polls only while `active` is TRUE, so clearing it here would stop that polling and strand the
  * integrator mid-operation, its callback never called again, never reporting completion.
