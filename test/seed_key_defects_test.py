@@ -499,3 +499,58 @@ def test_a_key_mismatch_still_answers_access_locked_not_the_calc_key_failure_cod
     assert handle.can_if_transmit.call_count == 0, (
         'GET_STATUS was answered after a key-mismatch UNLOCK, but 1.0/1.6.1.2.5 disconnects the '
         'session on a rejected key -- a disconnected slave processes nothing but CONNECT')
+
+
+def test_get_seed_mode_1_after_the_whole_seed_was_sent_answers_zero_remaining():
+    """Final review, F3. DD73 stopped Xcp_DTOCmdStdGetSeed (source/Xcp_Std.c) zeroing
+    seed.total_length once the final chunk goes out -- that zeroing was the DD73 defect, because
+    Xcp_DTOCmdStdUnlock reads the same field as the seed LENGTH it hands Xcp_CalcKey.
+
+    Removing it changed one behaviour nobody asked about and no test covered. The `mode == 1` gate
+    at source/Xcp_Std.c:990 is `total_length != 0`, so on the old code a mode=1 request made after
+    the seed had been fully transmitted found total_length == 0 and answered ERR_SEQUENCE; now the
+    gate passes, 0 bytes remain, and the slave answers (0xFF, 0x00).
+
+    The new answer is the defensible one -- 1.1/1.6.1.2.4's ERR_SEQUENCE rule is about a mode=1
+    with no preceding mode=0 request at all, which is a different thing from "you have already
+    been sent everything" -- but it was an accident of the DD73 fix rather than a decision, so it
+    is pinned here and recorded in the DD73 entry.
+
+    The existing coverage cannot reach this state: seed_key_test.py's only mode=1 test
+    parametrises 7..12-byte seeds at MAX_CTO=8, so a remainder always survives the first frame.
+    This test uses a 4-byte seed, which fits entirely in the first frame's 6 payload bytes."""
+    seed = [0xDE, 0xAD, 0xBE, 0xEF]
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=8))
+
+    def get_seed_side_effect(p_seed_buffer, _max_seed_length, p_seed_length):
+        for i, b in enumerate(seed):
+            p_seed_buffer[i] = b
+        p_seed_length[0] = len(seed)
+        return handle.define('E_OK')
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # GET_SEED mode=0: the whole 4-byte seed leaves in this one frame, so nothing remains.
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x00, 0x01)))
+    handle.lib.Xcp_MainFunction()
+    assert handle.can_if_transmit.call_count == 1
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFF, len(seed))
+    assert list(handle.can_if_transmit.call_args[0][1].SduDataPtr[2:2 + len(seed)]) == seed
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # Reset before the request under test. The mode=0 answer above is (0xFF, 0x04) and the one
+    # checked below is (0xFF, 0x00), so they differ in byte 1 -- but call_args is a live view into
+    # the single shared cto_response buffer, not a snapshot, so the count check is what actually
+    # distinguishes "mode=1 was answered" from "nothing was dispatched".
+    handle.can_if_transmit.reset_mock()
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x01, 0x01)))
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_count == 1
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFF, 0x00)

@@ -38,9 +38,31 @@ def handle_with_open_download_block(declared_elements, mta=0x1000):
     connect(handle)
     set_mta(handle, mta)
 
+    # Reset both mocks so the premise assertions below see ONLY the DOWNLOAD's own effects --
+    # connect() and set_mta() each transmit a response of their own.
+    handle.can_if_transmit.reset_mock()
+    handle.xcp_write_slave_memory_u8.reset_mock()
+
     handle.lib.Xcp_CanIfRxIndication(
         0x0001, handle.get_pdu_info((0xF0, declared_elements) + BLOCK_FIRST_FRAME_PAYLOAD))
     handle.lib.Xcp_MainFunction()
+
+    # The premise this helper exists to establish, asserted rather than assumed. Without these two
+    # checks every test in this file passes vacuously: if the DOWNLOAD were refused or never
+    # dispatched, "no block is open" and "the fix works" produce IDENTICAL evidence -- zero reads
+    # and zero transmits -- so all three tests would stay green while pinning nothing. Final
+    # review, F6.
+    #
+    # The pair is a complete discriminator for the ways this setup can silently fail:
+    #   * refused (ERR_OUT_OF_RANGE, ERR_CMD_SYNTAX, ...) -> transmits an error frame
+    #   * never dispatched                               -> writes nothing
+    #   * completed as a single non-block frame          -> transmits a positive response
+    # Only a genuinely open block both consumes the payload and stays silent, because
+    # 1.1/1.6.2.1.1 has the slave acknowledge only the LAST frame of a block.
+    assert handle.xcp_write_slave_memory_u8.call_count > 0, \
+        'the DOWNLOAD never reached slave memory: no block was opened and this file tests nothing'
+    assert handle.can_if_transmit.call_count == 0, \
+        'the DOWNLOAD answered instead of opening a block: this file tests nothing'
 
     return handle
 

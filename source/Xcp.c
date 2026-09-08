@@ -1071,7 +1071,16 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* UNLOCK 0xF7, optional */
+    /* DD76: GENERIC is not in UNLOCK's own 1.7.3.2.1 row -- that row's seven codes are the seven
+     * listed above, verified against the 1.0 table. It is declared here because
+     * Xcp_DTOCmdStdUnlock (Xcp_Std.c) answers ERR_GENERIC when the integrator's Xcp_CalcKey fails
+     * outright, a condition none of the seven describes: ERR_ACCESS_LOCKED, which the sibling
+     * branch answers, asserts the key was WRONG, which is a different claim from "no key could be
+     * computed". Recorded as a deviation in the DD76 entry, and declared here for the same reason
+     * PROGRAM_RESET 0xCF above declares its own -- a row that does not list what its handler can
+     * answer is a row that lies to whoever reads it next. No behavioural effect: only CMD_BUSY,
+     * CMD_SYNTAX and PGM_ACTIVE are ever tested against this table. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC, /* UNLOCK 0xF7, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_SEED 0xF8, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_REQUEST 0xF9, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_ID 0xFA, optional */
@@ -1731,8 +1740,9 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                      * lost and the other malformed regardless of which of the two
                                      * writers loses the race.
                                      *
-                                     * 1.1/1.7.1.1 exempts SYNCH: it is the master's only means of
-                                     * resynchronising, and one that cannot get through leaves a
+                                     * 1.1/1.7.1.2 lists SYNCH among the Pre-Actions that bring the slave
+                                     * to a well-defined state before the master retries, so it is
+                                     * exempted here: a SYNCH that cannot get through leaves a
                                      * confused master with no way out. Exempted here, not answered
                                      * here -- it falls through to dispatch below like any other
                                      * command and gets its usual ERR_CMD_SYNCH from

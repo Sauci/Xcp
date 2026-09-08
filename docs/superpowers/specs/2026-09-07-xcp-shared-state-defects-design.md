@@ -202,6 +202,32 @@ positive.
 
 ---
 
+### DD77 — `CONNECT` finishes the teardown DD74 started
+
+DD74 reset five fields and justified all of them by quoting XCP part 1 - Overview 1.0/§2.3: *"In
+'DISCONNECTED' state … The session status, all DAQ lists and the protection status bits are
+reset."* The final review noticed that the quote names **session status** and **DAQ lists**, and
+DD74 reset neither — five fields §2.3 does not mention, and not the two it does. DD77 closes that
+gap for the two fields where the module can act honestly:
+
+- `session_status`'s request bits (R1), which otherwise wedge 45 command rows permanently.
+- `daq_pointer.valid` (R2), which otherwise lets a new session write the old session's ODT entry.
+
+**A caveat that belongs on the record, because it is load-bearing and unverifiable here.** XCP
+part 1 - Overview is **not in `docs/external`** — the repository holds part 2 (1.0 and 1.1),
+ASAP2, and three AUTOSAR documents, and nothing else. The §2.3 text is quoted in full at
+`Xcp_CanIfRxIndication` (`source/Xcp.c`) and cited from two further sites in `Xcp_Std.c`, but
+nobody working from this repository alone can check it. It was already the justification for
+DD74's five resets before DD77 leaned on it for two more. Every other citation in this batch was
+re-verified against a held PDF during the final review — this is the one that cannot be, and it
+should be either confirmed against the real document or replaced with a part 2 argument.
+
+Not everything §2.3 names is reset even now: **all DAQ lists** is the DD25/SP2d question, and
+`DAQ_RUNNING` deliberately keeps tracking real state rather than being cleared to a value nothing
+enforces. DD77 is the honest subset, not full compliance with the sentence.
+
+---
+
 ## 3. What the audit found sound
 
 **One entry no longer holds, and this fix batch is what invalidated it.** `cto_response.pdu_info`
@@ -216,7 +242,7 @@ Two further consequences of that leg, both measured, neither a reason to revert 
 - An `UNLOCK` whose `Xcp_CalcKey` fails no longer corrupts `last_pid` — DD76 fixes the cause.
 - `SYNCH` between `GET_SEED` and `UNLOCK` no longer breaks the sequence, because `SYNCH` answers
   `ERR_CMD_SYNCH` by design and the leg does not record erroring commands. This is a **deliberate
-  behaviour change, not a regression**: §1.7.1.1 makes `SYNCH` the master's means of resynchronising,
+  behaviour change, not a regression**: §1.7.1.2 lists `SYNCH` among the master's Pre-Actions for error recovery,
   and a resynchronisation that silently invalidated an in-progress seed-and-key exchange would be a
   worse reading than one that does not. Recorded because nobody decided it at the time — it fell out
   of the leg.
@@ -229,9 +255,9 @@ write-only dead field alongside `connect_mode` and `event.successful_transmissio
 Recorded so the audit is not repeated from scratch. Each of these was traced writer-to-reader and
 found to have no reader inferring more than its writer answered:
 
-`connection_status`, `session_status` (`SET_REQUEST` refuses every bit but `STORE_CAL_REQ`, so the
-`ERR_PGM_ACTIVE` gate cannot be wedged), `protection_status` itself, `ongoing_transmit_type` (one
-frame outstanding at a time), `cto_response.pdu_info` (a buffer, not a predicate),
+`connection_status`, ~~`session_status`~~ (**retracted — see §3c/R1; the gate CAN be wedged, and
+permanently**), `protection_status` itself, `ongoing_transmit_type` (one
+frame outstanding at a time), ~~`cto_response.pdu_info`~~ (**retracted — see §3 above**),
 `daq_alloc_state`, `allocated_daq_count`, `internal_buffer`, `seed.buffer`, `seed.current_index`,
 and `key_slave`.
 
@@ -239,6 +265,9 @@ and `key_slave`.
 invalidate it, and `ALLOC_ODT`/`ALLOC_ODT_ENTRY` only ever raise counts, so a validated pointer
 cannot go out of bounds. `SET_DAQ_PTR(0,0,3)` → `0xFF`; a growing `ALLOC_ODT_ENTRY` then
 `WRITE_DAQ` → `0xFF`; `FREE_DAQ` then `WRITE_DAQ` → `ERR_OUT_OF_RANGE`.
+
+**That measurement answered *bounds*, not *session isolation*, and the audit did not notice the
+difference.** `daq_pointer` survives `CONNECT` exactly as the MTA did — see §3c/R2.
 
 **`connect_mode` and `event.successful_transmission_pending` are write-only dead state** — no
 reader anywhere. Not defects; noted because a future reader would inherit whatever the last writer
@@ -254,7 +283,7 @@ fixed tree, all reaching `Xcp_CalcKey` with `seedLength` 0 and all granting the 
 sharpest is `GET_SEED(A)` succeeding, `GET_SEED(B)` being refused, then `UNLOCK` — DD72's own
 scenario one step further along.
 
-It is pre-existing and none of DD70–DD76 changed it. It is left unfixed deliberately: the remedy is
+It is pre-existing and none of DD70–DD77 changed it. It is left unfixed deliberately: the remedy is
 a design decision about what "a seed is held" means — DD73 is what finally gives the module a
 `seed.total_length` capable of answering it — and taking that decision inside a batch of measured
 repairs would be reasoning in the wrong order. It belongs to whoever takes the seed-and-key work
@@ -265,6 +294,106 @@ read outside only at `source/Xcp.c:1824` and `pending_command` at `:1445`, `:174
 `:1994` — each asking exactly the question its writer answers.
 
 ---
+
+## 3c. Retractions and additions from the final review
+
+A whole-branch review after the seven fixes landed re-derived §3 rather than trusting it. **It
+confirmed that all seven fixes close their own defects and found no route that reopens any of
+them.** Everything below is a correction to the *record*, or a defect the audit missed — not a
+regression in the fixes.
+
+### R1 — `session_status` is NOT sound. The `ERR_PGM_ACTIVE` gate can be wedged permanently.
+
+§3 claimed the gate "cannot be wedged" because `SET_REQUEST` refuses every bit but
+`STORE_CAL_REQ`. That reasoning is wrong: the one accepted bit is enough.
+
+`SET_REQUEST(STORE_CAL_REQ)` ORs the bit into `session_status` (`Xcp_Std.c`). It is cleared in
+exactly one place — `Xcp_MainFunction` (`Xcp.c`) — and only when the integrator's
+`Xcp_StoreCalibrationDataToNonVolatileMemory` returns `E_OK`. An integrator whose NVM write fails,
+or which is stubbed out, returns `E_NOT_OK` forever and the bit never clears. From that moment the
+gate refuses **every command whose `Xcp_CTOErrorMatrix` row carries `XCP_INTERNAL_ERR_PGM_ACTIVE`
+— 45 rows, `DISCONNECT` (0xFE) among them**, along with `GET_SEED`, `UNLOCK`, and all of CAL and
+DAQ.
+
+`CONNECT` (0xFF) is itself ungated (its row is `0x00u`), so a master can still connect — and
+recovers nothing, because `CONNECT` does not clear the bit. **Only `Xcp_Init` — a power cycle —
+recovers.** Verified in code, not inferred: the row, the gate, the single clear site, and
+`CONNECT`'s teardown.
+
+An availability defect of the same class as the six, and pre-existing. **Fixed — DD77.**
+
+`CONNECT` now clears the session-status *request* bits. Three options were weighed: (a) `CONNECT`
+clears them, (b) the module bounds the wait and gives up, (c) it stays an undocumented integrator
+contract. (a) is taken, because the quoted §2.3 already commits this module to resetting session
+status at the session boundary, and the alternative it trades against is a permanent refusal of
+`DISCONNECT`.
+
+The cost is stated rather than hidden: if the integrator is still storing when a new master
+connects, `Xcp_MainFunction` stops polling it, so that store goes untracked and no `EV_STORE_CAL`
+follows. The new master never requested the store, and `GET_STATUS` reporting a pending request
+the new session cannot influence is the more misleading of the two answers.
+
+**Masked, not zeroed.** `session_status` also carries `DAQ_RUNNING` (bit 6), which `Xcp_Daq.c`
+maintains from whether DAQ lists are actually running. Zeroing the byte would make `GET_STATUS`
+report a stopped DAQ while it runs — this module does not stop DAQ on `CONNECT` (§R2 and DD25/SP2d),
+so that bit must keep tracking the truth rather than be reset to a state nothing enforces. Only
+`STORE_CAL_REQ`, `STORE_DAQ_REQ` and `CLEAR_DAQ_REQ` are cleared; today only the first is reachable,
+the other two being refused by `SET_REQUEST`, and they are included so the reset stays correct if
+that ever changes.
+
+**A second, smaller thing R1 exposes:** DD74's own comment justifies `CONNECT`'s teardown by
+quoting XCP part 1 §2.3, "the session status … [is] reset" — and then resets five fields §2.3 does
+not name while leaving `session_status`, the one it does, standing. `Xcp_Std.c` separately claims
+the bit lasts only "until the next `CONNECT`", which was untrue before this batch and is untrue
+after it. The citation was used to license a set of resets it does not describe.
+
+### R2 — `daq_pointer` survives `CONNECT`, which is DD74's own item in a different field
+
+DD74 fixed "the MTA survives, so a `DOWNLOAD` with no `SET_MTA` writes at the previous session's
+address". `daq_pointer` is the same kind of per-session cursor and was not reset, because §3
+measured it for *bounds* safety and never asked the isolation question.
+
+Session 1 sends `SET_DAQ_PTR(0,0,0)`, setting `valid = TRUE`. The master vanishes without
+`DISCONNECT` — DD74's own threat model. A new master `CONNECT`s, and sends `WRITE_DAQ` with no
+`SET_DAQ_PTR` of its own: the pointer is still valid, so the write lands in the previous session's
+ODT entry. `Xcp_DaqFreeAll` does clear it, but runs only from `DISCONNECT` and only under
+`DAQ_DYNAMIC`.
+
+Not a disclosure — DAQ-list corruption by a master that never selected that entry. **Fixed —
+DD77**, narrowly: `CONNECT` sets `daq_pointer.valid = FALSE` and touches nothing else.
+
+That narrowness is the point. `FALSE` is already how this module represents 1.1/1.6.4.1.1.2's
+undefined pointer, so the next `WRITE_DAQ` answers `ERR_OUT_OF_RANGE` and tells the master to
+position the pointer it never set. Clearing the DAQ lists *themselves* is the larger DD25/SP2d
+question about what a session boundary owes static DAQ lists, and this deliberately does not
+settle it — which is why the test asserts the pool is still allocated after the reconnect, so a
+later change that did free it would fail the test rather than silently pass it.
+
+### R3 — the `last_pid` narrowing is wider than §3 recorded
+
+DD72's second leg stopped recording `last_pid` for commands that answered an error, using byte 0 of
+`cto_response.pdu_info` as the test. That gate cannot distinguish "the handler refused" from "the
+handler wrote no response at all", so it also skips `last_pid` for PGM's response-suppressing block
+paths (`Xcp_Pgm.c`). §3 recorded the widening for `SYNCH` only. It grants nothing and enables
+nothing — `last_pid` gates admission, and skipping it can only make a later command more
+restricted, never less — but the record should describe what the gate does, not one instance of it.
+
+### R4 — DD73 changed `GET_SEED(mode=1)` after an exhausted seed
+
+Removing the `total_length` zeroing means a `mode=1` request made after the whole seed has been
+transmitted now answers `(0xFF, 0x00)` — zero bytes remaining — where it previously answered
+`ERR_SEQUENCE`. The new answer is the defensible one: 1.1/1.6.1.2.4's `ERR_SEQUENCE` rule is about
+a `mode=1` with no preceding `mode=0` at all, which is a different condition from "you already have
+everything". It was a side effect rather than a decision, no test covered it either way — the only
+existing `mode=1` test always leaves a remainder — and it is now pinned by
+`test_get_seed_mode_1_after_the_whole_seed_was_sent_answers_zero_remaining`.
+
+### R5 — a latent direction bug in `DOWNLOAD_NEXT`, not reachable today
+
+`Xcp_DTOCmdCalDownloadNext` asks the same direction-agnostic "is a block open" predicate that
+produced DD70, and would write through an `UPLOAD`-opened block. Only `ERR_CMD_BUSY` and an
+unstated invariant prevent it today, so it is latent rather than live. Recorded because DD63's rule
+is what makes it latent, and a future change to either could make it reachable.
 
 ## 4. Test strategy
 
@@ -291,7 +420,11 @@ a setup guard satisfied by a leftover response is how several of these went unno
 
 ## 5. Acceptance
 
-1. Each of the six has a test that fails on the current code and passes after the fix.
+1. Each of the six has a test that fails on the current code and passes after the fix — **with
+   one stated exception: DD71's guard is mutation-verified green on its own** (its own test file
+   records this; this criterion did not, until the final review). DD71 hardens the subtraction
+   DD70 already stops from being reached, so no pre-fix scenario reaches it; it is kept because
+   the two fixes are independent and a later change could reopen the path.
 2. `UPLOAD` slave block mode, `DOWNLOAD`/`DOWNLOAD_NEXT` master block mode, and the PGM block path
    all still work — the fixes narrow predicates and add resets, both directions that break
    neighbours.
