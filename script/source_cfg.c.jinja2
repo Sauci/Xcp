@@ -1068,41 +1068,6 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
 {%- if stim.capable and configuration.apis.resource_protection.data_stimulation %}
 {{ raise('resource_protection.data_stimulation is set and this configuration can stimulate, but no command is gated on the STIM resource: Xcp_PIDToCmdGroupTable (source/Xcp.c) maps every DAQ command to MASK_DAQ, so CONNECT and GET_STATUS would advertise a protection the slave does not enforce and SET_DAQ_LIST_MODE(DIRECTION = STIM), WRITE_DAQ and START_STOP_DAQ_LIST would stay reachable with nothing unlocked (XCP part 2 1.1/1.5; DD41 and DD48 in docs/superpowers/specs/2026-09-04-xcp-stim-sp3-design.md)') }}
 {%- endif %}
-{#- Final-review finding 2, and the exact analogue of DD48 immediately above: bit 4 below is the
-    PGM resource of XCP part 2 1.1/1.5, and this time the module DOES enforce it -- which is what
-    makes the combination unusable rather than merely decorative.
-
-    An unlock is spent by ONE command. Xcp_SetProtectionStatus (source/Xcp.c) copies the requested
-    resource into protection_status on a successful UNLOCK, and the dispatch loop in
-    Xcp_CanIfRxIndication clears it again after EVERY dispatched command whose PID is not UNLOCK --
-    including commands that are not protected at all, so an interposed GET_STATUS spends it too.
-    That is pre-existing, documented in README.md under *Key lifetime*, and identical for CAL_PAG
-    and DAQ. For those two it is merely unpleasant: §1.7.3.2.x's action for ERR_ACCESS_LOCKED is
-    "unlock slave, repeat 2 times", so a conformant master re-unlocks and carries on.
-
-    For PGM it is fatal, and the composition is what is fatal, not any one refusal. Once
-    PROGRAM_START has been dispatched -- spending the unlock that admitted it -- the session is
-    XCP_PGM_ACTIVE, and the only door out of it is PROGRAM_RESET, which is a PGM-group command and
-    therefore locked again. Re-unlocking is impossible, and conformantly so: GET_SEED and UNLOCK
-    both carry XCP_INTERNAL_ERR_PGM_ACTIVE in Xcp_CTOErrorMatrix (source/Xcp.c) and are refused
-    ERR_PGM_ACTIVE by DD51's gate, exactly as §1.7.3.2.1/§1.7.3.2.5 provide. DISCONNECT is refused
-    the same way. Every answer is correct; the master retries into silence and the slave cannot
-    leave the state short of Xcp_Init. Measured on a build of this branch, not reasoned:
-    PROGRAM_RESET after the sequence answers ERR_ACCESS_LOCKED (0xFE 0x25), GET_SEED and UNLOCK
-    answer ERR_PGM_ACTIVE (0xFE 0x12).
-
-    So the configuration is refused here rather than shipped. Removing this guard needs the unlock
-    LIFETIME fixed (a cross-group change to the protection model, out of this sub-project's scope)
-    or the GET_SEED/UNLOCK-vs-ERR_PGM_ACTIVE interaction resolved -- not merely SP4b landing the
-    remaining PGM commands, which inherits the group unchanged and makes the trap larger.
-
-    Conditioned on `programming.enabled` as well as on the flag, for DD48's own reason: a build
-    with the feature compiled out has no PGM command to lock, so the flag advertises a resource
-    nothing in the build can reach and is inert. The refused combination is the one that can be
-    driven into the dead end. #}
-{%- if configuration.programming.enabled | default(false) and configuration.apis.resource_protection.programming %}
-{{ raise('resource_protection.programming is set and programming.enabled is true, but a protected PGM resource cannot conduct a programming sequence: an UNLOCK is spent by the single command that follows it (source/Xcp.c, README.md "Key lifetime"), so PROGRAM_START consumes it, and once the session is XCP_PGM_ACTIVE the only command that ends it -- PROGRAM_RESET -- is locked again while GET_SEED and UNLOCK are themselves refused ERR_PGM_ACTIVE (XCP part 2 1.1/1.7.3.2.1 and 1.7.3.2.5), leaving the slave unable to leave the programming session at all; leave resource_protection.programming false until the unlock lifetime is fixed (final-review finding 2 in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/final-review.md)') }}
-{%- endif %}
     ({% if configuration.apis.resource_protection.calibration_paging %}0x01u{% else %}0x00u{% endif %} << 0x00u) |
     ({% if configuration.apis.resource_protection.data_acquisition %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.apis.resource_protection.data_stimulation %}0x01u{% else %}0x00u{% endif %} << 0x03u) |

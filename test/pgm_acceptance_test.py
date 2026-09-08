@@ -20,44 +20,50 @@ separate questions. That is what test_a_real_masters_full_programming_sequence_c
 below is for, and it is why it is one long test rather than several short ones: the whole point is
 that nothing resets the module in between.
 
-**A resource-protection finding, read this before wondering why the test below does not set
-resource_protection_programming.** The task brief asks for the PGM resource to be configured
-protected so GET_SEED/UNLOCK is 'real rather than decorative'. That configuration no longer exists:
-script/source_cfg.c.jinja2 refuses `resource_protection.programming` outright in any build with
-`programming.enabled` set (final-review finding 2, guarded by
-pgm_configuration_test.py's test_generation_refuses_the_pgm_resource_on_a_build_that_can_program),
-and the reason is the wall this docstring already described.
+**A resource-protection finding, now historical -- read this before wondering why the test below
+still does not set resource_protection_programming.** The original SP4a task brief asked for the
+PGM resource to be configured protected so GET_SEED/UNLOCK would be 'real rather than decorative'.
+At the time this docstring was first written, that configuration could not be generated at all:
+script/source_cfg.c.jinja2 refused `resource_protection.programming` outright in any build with
+`programming.enabled` set (final-review finding 2), for the reason described next.
 
-The wall, unchanged: this module's README ('Key lifetime') documents that an UNLOCK's effect 'is
-discarded after the command FOLLOWING the UNLOCK sequence has been executed', which source/Xcp.c
-implements as Xcp_ClearProtectionStatus() running after every dispatched command except UNLOCK
-itself -- so one GET_SEED/UNLOCK round unlocks exactly the ONE command sent right after it, never
-more. PROGRAM_START is that one command, and dispatching it (immediately, in the handler, before it
-ever defers) is what spends it. By the time the session reaches XCP_PGM_ACTIVE and PROGRAM_RESET is
-due, PGM is locked again, and there is no way to re-unlock it: GET_SEED and UNLOCK both carry
-XCP_INTERNAL_ERR_PGM_ACTIVE in their own Xcp_CTOErrorMatrix rows (source/Xcp.c) -- pre-existing,
-not touched by SP4a -- so DD51's own new ACTIVE-session trigger refuses both of them right back.
-Measured directly (see task-6-report.md): a PROGRAM_RESET sent in this state answers (0xFE, 0x25),
-ERR_ACCESS_LOCKED, not the positive response DD57 promises. Nothing between PROGRAM_START's
-dispatch and PROGRAM_RESET can change that -- SYNCH does not reset pgm_state for an established
-ACTIVE session (Task 3's own fix, DD55 corrected), and no command this module implements re-opens
-GET_SEED/UNLOCK while ACTIVE.
+The wall, now dissolved (DD83): this module's README ('Key lifetime') used to document that an
+UNLOCK's effect 'is discarded after the command FOLLOWING the UNLOCK sequence has been executed',
+which source/Xcp.c implemented as Xcp_ClearProtectionStatus() running after every dispatched
+command except UNLOCK itself -- so one GET_SEED/UNLOCK round unlocked exactly the ONE command sent
+right after it, never more. PROGRAM_START was that one command, and dispatching it (immediately, in
+the handler, before it ever defers) is what spent it. By the time the session reached
+XCP_PGM_ACTIVE and PROGRAM_RESET was due, PGM was locked again, and there was no way to re-unlock
+it: GET_SEED and UNLOCK both carried XCP_INTERNAL_ERR_PGM_ACTIVE in their own Xcp_CTOErrorMatrix
+rows (source/Xcp.c) -- pre-existing, not touched by SP4a -- so DD51's own ACTIVE-session trigger
+refused both of them right back. Measured directly at the time (see task-6-report.md): a
+PROGRAM_RESET sent in this state answered (0xFE, 0x25), ERR_ACCESS_LOCKED, not the positive
+response DD57 promises.
 
-That is a genuine interaction between two mechanisms that both predate this task and are each
-correct on their own -- resource protection's one-shot lifetime, and the pre-existing (not SP4a's)
-ERR_PGM_ACTIVE bit on GET_SEED/UNLOCK -- and fixing it means changing the unlock lifetime for every
-resource group, not something a test may repair by itself. The final review's verdict was that a
-configuration that cannot conduct the sequence it advertises must not ship, so it is refused at
-generation the way DD48 refuses its STIM equivalent.
+That was a genuine interaction between two mechanisms that each predated SP4a and were each correct
+on their own -- resource protection's one-shot lifetime, and the pre-existing ERR_PGM_ACTIVE bit on
+GET_SEED/UNLOCK -- so fixing it meant changing the unlock lifetime for every resource group, not
+something a test could repair by itself. DD79 is that fix: a granted resource now lasts the whole
+session instead of the single command following the unlock, so the GET_SEED/UNLOCK round that
+admits PROGRAM_START is still in effect when PROGRAM_RESET needs it, and the dead end above no
+longer forms.
+test/pgm_protected_acceptance_test.py::test_a_protected_pgm_resource_conducts_a_full_programming_sequence_end_to_end
+now proves exactly that: CONNECT, PROGRAM_START refused before any unlock (protection proven live),
+GET_SEED/UNLOCK, PROGRAM_START, PROGRAM_CLEAR, PROGRAM and PROGRAM_RESET, every step answering
+positively.
 
-What this file therefore does: the test below sends a real, wire-correct GET_SEED/UNLOCK exchange
-for the PGM resource where the brief places it (CONNECT, then this, then SET_MTA), proving the
-handshake itself is correct on a build that does not enforce it. A companion test that pinned
-GET_SEED/UNLOCK actually GATING a PGM command used to live here; it required exactly the refused
-configuration and went with it. The mechanism it exercised is not left unproven -- seed_key_test.py
-pins GET_SEED/UNLOCK itself, and asam_error_matrix_test.py pins ERR_ACCESS_LOCKED on protected
-commands of the other resource groups -- but nothing in this suite now proves it on a PGM command,
-and nothing can until the unlock lifetime is fixed.
+What this file still does, and why it still does not set resource_protection_programming: the test
+below is about the RICH sequence composing -- GET_PGM_PROCESSOR_INFO, a genuinely interrupted and
+polled PROGRAM_START, a slow PROGRAM_CLEAR, a real multi-frame PROGRAM/PROGRAM_NEXT block, a
+zero-element PROGRAM, PROGRAM_RESET and the disconnect it triggers -- not whether protection
+survives across it. Layering resource_protection_programming onto this test would conflate two
+concerns this suite now keeps apart on purpose: this file proves the rich command sequence
+composes; pgm_protected_acceptance_test.py proves protection survives a deliberately minimal one,
+including the exact fact this paragraph used to say nothing could prove -- GET_SEED/UNLOCK actually
+GATING a PGM command (PROGRAM_START answers ERR_ACCESS_LOCKED there before the unlock). The test
+below still sends a real, wire-correct GET_SEED/UNLOCK exchange for the PGM resource where the
+original brief places it (CONNECT, then this, then SET_MTA), proving the handshake itself is
+correct -- but, as before, on a build where nothing gates on it.
 
 Every exchange below follows the standing rule this sub-project's five prior tasks paid for the
 hard way (task reports in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/): reset can_if_transmit
