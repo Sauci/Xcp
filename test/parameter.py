@@ -319,6 +319,22 @@ class DefaultConfig(dict):
                  xcp_program_verify_api_enable=True,
                  xcp_program_format_api_enable=True,
                  xcp_program_api_enable=True,
+                 # SP4c Task 6: defaults False, for the same reason
+                 # xcp_program_clear_functional_api_enable above does, and the two must now agree --
+                 # script/source_cfg.c.jinja2 refuses to generate a configuration that enables one
+                 # without the other (DD92: PGM_PROPERTIES carries ONE FUNCTIONAL_MODE bit for both
+                 # halves of the one capability). With both halves finally implemented the pair
+                 # COULD honestly default True, and the coordinator left the choice to this task;
+                 # False is deliberate. Functional access is not a property of this module -- it is
+                 # a property of the integrator's flash driver, which 1.6.5.1.3 requires to know
+                 # "the start address for the new flash content automatically", and 1.6.5.1.2 to
+                 # erase by AREA rather than by address. A default that advertised FUNCTIONAL_MODE
+                 # would promise a master those two behaviours from every build whose integrator has
+                 # not written them, which is D10's own defect class -- the same argument that put
+                 # this pair's first half at False, now standing on its own rather than on the
+                 # advertisement being impossible. Absolute access stays unconditional, so no
+                 # existing build changes.
+                 xcp_program_write_functional_api_enable=False,
                  xcp_program_max_api_enable=True,
                  xcp_program_start_api_enable=True,
                  xcp_program_reset_api_enable=True,
@@ -470,6 +486,8 @@ class DefaultConfig(dict):
                     "xcp_program_format_api_enable": {"enabled": xcp_program_format_api_enable,
                                                        "protected": False},
                     "xcp_program_api_enable": {"enabled": xcp_program_api_enable, "protected": False},
+                    "xcp_program_write_functional_api_enable": {
+                            "enabled": xcp_program_write_functional_api_enable, "protected": False},
                     "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},
                     "xcp_program_start_api_enable": {"enabled": xcp_program_start_api_enable, "protected": False},
                     "xcp_program_reset_api_enable": {"enabled": xcp_program_reset_api_enable, "protected": False},

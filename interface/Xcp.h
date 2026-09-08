@@ -566,6 +566,11 @@ extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *
  * the codes PROGRAM's row does list and, per the specification's own error-code definitions, the
  * precise description of memory this callback could not write to -- the same choice
  * @ref Xcp_ProgramClear above makes for a failed erase, generalised here to a failed write.
+ * @note This callback answers ABSOLUTE access mode alone. Once a PROGRAM_FORMAT has announced
+ * functional access (access method non-zero, 1.6.5.2.4), the identical three commands reach
+ * @ref Xcp_ProgramWriteFunctional instead -- a separate callback taking a block sequence counter
+ * where this one takes an address, since under that mode the MTA is not one (design doc DD84,
+ * DD86). A given data transfer reaches exactly one of the two.
  */
 extern Std_ReturnType Xcp_ProgramWrite(void *address, const uint8 *pData, uint16 length, uint8 *pStatusCode);
 
@@ -615,9 +620,13 @@ extern Std_ReturnType Xcp_ProgramVerify(uint8 verificationMode, uint16 verificat
  * compressionMethod above.
  * @param [in] accessMethod The request's own access method: 0x00 Absolute Access Mode (default,
  * the MTA is a physical address), 0x01 Functional Access Mode (the MTA is a block sequence
- * number), 0x80..0xFF user defined. This slave never passes anything but 0x00 here today: 0x01 and
- * the user-defined range both require PGM_PROPERTIES' FUNCTIONAL_MODE bit advertised, which is
- * this build's own configuration to grant (design doc DD92) and none does yet.
+ * number), 0x80..0xFF user defined. Anything but 0x00 requires PGM_PROPERTIES' FUNCTIONAL_MODE bit
+ * advertised, which is this build's own configuration to grant (design doc DD92): a build
+ * configuring both functional callbacks -- @ref Xcp_ProgramClearFunctional and
+ * @ref Xcp_ProgramWriteFunctional -- passes 0x01 and the user-defined range through to this
+ * callback, and one configuring neither refuses them ERR_OUT_OF_RANGE before ever reaching here.
+ * Accepting a non-zero value here is what routes every following data transfer of this stream to
+ * @ref Xcp_ProgramWriteFunctional instead of @ref Xcp_ProgramWrite.
  * @param [out] pStatusCode Result of the request, read only when this function returns E_OK: zero
  * to accept the format, non-zero for a value this integrator cannot honour -- the only case that
  * matters in practice is a user-defined compression/encryption/programming method (0x80..0xFF)
@@ -671,6 +680,52 @@ extern Std_ReturnType Xcp_ProgramFormat(uint8 compressionMethod, uint8 encryptio
  * @ref Xcp_ProgramWrite.
  */
 extern Std_ReturnType Xcp_ProgramClearFunctional(uint32 clearRange, uint8 *pStatusCode);
+
+/**
+ * @brief Writes a block of data into non-volatile memory without being told where: PROGRAM's
+ * functional access mode.
+ * @param [in] blockSequenceCounter This module's own count of the data transfer requests received
+ * since the PROGRAM_FORMAT that opened this stream. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.5.1.3 (both revisions): "The MTA works as a Block Sequence Counter and it is counted
+ * inside the master and the server. The Block Sequence Counter allows an improved error handling in
+ * case a programming service fails during a sequence of multiple programming requests." Initialised
+ * so that the first data transfer after PROGRAM_FORMAT carries 1, advanced by one per data transfer
+ * request, and rolling over to 0x00 past its maximum -- so an integrator can compare it against the
+ * master's own count rather than re-deriving it. Not a value the master transmits: it is counted
+ * independently on both sides, which is what makes a divergence detectable at all (design doc
+ * DD86).
+ * @param [in] pData The data to write, `length` bytes, taken directly from the request. The same
+ * lifetime rule @ref Xcp_ProgramWrite's own pData carries applies here unchanged: valid for the
+ * duration of THIS call only.
+ * @param [in] length Number of bytes pData holds.
+ * @param [out] pStatusCode Result of the write, read only when this function returns E_OK: zero for
+ * success, non-zero for failure.
+ * @retval E_OK: the write is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the write is not finished
+ * @details Polled, exactly as @ref Xcp_ProgramWrite is, and reached from the same three commands
+ * (PROGRAM, PROGRAM_MAX, and the PROGRAM_NEXT frame that completes a master block mode block) --
+ * this is that callback's functional-access twin, not an addition beside it: a given data transfer
+ * reaches exactly one of the two.
+ * @note **No address parameter, and that is not an omission.** 1.1/1.6.5.1.3's Functional Access
+ * mode paragraph says "The ECU software knows the start address for the new flash content
+ * automatically. It depends on the PROGRAM_CLEAR command. The ECU expects the new flash content in
+ * one data stream and the assignment is done by the ECU automatically." There is no address in the
+ * protocol for this module to pass on, and the MTA is not one either under this mode -- it is the
+ * counter above. Passing @ref Xcp_ProgramWrite's own `void *address` here would hand the integrator
+ * a pointer the specification never defined (design doc DD84).
+ * @note The MTA is left exactly where the master last set it, unlike @ref Xcp_ProgramWrite's own
+ * post-increment: 1.6.5.1.3 states that post-increment under *Absolute Access mode* only, and this
+ * mode's own paragraph replaces it with the Block Sequence Counter.
+ * @note Reachable only once PROGRAM_FORMAT has been accepted with a non-default access method,
+ * which in turn requires this build to advertise PGM_PROPERTIES' FUNCTIONAL_MODE bit -- i.e. to
+ * configure BOTH this callback and @ref Xcp_ProgramClearFunctional (design doc DD92,
+ * xcp_program_write_functional_api_enable and xcp_program_clear_functional_api_enable,
+ * config/xcp.schema.json). Generation refuses a configuration offering one without the other, so
+ * "advertised" and "accepted" cannot drift apart.
+ * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, the same code and the same reasoning
+ * @ref Xcp_ProgramWrite's own note gives for a failed write -- the two share one completion path.
+ */
+extern Std_ReturnType Xcp_ProgramWriteFunctional(uint32 blockSequenceCounter, const uint8 *pData, uint16 length, uint8 *pStatusCode);
 
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 

@@ -1300,6 +1300,15 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pgm_format.encryption_method = 0x00u;
             Xcp_Internal.pgm_format.programming_method = 0x00u;
             Xcp_Internal.pgm_format.access_method = 0x00u;
+            /* SP4c Task 6, design doc DD86: the Block Sequence Counter belongs to the format
+             * immediately above and gets the same cross-session hygiene, written directly here for
+             * the identical reason the four fields above are (this is the module's own constructor,
+             * not a command handler reaching into another file's state). Nothing reads it while
+             * pgm_format.access_method is 0x00u, so a stale value could not be observed today --
+             * which is exactly the argument SP3's own surviving-state defect made before it
+             * shipped, and the reason this block resets everything rather than only what some
+             * reader currently depends on. */
+            Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             /* DD78. Every configured-protected group starts protected, which is what
              * `= protectedResource` says and what `= 0x00u` could not: on the old, inverted field

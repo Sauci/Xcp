@@ -32,6 +32,22 @@
     {%- if not daq_dynamic and configuration.daq_dynamic is defined %}
 {{ raise('a `daq_dynamic` pool is configured but daq_config_type is STATIC; nothing would ever allocate out of that pool, so its dimensions would silently go nowhere -- set daq_config_type to DYNAMIC, or remove the block') }}
     {%- endif %}
+{#- SP4c Task 6, design doc DD92: functional access is ONE capability with two callbacks, and
+    GET_PGM_PROCESSOR_INFO has exactly one bit (PGM_PROPERTIES' FUNCTIONAL_MODE, generated further
+    down) to advertise it with -- so a configuration offering one half without the other cannot be
+    described honestly on the wire in either direction, and is refused here rather than generated.
+    Enabling the CLEAR half alone would make PROGRAM_CLEAR accept mode 0x01 (its own gate is
+    pgmClearFunctionalSupported, deliberately independent of PGM_PROPERTIES per DD93) while the
+    slave advertised no functional mode at all: implementing an unadvertised capability, D10's own
+    defect class inverted, and the exact mismatch that made Task 5 default its flag off. Enabling
+    the WRITE half alone advertises nothing and accepts nothing, so the flag silently goes nowhere
+    -- the same shape as the `daq_dynamic` pool guard immediately above, and refused in the same
+    words. Guarded on programming.enabled so that a build with the gate off is unaffected by either
+    flag, which is the property test/pgm_configuration_test.py's own
+    test_gate_off_output_does_not_depend_on_any_other_programming_setting protects. #}
+    {%- if configuration.programming.enabled | default(false) and (configuration.apis.xcp_program_clear_functional_api_enable.enabled != configuration.apis.xcp_program_write_functional_api_enable.enabled) %}
+{{ raise('xcp_program_clear_functional_api_enable is {} and xcp_program_write_functional_api_enable is {}; functional access mode is ONE capability advertised by ONE bit (PGM_PROPERTIES FUNCTIONAL_MODE, XCP part 2 1.1/1.6.5.2.1), so enabling one half without the other either implements a mode the slave never advertises or advertises nothing while the flag goes nowhere (DD92, docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) -- enable both, or neither'.format(configuration.apis.xcp_program_clear_functional_api_enable.enabled, configuration.apis.xcp_program_write_functional_api_enable.enabled)) }}
+    {%- endif %}
 {%- endfor %}
 {% for configuration in configurations %}
 #ifndef {{configuration.communication.channel_rx_pdu_ref}}
@@ -1160,6 +1176,17 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     test_the_gate_touches_only_pgm_ctoinfo_rows both confirm it does, since neither test's own
     configurations ever set any of these six flags away from their own shared False default). #}
     0x01u /* ABSOLUTE_MODE, always -- this module offers absolute access unconditionally */ |
+{#- SP4c Task 6, design doc DD92: "The FUNCTIONAL_MODE bit is set if and only if DD84's callbacks
+    are configured." ONE bit for BOTH halves of the one capability -- Xcp_ProgramClearFunctional
+    (Task 5) and Xcp_ProgramWriteFunctional (Task 6) -- so this term is their conjunction, not
+    either flag alone, and the guard at the top of this file refuses a configuration that offers one
+    without the other so this AND can never quietly under-advertise a build that meant to enable
+    functional access. Conjoined with programming.enabled too, matching pgmClearFunctionalSupported
+    immediately below and every per-command api flag in this file: a build that cannot program at
+    all must not advertise a programming sub-capability either, and that is also what keeps this
+    line identical between a gate-off build and a gate-on one (test/pgm_configuration_test.py's own
+    test_gate_off_output_does_not_depend_on_any_other_programming_setting). #}
+    ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_clear_functional_api_enable.enabled and configuration.apis.xcp_program_write_functional_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x01u) |
     ({% if configuration.programming.compression_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
     ({% if configuration.programming.compression_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
     ({% if configuration.programming.encryption_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x04u) |

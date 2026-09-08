@@ -646,6 +646,50 @@ typedef struct {
         uint8 programming_method;
         uint8 access_method;
     } pgm_format;
+
+    /**
+     * @brief The Block Sequence Counter of the data transfer request currently being served
+     * (SP4c Task 6, DD86), valid only while pgm_format.access_method names functional access.
+     * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3, identically in 1.0: "The MTA
+     * works as a Block Sequence Counter and it is counted inside the master and the server. [...]
+     * The Block Sequence Counter of the server shall be initialized to one (1) when receiving a
+     * PROGRAM_FORMAT request message. This means that the first PROGRAM request message following
+     * the PROGRAM_FORMAT request message starts with a Block Sequence Counter of one (1). Its value
+     * is incremented by 1 for each subsequent data transfer request. At the maximum value the Block
+     * Sequence Counter rolls over and starts at 0x00 with the next data transfer request message."
+     *
+     * So this is state the slave COUNTS, not a value the master transmits, and SET_MTA plays no part
+     * in it -- an earlier draft of DD86 had SET_MTA supply it, and the sentences above are what
+     * corrected that. Both sides count independently, which is the whole point: a divergence between
+     * the two is detectable, "an improved error handling in case a programming service fails during
+     * a sequence of multiple programming requests". Xcp_PgmCallProgramWrite (source/Xcp_Pgm.c) hands
+     * this value to Xcp_ProgramWriteFunctional so the integrator can compare rather than re-derive.
+     *
+     * **uint32, and the specification does not actually say.** DD86 records this ambiguity rather
+     * than resolving it silently: the text names the MTA (32-bit) as the counter, which would make
+     * it 32 bits wide, but writes the rollover value as `0x00`, which reads byte-sized -- and
+     * neither revision states a width anywhere. uint32 is taken because it is the only width the
+     * specification actually mentions; a byte-wide counter would be a narrowing nothing in the text
+     * requires. Anyone meeting a master that disagrees should read DD86 first
+     * (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md).
+     *
+     * The rollover is the type's own modular arithmetic, not a branch: an unsigned addition past
+     * UINT32_MAX yields 0 by C's own definition, which is exactly "rolls over and starts at 0x00
+     * with the next data transfer request message". Written that way deliberately -- an explicit
+     * `== 0xFFFFFFFFu ? 0u : n + 1u` would add a branch no test in this suite could ever reach
+     * (2^32 requests) and could itself be written wrong, where this cannot be
+     * (Xcp_PgmAdvanceBlockSequenceCounter, source/Xcp_Pgm.c).
+     *
+     * Holds the counter of the request being served, so a deferred write's every poll re-reads the
+     * same value the handler's own first call passed (Xcp_PgmPollPendingCommand) -- the same
+     * standing-state argument pgm_block and the MTA already rely on, and the reason it is advanced
+     * BEFORE the value is used rather than after: PROGRAM_FORMAT leaves 0 here, and the first data
+     * transfer request advances it to the 1 the specification names. Reset with pgm_format itself
+     * (Xcp_PgmFormatReset, and Xcp_Init's own direct writes), which covers DD86's own PROGRAM_RESET
+     * and CONNECT plus SET_MTA: the format's lifetime IS this counter's lifetime, since reaching
+     * this field again takes a fresh PROGRAM_FORMAT, which re-initialises it regardless.
+     */
+    uint32 pgm_block_sequence_counter;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 

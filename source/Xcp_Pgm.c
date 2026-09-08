@@ -124,6 +124,40 @@ static void Xcp_PgmBlockAcknowledgeFrame(void);
  */
 static boolean Xcp_PgmDataTransferRefusedByFormat(void);
 
+/**
+ * @brief Counts one accepted data transfer request into the Block Sequence Counter.
+ * @details SP4c Task 6. Design doc DD86, 1.1/1.6.5.1.3: "Its value is incremented by 1 for each
+ * subsequent data transfer request. At the maximum value the Block Sequence Counter rolls over and
+ * starts at 0x00 with the next data transfer request message." Called from Xcp_DTOCmdPgmProgram,
+ * Xcp_DTOCmdPgmProgramMax and Xcp_DTOCmdPgmProgramNext below -- the three commands DD86 names --
+ * at the point each one accepts a frame's data, so a refused request never counts and a master
+ * that was told ERR_SEQUENCE or ERR_CMD_SYNTAX stays in step with this slave's own count.
+ * See Xcp_Internal.pgm_block_sequence_counter's own comment (source/Xcp_Internal.h) for why the
+ * advance happens BEFORE the value is used, and for why the rollover needs no branch here.
+ */
+static void Xcp_PgmAdvanceBlockSequenceCounter(void);
+
+/**
+ * @brief Hands the block currently in Xcp_Internal.pgm_block to whichever write callback this
+ * stream's access mode calls for, and reports what it answered.
+ * @details SP4c Task 6, design doc DD84/DD85. PROGRAM_FORMAT's own access method
+ * (Xcp_Internal.pgm_format.access_method) selects between Xcp_ProgramWrite -- absolute access, the
+ * MTA is an address -- and Xcp_ProgramWriteFunctional, which takes no address at all and receives
+ * the Block Sequence Counter instead (1.6.5.1.3: "the ECU software knows the start address for the
+ * new flash content automatically"). Any non-zero access method selects the functional callback,
+ * user-defined values (0x80..0xFF) included, matching Xcp_DTOCmdPgmProgramFormat's own fourth DD89
+ * term, which admits them on the identical FUNCTIONAL_MODE bit and gives them no separate meaning.
+ *
+ * One helper rather than the same if/else written out four times, and specifically so that
+ * Xcp_PgmPollPendingCommand below cannot dispatch a later poll to a DIFFERENT callback than the
+ * handler's own first call reached: both go through this function, reading the same standing state.
+ * That is the defect PROGRAM_CLEAR needed a dedicated pending_command.program_clear_functional flag
+ * to avoid (Task 5) -- not needed here, because pgm_format is standing session state that DD55's
+ * ERR_CMD_BUSY gate keeps stable for the duration of a deferred command, exactly as it keeps the
+ * MTA and pgm_block stable, whereas PROGRAM_CLEAR's own mode arrives in the request and is gone.
+ */
+static Std_ReturnType Xcp_PgmCallProgramWrite(uint8 *pStatusCode);
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
@@ -545,6 +579,16 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
             {
                 uint8_least idx;
 
+                /* SP4c Task 6, DD86: this frame is an accepted data transfer request, so it counts
+                 * -- whether it completes a block by itself or opens a multi-frame one. Counted
+                 * here, past every refusal above (the session and format gates, the oversized
+                 * count, the buffer bound and the short frame), so nothing this module answered
+                 * with an error ever advances a counter the master is keeping in step with. The
+                 * zero-element PROGRAM branch above does NOT reach this point and does not count
+                 * either: 1.6.5.1.3 gives it no data to transfer, DD64 makes it the end of a
+                 * segment rather than a transfer, and it never calls a write callback at all. */
+                Xcp_PgmAdvanceBlockSequenceCounter();
+
                 /* DD63/design Section 5: copied into pgm_block from index 0 by direct assignment,
                  * not accumulated onto whatever the buffer already held -- this IS the opening
                  * frame of a (possibly new) block, so it always starts one, the same way it did in
@@ -589,11 +633,13 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
                      * FIRST one happening here rather than on the next Xcp_MainFunction, for the
                      * same reason PROGRAM_CLEAR's own first call does above: an integrator whose
                      * work is instantaneous returns E_OK from it and the master is answered on this
-                     * very exchange. Spec Section 4. */
-                    if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                         Xcp_Internal.pgm_block.data,
-                                         Xcp_Internal.pgm_block.length,
-                                         &status_code) == E_OK)
+                     * very exchange. Spec Section 4.
+                     *
+                     * SP4c Task 6: through Xcp_PgmCallProgramWrite (below), not Xcp_ProgramWrite
+                     * directly -- this stream's own access method decides which of the two write
+                     * callbacks receives the block (DD84), and routing every call site through one
+                     * helper is what keeps a later poll from reaching the other one. */
+                    if (Xcp_PgmCallProgramWrite(&status_code) == E_OK)
                     {
                         Xcp_PgmCompleteProgramWrite(status_code);
                     }
@@ -741,6 +787,12 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
             uint8_least idx;
             uint8 status_code = 0x00u;
 
+            /* SP4c Task 6, DD86: PROGRAM_MAX is the second of the three commands DD86 counts, and
+             * this is the point past every refusal above at which its own fixed-size transfer is
+             * accepted -- the same placement Xcp_DTOCmdPgmProgram's own call carries, and for the
+             * same reason. */
+            Xcp_PgmAdvanceBlockSequenceCounter();
+
             /* Data starts at position AG (== element_size): 1.6.5.2.6's own layout is "1..AG-1
              * alignment, only if AG>1" then "AG..MAX_CTO-AG data" -- Xcp_DTOCmdCalDownloadMax's
              * identical arithmetic for the identical layout (source/Xcp_Cal.c). Copied into
@@ -753,10 +805,9 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
 
             Xcp_Internal.pgm_block.length = length;
 
-            if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                 Xcp_Internal.pgm_block.data,
-                                 Xcp_Internal.pgm_block.length,
-                                 &status_code) == E_OK)
+            /* SP4c Task 6: through Xcp_PgmCallProgramWrite, for the reason Xcp_DTOCmdPgmProgram's
+             * own identical call above gives. */
+            if (Xcp_PgmCallProgramWrite(&status_code) == E_OK)
             {
                 Xcp_PgmCompleteProgramWrite(status_code);
             }
@@ -866,6 +917,20 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
                 const uint16 offset = Xcp_Internal.pgm_block.length;
                 uint8_least idx;
 
+                /* SP4c Task 6, DD86: PROGRAM_NEXT is the third of the three commands DD86 counts,
+                 * so EVERY frame of a master block mode block advances the counter -- not only the
+                 * one that completes it and calls the integrator. DD86's own table says "each data
+                 * transfer request", and 1.6.5.1.3's rollover sentence is phrased against a request
+                 * message arriving ("rolls over and starts at 0x00 with the next data transfer
+                 * request message"), not against a write completing. The alternative reading is
+                 * recorded rather than dismissed: the same paragraph also says the MTA IS this
+                 * counter, and the MTA advances once per completed BLOCK here (DD66,
+                 * Xcp_PgmCompleteProgramWrite below), so a per-block counter would have been
+                 * defensible too. test/pgm_functional_test.py's own
+                 * test_every_frame_of_a_master_block_counts_as_its_own_data_transfer_request pins
+                 * the reading actually taken, so it cannot drift silently. */
+                Xcp_PgmAdvanceBlockSequenceCounter();
+
                 for (idx = 0x00u; idx < frame_length; idx++)
                 {
                     Xcp_Internal.pgm_block.data[offset + idx] = pPduInfo->SduDataPtr[0x02u + alignment + idx];
@@ -891,11 +956,10 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
                      * accumulated contribution rather than only the first one's. The FIRST call
                      * happens here, not on the next Xcp_MainFunction, for the same reason it does
                      * there: an integrator whose work is instantaneous returns E_OK from it and
-                     * the master is answered on this very exchange. Spec Section 4. */
-                    if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                         Xcp_Internal.pgm_block.data,
-                                         Xcp_Internal.pgm_block.length,
-                                         &status_code) == E_OK)
+                     * the master is answered on this very exchange. Spec Section 4. Through
+                     * Xcp_PgmCallProgramWrite since SP4c Task 6, for the reason
+                     * Xcp_DTOCmdPgmProgram's own identical call above gives. */
+                    if (Xcp_PgmCallProgramWrite(&status_code) == E_OK)
                     {
                         Xcp_PgmCompleteProgramWrite(status_code);
                     }
@@ -972,11 +1036,14 @@ uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoT
      * .non_sequential_... flags:
      * PROGRAM_FORMAT (Xcp_DTOCmdPgmProgramFormat, below) reads this SAME field to decide what it
      * accepts (design doc DD89), so the two commands cannot advertise and enforce different
-     * things. Bit 1, FUNCTIONAL_MODE, is still never set here -- a later task's own addition
-     * (DD92), once the functional callbacks it depends on exist; the generated expression is
-     * already shaped (one OR'd, shifted term per bit) so that task only adds a term, it does not
-     * rewrite this line. (MAX_SECTOR, the byte immediately below, is untouched by this change --
-     * SP4c Task 2 made it config-driven; see its own comment there.) */
+     * things. Bit 1, FUNCTIONAL_MODE, is SP4c Task 6's own addition to that same generated
+     * expression (DD92) and the only one this handler needed no change for: it is set exactly when
+     * this build configures BOTH functional callbacks -- Xcp_ProgramClearFunctional and
+     * Xcp_ProgramWriteFunctional (interface/Xcp.h) -- which generation refuses to let a
+     * configuration offer one at a time, so what this byte advertises and what
+     * Xcp_DTOCmdPgmProgramFormat accepts are the same fact rather than two that must be kept in
+     * step. (MAX_SECTOR, the byte immediately below, is untouched by this change -- SP4c Task 2
+     * made it config-driven; see its own comment there.) */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Ptr->general->pgmProperties;
 
@@ -1209,6 +1276,27 @@ uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *p
             Xcp_Internal.pgm_format.programming_method = programming_method;
             Xcp_Internal.pgm_format.access_method = access_method;
 
+            /* SP4c Task 6, DD86. 1.1/1.6.5.1.3: the Block Sequence Counter "shall be initialized to
+             * one (1) when receiving a PROGRAM_FORMAT request message. This means that the first
+             * PROGRAM request message following the PROGRAM_FORMAT request message starts with a
+             * Block Sequence Counter of one (1)." Written as 0x00u here, which is that same
+             * statement rather than a different one: this field holds the counter of the data
+             * transfer request being served, and every data transfer request advances it BEFORE
+             * reading it (Xcp_PgmAdvanceBlockSequenceCounter, below), so the first PROGRAM after
+             * this command reads exactly the 1 the sentence names. Storing 1 here and advancing
+             * after the read would need a second copy of the value for the deferred path --
+             * Xcp_PgmPollPendingCommand must hand Xcp_ProgramWriteFunctional the SAME counter on
+             * every poll of one transfer, which a field already advanced past that transfer's own
+             * value cannot supply.
+             *
+             * Inside the acceptance branch, not at the top of this handler: 1.6.5.1.3's "when
+             * receiving" taken to the letter would re-base the counter for a request this slave
+             * then REFUSES, and a master answered ERR_OUT_OF_RANGE has no reason to restart its own
+             * count -- so re-basing this one alone would manufacture exactly the divergence the
+             * counter exists to detect. The same reasoning DD85 already applies to pgm_format's own
+             * four fields immediately above, which a refused request likewise leaves untouched. */
+            Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
+
             Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
             Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
@@ -1291,18 +1379,23 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
         case XCP_PID_CMD_PROGRAM_MAX:
         case XCP_PID_CMD_PROGRAM_NEXT:
         {
-            /* All three commands write through the identical Xcp_ProgramWrite contract, from the
-             * identical Xcp_Internal.pgm_block standing state (Task 3; PROGRAM_NEXT joins it in
-             * Task 4, DD63) -- pData and length are re-read directly from it on every poll, exactly
-             * as the MTA is re-read from Xcp_Internal.memory_transfer.address just below, and for
-             * the same reason: stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any
-             * interloping command that could touch either. None of the three handlers stores
-             * anything in pending_command.args -- pgm_block already IS that storage, and a union
-             * member here would only duplicate it. */
-            result = Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                      Xcp_Internal.pgm_block.data,
-                                      Xcp_Internal.pgm_block.length,
-                                      pStatusCode);
+            /* All three commands write through the identical write contract, from the identical
+             * Xcp_Internal.pgm_block standing state (Task 3; PROGRAM_NEXT joins it in Task 4,
+             * DD63) -- pData and length are re-read directly from it on every poll, exactly as the
+             * MTA is re-read from Xcp_Internal.memory_transfer.address, and for the same reason:
+             * stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping
+             * command that could touch either. None of the three handlers stores anything in
+             * pending_command.args -- pgm_block already IS that storage, and a union member here
+             * would only duplicate it.
+             *
+             * SP4c Task 6: WHICH write contract is Xcp_PgmCallProgramWrite's own question (below),
+             * asked here through the very same helper each handler's own first call went through,
+             * so a poll can never continue a functional write through the absolute callback or the
+             * reverse. The Block Sequence Counter that helper passes is likewise re-read from
+             * standing state, and is still this transfer's own value: nothing advances it until the
+             * NEXT data transfer request, which DD55's gate cannot let in while this one is still
+             * pending. */
+            result = Xcp_PgmCallProgramWrite(pStatusCode);
             break;
         }
         case XCP_PID_CMD_PROGRAM_VERIFY:
@@ -1553,6 +1646,53 @@ void Xcp_PgmFormatReset(void)
     Xcp_Internal.pgm_format.encryption_method = 0x00u;
     Xcp_Internal.pgm_format.programming_method = 0x00u;
     Xcp_Internal.pgm_format.access_method = 0x00u;
+
+    /* SP4c Task 6, DD86: the counter goes with the format it belongs to. DD86's own table names
+     * PROGRAM_RESET and CONNECT as its reset points, and both of those reach here -- so does
+     * SET_MTA, which DD86 does not name, and resetting there too is deliberate rather than
+     * incidental: the counter counts ONE stream, the stream is the one PROGRAM_FORMAT opened, and
+     * DD85 ends that format's life at SET_MTA. Nothing can observe the difference either way, since
+     * every path back to the functional callback runs through a fresh PROGRAM_FORMAT, which
+     * re-initialises this field regardless (Xcp_DTOCmdPgmProgramFormat above). */
+    Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
+}
+
+static void Xcp_PgmAdvanceBlockSequenceCounter(void)
+{
+    /* One statement, and the rollover comes free with it: 1.1/1.6.5.1.3's "at the maximum value the
+     * Block Sequence Counter rolls over and starts at 0x00 with the next data transfer request
+     * message" is exactly what an unsigned addition past this type's maximum already does, by C's
+     * own definition of unsigned arithmetic. An explicit `== 0xFFFFFFFFu ? 0x00u : n + 0x01u`
+     * would restate that in a branch this suite could never execute -- reaching it takes 2^32 data
+     * transfer requests -- and an unreachable branch is one nothing can prove right; see this
+     * field's own comment in source/Xcp_Internal.h, and the task report, for how the rollover was
+     * verified instead. */
+    Xcp_Internal.pgm_block_sequence_counter += 0x00000001u;
+}
+
+static Std_ReturnType Xcp_PgmCallProgramWrite(uint8 *pStatusCode)
+{
+    Std_ReturnType result;
+
+    /* See this function's own forward declaration above for why one helper serves all four call
+     * sites, and why any non-zero access method -- not only 0x01 -- selects the functional
+     * callback. */
+    if (Xcp_Internal.pgm_format.access_method != 0x00u)
+    {
+        result = Xcp_ProgramWriteFunctional(Xcp_Internal.pgm_block_sequence_counter,
+                                            Xcp_Internal.pgm_block.data,
+                                            Xcp_Internal.pgm_block.length,
+                                            pStatusCode);
+    }
+    else
+    {
+        result = Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
+                                  Xcp_Internal.pgm_block.data,
+                                  Xcp_Internal.pgm_block.length,
+                                  pStatusCode);
+    }
+
+    return result;
 }
 
 static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
@@ -1803,8 +1943,22 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
          * length by the time this runs, whether it was set once by a single-frame PROGRAM/
          * PROGRAM_MAX (Task 3) or accumulated across a PROGRAM plus however many PROGRAM_NEXT
          * frames a master block mode sequence needed (DD63) -- this line has no way to tell the
-         * two shapes apart, and does not need to. */
-        Xcp_Internal.memory_transfer.address += Xcp_Internal.pgm_block.length;
+         * two shapes apart, and does not need to.
+         *
+         * SP4c Task 6 conditions it on the access mode, and the specification's own layout is why:
+         * the sentence quoted above sits under 1.6.5.1.3's *Absolute Access mode* heading, while
+         * its *Functional Access mode* paragraph -- the one that says "the ECU software knows the
+         * start address for the new flash content automatically" -- replaces the MTA's meaning
+         * entirely with the Block Sequence Counter (DD86) and never post-increments an address.
+         * Advancing it anyway would be silent and, for a master that programmed functionally and
+         * then switched to absolute access without re-sending SET_MTA, wrong by one whole block.
+         * test/pgm_functional_test.py's own test_a_functional_write_never_moves_the_mta observes
+         * exactly that, through the only window the harness has on this field: a following absolute
+         * write's own address argument. */
+        if (Xcp_Internal.pgm_format.access_method == 0x00u)
+        {
+            Xcp_Internal.memory_transfer.address += Xcp_Internal.pgm_block.length;
+        }
 
         /* 1.1/1.6.5.1.3 and 1.6.5.2.6 both specify no response payload beyond the standard
          * positive response, matching PROGRAM_RESET's, PROGRAM_PREPARE's and PROGRAM_CLEAR's own

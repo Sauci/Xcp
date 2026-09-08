@@ -10,15 +10,21 @@ than by discipline (design doc docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-de
 
 Functional access mode (access_method = 0x01) is the fourth term of that same compound condition,
 gated on PGM_PROPERTIES' FUNCTIONAL_MODE bit -- but that bit is set only once DD84's two functional
-callbacks exist (DD92), and neither is added until Tasks 5 and 6. This task therefore pins only the
-refusal half of that fourth term for real (test_program_format_refuses_functional_access_...
-below): no configuration this task's own schema exposes can ever advertise FUNCTIONAL_MODE, so the
-'accepted when configured' half the design doc's test strategy calls for is not yet reachable, the
-same honest limitation Task 4's own Block Sequence Counter tests record for the identical reason
-(counter has no reader until Task 6). The structural check itself already reads the same
-Xcp_Ptr->general->pgmProperties field GET_PGM_PROCESSOR_INFO reports, so Task 6 activates the
-acceptance path by adding one more generation term to that shared byte -- no further change to
-Xcp_DTOCmdPgmProgramFormat itself.
+callbacks exist (DD92), and neither was added until Tasks 5 and 6. This file therefore pins the
+refusal half of that fourth term (test_program_format_refuses_functional_access_... below), against
+a configuration that does not advertise FUNCTIONAL_MODE -- which is still every configuration this
+file builds, since both functional flags default off.
+
+**The acceptance half now exists, in test/pgm_functional_test.py.** When this docstring was first
+written it could not: no configuration Task 3's own schema exposed could advertise FUNCTIONAL_MODE
+at all, and this paragraph predicted that Task 6 would activate the acceptance path "by adding one
+more generation term to that shared byte -- no further change to Xcp_DTOCmdPgmProgramFormat
+itself". That prediction held exactly: Task 6 added the term (script/source_cfg.c.jinja2) and
+changed nothing in this command's own handler, and
+test_program_format_functional_access_is_accepted_and_forwarded_once_it_is_advertised
+(test/pgm_functional_test.py) is the test that proves it -- the identical request refused below is
+accepted there, on a build configuring both functional callbacks. The two live in different files
+because each belongs with the configuration it needs, and each names the other.
 
 pgm_program_handle() (test/pgm_program_test.py), not pgm_deferred_test.py's own pgm_handle(), is
 this file's base fixture throughout: DD90 (test 4 below) needs a real PROGRAM to refuse, and
@@ -132,15 +138,17 @@ def test_program_format_accepts_exactly_what_get_pgm_processor_info_advertises(f
 
 
 def test_program_format_refuses_functional_access_when_not_advertised():
-    """Brief test 3, refusal half only -- see the module docstring above for why the acceptance half
-    is not reachable within this task: PGM_PROPERTIES' FUNCTIONAL_MODE bit is set only once DD84's
-    two functional callbacks are configured (DD92), and neither exists before Tasks 5/6.
+    """Brief test 3, refusal half only -- its acceptance half is
+    test_program_format_functional_access_is_accepted_and_forwarded_once_it_is_advertised
+    (test/pgm_functional_test.py, Task 6), which needs a configuration this file's own fixture
+    deliberately does not build; see the module docstring above.
 
     access_method = 0x01 is DD89's fourth term, checked against the same
-    Xcp_Ptr->general->pgmProperties byte the other three use -- FUNCTIONAL_MODE is never set by
-    this task's own generation (no schema flag this task adds can turn it on), so this refusal is
-    unconditional today and the mutation below is what actually proves the check exists rather than
-    the bit simply never being reachable.
+    Xcp_Ptr->general->pgmProperties byte the other three use. FUNCTIONAL_MODE is clear in every
+    configuration this file builds -- both functional flags default off (test/parameter.py), and
+    pgm_format_handle passes neither -- so this refusal holds here regardless of what a
+    functional-capable build would do, and the mutation below is what proves the check exists
+    rather than the bit merely never being set.
 
     Mutation (Step 6): deleting this fourth term (or the whole access_method check) makes this test
     fail -- the request is answered 0xFF and Xcp_ProgramFormat is called, instead of ERR_OUT_OF_RANGE

@@ -320,8 +320,9 @@ Ordered. Each sub-project is independently shippable and leaves the suite green.
 
 **Progress:** SP1 is complete (#1). SP2a is complete (#2), with follow-ups in #3 and #4. SP2b is
 complete (#6), with a hygiene pass in #7. SP2d is complete (#12). SP3 is complete. SP4a is complete
-(#16), and SP4b is in review. **SP2c remains deferred — see its own entry below for why, which is
-unchanged — so SP4c is next.**
+(#16), SP4b is complete (#17), and SP4c is complete — **so SP4, and with it the whole PGM command
+group, is complete: all eleven PGM commands are implemented.** **SP2c remains deferred — see its
+own entry below for why, which is unchanged — so SP5 is next.**
 
 ### SP1 — Calibration and page switching (CAL + PAG) — **complete**
 
@@ -429,7 +430,7 @@ express a predicate on a command's argument, and `SET_DAQ_LIST_MODE` has no `ERR
 its error set). Until that lands, **DD48** makes generation refuse the one configuration where the
 gap would be visible: stimulation-capable *and* declaring the STIM resource protected.
 
-### SP4 — Non-volatile memory programming (PGM)
+### SP4 — Non-volatile memory programming (PGM) — **complete**
 
 The eleven PGM commands and their integrator callbacks. Independent of SP2 and SP3;
 schedulable whenever flash programming becomes a requirement.
@@ -456,9 +457,23 @@ one design can carry, so SP4 is **three sub-projects**:
   continues past `PROGRAM_START` through a genuine `PROGRAM_CLEAR` and a multi-frame
   `PROGRAM`/`PROGRAM_NEXT` block before `PROGRAM_RESET`, composing SP4b's own contribution into
   the same end-to-end sequence SP4a's Task 6 began.
-- **SP4c — sectors, formats and verification. Next.** `GET_SECTOR_INFO` (0xCD) and the flash sector
-  configuration model, `PROGRAM_FORMAT` (0xCB) with functional access mode and the block sequence
-  counter, `PROGRAM_VERIFY` (0xC8).
+- **SP4c — sectors, formats and verification — complete.** `PROGRAM_VERIFY` (0xC8),
+  `GET_SECTOR_INFO` (0xCD) and the flash sector configuration model, `PROGRAM_FORMAT` (0xCB), and
+  functional access mode for both `PROGRAM_CLEAR` (clearing by area rather than by address) and
+  `PROGRAM` (the Block Sequence Counter of §1.6.5.1.3, counted by the slave rather than transmitted
+  by the master). Design: `2026-09-08-xcp-pgm-sp4c-design.md` (DD84–DD93). `PGM_PROPERTIES` stops
+  being a constant: it now advertises exactly what this build's configuration offers, and
+  generation refuses a configuration that offers functional access by halves, so
+  `GET_PGM_PROCESSOR_INFO`'s claim and `PROGRAM_FORMAT`'s acceptance are one fact rather than two
+  kept in step. `test/pgm_functional_test.py` walks two end-to-end sequences — one purely
+  functional, one mixing a functional clear with absolute programming, which §1.6.5.2.4 permits
+  outright — beside the `test/pgm_acceptance_test.py` walk SP4a and SP4b built.
+
+  Functional access is **off by default**, in `config/xcp.json` and in the test suite's own default
+  configuration alike: it asks the integrator for two callbacks whose semantics only the ECU's own
+  flash driver can supply (§1.6.5.1.3's "the ECU software knows the start address for the new flash
+  content automatically", §1.6.5.1.2's erase-by-area), so a build that has not written them must not
+  advertise them. Absolute access stays unconditional.
 
 **D10 — `CONNECT` advertises flash programming that answers `ERR_CMD_UNKNOWN`.** With the shipped
 `config/xcp.json`, `CONNECT` returns resource byte `0x15`, setting the PGM bit (§1.6.1.1.1), while

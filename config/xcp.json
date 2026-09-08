@@ -211,6 +211,10 @@
           "enabled": true,
           "protected": false
         },
+        "xcp_program_write_functional_api_enable": {
+          "enabled": false,
+          "protected": false
+        },
         "xcp_program_max_api_enable": {
           "enabled": true,
           "protected": false

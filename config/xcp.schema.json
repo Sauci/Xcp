@@ -333,6 +333,9 @@
               "xcp_program_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_program_write_functional_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_program_max_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
@@ -437,6 +440,7 @@
               "xcp_program_verify_api_enable",
               "xcp_program_format_api_enable",
               "xcp_program_api_enable",
+              "xcp_program_write_functional_api_enable",
               "xcp_program_max_api_enable",
               "xcp_program_start_api_enable",
               "xcp_program_reset_api_enable",
