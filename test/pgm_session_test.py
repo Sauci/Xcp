@@ -84,7 +84,7 @@ def test_the_pending_response_still_arrives_after_an_err_cmd_busy():
 
 
 def test_synch_is_exempt_and_abandons_without_clearing_the_slot():
-    """1.1/1.7.1.1 makes SYNCH the master's means of resynchronising; a SYNCH that cannot get
+    """1.1/1.7.1.2 lists SYNCH among the master's Pre-Actions for error recovery; a SYNCH that cannot get
     through leaves a confused master with no way out, so it is answered ERR_CMD_SYNCH.
 
     It must NOT clear the slot. Xcp_MainFunction polls only while pending_command.active, so
@@ -349,7 +349,7 @@ def test_program_reset_answers_before_disconnecting():
     program_reset(handle)
 
     # Sent before Xcp_MainFunction ever runs, so nothing has flushed PROGRAM_RESET's own response
-    # to CanIf yet. 1.1/1.7.1.1 exempts SYNCH from every busy gate this module has, precisely so it
+    # to CanIf yet. 1.1/1.7.1.2 exempts SYNCH from every busy gate this module has, precisely so it
     # always gets through when the module is still connected -- the disconnected-state gate is a
     # different, earlier check, and is the one this frame is actually testing.
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFC,)))
@@ -562,10 +562,12 @@ def test_program_prepare_defers_through_the_pending_slot_and_keeps_passing_codes
     contract is pStatusCode alone. Xcp_ProgramPrepare's own contract additionally takes address
     and codeSize on EVERY call, not only the first (design §4), and the switch-based poll has no
     way back to the original request once the handler that parsed it has returned -- which is why
-    Task 5 adds pending_command.program_prepare_code_size (source/Xcp_Internal.h) to carry it. The
-    MTA needs no equivalent: Xcp_Internal.memory_transfer.address is already standing state the
-    poll re-reads directly, stable for the duration because DD55's ERR_CMD_BUSY gate refuses any
-    interloping SET_MTA.
+    Task 5 adds pending_command.program_prepare_code_size (source/Xcp_Internal.h) to carry it,
+    since widened into pending_command.args.program_prepare_code_size when SP4b Task 2 turned this
+    single field into a union keyed by pid, ahead of PROGRAM_CLEAR's own clear range needing a
+    second member. The MTA needs no equivalent: Xcp_Internal.memory_transfer.address is already
+    standing state the poll re-reads directly, stable for the duration because DD55's ERR_CMD_BUSY
+    gate refuses any interloping SET_MTA.
 
     A module that never persisted Codesize (leaving it at 0, or at whatever the slot's memory
     happened to hold) would still pass every existing PROGRAM_START/PROGRAM_RESET test in this
@@ -714,7 +716,7 @@ def test_a_mid_session_synch_does_not_end_the_programming_session():
     already-established session -- since 1.1/1.6.5.2.3 allows it from ACTIVE too
     (test_program_prepare_is_also_accepted_from_xcp_pgm_active above; a second code block
     mid-session is the natural reason a master would send it there). The reset ended such a session
-    silently on any ordinary SYNCH, which 1.1/1.7.1.1 requires to stay available throughout one:
+    silently on any ordinary SYNCH, which 1.1/1.7.1.2 requires to stay available throughout one:
     DD51's new pgm_state disjunct would stop firing for the rest of the session, a second
     PROGRAM_START would be accepted where DD49 requires a refusal, and the master would be told
     nothing on the wire to suggest either.

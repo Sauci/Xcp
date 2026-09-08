@@ -330,8 +330,16 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xC6 */
     Xcp_DTOCmdDaqWriteDaqMultiple, /* WRITE_DAQ_MULTIPLE 0xC7, new in 1.1, optional */
     Xcp_CmdNotImplemented, /* 0xC8 */
-    Xcp_CmdNotImplemented, /* 0xC9 */
-    Xcp_CmdNotImplemented, /* 0xCA */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramMax, /* PROGRAM_MAX 0xC9 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_MAX 0xC9 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramNext, /* PROGRAM_NEXT 0xCA, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_NEXT 0xCA, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xCB */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramPrepare, /* PROGRAM_PREPARE 0xCC, optional */
@@ -339,14 +347,26 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* PROGRAM_PREPARE 0xCC, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     Xcp_CmdNotImplemented, /* 0xCD */
-    Xcp_CmdNotImplemented, /* 0xCE */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmGetPgmProcessorInfo, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
+#else
+    Xcp_CmdNotImplemented, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramReset, /* PROGRAM_RESET 0xCF */
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_RESET 0xCF */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xD0 */
-    Xcp_CmdNotImplemented, /* 0xD1 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgram, /* PROGRAM 0xD0 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM 0xD0 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramClear, /* PROGRAM_CLEAR 0xD1 */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_CLEAR 0xD1 */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramStart, /* PROGRAM_START 0xD2 */
 #else
@@ -1051,7 +1071,16 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE, /* UNLOCK 0xF7, optional */
+    /* DD76: GENERIC is not in UNLOCK's own 1.7.3.2.1 row -- that row's seven codes are the seven
+     * listed above, verified against the 1.0 table. It is declared here because
+     * Xcp_DTOCmdStdUnlock (Xcp_Std.c) answers ERR_GENERIC when the integrator's Xcp_CalcKey fails
+     * outright, a condition none of the seven describes: ERR_ACCESS_LOCKED, which the sibling
+     * branch answers, asserts the key was WRONG, which is a different claim from "no key could be
+     * computed". Recorded as a deviation in the DD76 entry, and declared here for the same reason
+     * PROGRAM_RESET 0xCF above declares its own -- a row that does not list what its handler can
+     * answer is a row that lies to whoever reads it next. No behavioural effect: only CMD_BUSY,
+     * CMD_SYNTAX and PGM_ACTIVE are ever tested against this table. */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC, /* UNLOCK 0xF7, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_SEED 0xF8, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_REQUEST 0xF9, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_ID 0xFA, optional */
@@ -1230,6 +1259,18 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pending_command.active = FALSE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* DD63. SP3 and SP4a each shipped a defect that was exactly this omission for their
+             * own buffers -- a fill level surviving into the next session because Xcp_Init did not
+             * reset it. Only length needs clearing: data is never read past it. */
+            Xcp_Internal.pgm_block.length = 0x0000u;
+            /* Task 4 fix round 1, finding 1: pgm_block's own block-open counters, added alongside
+             * length above for the same cross-session hygiene, and now carrying more weight than
+             * length ever did -- a stale non-zero requested_elements surviving into a fresh session
+             * would leave Xcp_PgmBlockIsActive() reporting a block open that no PROGRAM ever
+             * started, misdirecting PROGRAM_NEXT's own count check and PROGRAM_MAX's own DD65
+             * guard alike. */
+            Xcp_Internal.pgm_block.requested_elements = 0x00u;
+            Xcp_Internal.pgm_block.frame_elements = 0x00u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             Xcp_Internal.protection_status = 0x00u;
             Xcp_Internal.requested_protected_resource = 0x00u;
@@ -1309,6 +1350,7 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.memory_transfer.extension = 0x00u;
             Xcp_Internal.block_transfer.requested_elements = 0x00u;
             Xcp_Internal.block_transfer.frame_elements = 0x00u;
+            Xcp_Internal.block_transfer.slave_block_mode = FALSE;
             for (idx = 0x00000000u; idx < (sizeof(Xcp_Internal.internal_buffer) / sizeof(Xcp_Internal.internal_buffer[0x00u])); idx ++) {
                 Xcp_Internal.internal_buffer[idx] = 0x00u;
             }
@@ -1698,8 +1740,9 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                      * lost and the other malformed regardless of which of the two
                                      * writers loses the race.
                                      *
-                                     * 1.1/1.7.1.1 exempts SYNCH: it is the master's only means of
-                                     * resynchronising, and one that cannot get through leaves a
+                                     * 1.1/1.7.1.2 lists SYNCH among the Pre-Actions that bring the slave
+                                     * to a well-defined state before the master retries, so it is
+                                     * exempted here: a SYNCH that cannot get through leaves a
                                      * confused master with no way out. Exempted here, not answered
                                      * here -- it falls through to dispatch below like any other
                                      * command and gets its usual ERR_CMD_SYNCH from
@@ -1798,7 +1841,28 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                                 {
                                                     result = Xcp_PIDTable[pid](&response_expected, pPduInfo);
 
-                                                    Xcp_Internal.last_pid = pid;
+                                                    /* DD72 (authentication bypass, pre-existing). last_pid used to be written here for
+                                                     * every dispatched command unconditionally, including one whose own handler just
+                                                     * decided to refuse it -- and Xcp_DTOCmdStdUnlock (source/Xcp_Std.c) reads
+                                                     * last_pid == XCP_PID_CMD_GET_SEED as "the previous command was a SUCCESSFUL
+                                                     * GET_SEED", not merely "the previous command was GET_SEED". A GET_SEED that
+                                                     * answered ERR_OUT_OF_RANGE (no seed produced) left that read wrong, and UNLOCK
+                                                     * admitted a key against a seed that was never issued -- XCP part 2 - Protocol Layer
+                                                     * Specification 1.1/1.6.1.2.5 makes UNLOCK meaningful only against a seed the slave
+                                                     * actually issued.
+                                                     *
+                                                     * Every error response in this module is built by Xcp_FillErrorPacket or
+                                                     * Xcp_FillErrorPacketWithData (source/Xcp.c), and both write XCP_PID_ERROR into byte 0
+                                                     * before anything else -- so that byte, already computed by the handler this line
+                                                     * runs immediately after, is a complete answer to "did this dispatch's own handler
+                                                     * refuse it" and needs no separate flag threaded through every one of Xcp_PIDTable's
+                                                     * handlers. This is one of two independent legs the defect needs both of -- the other
+                                                     * is requested_protected_resource's own write in Xcp_DTOCmdStdGetSeed
+                                                     * (source/Xcp_Std.c); see test/seed_key_defects_test.py. */
+                                                    if (Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] != XCP_PID_ERROR)
+                                                    {
+                                                        Xcp_Internal.last_pid = pid;
+                                                    }
 
                                                     if (pid != XCP_PID_CMD_UNLOCK) {
                                                         Xcp_ClearProtectionStatus();
@@ -1913,7 +1977,14 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 
                 if (result == E_OK)
                 {
-                    if (Xcp_BlockTransferIsActive() == TRUE)
+                    /* DD70. This used to ask Xcp_BlockTransferIsActive(), "is a block open",
+                     * which a master-block-mode DOWNLOAD also answers TRUE for while its own
+                     * response sits suppressed (1.1/1.6.2.1.1) awaiting DOWNLOAD_NEXT. Confirming
+                     * any OTHER command's response in that window read as "continue a slave block
+                     * mode UPLOAD" -- reading and transmitting slave memory nobody requested. The
+                     * question this confirmation actually needs answered is narrower: is the
+                     * slave the one who owes the master the next frame. */
+                    if (Xcp_SlaveBlockTransferIsActive() == TRUE)
                     {
                         Xcp_BlockTransferAcknowledgeFrame();
 
@@ -2356,7 +2427,37 @@ boolean Xcp_BlockTransferIsActive()
 }
 
 /**
+ * @brief Whether the SLAVE owes the master the next frame of the open block transfer.
+ * @details DD70. Narrower than Xcp_BlockTransferIsActive(): that predicate answers
+ * direction-agnostic "is a block open", which Xcp_Cal.c's ERR_SEQUENCE checks
+ * (1.1/1.6.2.2.1's lost-packet detection) legitimately ask regardless of direction, and stays
+ * unchanged for exactly that reason. This one additionally requires the open block to be slave
+ * block mode (UPLOAD) -- the only direction in which Xcp_CanIfTxConfirmation continuing the
+ * transfer on its own, by reading slave memory and transmitting it, is correct at all. A master
+ * block mode (DOWNLOAD) block leaves this FALSE while it sits open awaiting DOWNLOAD_NEXT.
+ */
+boolean Xcp_SlaveBlockTransferIsActive()
+{
+    boolean result = FALSE;
+
+    if ((Xcp_BlockTransferIsActive() == TRUE) && (Xcp_Internal.block_transfer.slave_block_mode == TRUE))
+    {
+        result = TRUE;
+    }
+
+    return result;
+}
+
+/**
  * @brief Initializes the internal memory transfer state.
+ * @param slaveBlockTransfer TRUE for a slave block mode transfer (UPLOAD, the slave sends the
+ * frames), FALSE for master block mode (DOWNLOAD, the master sends them via DOWNLOAD_NEXT). Both
+ * callers already know this unconditionally -- it is not derived from numberOfDataElements,
+ * blockModeSupported or any other parameter here, all of which vary independently of it (a
+ * transfer with block mode unsupported still opens exactly one direction's worth of state, per
+ * DD70). Recorded into Xcp_Internal.block_transfer.slave_block_mode below, alongside
+ * requested_elements/frame_elements, only once the request has actually validated -- an
+ * accepted transfer's direction must never be read from an aborted one's leftovers.
  * @retval E_OK: The provided parameters are valid, and the transfer will start.
  * @retval E_NOT_OK: The provided parameters are not valid, and the transfer will be discarded.
  */
@@ -2365,7 +2466,8 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
                                           uint8 alignment,
                                           uint8 budget,
                                           boolean blockModeSupported,
-                                          uint8 maxBlockSize)
+                                          uint8 maxBlockSize,
+                                          boolean slaveBlockTransfer)
 {
     Std_ReturnType result = E_OK;
     uint16 capacity;
@@ -2405,6 +2507,7 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
         {
             Xcp_Internal.block_transfer.requested_elements = numberOfDataElements;
             Xcp_Internal.block_transfer.frame_elements = 0x00u;
+            Xcp_Internal.block_transfer.slave_block_mode = slaveBlockTransfer;
         }
     }
     else
@@ -2417,7 +2520,23 @@ Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements,
 
 void Xcp_BlockTransferAcknowledgeFrame()
 {
-    Xcp_Internal.block_transfer.requested_elements -= Xcp_Internal.block_transfer.frame_elements;
+    /* DD71. requested_elements is a uint8; subtracting more than is outstanding would wrap it
+     * past zero rather than reach it, turning "the block is done" into "254 elements still to
+     * go". Every caller reachable today (Xcp_BlockTransferWriteSlaveMemory, source/Xcp.c) keeps
+     * frame_elements <= requested_elements by construction, computing the former from the
+     * latter immediately beforehand -- this held even for DD70's own scenario, whose runaway
+     * came from calling this function a second time on the same frame_elements via
+     * Xcp_CanIfTxConfirmation's now-fixed broad predicate, not from any caller here mismatching
+     * the two on its own. The guard stays regardless, for the reason DD70's own history is the
+     * evidence for: a shared counter's second reader is never guaranteed to stay the last one. */
+    if (Xcp_Internal.block_transfer.frame_elements > Xcp_Internal.block_transfer.requested_elements)
+    {
+        Xcp_Internal.block_transfer.requested_elements = 0x00u;
+    }
+    else
+    {
+        Xcp_Internal.block_transfer.requested_elements -= Xcp_Internal.block_transfer.frame_elements;
+    }
 }
 
 /**

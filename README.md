@@ -20,25 +20,43 @@ The following definitions might be set by the user, depending on the needs.
 | ```XCP_DAQ_TIMESTAMP_SUPPORTED``` | ```ON```/```OFF```           | derived                    | enables/disables the data acquisition clock: the DAQ timestamp field, the `GET_DAQ_CLOCK` command, and `interface/Xcp.h`'s inclusion of `Xcp_DaqTimestamp.h`. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` declares a ```protocol_layer.timestamp``` block, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below — this one is **not** optional there |
 | ```XCP_DAQ_TIMESTAMP_SIZE```  | ```0```/```1```/```2```/```4```  | derived                    | the DAQ timestamp field's width in bytes, as transmitted. Normally left alone: the default is the largest ```protocol_layer.timestamp.size``` any configuration in ```XCP_CONFIG_FILEPATH``` declares (```BYTE```/```WORD```/```DWORD``` → 1/2/4), or 0 when none does, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below |
 | ```XCP_FLASH_PROGRAMMING_ENABLED``` | ```ON```/```OFF```         | derived                    | enables/disables the **PGM** command group: the commands, the integrator callbacks `interface/Xcp.h` declares for them, and the programming-session state. Normally left alone: the default follows whether any configuration in ```XCP_CONFIG_FILEPATH``` sets ```programming.enabled```, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Flash programming* below |
+| ```XCP_MAX_CTO```             | ```-```                          | derived                    | sizes CTO-related buffers that need one compile-time bound for the whole module (currently: the **PGM** block buffer). Normally left alone: the default is the largest ```protocol_layer.max_cto``` any configuration in ```XCP_CONFIG_FILEPATH``` declares, and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below — required whenever ```XCP_FLASH_PROGRAMMING_ENABLED``` is ```ON``` |
+| ```XCP_PGM_MAX_BLOCK_SIZE```  | ```-```                          | derived                    | sizes the **PGM** block buffer (`Xcp_Internal.pgm_block`) at compile time; reported as `MAX_BS_PGM` by `PROGRAM_START`. Normally left alone: the default is the largest ```programming.max_block_size``` any configuration in ```XCP_CONFIG_FILEPATH``` declares (a configuration that omits the ```programming``` block entirely contributes the schema's own default, 8), and keeps following it when that file changes. An explicit ```-D``` overrides it and survives reconfiguring. See *Building the sources outside this CMake project* below — required whenever ```XCP_FLASH_PROGRAMMING_ENABLED``` is ```ON``` |
 
 To use this feature, simply add ```-D<definition>=<value>``` when configuring the build with CMake.
 
 ## Building the sources outside this CMake project
-`source/*.c` includes `Xcp.h`, never the generated `Xcp_Cfg.h`. The generated header defines
-`XCP_PAGING_SUPPORTED`, `XCP_MAX_DTO`, `XCP_DAQ_TIMESTAMP_SUPPORTED` and `XCP_DAQ_TIMESTAMP_SIZE` from the
-configuration and is authoritative for any translation unit that includes it, but it never reaches the library
-sources. This project's `CMakeLists.txt` closes that gap by deriving the same four values from
-`XCP_CONFIG_FILEPATH` and putting them on the compiler command line; a build system that compiles `source/*.c`
-itself has to do the same.
+`source/*.c` includes `Xcp.h`, never the generated `Xcp_Cfg.h` or `Xcp_Rt.h`. The generated header(s) define
+`XCP_PAGING_SUPPORTED`, `XCP_DAQ_TIMESTAMP_SUPPORTED`, `XCP_DAQ_TIMESTAMP_SIZE`, `XCP_FLASH_PROGRAMMING_ENABLED`,
+`XCP_MAX_CTO` and `XCP_PGM_MAX_BLOCK_SIZE` from the configuration and are authoritative for any translation unit
+that includes them, but none of the six reaches the library sources that way. This project's `CMakeLists.txt`
+closes that gap by deriving all six from `XCP_CONFIG_FILEPATH` and putting them on the compiler command line; a
+build system that compiles `source/*.c` itself has to do the same.
 
-`interface/Xcp_Types.h` carries a fallback for three of them, so a translation unit that names none of them still
-compiles — but the fallback is *off* (`XCP_DAQ_TIMESTAMP_SUPPORTED` `STD_OFF`, `XCP_DAQ_TIMESTAMP_SIZE` 0), and
-nothing detects the disagreement that follows. The generated `Xcp_Cfg.c` sets `timestampType` from the
-configuration regardless, so a slave built this way **reports** `TIMESTAMP_SUPPORTED`, reports a valid
-`TIMESTAMP_MODE` and `TIMESTAMP_TICKS`, and accepts `SET_DAQ_LIST_MODE` with the `TIMESTAMP` bit — while the code
-that writes the timestamp into the DTO and answers `GET_DAQ_CLOCK` has been compiled out. The master then
-correlates every sample against timestamps that never reach the wire. Define both macros wherever you compile
-`source/*.c`, with the values the table above describes.
+Corrected here: this list used to name four macros, one of which — `XCP_MAX_DTO` — was never actually one of
+them. `XCP_MAX_DTO` has its own fallback below and is not derived or forced by `CMakeLists.txt` at all; naming it
+here instead of `XCP_FLASH_PROGRAMMING_ENABLED`, which *is* derived and forced, was a documentation error that
+predates the two macros below and that this correction fixes at the same time.
+
+`interface/Xcp_Types.h` carries a fallback for two of the six (`XCP_DAQ_TIMESTAMP_SUPPORTED` `STD_OFF`,
+`XCP_DAQ_TIMESTAMP_SIZE` 0 — plus a fallback for `XCP_MAX_DTO`, 8, which is not one of the six), so a translation
+unit that names none of the six still compiles — but two hazards follow, of different kinds:
+
+- `XCP_DAQ_TIMESTAMP_SUPPORTED`/`_SIZE`'s fallback is silently **wrong**, not absent. Nothing detects the
+  disagreement that follows: the generated `Xcp_Cfg.c` sets `timestampType` from the configuration regardless, so
+  a slave built this way **reports** `TIMESTAMP_SUPPORTED`, reports a valid `TIMESTAMP_MODE` and `TIMESTAMP_TICKS`,
+  and accepts `SET_DAQ_LIST_MODE` with the `TIMESTAMP` bit — while the code that writes the timestamp into the DTO
+  and answers `GET_DAQ_CLOCK` has been compiled out. The master then correlates every sample against timestamps
+  that never reach the wire.
+- `XCP_PAGING_SUPPORTED`, `XCP_FLASH_PROGRAMMING_ENABLED`, `XCP_MAX_CTO` and `XCP_PGM_MAX_BLOCK_SIZE` have **no**
+  fallback at all. Omitting `XCP_PAGING_SUPPORTED`/`XCP_FLASH_PROGRAMMING_ENABLED` compiles their whole command
+  group out silently (an undefined macro reads as `0`/`STD_OFF` in `#if`), the same *wrong-but-quiet* failure as
+  the timestamp pair above. Omitting `XCP_MAX_CTO`/`XCP_PGM_MAX_BLOCK_SIZE` on a build that also sets
+  `XCP_FLASH_PROGRAMMING_ENABLED` to `STD_ON` is different in kind: `source/Xcp_Internal.h` sizes
+  `Xcp_Internal.pgm_block.data` from both, and the build **fails to compile outright** — every translation unit in
+  the library includes `Xcp_Internal.h`, so this is not narrowed to `Xcp_Pgm.c`.
+
+Define all six macros wherever you compile `source/*.c`, with the values the table above describes.
 
 # Module configuration
 A large part of this module consists of auto-generated code. It takes a *JSON* file as input (the path of this file is

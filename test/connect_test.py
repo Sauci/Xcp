@@ -110,14 +110,38 @@ def test_connect_sets_the_resource_stim_bit_according_to_enabled_apis(resource_s
     assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x03)) >> 0x03) == resource_stim_bit
 
 
-# test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis is gone. D11/DD60: its four
-# cases passed on xcp_program_max_api_enable alone -- disabling xcp_program_clear_api_enable or
-# xcp_program_api_enable instead, the other two conjuncts Xcp_CTOCmdStdConnect also tests, changed
-# nothing it asserted, because script/source_cfg.c.jinja2 never wired either key to its ctoInfo
-# enable bit. pgm_configuration_test.py now owns the PGM resource bit:
-# test_each_pgm_api_key_alone_withdraws_the_connect_advertisement sweeps one case per conjunct
-# instead of one per outcome, and test_all_three_pgm_api_keys_enabled_advertises_flash_programming
-# and test_the_gate_overrides_the_api_keys cover the all-enabled and gate-off cases.
+@pytest.mark.parametrize('resource_pgm_bit, api_enable', (
+        (1, (True, True, True)),
+        (0, (False, True, True)),
+        (0, (True, False, True)),
+        (0, (True, True, False))))
+def test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis(resource_pgm_bit, api_enable):
+    """D10/D11, DD60, restored. This test used to exist, was deleted when SP4a's generation guard
+    (final-review finding 3) made every case but the all-disabled one unbuildable -- PROGRAM_CLEAR,
+    PROGRAM and PROGRAM_MAX were all unimplemented then, and enabling any of them alongside
+    `programming.enabled` raised at generation rather than compiling a slave that would have
+    advertised flash programming while answering ERR_CMD_UNKNOWN to it (D10) -- and is restored
+    here now that SP4b's Task 2 (PROGRAM_CLEAR) and Task 3 (PROGRAM, PROGRAM_MAX) have implemented
+    all three and DD69 has deleted the guard term by term.
+
+    One case per conjunct -- each of the three keys as the SOLE disabled one -- plus the
+    all-enabled case, mirroring test_connect_sets_the_resource_cal_pag_bit_according_to_enabled_apis
+    and test_connect_sets_the_resource_daq_bit_according_to_enabled_apis just above. Not one case
+    per outcome: SP4a's original version of this exact test parametrised over four combinations
+    that all happened to turn on xcp_program_max_api_enable last, so all four passed on that one
+    conjunct alone -- disabling xcp_program_clear_api_enable or xcp_program_api_enable instead,
+    the other two Xcp_CTOCmdStdConnect's own AND also tests, changed nothing any of those four
+    cases asserted. That is D11, "a compound condition needs a test per term, not per outcome"
+    (DD60), and is exactly what parametrising over the SOLE-disabled key for each of the three
+    terms in turn -- rather than a fixed walk that enables them in some order -- forecloses."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   programming_enabled=True,
+                                   xcp_program_clear_api_enable=api_enable[0],
+                                   xcp_program_api_enable=api_enable[1],
+                                   xcp_program_max_api_enable=api_enable[2]))
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[1] & (0x01 << 0x04)) >> 0x04) == resource_pgm_bit
 
 
 @pytest.mark.parametrize('byte_order_bit, byte_order', ((0, "LITTLE_ENDIAN"), (1, "BIG_ENDIAN")))

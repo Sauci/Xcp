@@ -18,15 +18,15 @@ PGM_PIDS = ((0xD2, 'PROGRAM_START'), (0xD1, 'PROGRAM_CLEAR'), (0xD0, 'PROGRAM'),
             (0xCC, 'PROGRAM_PREPARE'), (0xCB, 'PROGRAM_FORMAT'), (0xCA, 'PROGRAM_NEXT'),
             (0xC9, 'PROGRAM_MAX'), (0xC8, 'PROGRAM_VERIFY'))
 
-#: The three PGM commands CONNECT's RESOURCE bit 4 is defined by (1.0/1.6.1.1.1), none of them
-#: implemented before SP4b, and therefore the three keys script/source_cfg.c.jinja2 refuses to see
-#: enabled alongside `programming.enabled` (final-review finding 3).
-CONNECT_ADVERTISED_KEYS = ('xcp_program_clear_api_enable',
-                           'xcp_program_api_enable',
-                           'xcp_program_max_api_enable')
-
-#: The only gate-on shape that generates: the feature on, the three unimplemented commands off.
-#: Mirrors pgm_deferred_test.py's own pgm_handle() and exists for the same reason.
+#: A gate-on shape with PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX all off, so every PGM test sharing
+#: this dict reads the same way regardless of which of those three commands' own test file
+#: (pgm_clear_test.py, pgm_program_test.py) exercises it with its own handle instead. Mirrors
+#: pgm_deferred_test.py's own pgm_handle() and exists for the same reason: since SP4b Task 3
+#: deleted DD69's generation guard entirely (all three commands now exist), this is no longer the
+#: only gate-on shape that generates -- xcp_program_clear_api_enable, xcp_program_api_enable and
+#: xcp_program_max_api_enable all True now generate cleanly too (config/xcp.json's own default,
+#: test/parameter.py) -- but it is still the shape every test below wants, isolating PGM's
+#: generated ctoInfo rows and CONNECT's own resource bit from the three commands' own behaviour.
 GATE_ON = dict(programming_enabled=True,
                xcp_program_clear_api_enable=False,
                xcp_program_api_enable=False,
@@ -70,73 +70,47 @@ def test_the_default_configuration_does_not_advertise_flash_programming():
             '%s answers ERR_CMD_UNKNOWN with the gate off' % name
 
 
-@pytest.mark.parametrize('key', CONNECT_ADVERTISED_KEYS)
-def test_generation_refuses_each_unimplemented_pgm_key_on_its_own(key):
-    """Final-review finding 3, and D11's successor.
-
-    Until this guard, `programming.enabled: true` generated eight of the eleven PGM ctoInfo rows
-    ENABLED with Xcp_PIDTable routing them to Xcp_CmdNotImplemented -- and three of the eight are
-    exactly the three Xcp_CTOCmdStdConnect reads for RESOURCE bit 4 (1.0/1.6.1.1.1 defines the bit
-    by naming PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX). So CONNECT advertised "Flash programming
-    available" while all three answered ERR_CMD_UNKNOWN: defect D10 verbatim, one configuration
-    flag away from the branch that exists to close it, and this file previously asserted it as
-    correct.
-
-    Parametrised over the key that is the SOLE one enabled, so each of the three terms in the
-    generator's condition is the only possible cause of the refusal in exactly one case. A guard
-    written against `xcp_program_max_api_enable` alone -- D11's original defect, in which that was
-    the only key the generator read -- would fail two of these three cases.
-
-    Asserts only that generation fails, never on the message: raise(...) is not a registered Jinja
-    global, so every guard in source_cfg.c.jinja2 aborts with the same "'raise' is undefined"
-    UndefinedError (daq_configuration_test.py carries the full explanation above its own four).
-    What makes this test discriminating is not the message but its companions below: the same
-    keys generate cleanly with the gate off, and the gate generates cleanly with the keys off."""
-    handle_kwargs = {name: (name == key) for name in CONNECT_ADVERTISED_KEYS}
-
-    with pytest.raises(UndefinedError):
-        XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, programming_enabled=True, **handle_kwargs))
-
-
 def test_the_gate_on_build_still_does_not_advertise_flash_programming():
-    """The positive-shaped half of the guard above, and what keeps D10 closed in the only gate-on
-    configuration that generates at all.
-
-    This replaces test_all_three_pgm_api_keys_enabled_advertises_flash_programming, which asserted
-    the OPPOSITE -- that a gate-on build with the three keys enabled sets the bit -- and was the
-    branch's own written endorsement of the defect. That test belongs to SP4b: once PROGRAM_CLEAR,
-    PROGRAM and PROGRAM_MAX exist, the guard above loses its terms one by one, the keys become
-    settable again, and the bit becomes legitimately true for the first time (design §8 says so).
-    Until then no buildable configuration sets it, which is the honest state of affairs and is
-    exactly what this asserts.
-
-    The consequence worth stating out loud for whoever writes SP4b: `resource |= (0x01u << 0x04u)`
-    in Xcp_CTOCmdStdConnect (source/Xcp_Std.c) is unreachable in every configuration this release
-    can build, so no test in this suite can currently prove that line works. Restoring that proof
-    is SP4b's, not something to be simulated here by re-admitting the lie."""
+    """GATE_ON's own self-consistency check. Final-review finding 3's generation guard (DD69) is
+    gone as of this task -- deleted term by term as SP4b implemented PROGRAM_CLEAR (Task 2), then
+    PROGRAM and PROGRAM_MAX (Task 3) -- so this no longer states a ceiling on what any build can
+    advertise (test/connect_test.py's restored
+    test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis, DD60, proves the bit reads
+    TRUE for a build that enables all three). What this still asserts is narrower and remains true:
+    GATE_ON itself -- the fixture nearly every other test in this file builds on, deliberately
+    holding all three commands off so it can isolate PGM's OTHER generated rows and CONNECT's
+    resource bit from those three commands' own behaviour -- does what its own name promises."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, **GATE_ON))
     connect(handle)
 
     assert (handle.can_if_transmit.call_args[0][1].SduDataPtr[0x01] & 0x10) == 0x00, \
-        'no configuration SP4a can build may advertise flash programming'
+        'GATE_ON must not advertise flash programming, since it holds all three commands off'
 
 
-def test_the_three_unimplemented_commands_answer_err_cmd_unknown_with_the_gate_on():
+def test_the_three_pgm_advertised_commands_answer_err_cmd_unknown_when_their_own_keys_are_disabled():
     """The other half of the pair above, and the half that says the advertisement matches the
     implementation rather than merely that both are absent.
 
     test_the_default_configuration_does_not_advertise_flash_programming makes this claim for the
-    gate-OFF build, where every PGM command is unimplemented. Here the gate is ON and three of the
-    eleven commands really do exist -- PROGRAM_START, PROGRAM_RESET and PROGRAM_PREPARE, exercised
-    at length in pgm_deferred_test.py and pgm_session_test.py -- so the sweep is over the three
-    CONNECT reads instead: they must answer ERR_CMD_UNKNOWN, which is what makes the withheld
-    advertisement above the truth about this build and not an accident of it."""
+    gate-OFF build, where every PGM command is unimplemented. Here the gate is ON and seven of the
+    eleven commands really do exist -- PROGRAM_START, PROGRAM_RESET, PROGRAM_PREPARE, and as of
+    SP4b, PROGRAM_CLEAR (Task 2), PROGRAM and PROGRAM_MAX (Task 3) -- exercised at length in
+    pgm_deferred_test.py, pgm_session_test.py, pgm_clear_test.py and pgm_program_test.py. GATE_ON
+    still holds all three of CONNECT's own reads disabled by their own keys, though, so the sweep
+    below is over those three: they must still answer ERR_CMD_UNKNOWN, which is what makes the
+    withheld advertisement above the truth about THIS build and not an accident of it. All three
+    answer it for the identical reason now, unlike before Task 3: GATE_ON leaves their own
+    xcp_..._api_enable keys False, so each ctoInfo entry is disabled and dispatch never reaches
+    its (real, existing) handler at all -- the same wire answer a genuinely unimplemented command
+    gets, which is the property test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off's
+    own docstring names directly. pgm_clear_test.py and pgm_program_test.py are where the three
+    handlers are actually exercised, on handles that enable them."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, **GATE_ON))
     connect(handle)
 
     for pid, name in ((0xD1, 'PROGRAM_CLEAR'), (0xD0, 'PROGRAM'), (0xC9, 'PROGRAM_MAX')):
         assert exchange(handle, (pid,) + (0x00,) * 7)[0:2] == (0xFE, 0x20), \
-            '%s must answer ERR_CMD_UNKNOWN until SP4b implements it' % name
+            '%s must answer ERR_CMD_UNKNOWN while its own api_enable key is disabled' % name
 
 
 def test_the_gate_overrides_the_api_keys():
@@ -145,11 +119,9 @@ def test_the_gate_overrides_the_api_keys():
     integrator who enabled the three API keys without enabling the feature would get the
     advertisement back and nothing behind it.
 
-    This is also the accepting discriminator for the guard in
-    test_generation_refuses_each_unimplemented_pgm_key_on_its_own above: it is the CONJUNCTION that
-    is refused, not the keys. A gate-off build has no PGM handler for the advertisement to be wrong
-    about, so the same three keys generate cleanly here -- and a guard mistakenly written as "refuse
-    these keys", full stop, would fail this test."""
+    A gate-off build has no PGM handler for the advertisement to be wrong about, so the same three
+    keys generate cleanly here -- and a guard mistakenly written as "refuse these keys", full stop,
+    rather than the conjunction with programming.enabled, would fail this test."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    programming_enabled=False,
                                    xcp_program_clear_api_enable=True,
@@ -198,6 +170,122 @@ def test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off():
             '%s must generate disabled with the gate off: %r' % (marker, matches[0])
 
 
+def test_program_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off():
+    """Task 3 review, fix round 1, finding 4. Design doc Section 9, acceptance criterion 1's
+    byte-for-byte claim is about the whole generated file, not merely the enable bit the test
+    above and test_the_gate_touches_only_pgm_ctoinfo_rows below both check -- neither would have
+    caught PROGRAM's own ctoInfo minimum-request nibble (the trailing 4 bits of the row) being
+    emitted unconditionally at Task 3's new value (2), outside the programming.enabled
+    conditional that already gates the enable and protected bits on the same line, so a gate-off
+    build's generated Xcp_Cfg.c differed from a pre-Task-3 tree by that one byte even though the
+    row stayed disabled and unread either way (source/Xcp.c tests the enable bit before ever
+    reading this nibble). Fixed by keying the nibble on the identical conjunction the enable bit
+    already tests, so a gate-off build (this test) and GATE_ON with PROGRAM's own key left False
+    (test_the_gate_touches_only_pgm_ctoinfo_rows's own `unchanged` set) both keep the pre-Task-3
+    value, 4 -- and only a build where PROGRAM is truly reachable renders the corrected value, 2.
+
+    Checked directly against the generated line's own trailing token, which neither of this
+    file's two other generator tests reads at all."""
+    source = _generated_source(DefaultConfig())
+
+    matches = [line for line in source.splitlines() if 'PROGRAM 0xD0' in line]
+    assert len(matches) == 1, 'PROGRAM 0xD0 must appear exactly once in the generated ctoInfo table'
+    assert '0x04u, /* PROGRAM 0xD0' in matches[0], \
+        'the gate-off minimum nibble must stay the pre-Task-3 value (4), not become 2 merely ' \
+        'because the row is unreachable either way: %r' % matches[0]
+
+
+def test_program_next_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off():
+    """Task 4 review, fix round 1, finding 2. The exact mistake
+    test_program_ctoinfo_minimum_nibble_is_unchanged_with_the_gate_off above exists to catch,
+    reintroduced for a different row: PROGRAM_NEXT's own ctoInfo minimum-request nibble was
+    corrected from the SP4a-era placeholder 4 to the true value 3 (task-4-report.md), but emitted
+    unconditionally, outside the `programming.enabled` conditional that already gates this row's
+    own enable bit on the same line -- so a gate-off build's generated Xcp_Cfg.c differed from
+    SP4a's by this one byte even though the row stayed disabled and unread either way (source/Xcp.c
+    tests the enable bit before ever reading this nibble). Unlike PROGRAM 0xD0's own key, this row
+    has no per-command api_enable term to conjoin (DD69/design Section 4: PROGRAM_NEXT adds no new
+    callback), so the correct key is `programming.enabled` alone -- the identical condition its own
+    enable bit already tests, one column to its own left.
+
+    Fixed by keying the nibble on that same condition, so a gate-off build (this test) keeps the
+    pre-Task-4 value, 4, and only a build where `programming.enabled` is true renders the corrected
+    value, 3 (test_generation_accepts_the_pgm_resource_on_a_build_that_cannot_program and friends
+    below exercise that side indirectly; the value itself, 3, is not in question here -- only its
+    conditional placement is)."""
+    source = _generated_source(DefaultConfig())
+
+    matches = [line for line in source.splitlines() if 'PROGRAM_NEXT 0xCA' in line]
+    assert len(matches) == 1, 'PROGRAM_NEXT 0xCA must appear exactly once in the generated ctoInfo table'
+    assert '0x04u, /* PROGRAM_NEXT 0xCA' in matches[0], \
+        'the gate-off minimum nibble must stay the pre-Task-4 value (4), not become 3 merely ' \
+        'because the row is unreachable either way: %r' % matches[0]
+
+
+def test_gate_off_output_does_not_depend_on_any_other_programming_setting():
+    """Task 4 review, fix round 2. The two tests immediately above are hand-written siblings, one
+    per row (PROGRAM 0xD0 from Task 3's own review, PROGRAM_NEXT 0xCA from this task's own fix
+    round 1) -- each pins that ONE row's own minimum nibble against ONE way it could leak past the
+    gate. The review checked directly whether that generalises, by keying a THIRD row's own
+    minimum nibble (GET_SECTOR_INFO 0xCD) on something other than `programming.enabled` while the
+    gate stayed off: every one of the 108 tests in this file still passed, because
+    test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off only reads the enable bit and
+    test_the_gate_touches_only_pgm_ctoinfo_rows only compares which LINES differ between gate-on
+    and gate-off -- neither reads a value that stays constant across THAT comparison while still
+    depending on something it should not. Two more hand-written siblings would only have moved the
+    same gap to a fourth and fifth row; GET_SECTOR_INFO and GET_PGM_PROCESSOR_INFO both still have
+    no sibling of their own after this test is added, and neither needs one.
+
+    The property that actually closes the class, not merely one instance of it: with
+    `programming.enabled` FALSE, source/Xcp.c's own dispatcher never reads a PGM row's ctoInfo
+    fields beyond the enable bit it already tested false, so NOTHING else about a PGM row -- not
+    its minimum nibble, not any other field this sub-project or a later one adds -- may depend on
+    ANY other configuration value while the gate stays off. A baseline gate-off build is compared,
+    byte for byte, against one variant per OTHER setting this command group's own implementation
+    status could plausibly leak through -- `programming.max_block_size` moved to each of its two
+    extremes, and each of the six `xcp_program_*_api_enable` keys flipped off -- all eight with the
+    gate itself left off throughout. Comparing the WHOLE generated file, not only the ctoInfo
+    table, matches acceptance criterion 1's own scope (design doc Section 9): a leak could in
+    principle land anywhere the generator touches, not only in the block this sub-project's own two
+    siblings happen to read.
+
+    `resource_protection_programming` is deliberately NOT one of the variants, and finding out why
+    the hard way is exactly what building this test caught: it changes `protectedResource`'s own
+    PGM bit (source/Xcp_Cfg.c) whether or not `programming.enabled` is true, by design -- a slave
+    declares which resources need unlocking as a policy independent of whether the commands behind
+    them exist yet, the same way GET_SEED/UNLOCK already read that bit for resources a given build
+    does not implement at all. Including it as a variant made this test fail against CORRECT
+    output on the very first run, which is worth recording so the same false lead is not
+    rediscovered: resource protection is a different axis from command-implementation gating, and
+    this property is about the latter only.
+
+    Mutation-verified against two independent, unrelated leaks (task report), proving this is not
+    a sibling of the two tests above with extra steps: keying GET_SECTOR_INFO 0xCD's own minimum
+    nibble on `programming.max_block_size`, ungated on `programming.enabled` -- mirroring this
+    task's own fix round 1 mistake, on a row and a setting neither hand-written sibling above ever
+    names -- makes the `max_block_size` variant below fail; keying PROGRAM_FORMAT 0xCB's own
+    minimum nibble on `xcp_program_prepare_api_enable` the same, ungated, way makes the
+    corresponding api_enable variant fail instead. Both were reverted after."""
+    baseline = _generated_source(DefaultConfig())
+
+    variants = {
+        'programming_max_block_size=1': DefaultConfig(programming_max_block_size=1),
+        'programming_max_block_size=255': DefaultConfig(programming_max_block_size=255),
+        'xcp_program_clear_api_enable=False': DefaultConfig(xcp_program_clear_api_enable=False),
+        'xcp_program_api_enable=False': DefaultConfig(xcp_program_api_enable=False),
+        'xcp_program_max_api_enable=False': DefaultConfig(xcp_program_max_api_enable=False),
+        'xcp_program_start_api_enable=False': DefaultConfig(xcp_program_start_api_enable=False),
+        'xcp_program_reset_api_enable=False': DefaultConfig(xcp_program_reset_api_enable=False),
+        'xcp_program_prepare_api_enable=False': DefaultConfig(xcp_program_prepare_api_enable=False),
+    }
+
+    for label, config in variants.items():
+        assert _generated_source(config) == baseline, \
+            'programming.enabled is FALSE in both the baseline and this variant, so %s alone must ' \
+            'not change a single byte of the generated output -- something programming-related ' \
+            'reached Xcp_Cfg.c without the enable check source/Xcp.c relies on' % label
+
+
 def test_the_gate_touches_only_pgm_ctoinfo_rows():
     """The other half of acceptance criterion 1: not merely that the disabled state above is
     correct, but that turning the gate on touches NOTHING else. A generator defect that shifted
@@ -205,10 +293,15 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     this suite -- all of it runs with the gate off -- and still violate 'byte-for-byte identical',
     which is a claim about the whole file, not about the eleven rows this sub-project added.
 
-    Named for eleven rows until final-review finding 3; eight of them now, since PROGRAM_CLEAR,
-    PROGRAM and PROGRAM_MAX cannot be enabled in a gate-on build at all. The claim is unchanged --
-    nothing outside the PGM block may move when the gate flips -- and is asserted below as the
-    exact set rather than as a number.
+    Named for eleven rows until final-review finding 3; eight of them here, since this comparison's
+    `on` config is GATE_ON, which forces PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX off deliberately --
+    by GATE_ON's own choice now, not because the generator refuses any combination of them: DD69's
+    guard is gone entirely as of SP4b Task 3, term by term as PROGRAM_CLEAR (Task 2), then PROGRAM
+    and PROGRAM_MAX (Task 3) were implemented. GATE_ON keeps holding all three off regardless,
+    because isolating the OTHER eight rows from these three commands' own behaviour is what this
+    particular comparison needs, not because generation would refuse the alternative. The claim
+    itself is unchanged -- nothing outside the PGM block may move when the gate flips -- and is
+    asserted below as the exact set rather than as a number.
 
     Diffs the current generator's own output for the gate on vs off, rather than reaching back into
     git history for the comparison. The two questions are the same one as long as the template's
@@ -217,7 +310,18 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     historical comparison was run by hand instead, twice: task-6-report.md carries Task 1's, and
     final-fix-report.md carries this round's, where the default build's generated Xcp_Cfg.c,
     Xcp_Cfg.h, Xcp_Rt.c and Xcp_Rt.h were confirmed byte-identical to 35c4877's despite
-    config/xcp.json's PGM defaults changing and two guards being added to the template."""
+    config/xcp.json's PGM defaults changing and two guards being added to the template.
+
+    Nine differing lines, not eight, since final review F4: Xcp_GeneralType's own maxBsPgm row
+    (script/source_cfg.c.jinja2) is a second, genuine gate-on/gate-off difference outside the
+    ctoInfo table entirely -- MAX_BS_PGM's per-configuration value, 0 whenever programming.enabled
+    is false (F4's own gate-off invariant, guarded separately by
+    test_gate_off_output_does_not_depend_on_any_other_programming_setting) and the real configured
+    value once it is true. Caught here the moment F4's own fix landed: keying this row on
+    programming.enabled alone (matching the ctoInfo rows) still left it differing between GATE_ON
+    and gate-off, since GATE_ON's own programming.enabled IS true -- a real, correctly-gated
+    difference this test's own pre-F4 assertion (`== len(PGM_PIDS) - len(unchanged)`, silently
+    assuming every differing line is a ctoInfo row) was not yet written to expect."""
     off = _generated_source(DefaultConfig())
     on = _generated_source(DefaultConfig(xcp_program_start_api_enable=True,
                                          xcp_program_reset_api_enable=True,
@@ -228,19 +332,27 @@ def test_the_gate_touches_only_pgm_ctoinfo_rows():
     on_lines = on.splitlines()
     assert len(off_lines) == len(on_lines), 'the gate must not add or remove any generated line'
 
-    # Eight, not eleven, since final-review finding 3: PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX
-    # cannot be enabled in a gate-on build at all, so their rows are identical on both sides and
-    # the ceiling on what the gate may touch drops to the other eight. Asserting the exact set
-    # rather than a count keeps the claim from weakening as that number moves: SP4b puts each of
-    # the three back as it implements it, and this list is where that shows up.
+    # Eight, not eleven, since final-review finding 3: this comparison's `on` config is GATE_ON,
+    # which forces PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX off deliberately, so their rows are
+    # identical on both sides and the ceiling on what the gate may touch drops to the other eight.
+    # Asserting the exact set rather than a count keeps the claim from weakening as that number
+    # moves: DD69's generator refusal is gone for all three now (Task 2 lifted PROGRAM_CLEAR's own
+    # term, Task 3 the other two), and only GATE_ON's own choice to still pass all three keys False
+    # keeps their rows in this particular set.
     unchanged = {'PROGRAM_CLEAR 0xD1', 'PROGRAM 0xD0', 'PROGRAM_MAX 0xC9'}
     pgm_markers = ['%s 0x%02X' % (name, pid) for pid, name in PGM_PIDS]
+    # Final review F4: the one non-ctoInfo row this gate is now also allowed to touch, named
+    # explicitly (not folded into pgm_markers, which greps for a PID name/hex pair this row does
+    # not carry) so the loop below can tell "an expected second kind of difference" apart from "an
+    # unrelated byte the gate should never move".
+    other_expected_markers = ['maxBsPgm']
     differing = [i for i, (o, n) in enumerate(zip(off_lines, on_lines)) if o != n]
 
-    assert len(differing) == len(PGM_PIDS) - len(unchanged), \
-        'the gate must change exactly the eight enableable PGM ctoInfo rows, no more and no fewer'
+    assert len(differing) == len(PGM_PIDS) - len(unchanged) + len(other_expected_markers), \
+        'the gate must change exactly the eight enableable PGM ctoInfo rows plus maxBsPgm, no ' \
+        'more and no fewer'
     for i in differing:
-        assert any(marker in off_lines[i] for marker in pgm_markers), \
+        assert any(marker in off_lines[i] for marker in pgm_markers + other_expected_markers), \
             'line %d differs but names no PGM PID: %r' % (i, off_lines[i])
         assert not any(marker in off_lines[i] for marker in unchanged), \
             'line %d is one of the three commands SP4a cannot enable, yet the gate changed it: %r' \
@@ -272,8 +384,12 @@ def test_generation_refuses_the_pgm_resource_on_a_build_that_can_program():
 
     Refused at generation rather than repaired here because repairing it means changing the unlock
     LIFETIME, which is one mechanism shared by CAL_PAG, DAQ and PGM alike and needs its own design.
-    Asserts only that generation fails, never on the message, for the reason
-    test_generation_refuses_each_unimplemented_pgm_key_on_its_own above gives."""
+    Asserts only that generation fails, never on the message: raise(...) is not a registered Jinja
+    global, so every guard in source_cfg.c.jinja2 aborts with the same "'raise' is undefined"
+    UndefinedError (daq_configuration_test.py carries the full explanation above its own four).
+    What makes this test discriminating is not the message but its companion below, which shows
+    the same GATE_ON configuration generates cleanly once resource_protection.programming is left
+    False."""
     with pytest.raises(UndefinedError):
         XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                               resource_protection_programming=True,

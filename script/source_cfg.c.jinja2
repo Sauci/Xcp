@@ -918,44 +918,44 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC5 */
         (0x01u << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x00u, /* 0xC6 */
         ({% if configuration.apis.xcp_write_daq_multiple_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_write_daq_multiple_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x02u, /* WRITE_DAQ_MULTIPLE 0xC7, optional */
-{#- Final-review finding 3. PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and PROGRAM_MAX (0xC9) are exactly
-    the three commands Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads to decide CONNECT's RESOURCE
-    bit 4, because 1.0/1.6.1.1.1 defines that bit by naming them: "1 = Flash programming available.
-    The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are available." None of the three is
-    implemented until SP4b -- Xcp_PIDTable (source/Xcp.c) routes all three to
-    Xcp_CmdNotImplemented -- so enabling their keys in a build with the feature gated on makes
-    CONNECT advertise flash programming while all three answer ERR_CMD_UNKNOWN.
+{#- Final-review finding 3, closed by SP4b (DD69). PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and
+    PROGRAM_MAX (0xC9) are exactly the three commands Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads
+    to decide CONNECT's RESOURCE bit 4, because 1.0/1.6.1.1.1 defines that bit by naming them:
+    "1 = Flash programming available. The commands PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX are
+    available." None of the three was implemented in SP4a -- Xcp_PIDTable (source/Xcp.c) routed all
+    three to Xcp_CmdNotImplemented -- so enabling their keys in a build with the feature gated on
+    would have made CONNECT advertise flash programming while all three answered ERR_CMD_UNKNOWN:
+    defect D10 verbatim.
 
-    That is defect D10 verbatim, the defect this sub-project exists to close, one configuration
-    flag away. DD58 closes it "by construction" for the DEFAULT build only, where the gate is off
-    and every PGM row generates disabled; the moment programming.enabled is true these three rows
-    follow their own keys, which config/xcp.json used to ship enabled. It is also DD59's own stated
-    principle -- "a command whose handler is not compiled must not be advertised as enabled" --
-    applied to the three rows that are visible on the wire.
-
-    Refused rather than merely defaulted false, because a default is a trap for whoever flips it:
-    the keys stay in the schema for SP4b, and an integrator who sets one gets an explanation here
-    instead of a slave that lies to its master. Self-removing -- SP4b deletes each command's term
-    from this condition as it implements it, and the condition disappears with the last one.
+    A three-term guard stood here through SP4a and SP4b Task 2, refusing generation rather than
+    merely defaulting the keys false -- a default is a trap for whoever flips it, and an integrator
+    who set one before its command existed got an explanation here instead of a slave that lies to
+    its master. It was written to be self-removing, one term per command as SP4b implemented it:
+    PROGRAM_CLEAR's term went first (Task 2, Xcp_DTOCmdPgmProgramClear), and this task's own
+    Xcp_DTOCmdPgmProgram and Xcp_DTOCmdPgmProgramMax (source/Xcp_Pgm.c) are what remove the last
+    two. The guard itself is gone with them: CONNECT's RESOURCE bit 4 needed all three ctoInfo
+    entries enabled at once (Xcp_CTOCmdStdConnect ANDs them), and now that all three commands exist
+    there is nothing left for a term to guard. config/xcp.json sets all three keys true.
+    test/connect_test.py's test_connect_sets_the_resource_pgm_bit_according_to_enabled_apis is
+    DD60's per-conjunct sweep, restored now that it has three real commands to sweep.
 
     The other five PGM rows (PROGRAM_VERIFY 0xC8, PROGRAM_NEXT 0xCA, PROGRAM_FORMAT 0xCB,
-    GET_SECTOR_INFO 0xCD, GET_PGM_PROCESSOR_INFO 0xCE) are equally unimplemented and are NOT
-    refused here, deliberately: they have no configuration key of their own, nothing reads their
-    ctoInfo bit except the dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN for an enabled
-    row pointing at Xcp_CmdNotImplemented exactly as it does for a disabled one. No master is told
-    anything untrue about them. It is the CONNECT advertisement that makes these three different. #}
-{%- if configuration.programming.enabled | default(false) and (configuration.apis.xcp_program_clear_api_enable.enabled or configuration.apis.xcp_program_api_enable.enabled or configuration.apis.xcp_program_max_api_enable.enabled) %}
-{{ raise('programming.enabled is true and at least one of xcp_program_clear_api_enable, xcp_program_api_enable and xcp_program_max_api_enable is enabled, but none of PROGRAM_CLEAR (0xD1), PROGRAM (0xD0) and PROGRAM_MAX (0xC9) is implemented before SP4b -- Xcp_PIDTable (source/Xcp.c) routes all three to Xcp_CmdNotImplemented, while Xcp_CTOCmdStdConnect (source/Xcp_Std.c) reads exactly these three ctoInfo entries to set CONNECT\'s RESOURCE bit 4, so the slave would advertise "Flash programming available" (XCP part 2 1.0/1.6.1.1.1) and then answer ERR_CMD_UNKNOWN to all three; set the three keys to false until SP4b implements the commands (defect D10; final-review finding 3 in .superpowers/sdd/2026-09-06-xcp-pgm-sp4a/final-review.md)') }}
-{%- endif %}
+    GET_SECTOR_INFO 0xCD, GET_PGM_PROCESSOR_INFO 0xCE) were never part of this guard, deliberately:
+    they have no configuration key of their own, nothing reads their ctoInfo bit except the
+    dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN for an enabled row pointing at
+    Xcp_CmdNotImplemented exactly as it does for a disabled one. No master is told anything untrue
+    about them. It was the CONNECT advertisement that made PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX
+    different, and that is also why lifting their own refusal here is what closes D10, not merely
+    what implements three more commands. #}
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_VERIFY 0xC8, optional */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_max_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_max_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x03u, /* PROGRAM_MAX 0xC9, optional */
-        ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x04u, /* PROGRAM_NEXT 0xCA, optional */
+        ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | {% if configuration.programming.enabled | default(false) %}0x03u{% else %}0x04u{% endif %}, /* PROGRAM_NEXT 0xCA, optional. Task 4: 3 once truly enabled (the same conjunction as the enable bit immediately to its own left -- here just configuration.programming.enabled, since this row has no per-command api_enable key of its own to conjoin, DD69/design Section 4: "No new callback"), not the SP4a-era placeholder 4 -- unlike PROGRAM_MAX immediately above, this row's own Xcp_CTOErrorMatrix entry (source/Xcp.c) DOES carry XCP_INTERNAL_ERR_CMD_SYNTAX, so this nibble is a live bound the generic pre-dispatch gate (Xcp_CanIfRxIndication, source/Xcp.c) actually enforces before the handler ever runs, not an unused one. 1.1/1.6.5.2.5's own request is [PID, count, data...], and this command's own count is never legitimately 0 (Xcp_DTOCmdPgmProgramNext's own Xcp_PgmBlockIsActive() guard makes count meaningful only while a block is open, i.e. while at least one element remains) -- so a genuine minimum request always carries at least 1 data byte at AG=BYTE, the true floor being cmd+count+1data=3, mirroring DOWNLOAD_NEXT's own identical 3 immediately below (0xEF). Left at 4, a legitimate 3-byte completing PROGRAM_NEXT for a block's last remaining element was refused ERR_CMD_SYNTAX by this generic gate before Xcp_DTOCmdPgmProgramNext ever saw it -- test_program_next_is_refused_err_sequence_before_program_start_succeeds (test/pgm_program_test.py) caught this directly during this task's own RED phase (task report). Kept at the OLD value 4 whenever this row is not truly enabled -- fix round 1, finding 2: an earlier version of this nibble was an UNCONDITIONAL 3, so a gate-OFF build's generated Xcp_Cfg.c differed from SP4a's by this one byte even though the row stayed disabled and unread either way (source/Xcp.c tests the enable bit before ever reading this nibble) -- inert on the wire, but a real byte difference the design doc's own "byte-for-byte identical with the gate off" criterion (SP4b design Section 9, criterion 1) does not tolerate, exactly the mistake Task 3's own review round 1 finding 4 had already fixed for PROGRAM's own identical nibble on the row immediately above this one (that row's own name and hex are deliberately not spelled out adjacently in this sentence, unlike everywhere else in this comment: test_every_pgm_ctoinfo_entry_generates_disabled_with_the_gate_off, test/pgm_configuration_test.py, greps this generated file for each row's own "name 0xHH" marker and an earlier version of this sentence supplied a false second match for that other row's own marker by quoting it in full). */
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x05u, /* PROGRAM_FORMAT 0xCB, optional */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_prepare_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_prepare_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* PROGRAM_PREPARE 0xCC, optional */
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x03u, /* GET_SECTOR_INFO 0xCD, optional */
         ({% if configuration.programming.enabled | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | (0x00u << 0x05u) /* protected through seed and key */ | 0x01u, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_reset_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_reset_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x01u, /* PROGRAM_RESET 0xCF */
-        ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x04u, /* PROGRAM 0xD0 */
+        ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | {% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_api_enable.enabled %}0x02u{% else %}0x04u{% endif %}, /* PROGRAM 0xD0. Task 3: 2 once truly enabled (both this same conjunction the enable bit above already tests), not SP4a/Task-2-era 4 -- DD64 makes a zero element count a legitimate request (command code + the count byte alone, no data, no alignment), so 2 is the true minimum; a non-zero count's own actual length is checked in the handler itself, exactly as DOWNLOAD's minimum (3, below) is not the whole story for ITS non-zero counts either. Kept at the OLD value 4 whenever this row is not truly enabled -- task 3 review, fix round 1, finding 4: the minimum nibble used to be an unconditional 2 regardless of the gate, so a gate-OFF build's generated Xcp_Cfg.c differed from a pre-Task-3 tree by this one byte even though the row stayed disabled and unread either way (source/Xcp.c tests the enable bit before ever reading this nibble) -- inert on the wire, but a real byte difference the design doc's own "byte-for-byte identical with the gate off" criterion (SP4b design Section 9, criterion 1) does not tolerate. Same conjunction as the enable bit immediately to its own left, deliberately: GATE_ON (test/pgm_configuration_test.py) sets programming.enabled true while forcing xcp_program_api_enable false specifically so this row stays untouched, and a nibble keyed on programming.enabled alone would have broken that guarantee instead of fixing it. */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_clear_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_clear_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x08u, /* PROGRAM_CLEAR 0xD1 */
         ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_start_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_program_start_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x01u, /* PROGRAM_START 0xD2 */
         ({% if configuration.apis.xcp_alloc_odt_entry_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x07u) /* enable */ | (0x01u << 0x06u) /* is CTO */ | ({% if configuration.apis.xcp_alloc_odt_entry_api_enable.protected %}0x01u{% else %}0x00u{% endif %} << 0x05u) /* protected through seed and key */ | 0x06u, /* ALLOC_ODT_ENTRY 0xD3, optional */
@@ -1012,6 +1012,38 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % configuration.protocol_layer.max_bs}}, /* maxBS */
     {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
     {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
+{#- Final review F4. PROGRAM_START reports this as MAX_BS_PGM (source/Xcp_Pgm.c) -- the PER-
+    CONFIGURATION value, matching maxBS/minST/ctoQueueSize immediately above, all of which are
+    already the live field this build is actually running rather than a build-wide bound. Unlike
+    them, this one also has a compile-time twin, XCP_PGM_MAX_BLOCK_SIZE (script/header_cfg.h.jinja2),
+    which sizes Xcp_Internal.pgm_block -- and MUST stay the build-wide largest across every
+    configuration, since the sources compile once for all of them. The two serve different masters
+    on purpose: the buffer has to hold the biggest block ANY configuration in this build can ask
+    for, but the response must promise only what THIS configuration actually offers, or a build
+    holding a max_block_size=1 configuration beside a max_block_size=200 one would have the first
+    advertise a block size the second's buffer allows but the first's own master was never told
+    to expect.
+
+    Conditioned on programming.enabled -- unlike maxBS/minST/ctoQueueSize immediately above, which
+    are not PGM-specific and were never at risk of this -- for the identical reason the PROGRAM/
+    PROGRAM_NEXT ctoInfo minimum nibbles are conditioned on it two Task reviews running (Task 3
+    finding 4, Task 4's own fix round 1 finding 2, both now generalised into
+    test_gate_off_output_does_not_depend_on_any_other_programming_setting,
+    test/pgm_configuration_test.py): with the gate off, this row is unread either way
+    (source/Xcp_Pgm.c's own reader is entirely inside #if XCP_FLASH_PROGRAMMING_ENABLED), but an
+    UNCONDITIONAL fold on programming.max_block_size would still change Xcp_Cfg.c whenever that
+    setting changes, real byte differences that property test exists specifically to catch --
+    caught here, during this very fix, the first time this row was built without the conjunction:
+    keyed on programming.max_block_size alone, programming_max_block_size=1
+    (test_gate_off_output_does_not_depend_on_any_other_programming_setting's own variant) failed
+    immediately. 0, not 8 (the schema's own default `| default(8)` gives when the whole
+    programming block is absent), is the value emitted whenever the gate is off: this row is
+    inert either way, and 0 needs no further fold with the field's own default -- unlike
+    XCP_PGM_MAX_BLOCK_SIZE (header_cfg.h.jinja2), which is NOT gated (DD62/F6: it is additive and
+    inert with the gate off, not byte-identical, and is not protected by this same property test,
+    which reads source_cfg only). #}
+    {{'0x%02Xu' % ((configuration.programming.max_block_size | default(8))
+                   if (configuration.programming.enabled | default(false)) else 0)}}, /* maxBsPgm */
     {{'0x%02Xu' % configuration.protocol_layer.event_queue_size}}, /* eventQueueSize */
 {#- DD48. Bit 3 below is the STIM resource of XCP part 2 1.1/1.5, and CONNECT's RESOURCE byte,
     GET_STATUS and GET_SEED/UNLOCK all honour it -- but NOTHING IN THE MODULE KEYS ON IT.

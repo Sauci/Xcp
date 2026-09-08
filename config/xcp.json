@@ -49,7 +49,7 @@
         }
       ],
       "paging": {"freeze_supported": false},
-      "programming": {"enabled": false},
+      "programming": {"enabled": false, "max_block_size": 8},
       "events": [
         {
           "consistency": "ODT",
@@ -189,15 +189,15 @@
           "protected": false
         },
         "xcp_program_clear_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_program_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_program_max_api_enable": {
-          "enabled": false,
+          "enabled": true,
           "protected": false
         },
         "xcp_program_start_api_enable": {

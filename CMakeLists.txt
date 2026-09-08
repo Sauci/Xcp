@@ -40,6 +40,11 @@ set(XCP_PAGING_SUPPORTED_DERIVED OFF)
 set(XCP_DAQ_TIMESTAMP_SUPPORTED_DERIVED OFF)
 set(XCP_DAQ_TIMESTAMP_SIZE_DERIVED 0)
 set(XCP_FLASH_PROGRAMMING_ENABLED_DERIVED OFF)
+# Both 0, matching script/header_cfg.h.jinja2:62-89's own namespace(value=0)/namespace(size=0)
+# starting points exactly -- zero configurations must derive the identical zero both places, or
+# CMake and the generator disagree about a build no PGM test would ever compile to notice.
+set(XCP_MAX_CTO_DERIVED 0)
+set(XCP_PGM_MAX_BLOCK_SIZE_DERIVED 0)
 
 if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
     math(EXPR XCP_CONFIG_LAST_INDEX "${XCP_CONFIG_N_CONFIGURATIONS} - 1")
@@ -63,6 +68,38 @@ if(XCP_CONFIG_N_CONFIGURATIONS GREATER 0)
             if(XCP_CFG_PROGRAMMING_ENABLED)
                 set(XCP_FLASH_PROGRAMMING_ENABLED_DERIVED ON)
             endif()
+        endif()
+
+        # protocol_layer.max_cto is schema-required (unlike segments/programming/timestamp above),
+        # so a plain GET is the same choice this file's own top comment states: an absent key is a
+        # hard configure error, not something to default around. Sizes Xcp_Internal.pgm_block
+        # (DD62) at compile time, mirroring script/header_cfg.h.jinja2:62-67's XCP_MAX_CTO fold
+        # exactly -- both must take the same largest-across-configurations value, or a
+        # multi-configuration build sizes the buffer from one number while PROGRAM_MAX's own
+        # element count (Xcp_Ptr->general->maxCto / AG - 1, read at runtime) is computed from
+        # another.
+        string(JSON XCP_CFG_MAX_CTO GET ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} protocol_layer max_cto)
+        if(XCP_CFG_MAX_CTO GREATER XCP_MAX_CTO_DERIVED)
+            set(XCP_MAX_CTO_DERIVED ${XCP_CFG_MAX_CTO})
+        endif()
+
+        # programming, unlike protocol_layer, is NOT in a configuration's own schema-required list
+        # (config/xcp.schema.json), so a configuration may omit it entirely -- exactly like
+        # segments/protocol_layer.timestamp above, and unlike max_cto just above. Where it is
+        # absent, script/header_cfg.h.jinja2:79 folds in the schema's own default of 8
+        # (`configuration.programming.max_block_size | default(8)`) rather than skipping the
+        # configuration, so this mirrors that default rather than the skip-if-absent shape
+        # segments/timestamp use above: an absent `programming` block must still contribute 8 to
+        # the running maximum, not 0, or a build mixing a programming-enabled configuration
+        # declaring max_block_size=1 with a programming-absent one would size the buffer from 1
+        # while the generated header sizes it from 8.
+        string(JSON XCP_CFG_MAX_BLOCK_SIZE ERROR_VARIABLE XCP_CFG_MAX_BLOCK_SIZE_ERROR
+            GET ${XCP_CONFIG_JSON} configurations ${XCP_CONFIG_INDEX} programming max_block_size)
+        if(XCP_CFG_MAX_BLOCK_SIZE_ERROR)
+            set(XCP_CFG_MAX_BLOCK_SIZE 8)
+        endif()
+        if(XCP_CFG_MAX_BLOCK_SIZE GREATER XCP_PGM_MAX_BLOCK_SIZE_DERIVED)
+            set(XCP_PGM_MAX_BLOCK_SIZE_DERIVED ${XCP_CFG_MAX_BLOCK_SIZE})
         endif()
 
         string(JSON XCP_CFG_TIMESTAMP_SIZE ERROR_VARIABLE XCP_CFG_TIMESTAMP_ERROR
@@ -166,6 +203,20 @@ xcp_derive_from_configuration(XCP_PAGING_SUPPORTED BOOL ${XCP_PAGING_SUPPORTED_D
 xcp_derive_from_configuration(XCP_FLASH_PROGRAMMING_ENABLED BOOL ${XCP_FLASH_PROGRAMMING_ENABLED_DERIVED}
     "enables/disables the non-volatile memory programming commands. Defaults to whether XCP_CONFIG_FILEPATH enables programming in at least one configuration; override only if you know why.")
 
+# STRING, not an integer type CMake does not have -- matching XCP_DAQ_TIMESTAMP_SIZE above. Both
+# size Xcp_Internal.pgm_block (DD62) at compile time, so both must reach the Xcp target the same
+# way XCP_FLASH_PROGRAMMING_ENABLED just above does: source/*.c never includes the generated
+# Xcp_Cfg.h (script/header_cfg.h.jinja2:62-89 is where these two are ALSO derived, for translation
+# units that do), so nothing on the library's own include path supplies either otherwise, and
+# interface/Xcp_Types.h carries a fallback for neither. Left off this list, the pgm_block buffer's
+# sizing expression names two undeclared identifiers the moment XCP_FLASH_PROGRAMMING_ENABLED
+# above is truly STD_ON -- every translation unit in the Xcp target includes Xcp_Internal.h, so
+# every one of them fails to compile, not only Xcp_Pgm.c.
+xcp_derive_from_configuration(XCP_MAX_CTO STRING ${XCP_MAX_CTO_DERIVED}
+    "largest protocol_layer.max_cto across every configuration in XCP_CONFIG_FILEPATH. Defaults to that value and keeps following it when the file changes; override only if you know why.")
+xcp_derive_from_configuration(XCP_PGM_MAX_BLOCK_SIZE STRING ${XCP_PGM_MAX_BLOCK_SIZE_DERIVED}
+    "largest programming.max_block_size across every configuration in XCP_CONFIG_FILEPATH (a configuration omitting the programming block contributes the schema's own default, 8). Defaults to that value and keeps following it when the file changes; override only if you know why.")
+
 # XCP_DAQ_TIMESTAMP_SUPPORTED/_SIZE need exactly the same treatment as XCP_PAGING_SUPPORTED above,
 # and for the same reason: source/*.c includes Xcp.h, never the generated Xcp_Cfg.h, so nothing on
 # the library's include path supplies these two. The generated header does define them from the
@@ -227,7 +278,9 @@ target_compile_definitions(Xcp
     PUBLIC XCP_PAGING_SUPPORTED=$<IF:$<BOOL:${XCP_PAGING_SUPPORTED}>,STD_ON,STD_OFF>
     PUBLIC XCP_DAQ_TIMESTAMP_SUPPORTED=$<IF:$<BOOL:${XCP_DAQ_TIMESTAMP_SUPPORTED}>,STD_ON,STD_OFF>
     PUBLIC XCP_DAQ_TIMESTAMP_SIZE=${XCP_DAQ_TIMESTAMP_SIZE}
-    PUBLIC XCP_FLASH_PROGRAMMING_ENABLED=$<IF:$<BOOL:${XCP_FLASH_PROGRAMMING_ENABLED}>,STD_ON,STD_OFF>)
+    PUBLIC XCP_FLASH_PROGRAMMING_ENABLED=$<IF:$<BOOL:${XCP_FLASH_PROGRAMMING_ENABLED}>,STD_ON,STD_OFF>
+    PUBLIC XCP_MAX_CTO=${XCP_MAX_CTO}
+    PUBLIC XCP_PGM_MAX_BLOCK_SIZE=${XCP_PGM_MAX_BLOCK_SIZE})
 
 target_include_directories(Xcp
     PUBLIC interface
@@ -260,6 +313,19 @@ if (${XCP_ENABLE_TEST})
         --include_directories $<JOIN:$<TARGET_PROPERTY:Xcp,INCLUDE_DIRECTORIES>,$<SEMICOLON>>
         --junitxml=./report/${PROJECT_NAME}.xml
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+    # Final review F1 (.superpowers/sdd/2026-09-07-xcp-pgm-sp4b/final-review.md) and
+    # script/check_gate_on_compiles.sh's own header comment carry the full reasoning: Xcp_UnitTest
+    # above never compiles the real Xcp target with programming.enabled true, because
+    # test/conftest.py's own MockGen supplies XCP_MAX_CTO/XCP_PGM_MAX_BLOCK_SIZE directly rather
+    # than through this file's own target_compile_definitions(Xcp ...) -- so this project had no
+    # test at all standing between a broken gate-on build and a fully green ctest run. This second,
+    # independent ctest is that test: a nested configure+build of the same Xcp target with the gate
+    # forced on, in its own directory so it cannot disturb Xcp_UnitTest's own build/ or
+    # XCP_PYTEST_ARGS-scoped cache.
+    add_test(NAME Xcp_GateOnCompiles
+        COMMAND sh ${PROJECT_SOURCE_DIR}/script/check_gate_on_compiles.sh
+            ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR}/gate_on_check ${CMAKE_COMMAND})
 endif ()
 
 if (${ENABLE_PC_LINT})

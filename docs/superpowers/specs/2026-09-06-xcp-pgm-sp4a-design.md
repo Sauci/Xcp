@@ -297,7 +297,8 @@ The new test is `pending_command.active`, evaluated beside the existing one. §1
 `ERR_CMD_BUSY` for every PGM command with the action "wait t7, repeat ∞ times", so a conformant
 master already knows what to do with it.
 
-`SYNCH` (0xFC) is exempt: §1.7.1.1 makes it the master's means of resynchronising, and a `SYNCH`
+`SYNCH` (0xFC) is exempt: §1.7.1.2 lists it among the Pre-Actions that bring the slave to a
+well-defined state before the master retries, and a `SYNCH`
 that cannot get through leaves a confused master with no way out. It answers its usual
 `ERR_CMD_SYNCH` immediately.
 

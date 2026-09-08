@@ -729,7 +729,9 @@ uint8 Xcp_DTOCmdStdUpload(boolean *responseExpected, const PduInfoType *pPduInfo
                                        (uint8)alignment,
                                        (uint8)(Xcp_Ptr->general->maxCto - 0x01u),
                                        Xcp_Ptr->general->slaveBlockModeSupported,
-                                       0x00u) == E_OK)
+                                       0x00u,
+                                       TRUE) == E_OK) /* DD70: UPLOAD is slave block mode -- the
+                                                        * slave sends the frames. */
         {
             if (Xcp_BlockTransferReadSlaveMemory() == E_NOT_OK) {
                 /* Do nothing, last frame is waiting for TX confirmation. */
@@ -829,6 +831,65 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                             Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
                         }
                     }
+                    else
+                    {
+                        /* Pre-existing, found by the acceptance pass over this branch's own
+                         * earlier shared-state fixes (task 7,
+                         * .superpowers/sdd/2026-09-07-xcp-shared-state-defects/task-7-report.md),
+                         * not introduced by any of them. This `if` used to have no `else`: when
+                         * the integrator's Xcp_CalcKey fails, nothing was written to
+                         * cto_response.pdu_info and responseExpected (set TRUE at this function's
+                         * entry) stayed TRUE, so whatever the previous command had left in that
+                         * shared response buffer -- measured as GET_SEED's own positive answer,
+                         * seed bytes included -- was transmitted as THIS UNLOCK's answer instead.
+                         * The GET_DAQ_ID sub-command above (dtoCount == 0 branch) names this exact
+                         * defect class in its own comment: D2/D7, fixed twice in SP1 -- an empty
+                         * branch with responseExpected TRUE is a stale positive response, not a
+                         * no-op, whether or not the branch is easy to reach.
+                         *
+                         * It also fed a stale non-error byte 0 to Xcp_CanIfRxIndication's last_pid
+                         * gate (source/Xcp.c, DD72), which only advances last_pid when byte 0 is
+                         * NOT XCP_PID_ERROR: a failed UNLOCK was indistinguishable from a
+                         * successful one, so last_pid recorded a success this dispatch never
+                         * earned. Filling a real error packet here, before that gate runs, is what
+                         * a fix for either half needs -- there is only the one buffer and the one
+                         * flag.
+                         *
+                         * XCP part 2 - Protocol Layer Specification 1.0/1.7.3.2.1's UNLOCK row
+                         * (verified against the 1.0 PDF -- pdftotext -layout extracts it cleanly,
+                         * the 1.1 copy does not) lists seven codes: ERR_CMD_BUSY, ERR_PGM_ACTIVE,
+                         * ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE, ERR_ACCESS_LOCKED and
+                         * ERR_SEQUENCE. None fits an integrator's key-derivation callback failing
+                         * outright: this is not a busy/active/unknown/syntax condition; the
+                         * master's own key bytes are not what is "out of range" (the slave never
+                         * got as far as evaluating them); ERR_ACCESS_LOCKED is the sibling branch
+                         * immediately above, for a KEY MISMATCH -- 1.0/1.6.1.2.5's own "the key is
+                         * checked ... if the key is not accepted" presupposes a key WAS computed
+                         * and compared, which did not happen here, and reusing it would also pull
+                         * in a disconnect this condition never reached that check to earn;
+                         * ERR_SEQUENCE is the row's OTHER UNLOCK user, for the master's own
+                         * chunking mistake -- nothing about this request is out of sequence, the
+                         * master sent a well-formed UNLOCK after a genuine GET_SEED.
+                         *
+                         * This is the identical shape DD57 already recorded for PROGRAM_RESET's own
+                         * integrator-callback failure (source/Xcp_Pgm.c, Xcp_PgmCompleteProgramReset):
+                         * PROGRAM_RESET's own 1.7.3.2.5 row lists no ERR_GENERIC either (only
+                         * ERR_CMD_BUSY, ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_SEQUENCE -- checked
+                         * against the same 1.0 PDF), and that comment records "of the listed [codes]
+                         * only ERR_SEQUENCE could be pressed into service -- a worse fit, since
+                         * nothing about the request is out of sequence", the same reasoning that
+                         * rules it out here. The same deviation is kept: XCP_E_ASAM_GENERIC, matching
+                         * 1.0/1.1.3.3's own description of that code ("the error packet contains an
+                         * implementation specific slave device error code"). This is NOT the same as
+                         * PROGRAM_START/PROGRAM_PREPARE's own use of it (source/Xcp_Pgm.c,
+                         * interface/Xcp.h) -- checked, and their own 1.7.3.2.5 rows list ERR_GENERIC
+                         * directly, so answering it there is direct compliance, not a deviation; only
+                         * PROGRAM_RESET's row is the genuine precedent for "listed nowhere, chosen
+                         * anyway", and this UNLOCK branch follows that one specifically, rather than a
+                         * listed code that would misattribute an internal failure to the master's own
+                         * request. */
+                        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+                    }
 
                     /* Discard the key buffer, as we received a full key. */
                     Xcp_Internal.key_master.total_length = 0x00u;
@@ -887,7 +948,6 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
     {
         if (mode == 0x00u)
         {
-            Xcp_Internal.requested_protected_resource = resource;
             Xcp_Internal.seed.total_length = 0x00u;
             Xcp_Internal.seed.current_index = 0x00u;
 
@@ -900,6 +960,24 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
             if (Xcp_Internal.seed.total_length == 0x00u)
             {
                 result = XCP_E_ASAM_OUT_OF_RANGE;
+            }
+
+            /* DD72 (authentication bypass, pre-existing). This used to assign
+             * requested_protected_resource unconditionally, before either check above could
+             * refuse the request, and never rolled it back on failure -- so a GET_SEED that never
+             * produced a seed still left this resource requestable. Xcp_SetProtectionStatus
+             * (source/Xcp.c) copies this field into protection_status verbatim once UNLOCK's key
+             * matches, with no way to tell "GET_SEED succeeded for this resource" from "GET_SEED
+             * was merely asked for this resource and refused". Committing the write only once
+             * both checks above have passed is a true rollback rather than a reset to a fixed
+             * value: whatever resource (or none, XCP_RESOURCE_PROTECTION_STATUS_MASK_NONE) was
+             * requested before this attempt is what stays in effect. This is one of two
+             * independent legs the defect needs both of -- the other is last_pid's own write in
+             * Xcp_CanIfRxIndication (source/Xcp.c), which Xcp_DTOCmdStdUnlock below reads as "the
+             * previous command was a successful GET_SEED"; see test/seed_key_defects_test.py. */
+            if (result == E_OK)
+            {
+                Xcp_Internal.requested_protected_resource = resource;
             }
         }
         else
@@ -937,10 +1015,27 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.seed.total_length - Xcp_Internal.seed.current_index;
 
+        /* DD73 (key not bound to the seed, pre-existing). This branch used to also set
+         * Xcp_Internal.seed.total_length to 0x00u right here, once the final chunk of the seed
+         * had been queued for this response, to mean "nothing left to send" for GET_SEED's own
+         * pacing. Xcp_DTOCmdStdUnlock above reads that very same field as the seed's LENGTH when
+         * it calls Xcp_CalcKey, once the master's key has fully arrived -- so an integrator
+         * honouring that parameter always computed its key from a zero-length seed, regardless of
+         * what had actually been transmitted: XCP part 2 - Protocol Layer Specification
+         * 1.1/1.6.1.2.4 and 1.1/1.6.1.2.5 both depend on the key being a function of the seed the
+         * slave issued, which a length of zero cannot be. The two meanings cannot share one
+         * field. total_length now always holds the seed's true, constant length once
+         * Xcp_GetSeed has produced it; every line below already computes what remains to be sent
+         * from current_index, so removing the reset here does not change GET_SEED's own
+         * multi-frame pacing -- nor GET_SEED(mode=1)'s own sequence gate above, which only asks
+         * whether a seed is currently held at all, never whether its transmission has finished.
+         * Xcp_DTOCmdStdUnlock's own reset of this same field, a few lines above (after
+         * Xcp_CalcKey has already been called), is what actually discards the seed once its key
+         * has been consumed, and still enforces a new seed being required before the next UNLOCK.
+         * See test/seed_key_defects_test.py. */
         if ((Xcp_Internal.seed.total_length - Xcp_Internal.seed.current_index) <= (Xcp_Ptr->general->maxCto - (uint8)0x02u))
         {
             num_of_bytes_to_copy = (Xcp_Internal.seed.total_length - Xcp_Internal.seed.current_index);
-            Xcp_Internal.seed.total_length = 0x00u;
         }
         else
         {
@@ -1042,7 +1137,39 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
 
     if (identification_type == 0x00u)
     {
+        /* DD75 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). XCP part 2
+         * - Protocol Layer Specification 1.1/1.6.1.2.2 (1.0/1.6.1.2.2, identical wording): with
+         * mode 0, "the slave device sets the Memory Transfer Address (MTA) to the location from
+         * which the master device may upload the requested identification". 1.1/1.6.1.2.6
+         * (1.0/1.6.1.2.6, same wording) defines the MTA itself as one complete pointer -- "32Bit
+         * address + 8Bit extension" -- not an address alone, so setting it means setting both
+         * members. Only .address used to be assigned here, leaving .extension holding whatever an
+         * earlier, unrelated SET_MTA last left there for the UPLOAD that follows this command to
+         * read the identification through -- source/Xcp.c and the checksum helpers in this file
+         * both read the pair, never .address alone.
+         *
+         * GET_ID's own text never states which extension value to use here -- the specification
+         * does not settle it, the same kind of gap already found for the MTA's pre-SET_MTA value
+         * (this file, Xcp_CTOCmdStdConnect). What the specification does define is what a
+         * non-zero extension is FOR: 1.1/1.6.3.1.4 (1.0/1.6.3.2.2, identical wording,
+         * GET_SEGMENT_INFO) reads "ADDRESS_EXTENSION is used in SET_MTA, SHORT_UPLOAD and
+         * SHORT_DOWNLOAD when accessing a PAGE within this SEGMENT" -- a non-zero extension
+         * selects a PAGE within a configured CAL/PAG SEGMENT. Xcp_Ptr->general->identification is
+         * not part of any segments[] entry; it is plain, slave-owned descriptive data that lives
+         * entirely outside the page-switching model, so there is no SEGMENT for a non-zero
+         * extension to name here.
+         * 0x00u is also the specification's own vocabulary for "nothing meaningful on this pair":
+         * 1.1/1.6.1.2.3 (1.0/1.6.1.2.3, SET_REQUEST) reads "All ODT entries reset to address = 0,
+         * extension = 0" for the identical kind of pointer with nothing of its own to report. And
+         * it is what this module already uses whenever it hands the MTA a plain descriptive
+         * pointer of its own rather than an address the master supplied: Xcp_Init and
+         * Xcp_CTOCmdStdConnect both pair NULL_PTR with extension = 0x00u, and
+         * Xcp_DTOCmdDaqGetDaqEventInfo (source/Xcp_Daq.c) sets this exact pair when it points the
+         * MTA at an event channel's name for a following UPLOAD -- checked to actually apply here,
+         * not copied on sight: that pointer and this one are the same category of thing for the
+         * same structural reason above, neither living in a CAL/PAG segment. */
         Xcp_Internal.memory_transfer.address = (void *)Xcp_Ptr->general->identification;
+        Xcp_Internal.memory_transfer.extension = 0x00u;
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
@@ -1344,7 +1471,149 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
      * command but SYNCH while pending_command.active is TRUE, CONNECT included, so this line cannot
      * run underneath a deferred operation. */
     Xcp_Internal.pgm_state = XCP_PGM_IDLE;
+
+    /* Final review F2. A block left open by an abandoned session is state exactly like pgm_state
+     * itself -- "no state of the previous one may survive into it" (this function's own reasoning
+     * two paragraphs up) applies to it precisely because it is not covered by the pgm_state write
+     * alone: Xcp_PgmBlockIsActive() reads Xcp_Internal.pgm_block.requested_elements, a separate
+     * field this function never touched before. Measured before this fix: PROGRAM declaring 10
+     * with 6 delivered, then CONNECT, then a fresh PROGRAM_START and SET_MTA -- a PROGRAM_NEXT
+     * carrying the abandoned block's own still-expected count was accepted, and the integrator was
+     * handed the previous session's 6 leftover bytes at the new session's MTA. Xcp_Init (Xcp.c)
+     * already clears this on its own door into a fresh session; this is the same clearing on the
+     * other one. */
+    Xcp_PgmBlockAbort();
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+
+    /* DD74 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). This
+     * function's own reasoning above -- no state of the previous session may survive into the
+     * next, XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.1 makes CONNECT the start of
+     * one -- applies just as much to a block transfer, a partial key, a seed and the MTA as it
+     * does to pgm_state/pgm_block above; until here none of the four was touched. Three measured
+     * consequences (test/session_teardown_test.py):
+     *
+     * - An UPLOAD (slave block mode) left open -- its first frame sent but never confirmed --
+     *   answered a later, unrelated transmission confirmation by continuing to read and transmit
+     *   the PREVIOUS session's memory into the new one: DD70's disclosure, reopened across a
+     *   reconnect.
+     * - A partial key -- GET_SEED then an UNLOCK that announces N bytes and delivers fewer --
+     *   left standing let a new session's UNLOCK complete it with only the still-missing bytes,
+     *   granting a resource the new session never actually supplied a full key for.
+     * - An MTA set in the previous session and never reset let a DOWNLOAD with no SET_MTA in the
+     *   new session write at the previous session's address.
+     *
+     * Xcp_BlockTransferAbort() (source/Xcp.c) already exists for the first -- Xcp_Cal.c's own
+     * DOWNLOAD/DOWNLOAD_MAX/DOWNLOAD_NEXT handlers already reuse it, at five call sites, to
+     * abandon a block whose own request turns out malformed or out of sequence -- so it is
+     * reused here too, rather than the two fields it clears being written directly.
+     * A stale block_transfer.slave_block_mode surviving this call is harmless, and deliberately
+     * left to Xcp_BlockTransferAbort() to not touch, for the same reason the DD70 fix that added
+     * it leaves it alone in every other caller: every reader of it is already gated on
+     * Xcp_BlockTransferIsActive() (== requested_elements != 0) first, which this call clears.
+     *
+     * key_master/key_slave: total_length back to 0x00u, matching Xcp_DTOCmdStdUnlock's own reset
+     * once a key completes (source/Xcp_Std.c below) -- total_length == 0 is that function's own
+     * "no transfer in progress" reading
+     * (`if (Xcp_Internal.key_master.total_length == 0x00u)`), the same value a fresh session must
+     * present. current_index is reset alongside it for the identical reason
+     * Xcp_DTOCmdStdUnlock's own completion does not bother resetting it there: nothing reads a
+     * stale current_index once its own total_length is 0, but a field that means nothing this
+     * session is reset to nothing instead of to a number that used to mean something in the one
+     * before it.
+     *
+     * seed: total_length back to 0x00u, for the identical reason as key_master's above -- an
+     * earlier task (DD73) corrected this field to mean the seed's own length rather than "bytes
+     * still to send", and 0 is that meaning's own "no seed issued this session" value, matching
+     * Xcp_DTOCmdStdGetSeed's mode=1 continuation gate
+     * (`if (Xcp_Internal.seed.total_length != 0x00u)`) and Xcp_DTOCmdStdUnlock's own
+     * post-completion reset of the same field, both below. current_index reset alongside it for
+     * the same reason as key_master's own above.
+     *
+     * memory_transfer: XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.6 lists SET_MTA as
+     * "Category: Standard, optional", and neither it nor 1.1/1.6.2.1.1 (DOWNLOAD, which uses the
+     * MTA) states what the MTA holds before a session's first SET_MTA -- checked against both the
+     * local 1.1 PDF's own OCR text and the 1.0 PDF (pdftotext -layout) for this comment, neither
+     * uses the word "undefined" anywhere in connection with the MTA; the only "undefined" in
+     * either document is 1.1/1.6.4.1.1.2's DAQ pointer, a different field with its own explicit
+     * daq_pointer.valid flag (source/Xcp_Internal.h) that this pair has no equivalent of. So: a
+     * master that omits SET_MTA is unaddressed by the letter of the text, not named
+     * non-conformant by it -- but the previous session's own address is still the worst available
+     * value, being the one this defect is measured writing through.
+     *
+     * A true "refuses to use" reset -- one this module would actively decline to write through --
+     * is not achievable here without inventing a validity flag this pair does not have, matching
+     * daq_pointer's own .valid above: Xcp_ReadSlaveMemoryTable/Xcp_WriteSlaveMemoryTable
+     * (source/Xcp.c) are integrator callbacks this module calls through unconditionally, with no
+     * address check of its own anywhere in this file, so nothing here can be made to refuse a
+     * write the way an exhausted daq_pointer already refuses WRITE_DAQ. Adding that concept for
+     * the MTA would mean a new field AND a new check at every one of memory_transfer's readers --
+     * Xcp_Cal.c, Xcp_Pag.c, the checksum helpers in this file, and, under
+     * XCP_FLASH_PROGRAMMING_ENABLED, Xcp_Pgm.c -- disproportionate to this task and a change of
+     * its own. Chosen instead: NULL_PTR, matching the one place this module already makes exactly
+     * this choice for exactly this reason -- Xcp_Init (source/Xcp.c) resets
+     * memory_transfer.address to NULL_PTR (and .extension to 0x00u) on its own entry into a fresh
+     * session, with no more of a "refuses to use it" guarantee than this line has, for the
+     * identical reason. This does not make a NULL write impossible; it makes any write land at a
+     * NEW address rather than the previous session's, which is what this defect is measured doing
+     * and what this line ends. */
+    Xcp_BlockTransferAbort();
+
+    Xcp_Internal.key_master.total_length = 0x00u;
+    Xcp_Internal.key_master.current_index = 0x00u;
+    Xcp_Internal.key_slave.total_length = 0x00u;
+    Xcp_Internal.key_slave.current_index = 0x00u;
+
+    Xcp_Internal.seed.total_length = 0x00u;
+    Xcp_Internal.seed.current_index = 0x00u;
+
+    Xcp_Internal.memory_transfer.address = NULL_PTR;
+    Xcp_Internal.memory_transfer.extension = 0x00u;
+
+    /* Final review, R1. The session-status REQUEST bits, and only those. XCP part 1 - Overview
+     * 1.0/2.3 -- quoted in full at Xcp_CanIfRxIndication (Xcp.c) and already the justification for
+     * every reset above -- names "the session status, all DAQ lists and the protection status
+     * bits" among what a DISCONNECTED slave has reset. This block honoured that citation for five
+     * fields it does not name while leaving standing the one it does.
+     *
+     * It is not cosmetic. STORE_CAL_REQ is cleared in exactly one place, Xcp_MainFunction (Xcp.c),
+     * and only when Xcp_StoreCalibrationDataToNonVolatileMemory returns E_OK. An integrator whose
+     * NVM write never succeeds returns E_NOT_OK forever, the bit never clears, and the
+     * ERR_PGM_ACTIVE gate (Xcp.c) then refuses every command whose Xcp_CTOErrorMatrix row carries
+     * XCP_INTERNAL_ERR_PGM_ACTIVE -- 45 rows, DISCONNECT (0xFE) among them. CONNECT itself is
+     * ungated (its row is 0x00u), so before this line a master could reconnect and recover
+     * NOTHING: only Xcp_Init, i.e. a power cycle, cleared it.
+     *
+     * The trade this makes, deliberately: if the integrator is still storing when a new master
+     * connects, clearing the bit stops Xcp_MainFunction polling it, so that store is no longer
+     * tracked and no EV_STORE_CAL will follow. That is the lesser harm. The new master never
+     * requested the store, GET_STATUS reporting a pending request it cannot influence would be
+     * the more misleading answer, and the alternative being traded away is a permanent refusal of
+     * DISCONNECT.
+     *
+     * Masked rather than assigned, because session_status is not only request bits: DAQ_RUNNING
+     * (bit 6) is maintained by Xcp_DaqStartStop (Xcp_Daq.c) from whether DAQ lists are actually
+     * running. Zeroing the byte here would make GET_STATUS report a stopped DAQ while it runs --
+     * this module does not stop DAQ on CONNECT, that being the parked DD25/SP2d question, so the
+     * bit must keep tracking the truth rather than be reset to a state nothing enforces. */
+    Xcp_Internal.session_status &= (uint8)(~(XCP_SESSION_STATUS_MASK_STORE_CAL_REQ |
+                                             XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ |
+                                             XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ));
+
+    /* Final review, R2. The DAQ pointer is a per-session cursor exactly as the MTA above is, and
+     * survived CONNECT for the same reason the MTA did -- nothing reset it. Session 1 sends
+     * SET_DAQ_PTR(0,0,0) and vanishes without DISCONNECT (this block's whole threat model);
+     * session 2 sends WRITE_DAQ with no SET_DAQ_PTR of its own, and Xcp_DaqApplyOdtEntry
+     * (Xcp_Daq.c) finds valid == TRUE and writes the PREVIOUS session's ODT entry.
+     *
+     * Xcp_DaqFreeAll (Xcp_Daq.c) does clear this, but runs only from DISCONNECT and only under a
+     * DYNAMIC configuration, so neither a STATIC build nor a vanished master reached it.
+     *
+     * Only `valid` is cleared, not the three coordinates: FALSE is already how this module
+     * represents the undefined pointer of 1.1/1.6.4.1.1.2 (see Xcp_DaqPointerAdvance), so the
+     * next Xcp_DaqApplyOdtEntry fails its validity check and answers ERR_OUT_OF_RANGE, telling
+     * the master to position the pointer it never set. Clearing the whole DAQ list content is a
+     * different and larger question -- the DD25/SP2d one this does not settle. */
+    Xcp_Internal.daq_pointer.valid = FALSE;
 
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 

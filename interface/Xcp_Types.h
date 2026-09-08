@@ -602,6 +602,7 @@ typedef struct
     const uint8 maxBS; /* not part of the specification... */
     const uint8 minST; /* not part of the specification... */
     const uint8 ctoQueueSize; /* not part of the specification... */
+    const uint8 maxBsPgm; /* not part of the specification... */
     const uint8 eventQueueSize; /* not part of the specification... */
     const uint8 protectedResource; /* not part of the specification... */
     const Xcp_ChecksumType checksumType; /* not part of the specification... */

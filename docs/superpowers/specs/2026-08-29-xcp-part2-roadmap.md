@@ -446,9 +446,14 @@ one design can carry, so SP4 is **three sub-projects**:
   defects D10 and D11, now fixed (below). Design: `2026-09-06-xcp-pgm-sp4a-design.md` (DD49–DD61).
   `test/pgm_acceptance_test.py` walks `CONNECT` through `PROGRAM_RESET` against a deliberately
   slow integrator, composing what each task's own tests had only verified in isolation.
-- **SP4b — clear and program, absolute access mode.** `PROGRAM_CLEAR` (0xD1), `PROGRAM` (0xD0),
-  `PROGRAM_MAX` (0xC9), `PROGRAM_NEXT` (0xCA), `GET_PGM_PROCESSOR_INFO` (0xCE). The first slice
-  where flash contents change, and the first where `CONNECT` may legitimately advertise PGM.
+- **SP4b — clear and program, absolute access mode — complete.** `PROGRAM_CLEAR` (0xD1),
+  `PROGRAM` (0xD0), `PROGRAM_MAX` (0xC9), `PROGRAM_NEXT` (0xCA), `GET_PGM_PROCESSOR_INFO` (0xCE).
+  The first slice where flash contents change, and the first where `CONNECT` legitimately
+  advertises PGM — D10 fixed in the direction SP4a could not test. Design:
+  `2026-09-07-xcp-pgm-sp4b-design.md` (DD62–DD69). `test/pgm_acceptance_test.py`'s walk now
+  continues past `PROGRAM_START` through a genuine `PROGRAM_CLEAR` and a multi-frame
+  `PROGRAM`/`PROGRAM_NEXT` block before `PROGRAM_RESET`, composing SP4b's own contribution into
+  the same end-to-end sequence SP4a's Task 6 began.
 - **SP4c — sectors, formats and verification.** `GET_SECTOR_INFO` (0xCD) and the flash sector
   configuration model, `PROGRAM_FORMAT` (0xCB) with functional access mode and the block sequence
   counter, `PROGRAM_VERIFY` (0xC8).

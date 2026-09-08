@@ -232,6 +232,25 @@ extern "C" {
 #define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_DAQ (0x01u << 0x06u)
 #define XCP_DAQ_EVENT_PROPERTIES_CONSISTENCY_EVENT (0x01u << 0x07u)
 
+/* PGM_PROPERTIES, GET_PGM_PROCESSOR_INFO's own response byte, 1.0/1.6.5.2.1 (confirmed against
+ * 1.0's own pdftotext -layout dump, since the 1.1 OCR garbles tables -- design doc §0). Defined
+ * unconditionally, the same convention the PID defines above follow, and for the same reason nothing
+ * in this block depends on XCP_FLASH_PROGRAMMING_ENABLED: these are names for bit positions, not
+ * state, and cost nothing to leave visible in a gate-off build. Task 5 (source/Xcp_Pgm.c) sets only
+ * XCP_PGM_PROPERTIES_ABSOLUTE_MODE -- this module offers absolute mode alone (DD68) -- and leaves
+ * every other bit clear; the rest are named here regardless, both because 1.0's own table defines
+ * the whole byte at once and because SP4c (design doc §8) will need FUNCTIONAL_MODE and the
+ * COMPRESSION_x/ENCRYPTION_x/NON_SEQ_PGM_x pairs by these exact names once it implements what they
+ * advertise. */
+#define XCP_PGM_PROPERTIES_ABSOLUTE_MODE (0x01u << 0x00u)
+#define XCP_PGM_PROPERTIES_FUNCTIONAL_MODE (0x01u << 0x01u)
+#define XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED (0x01u << 0x02u)
+#define XCP_PGM_PROPERTIES_COMPRESSION_REQUIRED (0x01u << 0x03u)
+#define XCP_PGM_PROPERTIES_ENCRYPTION_SUPPORTED (0x01u << 0x04u)
+#define XCP_PGM_PROPERTIES_ENCRYPTION_REQUIRED (0x01u << 0x05u)
+#define XCP_PGM_PROPERTIES_NON_SEQ_PGM_SUPPORTED (0x01u << 0x06u)
+#define XCP_PGM_PROPERTIES_NON_SEQ_PGM_REQUIRED (0x01u << 0x07u)
+
 /**
  * @brief BIT_OFFSET value meaning "this entry is a normal element, ignore the field".
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.2.
@@ -390,6 +409,34 @@ typedef struct {
     struct {
         uint8 requested_elements;
         uint8 frame_elements;
+
+        /**
+         * @brief Direction of the currently open block transfer.
+         * @details DD70. TRUE for slave block mode (UPLOAD: the slave sends the frames), FALSE
+         * for master block mode (DOWNLOAD/DOWNLOAD_NEXT: the master sends them). Set by
+         * Xcp_DataTransferInitialize alongside requested_elements/frame_elements above, from a
+         * literal TRUE/FALSE at each of its two call sites -- Xcp_DTOCmdStdUpload passes TRUE
+         * (Xcp_Std.c), Xcp_DTOCmdCalDownload passes FALSE (Xcp_Cal.c). Fixed by which handler is
+         * calling, not read from slaveBlockModeSupported/masterBlockModeSupported or any other
+         * parameter here: both callers already know their own direction unconditionally, and a
+         * transfer with block mode unsupported still opens exactly one direction's worth of
+         * state, so this records a fact neither had to learn, only to stop discarding.
+         *
+         * Exists because requested_elements != 0 alone answers "is a block open", a question
+         * both directions share, while Xcp_CanIfTxConfirmation's own use of that predicate
+         * (source/Xcp.c) means something narrower: "is it my turn, as the slave, to send the
+         * next frame". Before this field the two readings were conflated, and confirming any
+         * OTHER command's response while a master-block-mode DOWNLOAD sat open -- suppressing
+         * its own response is exactly what leaves room for one, XCP part 2 1.1/1.6.2.1.1 -- was
+         * read as "continue a slave block mode UPLOAD", reading and transmitting slave memory
+         * nobody requested. Xcp_SlaveBlockTransferIsActive() (source/Xcp.c) is the narrowed
+         * predicate this field exists to answer; Xcp_BlockTransferIsActive() itself is
+         * unchanged, and stays the right, direction-agnostic question for
+         * DOWNLOAD/DOWNLOAD_NEXT/DOWNLOAD_MAX/SHORT_DOWNLOAD's own ERR_SEQUENCE checks
+         * (source/Xcp_Cal.c) -- 1.1/1.6.2.2.1's lost-packet detection does not care which
+         * direction is open, only whether one is.
+         */
+        boolean slave_block_mode;
     } block_transfer;
 
     /**
@@ -432,19 +479,97 @@ typedef struct {
         boolean event_outstanding;
 
         /**
-         * @brief PROGRAM_PREPARE's own Codesize argument, valid only while pid ==
-         * XCP_PID_CMD_PROGRAM_PREPARE.
-         * @details Xcp_ProgramPrepare's contract (interface/Xcp.h) takes address and codeSize on
-         * EVERY call, not only the first -- unlike the single-pStatusCode-argument PROGRAM_START/
-         * PROGRAM_RESET callbacks, which need nothing beyond this struct's existing fields.
-         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) re-reads the MTA itself from
-         * Xcp_Internal.memory_transfer.address on every poll -- stable for the duration, since
-         * DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- but has no such standing
-         * field for Codesize, which this one exists to hold across the poll cycles the switch-based
-         * Xcp_PgmPollPendingCommand does not otherwise have the original request to re-read from.
+         * @brief per-command arguments a poll needs but the handler that parsed them has already
+         * returned by the time it runs, valid only while pid names the matching command.
+         * @details A union keyed by pid, not a growing set of flat fields. PROGRAM_PREPARE's own
+         * Codesize (uint16) was the first member here, added as a single flat field because it was
+         * the only one that existed yet; SP4a's final review anticipated exactly this growth and
+         * asked for a union before a second command needed one. PROGRAM_CLEAR's clear range
+         * (uint32, Task 2) is that second member, and Tasks 3 and 4 both add their own -- a second
+         * flat field beside the first would have invited a third. Both callbacks take address and
+         * a second argument on EVERY call, not only the first -- unlike the single-pStatusCode-
+         * argument PROGRAM_START/PROGRAM_RESET callbacks, which need nothing beyond this struct's
+         * other fields. Only one member is ever live at a time, exactly like pid itself, so this
+         * union costs nothing a struct holding every member unconditionally would not already have
+         * wasted on padding, and it makes the keyed-by-pid discipline visible in the type instead
+         * of only in this comment.
+         * @note The MTA needs no member here at all, for either command: Xcp_PgmPollPendingCommand
+         * (Xcp_Pgm.c) re-reads it directly from Xcp_Internal.memory_transfer.address on every poll
+         * -- stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping
+         * SET_MTA -- which is standing state neither Codesize nor the clear range has anywhere
+         * else once the handler that parsed the request has returned.
          */
-        uint16 program_prepare_code_size;
+        union
+        {
+            uint16 program_prepare_code_size;
+            uint32 program_clear_range;
+        } args;
     } pending_command; /* DD52 */
+
+    /**
+     * @brief One master block mode block of PROGRAM data, accumulated as frames arrive.
+     * @details DD63. Intermediate PROGRAM_NEXT frames copy here and answer nothing; the frame that
+     * completes the block is what calls the integrator, once, through pending_command.
+     *
+     * Sized as the LARGER of two demands, not from XCP_PGM_MAX_BLOCK_SIZE alone (task 3 review,
+     * fix round 1, finding 1). A block of XCP_PGM_MAX_BLOCK_SIZE frames needs
+     * XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 2) bytes, the value PROGRAM_START reports as
+     * MAX_BS_PGM (DD62) -- but PROGRAM_MAX carries no element-count byte of its own, so its fixed
+     * transfer needs XCP_MAX_CTO - 1 bytes at AG BYTE regardless of the configured block size, one
+     * byte more than a single PROGRAM frame's own (XCP_MAX_CTO - 2)-byte ceiling
+     * (Xcp_DTOCmdPgmProgramMax, source/Xcp_Pgm.c). Sizing from the first demand alone made
+     * PROGRAM_MAX permanently refused ERR_MEMORY_OVERFLOW at programming.max_block_size's own
+     * (former) schema minimum of 1 -- CONNECT advertising a command that then answered every
+     * single request with the same error, the D10 shape this sub-project exists to close, reached
+     * from a schema-legal configuration. The second term is the floor that keeps that from
+     * happening at any block size the schema now permits (minimum raised to 1 for the same
+     * finding: 0 is not a block size at all, and made this array a zero-length one, a GCC
+     * extension and an ISO C 6.7.6.2p1 constraint violation); the first term is what lets an
+     * integrator who raises max_block_size actually get the bigger buffer a real multi-frame block
+     * needs. The two guards at the point of use in Xcp_DTOCmdPgmProgram and
+     * Xcp_DTOCmdPgmProgramMax (source/Xcp_Pgm.c) stay regardless -- a handler must never trust a
+     * generated bound merely because the formula that produced it is believed correct -- and are
+     * now unreachable for every schema-legal configuration, which is the right relationship
+     * between a size and the bound guarding it: don't delete them as dead code.
+     */
+    struct {
+        uint8 data[(XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u) > (XCP_MAX_CTO - 0x01u)) ?
+                   (XCP_PGM_MAX_BLOCK_SIZE * (XCP_MAX_CTO - 0x02u)) : (XCP_MAX_CTO - 0x01u)];
+        uint16 length;
+
+        /**
+         * @brief How many elements a PGM block still needs, and how many the current frame
+         * contributed -- PGM's OWN pair, deliberately not Xcp_Internal.block_transfer.
+         * @details Task 4 fix round 1, finding 1 (critical). The first version of this task reused
+         * Xcp_Internal.block_transfer for these two counters, reasoning that DD63 says to reuse it
+         * and that Xcp_DTOCmdPgmProgramMax's own DD65 guard already reads it. Both were true and
+         * both missed the same fact: Xcp_CanIfTxConfirmation (source/Xcp.c) ALSO reads
+         * block_transfer, unconditionally, for a completely different purpose -- treating ANY
+         * active block_transfer as a slave block mode UPLOAD continuation still owed to the master,
+         * regardless of which command opened it. Before this task nothing could leave
+         * block_transfer active across a CTO confirmation except a genuine UPLOAD, so the two
+         * purposes never collided. Task 4 made PROGRAM leave it active for as long as a block
+         * stays open -- which can span several unrelated command/response exchanges, e.g. a
+         * PROGRAM_MAX refused mid-block, or a SET_MTA, both of which 1.1/1.6.5.1.1 requires to stay
+         * available during a programming sequence -- so confirming THEIR ordinary response also
+         * triggered the identical unsolicited-UPLOAD path: Xcp_ReadSlaveMemoryU8 read MAX_CTO-1
+         * bytes at the current MTA, transmitted them as an unrequested 0xFF frame, advanced the MTA
+         * by that many bytes (silently breaching DD66), and repeated -- disclosing slave memory on
+         * the wire and leaving the session wedged. Reviewed and reproduced on the branch before
+         * this fix; see task-4-report.md, "Fix round 1", finding 1.
+         *
+         * The fix is this pair: PGM's own block-open state, read only by this module
+         * (Xcp_PgmBlockIsActive/Xcp_PgmBlockAcknowledgeFrame/Xcp_PgmBlockAbort, source/Xcp_Pgm.c)
+         * and never touched by Xcp_Internal.block_transfer or anything that reads it. A PGM block
+         * being open is now structurally invisible to Xcp_CanIfTxConfirmation, the same way it was
+         * before this sub-project existed. Xcp_Internal.block_transfer itself is unchanged and
+         * untouched by PGM -- DD63's own text is corrected by a note next to it, not by this
+         * struct's own comment alone, so a future reader of DD63 does not re-discover the hazard by
+         * following its original advice.
+         */
+        uint8 requested_elements;
+        uint8 frame_elements;
+    } pgm_block;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 
@@ -511,7 +636,8 @@ void Xcp_CopyFromU32WithOrder(const uint32 src, uint8 *pDest, Xcp_ByteOrderType 
 void Xcp_CopyToU16WithOrder(const uint8 *pSrc, uint16 *pDest, Xcp_ByteOrderType endianness);
 void Xcp_CopyToU32WithOrder(const uint8 *pSrc, uint32 *pDest, Xcp_ByteOrderType endianness);
 boolean Xcp_BlockTransferIsActive(void);
-Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment, uint8 budget, boolean blockModeSupported, uint8 maxBlockSize);
+boolean Xcp_SlaveBlockTransferIsActive(void);
+Std_ReturnType Xcp_DataTransferInitialize(uint8 numberOfDataElements, uint8 elementSize, uint8 alignment, uint8 budget, boolean blockModeSupported, uint8 maxBlockSize, boolean slaveBlockTransfer);
 void Xcp_BlockTransferAcknowledgeFrame(void);
 Std_ReturnType Xcp_BlockTransferReadSlaveMemory(void);
 Std_ReturnType Xcp_BlockTransferWriteSlaveMemory(uint8 *pBuffer, uint8 elementSize);
@@ -872,10 +998,74 @@ uint8 Xcp_DTOCmdPgmProgramReset(boolean *responseExpected, const PduInfoType *pP
 uint8 Xcp_DTOCmdPgmProgramPrepare(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM_CLEAR, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.2.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdPgmProgramStart above documents -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ * Unlike PROGRAM_PREPARE just above, this one IS gated on Xcp_Internal.pgm_state (DD67, Task 2):
+ * 1.1/1.6.5.1.1 requires it refused ERR_SEQUENCE until PROGRAM_START has succeeded -- the same gate
+ * PROGRAM, PROGRAM_NEXT and PROGRAM_MAX will share once later tasks implement them, and this is its
+ * first user.
+ */
+uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here -- the same convention
+ * Xcp_DTOCmdPgmProgramStart documents above -- because nothing references this declaration when
+ * XCP_FLASH_PROGRAMMING_ENABLED is off: the PID table falls back to Xcp_CmdNotImplemented instead.
+ * Gated on Xcp_Internal.pgm_state exactly as Xcp_DTOCmdPgmProgramClear above is (Task 3): 1.1/
+ * 1.6.5.1.1 requires it refused ERR_SEQUENCE until PROGRAM_START has succeeded.
+ */
+uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_MAX, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.6.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. Gated on Xcp_Internal.pgm_state the same way, and additionally on
+ * Xcp_BlockTransferIsActive() (DD65): this command does not support block transfer and may not be
+ * used within a block transfer sequence.
+ */
+uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_NEXT, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.5.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. Gated on Xcp_Internal.pgm_state exactly as PROGRAM, PROGRAM_CLEAR
+ * and PROGRAM_MAX are (1.1/1.6.5.1.1 lists this as the fourth of the four commands refused until
+ * PROGRAM_START has succeeded), and additionally on Xcp_BlockTransferIsActive(): unlike
+ * PROGRAM_MAX's identical-looking check above, this one must find a block OPEN to proceed, since
+ * this command exists only to continue one PROGRAM began (DD63). Produces no new integrator
+ * callback of its own -- every completing frame, whichever command received it, writes through
+ * the identical Xcp_ProgramWrite contract PROGRAM and PROGRAM_MAX already use.
+ */
+uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_PGM_PROCESSOR_INFO, XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.1.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. Unlike every other handler in this group, it carries no gate on
+ * Xcp_Internal.pgm_state at all, and calls no integrator function: Xcp_CTOErrorMatrix[0xCE]
+ * (source/Xcp.c) carries neither XCP_INTERNAL_ERR_SEQUENCE nor XCP_INTERNAL_ERR_PGM_ACTIVE, matching
+ * §1.7.3.2.5's own row for this command (ERR_CMD_BUSY, ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX only), and
+ * §1.6.5.1.1's "not allowed until PROGRAM_START" list names PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX and
+ * PROGRAM_NEXT, not this command -- so it answers identically from XCP_PGM_IDLE and XCP_PGM_ACTIVE
+ * (DD68). It reports this build's own fixed configuration (PGM_PROPERTIES, MAX_SECTOR), never
+ * defers, and therefore adds no case to Xcp_PgmPollPendingCommand or Xcp_PgmCompletePendingCommand
+ * below -- design doc §5's "one case each" sketch predates DD68, which settles this command as pure
+ * report-what-is-configured with no integrator round trip, the same refinement Task 3/4 already made
+ * when PROGRAM_MAX and PROGRAM_NEXT joined PROGRAM's shared case rather than each getting a distinct
+ * one.
+ */
+uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
- * the slot, so Tasks 4 and 5 add a case each instead of a hard-coded single-command function.
+ * the slot, so Task 4 adds a case for PROGRAM_NEXT instead of a hard-coded single-command function.
+ * Task 5's own GET_PGM_PROCESSOR_INFO adds none: it never defers (Xcp_DTOCmdPgmGetPgmProcessorInfo's
+ * own @details above), so there is nothing pending for this function to ever poll on its behalf.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK.
  * @retval E_OK the integrator callback has finished, successfully or not.
  * @retval E_NOT_OK the integrator callback has not finished; pStatusCode is not read.
@@ -904,12 +1094,31 @@ void Xcp_PgmRequestPending(void);
 /**
  * @brief Abandons the pending PGM command without releasing its slot (DD55).
  * @details Defined in Xcp_Pgm.c and called from Xcp_CanIfRxIndication's ERR_CMD_BUSY gate when
- * SYNCH (1.1/1.7.1.1) arrives while Xcp_Internal.pending_command.active is TRUE. Sets `abandoned`
+ * SYNCH (1.1/1.7.1.2) arrives while Xcp_Internal.pending_command.active is TRUE. Sets `abandoned`
  * and returns pgm_state to XCP_PGM_IDLE; deliberately leaves `active` alone -- Xcp_MainFunction
  * polls only while `active` is TRUE, so clearing it here would stop that polling and strand the
  * integrator mid-operation, its callback never called again, never reporting completion.
  */
 void Xcp_PgmAbandonPendingCommand(void);
+
+/**
+ * @brief Empties whatever PGM master block mode block is open: no bytes still accumulated, no
+ * elements still expected, no frame just acknowledged.
+ * @details Defined in Xcp_Pgm.c. Was `static` and private to that file (Task 4 fix round 1,
+ * finding 1 -- against Xcp_Internal.pgm_block, deliberately never Xcp_Internal.block_transfer,
+ * which Xcp_CanIfTxConfirmation also reads for an unrelated purpose); exported here by
+ * final-review finding 2/3, since a block left open must be emptied wherever a session boundary
+ * clears Xcp_Internal.pgm_state -- Xcp_CTOCmdStdConnect (Xcp_Std.c) and
+ * Xcp_PgmCompleteProgramReset (Xcp_Pgm.c) alike, not only Xcp_Init (Xcp.c), which already did --
+ * and wherever DD64's zero-element PROGRAM ends a segment with a block still open
+ * (Xcp_DTOCmdPgmProgram, Xcp_Pgm.c, final-review finding 3). A stale, non-zero
+ * pgm_block.requested_elements surviving any of those doors leaves Xcp_PgmBlockIsActive()
+ * reporting a block open that no PROGRAM in the NEW session or segment ever started, misdirecting
+ * PROGRAM_NEXT's own count check and PROGRAM_MAX's own DD65 guard alike -- and, measured directly
+ * (final-review F2), lets a PROGRAM_NEXT carrying the abandoned block's own expected count be
+ * accepted, writing the previous session's leftover bytes into flash at the new session's MTA.
+ */
+void Xcp_PgmBlockAbort(void);
 
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);
