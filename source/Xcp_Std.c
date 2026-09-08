@@ -1569,6 +1569,52 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
     Xcp_Internal.memory_transfer.address = NULL_PTR;
     Xcp_Internal.memory_transfer.extension = 0x00u;
 
+    /* Final review, R1. The session-status REQUEST bits, and only those. XCP part 1 - Overview
+     * 1.0/2.3 -- quoted in full at Xcp_CanIfRxIndication (Xcp.c) and already the justification for
+     * every reset above -- names "the session status, all DAQ lists and the protection status
+     * bits" among what a DISCONNECTED slave has reset. This block honoured that citation for five
+     * fields it does not name while leaving standing the one it does.
+     *
+     * It is not cosmetic. STORE_CAL_REQ is cleared in exactly one place, Xcp_MainFunction (Xcp.c),
+     * and only when Xcp_StoreCalibrationDataToNonVolatileMemory returns E_OK. An integrator whose
+     * NVM write never succeeds returns E_NOT_OK forever, the bit never clears, and the
+     * ERR_PGM_ACTIVE gate (Xcp.c) then refuses every command whose Xcp_CTOErrorMatrix row carries
+     * XCP_INTERNAL_ERR_PGM_ACTIVE -- 45 rows, DISCONNECT (0xFE) among them. CONNECT itself is
+     * ungated (its row is 0x00u), so before this line a master could reconnect and recover
+     * NOTHING: only Xcp_Init, i.e. a power cycle, cleared it.
+     *
+     * The trade this makes, deliberately: if the integrator is still storing when a new master
+     * connects, clearing the bit stops Xcp_MainFunction polling it, so that store is no longer
+     * tracked and no EV_STORE_CAL will follow. That is the lesser harm. The new master never
+     * requested the store, GET_STATUS reporting a pending request it cannot influence would be
+     * the more misleading answer, and the alternative being traded away is a permanent refusal of
+     * DISCONNECT.
+     *
+     * Masked rather than assigned, because session_status is not only request bits: DAQ_RUNNING
+     * (bit 6) is maintained by Xcp_DaqStartStop (Xcp_Daq.c) from whether DAQ lists are actually
+     * running. Zeroing the byte here would make GET_STATUS report a stopped DAQ while it runs --
+     * this module does not stop DAQ on CONNECT, that being the parked DD25/SP2d question, so the
+     * bit must keep tracking the truth rather than be reset to a state nothing enforces. */
+    Xcp_Internal.session_status &= (uint8)(~(XCP_SESSION_STATUS_MASK_STORE_CAL_REQ |
+                                             XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ |
+                                             XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ));
+
+    /* Final review, R2. The DAQ pointer is a per-session cursor exactly as the MTA above is, and
+     * survived CONNECT for the same reason the MTA did -- nothing reset it. Session 1 sends
+     * SET_DAQ_PTR(0,0,0) and vanishes without DISCONNECT (this block's whole threat model);
+     * session 2 sends WRITE_DAQ with no SET_DAQ_PTR of its own, and Xcp_DaqApplyOdtEntry
+     * (Xcp_Daq.c) finds valid == TRUE and writes the PREVIOUS session's ODT entry.
+     *
+     * Xcp_DaqFreeAll (Xcp_Daq.c) does clear this, but runs only from DISCONNECT and only under a
+     * DYNAMIC configuration, so neither a STATIC build nor a vanished master reached it.
+     *
+     * Only `valid` is cleared, not the three coordinates: FALSE is already how this module
+     * represents the undefined pointer of 1.1/1.6.4.1.1.2 (see Xcp_DaqPointerAdvance), so the
+     * next Xcp_DaqApplyOdtEntry fails its validity check and answers ERR_OUT_OF_RANGE, telling
+     * the master to position the pointer it never set. Clearing the whole DAQ list content is a
+     * different and larger question -- the DD25/SP2d one this does not settle. */
+    Xcp_Internal.daq_pointer.valid = FALSE;
+
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 
     return E_OK;

@@ -569,3 +569,80 @@ def test_set_mta_followed_by_upload_without_get_id_is_unaffected_by_the_get_id_f
         'UPLOAD with no intervening GET_ID read memory through extension(s) {} -- expected '
         "[3, 3, 3], SET_MTA's own value, unaffected by DD75's fix to a wholly different command's "
         'handler'.format(observed_extensions))
+
+
+def test_a_stuck_store_cal_request_does_not_survive_a_reconnect():
+    """Final review, R1. The audit recorded session_status sound because "SET_REQUEST refuses
+    every bit but STORE_CAL_REQ, so the ERR_PGM_ACTIVE gate cannot be wedged". The one accepted
+    bit is enough.
+
+    STORE_CAL_REQ is cleared in exactly one place -- Xcp_MainFunction (source/Xcp.c) -- and only
+    when Xcp_StoreCalibrationDataToNonVolatileMemory returns E_OK. An integrator whose NVM write
+    never succeeds returns E_NOT_OK forever, so the bit never clears, and the ERR_PGM_ACTIVE gate
+    then refuses every command whose Xcp_CTOErrorMatrix row carries the bit -- 45 rows, DISCONNECT
+    among them. CONNECT is itself ungated (row 0x00u), so before the fix a master could reconnect
+    and recover nothing: only Xcp_Init, a power cycle, cleared it.
+
+    The two halves matter separately. The DISCONNECT refusal below is the PRECONDITION -- it
+    proves the wedge is real and that this test is exercising it, not a slave that was fine all
+    along. The refusal is expected and correct while the request is outstanding; what was wrong is
+    that it outlived the session."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    handle.xcp_store_calibration_data_to_non_volatile_memory.return_value = handle.define('E_NOT_OK')
+
+    connect(handle)
+
+    assert exchange(handle, (0xF9, 0x01, 0x00, 0x00))[0] == 0xFF, 'SET_REQUEST(STORE_CAL_REQ)'
+
+    # Poll once: the integrator refuses, so the bit stays set. Without this the bit would be set
+    # but never yet offered to the integrator, and the test would not be pinning the stuck case.
+    handle.lib.Xcp_MainFunction()
+    assert handle.xcp_store_calibration_data_to_non_volatile_memory.call_count > 0, \
+        'the store was never attempted, so nothing is stuck and this test proves nothing'
+
+    # Precondition: the wedge is real. DISCONNECT is refused while the request is outstanding.
+    assert exchange(handle, (0xFE,))[0:2] == (0xFE, 0x12), 'ERR_PGM_ACTIVE'
+
+    connect(handle)
+
+    # The fix: the new session does not inherit the previous one's stuck request.
+    assert exchange(handle, (0xFE,))[0] == 0xFF, \
+        'DISCONNECT still refused after a reconnect: the wedge outlived the session'
+
+
+def test_the_daq_pointer_does_not_survive_a_reconnect():
+    """Final review, R2. daq_pointer is a per-session cursor exactly as the MTA is
+    (test_the_mta_does_not_survive_a_reconnect above), and survived CONNECT for the same reason --
+    nothing reset it. Xcp_DaqFreeAll (source/Xcp_Daq.c) does clear it but runs only from
+    DISCONNECT and only under a DYNAMIC configuration, so a master that vanishes without
+    DISCONNECT -- this file's whole threat model -- never reached it.
+
+    Before the fix, session 2's WRITE_DAQ with no SET_DAQ_PTR of its own wrote session 1's ODT
+    entry. After it, the pointer is invalid and WRITE_DAQ answers ERR_OUT_OF_RANGE, which
+    1.1/1.6.4.1.1.2 makes the correct answer for an undefined pointer: repositioning it is the
+    master's responsibility.
+
+    The last two lines are what stop this passing for the wrong reason. ERR_OUT_OF_RANGE would
+    equally be the answer if the reconnect had freed the DAQ pool outright, which is a different
+    behaviour and one this fix deliberately does not implement (the DD25/SP2d question). Setting
+    the pointer again and completing the write proves the lists are still allocated, so the
+    refusal above was the invalid pointer and nothing else."""
+    handle = XcpTest(dynamic_config(daq_count=1, odt_count=1, odt_entries_count=1,
+                                    channel_rx_pdu_ref=0x0001))
+    write_daq = (0xE1, 0xFF, 0x01, 0x00) + tuple(u32_to_array(0x1000, 'LITTLE_ENDIAN'))
+
+    connect(handle)
+    assert exchange(handle, (0xD6,))[0] == 0xFF                              # FREE_DAQ
+    assert exchange(handle, (0xD5, 0x00, 0x01, 0x00))[0] == 0xFF             # ALLOC_DAQ(1)
+    assert exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF       # ALLOC_ODT(list 0, 1)
+    assert exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01))[0] == 0xFF  # ALLOC_ODT_ENTRY
+    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0] == 0xFF  # SET_DAQ_PTR(0,0,0)
+
+    connect(handle)
+
+    assert exchange(handle, write_daq)[0:2] == (0xFE, 0x22), \
+        'WRITE_DAQ used the previous session\'s DAQ pointer'
+
+    assert exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))[0] == 0xFF
+    assert exchange(handle, write_daq)[0] == 0xFF, \
+        'the reconnect freed the DAQ pool, so the refusal above was not about the pointer'
