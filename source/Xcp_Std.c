@@ -1615,6 +1615,12 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
      * different and larger question -- the DD25/SP2d one this does not settle. */
     Xcp_Internal.daq_pointer.valid = FALSE;
 
+    /* DD79. With the clear-after-dispatch gone, this is the ONLY thing that re-locks a resource
+     * inside a running module, and XCP part 1 - Overview 1.0/2.3 -- quoted in full at
+     * Xcp_CanIfRxIndication (Xcp.c) -- names the protection status bits among what a DISCONNECTED
+     * slave has reset. A grant belongs to the session that earned it. */
+    Xcp_Internal.protection_status = 0x00u;
+
     Xcp_Internal.connection_status = XCP_CONNECTION_STATE_CONNECTED;
 
     return E_OK;
