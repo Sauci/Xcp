@@ -405,29 +405,35 @@ def test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_nex
     Xcp_Internal.h -- see this file's own module docstring), so last_pid's value cannot be read
     directly; this observes the fix's effect through consequences instead.
 
-    What last_pid actually gates in Xcp_DTOCmdStdUnlock is membership in
-    {GET_SEED, UNLOCK} (source/Xcp_Std.c's own `if ((last_pid == GET_SEED) || (last_pid ==
-    UNLOCK))`), by design admitting a FURTHER unlock attempt whenever last_pid is already UNLOCK's
-    own pid -- 1.0/1.6.1.2.5's own multi-frame key continuation, and the same mechanism
-    test_a_failed_get_seed_does_not_let_a_stale_admission_grant_the_resource_it_requested above
-    already exercises. Reaching Xcp_DTOCmdStdUnlock's own Xcp_CalcKey call at all -- pre-fix or
-    post-fix -- already requires last_pid to be GET_SEED or UNLOCK, and whichever of those two
-    member values it ends up as afterwards, a following UNLOCK is equally admitted through that
-    same membership test either way: last_pid landing on the WRONG one of its two admitted values
-    is not something Xcp_DTOCmdStdUnlock's own gate can ever tell apart (confirmed by direct trace
-    and empirically, both ways, while investigating this task -- see task-7-report.md). So a bare
-    "does a following UNLOCK get admitted" probe cannot isolate this leg the way
-    DD72's own two tests isolate its two legs -- unlike GET_SEED failing, which (immediately after
-    CONNECT) can flip last_pid from OUTSIDE that set to inside it, UNLOCK failing never can, since
-    reaching its own failure path already means last_pid was inside the set to begin with.
+    DD81 (source/Xcp_Std.c, task-2-report.md) changed what "a following UNLOCK gets admitted"
+    means: admission now also requires Xcp_Internal.seed.total_length != 0, and
+    Xcp_DTOCmdStdUnlock discards that field once a full key has been received, success or failure
+    alike. Before DD81 this test relied on exactly the gap DD81 closes: last_pid staying at
+    UNLOCK's own pid after a failed attempt was, on its own, enough to admit the next attempt with
+    no seed behind it at all, which is how one GET_SEED used to be stretched across all three
+    probes below. That route is gone -- a chain of failed UNLOCKs sharing one seed now stops
+    reaching Xcp_CalcKey after its first member, which would silently cut this test's coverage of
+    DD76 (task 7, the defect this test exists to keep fixed) from three probes of the stale-answer
+    property to one. So each attempt below reissues its own GET_SEED first, asserting it is
+    genuinely honoured rather than assuming it: Xcp_DTOCmdStdGetSeed(mode=0) (source/Xcp_Std.c)
+    has no dependency on last_pid or on anything an UNLOCK leaves behind, and a failed
+    Xcp_CalcKey does not disconnect the session (unlike a KEY MISMATCH,
+    Xcp_CheckMasterSlaveKeyMatch's own failure -- see
+    test_a_key_mismatch_still_answers_access_locked_not_the_calc_key_failure_code below), so this
+    is expected to succeed every time.
 
-    What the fix actually guarantees, and what this test pins instead: every dispatch that reads
-    byte 0 next -- including DD72's own gate, and including the following UNLOCK's own answer --
-    now sees the truth. A chain of failing UNLOCK attempts (fresh key bytes each time, no new
-    GET_SEED reissued in between -- Xcp_DTOCmdStdUnlock discards the seed once a full key has been
-    received, success or failure, so none would even be honoured) never again shows the stale
-    positive response the defect used to produce, on the first attempt or any later one, and
-    GET_STATUS confirms nothing is ever granted across the whole chain."""
+    What this still pins, unchanged from before DD81: every dispatch that reads byte 0 next --
+    including DD72's own gate, and including the following UNLOCK's own answer -- sees the truth.
+    A chain of failing UNLOCK attempts, each now with its own genuinely fresh seed, never again
+    shows the stale positive response DD76 used to produce, on the first attempt or any later one,
+    and GET_STATUS confirms nothing is ever granted across the whole chain.
+
+    The fourth probe is new, added alongside DD81: one more UNLOCK, after the chain, with no fresh
+    GET_SEED behind it. The last chain member's own completion already discarded the seed it was
+    issued -- the same unconditional discard the reissuing above relies on -- so this is refused
+    with ERR_SEQUENCE before ever reaching Xcp_CalcKey again. It documents DD81's own interaction
+    with the defect this test is named for, in the place a reader of that defect would look for
+    it."""
     seed = [0x11, 0x22, 0x33, 0x44]
 
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -436,15 +442,24 @@ def test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_nex
     handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, seed)
     handle.xcp_calc_key.side_effect = calc_key_side_effect_fail(handle)
 
-    get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
-    assert get_seed_response[0:2] == (0xFF, len(seed))
-
     for attempt, key in enumerate(([0x99], [0x55], [0x11, 0x22])):
+        get_seed_response = exchange(handle, (0xF8, 0x00, CAL_PAG), length=2 + len(seed))
+        assert get_seed_response[0:2] == (0xFF, len(seed)), (
+            'GET_SEED before attempt #{} answered {}, expected a genuine fresh seed (0xFF, {}) -- '
+            'DD81 now requires one before every attempt below, so this is asserted rather than '
+            'assumed'.format(attempt, get_seed_response, len(seed)))
+
         unlock_response = exchange(handle, (0xF7, len(key), *key), length=8)
         assert unlock_response[0:2] == (0xFE, 0x31), (
             'UNLOCK attempt #{} (key={}) answered {}, expected (0xFE, 0x31) [ERR_GENERIC] again -- '
             'a stale answer from an earlier exchange would show up here as something else, most '
             'likely a positive (0xFF, ...) reply nobody computed'.format(attempt, key, unlock_response))
+
+    no_fresh_seed_response = exchange(handle, (0xF7, 0x01, 0x01), length=8)
+    assert no_fresh_seed_response[0:2] == (0xFE, 0x29), (
+        'UNLOCK with no fresh GET_SEED behind it answered {}, expected (0xFE, 0x29) [ERR_SEQUENCE] '
+        '-- the last chain attempt already discarded its own seed on completion, same as any other '
+        'UNLOCK (DD81, source/Xcp_Std.c)'.format(no_fresh_seed_response))
 
     status_response = exchange(handle, GET_STATUS)
     assert status_response[2] == 0x00, (

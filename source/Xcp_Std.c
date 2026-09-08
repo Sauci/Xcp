@@ -770,7 +770,23 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
 
     *responseExpected = TRUE;
 
-    if ((Xcp_Internal.last_pid == XCP_PID_CMD_GET_SEED) || (Xcp_Internal.last_pid == XCP_PID_CMD_UNLOCK))
+    /* DD81. Two terms answering two different questions, and both are load-bearing.
+     *
+     * last_pid asks whether the immediately preceding command was a successful GET_SEED or a prior
+     * frame of this same key. It cannot say WHICH -- it is a two-element set-membership test -- so
+     * it cannot answer "was a seed actually issued", and on its own it admitted an UNLOCK against a
+     * seed that never existed (XCP part 2 1.0/1.6.1.2.5: "The master only can send an UNLOCK
+     * sequence if previously there was a GET_SEED sequence").
+     *
+     * seed.total_length asks exactly that second question. The mechanism already existed and
+     * nothing read it: the sequence below zeroes this field once a full key arrives, to "enforce a
+     * new seed to be requested prior to unlock a next resource". It stays non-zero for every frame
+     * of a multi-frame key, so this admits the whole legitimate sequence and refuses a replay.
+     *
+     * ERR_SEQUENCE is not a deviation: UNLOCK's own 1.7.3.2.1 row lists it, with GET_SEED as its
+     * prescribed pre-action. */
+    if (((Xcp_Internal.last_pid == XCP_PID_CMD_GET_SEED) || (Xcp_Internal.last_pid == XCP_PID_CMD_UNLOCK)) &&
+        (Xcp_Internal.seed.total_length != 0x00u))
     {
         if (pPduInfo->SduDataPtr[0x01u] >= 0x01u)
         {

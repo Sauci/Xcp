@@ -94,3 +94,80 @@ def test_an_unlock_does_not_survive_a_reconnect():
 
     assert exchange(handle, DOWNLOAD)[0:2] == (0xFE, 0x25), \
         'the grant outlived the session that earned it'
+
+
+def test_unlock_with_no_preceding_get_seed_is_refused():
+    """DD81, and the defect section 3b of the previous branch recorded and deliberately left
+    unfixed. XCP part 2 1.0/1.6.1.2.5: "The master only can send an UNLOCK sequence if previously
+    there was a GET_SEED sequence... If the master does not respect this sequence, the slave
+    returns an ERR_SEQUENCE."
+
+    ERR_SEQUENCE needs no deviation: it is in UNLOCK's own 1.7.3.2.1 row, and that row's prescribed
+    pre-action for it is literally GET_SEED, so the refusal tells the master exactly what to do."""
+    handle = cal_protected_handle()
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, KEY)
+
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
+    assert exchange(handle, DOWNLOAD)[0:2] == (0xFE, 0x25), \
+        'the resource was granted by an UNLOCK against a seed that was never issued'
+
+
+def test_a_second_unlock_without_a_fresh_seed_is_refused():
+    """The seed is spent by the UNLOCK that consumes it -- Xcp_DTOCmdStdUnlock already zeroes
+    seed.total_length on a complete key, under a comment saying it "enforces a new seed to be
+    requested prior to unlock a next resource". Nothing ever checked it. This is that check."""
+    handle = cal_protected_handle()
+    unlock_cal_pag(handle)
+
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
+
+
+def test_a_legitimate_multi_frame_key_is_still_admitted():
+    """The guard must not break a key too long for one frame. At MAX_CTO=8 a frame carries at most
+    MAX_CTO-2 = 6 key bytes, so a 10-byte key needs two UNLOCK frames; seed.total_length stays
+    non-zero across the whole sequence and is zeroed only on completion, so every frame is
+    admitted. Without this test the guard could be written to admit only the FIRST frame and both
+    tests above would still pass."""
+    handle = cal_protected_handle()
+    long_key = [0xA0 + i for i in range(10)]
+
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, SEED)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, long_key)
+
+    assert exchange(handle, (0xF8, 0x00, 0x01))[0] == 0xFF
+    assert exchange(handle, (0xF7, 10) + tuple(long_key[0:6]))[0] == 0xFF, 'first UNLOCK frame'
+    assert exchange(handle, (0xF7, 4) + tuple(long_key[6:10]))[0] == 0xFF, 'second UNLOCK frame'
+
+    assert exchange(handle, DOWNLOAD)[0] == 0xFF, 'a legitimate multi-frame unlock was refused'
+
+
+def test_an_unlock_after_get_status_is_refused_despite_a_held_seed():
+    """Isolates the last_pid conjunct alone -- coordinator ruling on task-2-report.md's mutation 2,
+    which found that conjunct unpinned by every scenario in this file: dropping it left all seven
+    tests above passing regardless, because each one's seed.total_length happens to already agree
+    with what last_pid alone would have decided.
+
+    GET_STATUS is MASK_NONE (always reachable, this file's own module docstring) and
+    Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) never reads or writes Xcp_Internal.seed -- so it
+    leaves a just-issued seed exactly as GET_SEED left it. But it is a dispatch like any other, and
+    always answers positively, so Xcp_CanIfRxIndication's DD72 gate (source/Xcp.c), which advances
+    last_pid past any dispatch whose own response byte 0 is not XCP_PID_ERROR, advances it to
+    GET_STATUS's own pid (0xFD). The UNLOCK that follows therefore satisfies the seed.total_length
+    conjunct (a seed is genuinely held, untouched) and fails only the last_pid conjunct (0xFD is
+    outside {GET_SEED, UNLOCK}) -- the one scenario in this file where the two conjuncts disagree,
+    so only a gate that checks both refuses it. Confirmed empirically, not just by trace: with
+    task-2-report.md's mutation 2 reapplied (last_pid terms dropped, only seed.total_length !=
+    0x00u kept), this test fails -- see the report's update for that run.
+
+    xcp_calc_key is armed to succeed with a matching key, not left unconfigured: if the last_pid
+    conjunct were ever dropped, this UNLOCK would be admitted, reach Xcp_CalcKey and match,
+    answering a clean (0xFF, ...) -- an unambiguous positive, not an artifact of an unconfigured
+    mock -- so a broken gate cannot pass this test by accident."""
+    handle = cal_protected_handle()
+    handle.xcp_get_seed.side_effect = get_seed_side_effect_copy_ok(handle, SEED)
+    handle.xcp_calc_key.side_effect = calc_key_side_effect_copy_ok(handle, KEY)
+
+    assert exchange(handle, (0xF8, 0x00, 0x01))[0] == 0xFF, 'GET_SEED(mode=0, CAL_PAG)'
+    assert exchange(handle, GET_STATUS)[0] == 0xFF, 'GET_STATUS'
+
+    assert exchange(handle, (0xF7, len(KEY)) + tuple(KEY))[0:2] == (0xFE, 0x29), 'ERR_SEQUENCE'
