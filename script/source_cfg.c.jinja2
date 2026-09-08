@@ -1166,6 +1166,26 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     ({% if configuration.programming.encryption_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x05u) |
     ({% if configuration.programming.non_sequential_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x06u) |
     ({% if configuration.programming.non_sequential_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u), /* pgmProperties */
+{#- SP4c Task 5, design doc DD84/DD93: whether THIS build's own PROGRAM_CLEAR handler may accept
+    mode 0x01 (functional access, clearing by area rather than by address) and forward it to
+    Xcp_ProgramClearFunctional. Deliberately NOT another pgmProperties bit immediately above,
+    despite being the same shape of "is this capability configured" question DD89's six flags
+    already answer there: pgmProperties has no bit left to give it (bit 1, FUNCTIONAL_MODE, is
+    DD92's own combined advertisement -- set only once BOTH DD84 callbacks exist, Xcp_ProgramWrite
+    Functional included, which this task alone cannot complete -- and bits 0 and 2-7 are all
+    already spoken for). More fundamentally, it would be the wrong bit even with room to spare:
+    DD93 is explicit that PROGRAM_CLEAR's own mode byte is independent of PROGRAM_FORMAT's access
+    method, which is what pgmProperties' FUNCTIONAL_MODE bit governs (DD89's fourth term,
+    Xcp_DTOCmdPgmProgramFormat) -- so gating PROGRAM_CLEAR's own mode 0x01 on that same bit would
+    make one flag answer two different questions and reintroduce exactly the coupling DD93 rejects
+    by name. A dedicated boolean, read directly by Xcp_DTOCmdPgmProgramClear
+    (Xcp_Ptr->general->pgmClearFunctionalSupported), keeps the two capabilities free to vary
+    independently, mirroring masterBlockModeSupported/slaveBlockModeSupported/
+    interleavedModeSupported immediately above in this same struct rather than pgmProperties'
+    own bit-packed style. Conjoined with programming.enabled, the same guard every per-command
+    apis.xcp_program_*_api_enable flag in this file already carries, for the identical reason: a
+    build that cannot program at all must not advertise a programming sub-capability either. #}
+    {% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_clear_functional_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* pgmClearFunctionalSupported */
     {% if configuration.paging is defined and configuration.paging.freeze_supported %}0x01u{% else %}0x00u{% endif %}, /* pagProperties */
     {% if (configuration.protocol_layer.overload_indication | default('EVENT')) == 'EVENT' %}TRUE{% else %}FALSE{% endif %}, /* overload indication by event packet */
 };

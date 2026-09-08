@@ -176,79 +176,42 @@ def test_program_clear_defers_through_the_pending_slot_and_keeps_passing_the_cle
         "the clear range must still be the request's own value on the completing poll"
 
 
-def test_program_clear_functional_mode_is_refused_err_out_of_range_without_calling_the_integrator():
-    """DD67. 1.1/1.6.5.1.2 gives PROGRAM_CLEAR two mode bytes -- 0x00 absolute (default), 0x01
-    functional -- and this slave offers only the first (DD68's PGM_PROPERTIES says so on the wire
-    too). Answered ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row lists the action 'retry other
-    parameter' -- precisely what a master should do with a mode this slave does not offer.
-
-    The integrator must not be called at all, not merely answered an error: 1.6.5.1.2 gives the two
-    modes completely different readings of the SAME clear-range field -- a length in absolute mode,
-    a bit mask of memory areas in functional mode -- so a handler that read the field as a length
-    and called Xcp_ProgramClear before noticing the mode byte would already have started erasing
-    whatever 0x00000001 means as a length, in a request where the master's mode byte meant 'clear
-    all the calibration data area(s)'. call_count == 0 is the assertion that catches exactly that
-    ordering bug; a wire-only assertion on the response alone would not -- a handler that cleared
-    first and refused afterwards would still answer (0xFE, 0x22) here.
-
-    Fix round 2 correction: an earlier revision of this docstring argued the handler should test
-    `== 0x01u` rather than `!= 0x00u`, on the premise that DD67 names 0x01 specifically and
-    1.6.5.1.2 "defines no third mode byte for this slave to have an opinion about". That premise
-    was backwards, and the code briefly matched it: 1.6.5.1.2 gives the mode byte as a table with
-    exactly two rows, an ENUMERATION of the values this command recognises, not a bit field with
-    reserved-but-harmless positions -- so a slave that implements only absolute mode has exactly
-    one value to ACCEPT, and every other byte (0x01 included, but not only 0x01) is equally
-    unrecognised and must be equally refused. `== 0x01u` refuses the one documented alternative and
-    silently treats every undefined value (0x02..0xFF) as absolute mode instead, which is `!=
-    0x00u`'s failure mode exactly reversed: this command has no "unknown but harmless" value to let
-    through, because letting one through means erasing flash on its behalf.
-    test_program_clear_unrecognised_mode_is_refused_err_out_of_range_without_calling_the_integrator
-    below covers the values `== 0x01u` used to admit; this test stays because DD67 discusses 0x01
-    by name (the one alternative the specification itself defines) and this is where that specific
-    reasoning belongs.
-
-    Mutation: deleting the mode check (or comparing against the wrong byte offset) makes the
-    integrator's default E_OK/zero-status mock answer positively instead, changing both the
-    response code and call_count."""
-    handle = pgm_clear_handle()
-    _active_session_with_mta(handle)
-
-    assert send(handle, (0xD1, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x22), \
-        'ERR_OUT_OF_RANGE'
-    assert handle.xcp_program_clear.call_count == 0, 'functional mode must never reach the integrator'
-
-
-@pytest.mark.parametrize('mode', (0x01, 0x02, 0x80, 0xFF))
+@pytest.mark.parametrize('mode', (0x02, 0x80, 0xFF))
 def test_program_clear_unrecognised_mode_is_refused_err_out_of_range_without_calling_the_integrator(mode):
     """Fix round 2, task-2-review.md finding 1. 1.6.5.1.2's mode-byte table has exactly two rows,
     0x00 and 0x01 -- an enumeration of the values this command recognises, not a bit field with
-    reserved-but-harmless positions -- and this slave implements only 0x00 (DD67, DD68). Every
-    value other than 0x00 is therefore equally unrecognised, not only 0x01: a master that sets a
-    vendor extension, a future ASAM revision's mode bit, or simply a mis-encoded frame is asking for
-    a mode this slave cannot honour, and a handler that fell through to absolute mode for anything
-    it did not specifically refuse would erase `clearRange` bytes at the MTA on that master's behalf
-    and report success -- confirmed against a build carrying exactly that bug (task-2-review.md):
-    modes 0x02, 0x03, 0x80 and 0xFF each reached Xcp_ProgramClear once and were answered (0xFF,).
+    reserved-but-harmless positions. Every value other than those two is therefore unrecognised: a
+    master that sets a vendor extension, a future ASAM revision's mode bit, or simply a mis-encoded
+    frame is asking for a mode this slave cannot honour, and a handler that fell through to absolute
+    mode for anything it did not specifically refuse would erase `clearRange` bytes at the MTA on
+    that master's behalf and report success -- confirmed against a build carrying exactly that bug
+    (task-2-review.md): modes 0x02, 0x03, 0x80 and 0xFF each reached Xcp_ProgramClear once and were
+    answered (0xFF,).
 
     Answered ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row lists the action 'retry other parameter' --
-    correct for any mode byte this slave does not implement, not only for 0x01. call_count == 0 is
-    the assertion that actually matters, per
-    test_program_clear_functional_mode_is_refused_err_out_of_range_without_calling_the_integrator's
-    own reasoning just above: a handler that erased first and refused afterwards would still pass a
+    correct for any mode byte this slave does not recognise. call_count == 0 is the assertion that
+    actually matters: a handler that erased first and refused afterwards would still pass a
     wire-only assertion on the response code alone.
 
-    0x01 is included here alongside the three previously-unchecked values (0x02, 0x80, 0xFF) so
-    this test's own claim -- 'every mode but 0x00 is refused, and none of them reach the integrator'
-    -- is checked as one property over the whole non-zero byte range this parametrisation samples,
-    not asserted for 0x01 in one test and merely assumed to generalise. It duplicates no coverage:
-    the test above pins DD67's specific reasoning about 0x01, the named alternative the
-    specification itself defines; this one pins the general rule the handler's code actually
-    implements (`!= 0x00u`), which 0x01 is one instance of and not a special case within.
+    SP4c Task 5 narrows this parametrisation: 0x01 (functional access mode, DD84/DD93) used to be
+    included here alongside 0x02/0x80/0xFF, pinning SP4b's own DD67 refusal of every non-zero mode
+    byte with no exception. That task implements the 0x01 branch this file's own
+    test/pgm_functional_test.py now covers in full -- including the still-refused case, when
+    xcp_program_clear_functional_api_enable is False -- so 0x01 is removed from here rather than
+    left asserting a refusal this build may no longer produce. 0x02/0x80/0xFF are untouched by that
+    task and stay refused unconditionally, which is exactly what this narrowed parametrisation still
+    checks.
 
-    Mutation: reverting the handler's check from `!= 0x00u` to `== 0x01u` (the exact bug this fix
-    round corrects) leaves the 0x01 case failing here too, but is chiefly caught by the 0x02/0x80/
-    0xFF cases, none of which the pre-fix handler refused -- each would instead reach
-    Xcp_ProgramClear and answer (0xFF,), not (0xFE, 0x22), with call_count == 1, not 0."""
+    Mutation: SP4c Task 5 inserts its own `mode == 0x01u` branch ahead of this catch-all, so 0x01 is
+    intercepted by ORDER rather than by an explicit exclusion written into this line -- this
+    catch-all still reads the same `!= 0x00u` it always has. Disabling that new, earlier branch
+    (making it permanently false) leaves 0x01 falling into THIS catch-all too, and this
+    parametrisation would need a fourth case to notice; that specific regression is what
+    test/pgm_functional_test.py's own test 1 catches instead, in isolation, since call_count there
+    names the callback actually reached. What this catch-all's own mutation still covers is
+    unchanged: reverting `!= 0x00u` to admit any of 0x02/0x80/0xFF as absolute mode reaches
+    Xcp_ProgramClear and answers (0xFF,), not (0xFE, 0x22), with call_count == 1, not 0, for each of
+    these three cases."""
     handle = pgm_clear_handle()
     _active_session_with_mta(handle)
 

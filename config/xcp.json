@@ -195,6 +195,10 @@
           "enabled": true,
           "protected": false
         },
+        "xcp_program_clear_functional_api_enable": {
+          "enabled": false,
+          "protected": false
+        },
         "xcp_program_verify_api_enable": {
           "enabled": true,
           "protected": false

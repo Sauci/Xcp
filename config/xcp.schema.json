@@ -321,6 +321,9 @@
               "xcp_program_clear_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_program_clear_functional_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_program_verify_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
@@ -430,6 +433,7 @@
               "xcp_alloc_odt_api_enable",
               "xcp_alloc_odt_entry_api_enable",
               "xcp_program_clear_api_enable",
+              "xcp_program_clear_functional_api_enable",
               "xcp_program_verify_api_enable",
               "xcp_program_format_api_enable",
               "xcp_program_api_enable",

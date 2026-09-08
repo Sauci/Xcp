@@ -486,6 +486,20 @@ typedef struct {
         boolean event_outstanding;
 
         /**
+         * @brief SP4c Task 5: which PROGRAM_CLEAR callback a later poll must re-invoke, valid only
+         * while pid names XCP_PID_CMD_PROGRAM_CLEAR.
+         * @details PROGRAM_CLEAR's own PID is shared by both access modes (DD93 -- the mode byte is
+         * not a separate command), so args.program_clear_range alone no longer says which callback
+         * deferred: TRUE means Xcp_DTOCmdPgmProgramClear's own mode==0x01 branch deferred and
+         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) must re-invoke Xcp_ProgramClearFunctional, FALSE
+         * means the existing absolute-mode branch deferred and Xcp_ProgramClear is still the right
+         * callback, exactly as it was before this task. Not part of the args union just below: it
+         * has to be readable at the same time as args.program_clear_range on the very same poll,
+         * where a union member would only overlay one or the other in the same storage.
+         */
+        boolean program_clear_functional;
+
+        /**
          * @brief per-command arguments a poll needs but the handler that parsed them has already
          * returned by the time it runs, valid only while pid names the matching command.
          * @details A union keyed by pid, not a growing set of flat fields. PROGRAM_PREPARE's own

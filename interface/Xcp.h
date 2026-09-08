@@ -506,9 +506,11 @@ extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *
  * @param [in] clearRange The request's own Clear Range: the length, in bytes, of the memory part to
  * be cleared. 1.1/1.6.5.1.2: "The Clear Range indicates the length of the memory part to be
  * cleared. The PROGRAM_CLEAR service clears a complete sector or multiple sectors at once." Always
- * a length -- this module implements absolute access mode only (DD67, DD68), so the alternative
- * reading functional access mode gives the same field (a bit mask of memory areas) never reaches
- * this callback; a request naming that mode is refused ERR_OUT_OF_RANGE before this is called.
+ * a length here: this callback answers absolute access mode alone (request mode byte 0x00). Under
+ * functional access mode (0x01) the same request field is a bit mask of memory areas instead, and
+ * reaches @ref Xcp_ProgramClearFunctional, a separate callback, never this one (design doc DD84,
+ * DD93) -- a request naming a mode neither callback is configured for is refused ERR_OUT_OF_RANGE
+ * before either is ever called.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
  * for success, non-zero for failure.
  * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
@@ -635,6 +637,40 @@ extern Std_ReturnType Xcp_ProgramVerify(uint8 verificationMode, uint16 verificat
  * specific meaning.
  */
 extern Std_ReturnType Xcp_ProgramFormat(uint8 compressionMethod, uint8 encryptionMethod, uint8 programmingMethod, uint8 accessMethod, uint8 *pStatusCode);
+
+/**
+ * @brief Clears (erases) memory by AREA rather than by address: PROGRAM_CLEAR's functional access
+ * mode.
+ * @param [in] clearRange The request's own Clear Range, reinterpreted under functional access mode
+ * (design doc DD84, DD93): no longer a length, but a bit mask of the memory areas to clear. XCP
+ * part 2 - Protocol Layer Specification 1.1/1.6.5.1.2 (both revisions): "The MTA has no influence on
+ * the clearing functionality" under this mode -- which is why, unlike @ref Xcp_ProgramClear, this
+ * callback takes no address parameter at all; passing one would invent a parameter the protocol does
+ * not carry. 0x00000001 all calibration data areas, 0x00000002 all code areas (the boot area is not
+ * covered), 0x00000004 NVRAM areas, 0x00000100..0xFFFFFF00 user defined. 0x00000008..0x00000080 are
+ * reserved and refused ERR_OUT_OF_RANGE before this callback is ever reached -- the one structural
+ * check this command's own 1.7.3.2.5 row permits a slave to make.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero for failure.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_ProgramClear is: called once from the PROGRAM_CLEAR handler
+ * to start the work and then once per Xcp_MainFunction until it reports completion. An
+ * implementation whose work is instantaneous returns E_OK from the first call and the command is
+ * answered without ever deferring.
+ * @note Reachable only once both PROGRAM_START has succeeded (1.1/1.6.5.1.1, the same session gate
+ * @ref Xcp_ProgramClear itself carries) and this build's own configuration offers this callback
+ * (xcp_program_clear_functional_api_enable, config/xcp.schema.json); a mode 0x01 request otherwise
+ * is refused ERR_OUT_OF_RANGE and never reaches here.
+ * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, the same code and the same reasoning
+ * @ref Xcp_ProgramClear's own note gives for a failed erase.
+ * @note Independent of PROGRAM_FORMAT's own access method (design doc DD93): XCP part 2 - Protocol
+ * Layer Specification 1.1/1.6.5.2.4 states outright that "it is possible to use different access
+ * modes for clearing and programming", so a master may reach this callback while
+ * Xcp_Internal.pgm_format.access_method still reads absolute access mode, or the reverse for
+ * @ref Xcp_ProgramWrite.
+ */
+extern Std_ReturnType Xcp_ProgramClearFunctional(uint32 clearRange, uint8 *pStatusCode);
 
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 

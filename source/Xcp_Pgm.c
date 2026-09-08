@@ -277,22 +277,90 @@ uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pP
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
-    /* Fix round 2. 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default)
-     * and 0x01 (functional access mode), as a table -- an enumeration of the values this command
-     * recognises, not a bit field with reserved-but-harmless positions -- and this slave offers
-     * only the first (DD68's PGM_PROPERTIES says so on the wire too). There is therefore exactly
-     * one mode byte to ACCEPT, not one to refuse: testing `!= 0x00u` refuses 0x01 and every value
-     * neither this slave nor the specification itself gives a meaning to (0x02..0xFF), where
-     * testing `== 0x01u` (the first form of this check) refused only 0x01 and silently accepted
-     * every one of those undefined values as if it were 0x00 -- absolute mode, on a field that is
-     * about to be read as a byte length and handed to an erase. Refused ERR_OUT_OF_RANGE, whose
-     * own 1.7.3.2.5 row lists the action "retry other parameter", correct for ANY mode byte this
-     * slave does not implement, not only for 0x01 specifically. Checked, and refused, BEFORE the
-     * clear range is even read below: 1.6.5.1.2 gives that same DWORD field completely different
-     * readings depending on the mode -- a length in absolute mode, a bit mask of memory areas in
-     * functional mode -- so a handler that read it as a length first would already have called
-     * Xcp_ProgramClear with whatever the DWORD means as a length, under a mode byte the master may
-     * not have meant as absolute at all. */
+    /* SP4c Task 5, design doc DD84/DD93: functional access mode. Checked here, ahead of the
+     * unrecognised-mode refusal just below, so that refusal's own `!= 0x00u` no longer has to (and
+     * no longer does) speak for 0x01 -- this branch does. DD93 is explicit that this mode byte is
+     * independent of PROGRAM_FORMAT's own access method: read directly off THIS request, never off
+     * Xcp_Internal.pgm_format.access_method, so a master may clear functionally and program
+     * absolutely, or the reverse (1.1/1.6.5.2.4: "It is possible to use different access modes for
+     * clearing and programming"). */
+    else if (pPduInfo->SduDataPtr[0x01u] == 0x01u)
+    {
+        uint32 clear_range;
+
+        /* Harmless ahead of the capability/reserved-bit checks just below: this only copies the
+         * request's own raw bytes into a local, the same DWORD offset absolute mode reads, and
+         * commits to no interpretation of them yet -- unlike calling Xcp_ProgramClear itself, which
+         * the comment on the unrecognised-mode branch below warns against doing before the mode
+         * byte is settled. 1.6.5.1.2 (both revisions): "The MTA has no influence on the clearing
+         * functionality" under this mode, so Xcp_Internal.memory_transfer.address is never read in
+         * this branch, unlike the absolute-mode branch below. */
+        Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &clear_range, Xcp_Ptr->general->byteOrder);
+
+        if (Xcp_Ptr->general->pgmClearFunctionalSupported != TRUE)
+        {
+            /* This build's own configuration does not offer Xcp_ProgramClearFunctional
+             * (xcp_program_clear_functional_api_enable, config/xcp.schema.json) -- refused before
+             * the area bitmask below is even validated, the same "nothing this build cannot honour
+             * reaches the integrator" discipline Xcp_DTOCmdPgmProgramFormat's own DD89 check
+             * follows against pgmProperties. */
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        }
+        /* 1.6.5.1.2 (both revisions) reserves 0x00000008..0x00000080 of the area bitmask; checked
+         * as one mask (0x000000F8u covers exactly those five bits together), not five separate
+         * equality checks, the same reasoning Xcp_DTOCmdPgmProgramVerify's own verificationType
+         * check above gives: a master is free to combine a reserved bit with a defined one in the
+         * same request, which a chain of `==` comparisons against only the single-bit values would
+         * not catch. 0x00000001/0x02/0x04 (the three defined areas) and 0x00000100..0xFFFFFF00
+         * (user defined) both pass this check untouched -- the latter is, by this same paragraph's
+         * own words, the integrator's to interpret, not this module's to refuse. */
+        else if ((clear_range & 0x000000F8u) != 0x00000000u)
+        {
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else
+        {
+            uint8 status_code = 0x00u;
+
+            /* The FIRST call happens here, not on the next Xcp_MainFunction, for the identical
+             * reason the absolute-mode branch below calls Xcp_ProgramClear at this same point. */
+            if (Xcp_ProgramClearFunctional(clear_range, &status_code) == E_OK)
+            {
+                Xcp_PgmCompleteProgramClear(status_code);
+            }
+            else
+            {
+                Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_CLEAR;
+                Xcp_Internal.pending_command.active = TRUE;
+                Xcp_Internal.pending_command.abandoned = FALSE;
+                Xcp_Internal.pending_command.event_outstanding = FALSE;
+                /* Told apart from an absolute-mode deferral by pid alone until now -- both share
+                 * XCP_PID_CMD_PROGRAM_CLEAR, since DD93 keeps this one request's own mode byte from
+                 * ever becoming a separate command -- so Xcp_PgmPollPendingCommand (below) also
+                 * needs this flag to know which callback to re-invoke (source/Xcp_Internal.h,
+                 * program_clear_functional's own comment). */
+                Xcp_Internal.pending_command.program_clear_functional = TRUE;
+                /* Xcp_ProgramClearFunctional's contract takes the area bitmask on every call, not
+                 * only this first one, for the identical reason the absolute-mode branch below
+                 * holds onto its own clear range the same way. */
+                Xcp_Internal.pending_command.args.program_clear_range = clear_range;
+
+                /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+                *responseExpected = FALSE;
+            }
+        }
+    }
+    /* 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default) and 0x01
+     * (functional access mode, the branch immediately above) -- a table, an enumeration of the
+     * values this command recognises at all, not a bit field with reserved-but-harmless positions.
+     * Every other byte (0x02..0xFF) is therefore unrecognised regardless of what this build
+     * configures for either mode, and is refused ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row lists
+     * the action "retry other parameter". Checked, and refused, BEFORE the clear range is even read
+     * below: 1.6.5.1.2 gives that same DWORD field completely different readings depending on the
+     * mode -- a length in absolute mode, a bit mask of memory areas in functional mode -- so a
+     * handler that read it as a length first would already have called Xcp_ProgramClear with
+     * whatever the DWORD means as a length, under a mode byte the master may not have meant as
+     * absolute at all. */
     else if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
@@ -317,6 +385,10 @@ uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pP
             Xcp_Internal.pending_command.active = TRUE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* SP4c Task 5: explicit, not merely defaulted -- this slot is shared with the
+             * functional-mode branch above, so a stale TRUE left over from a previous deferral
+             * must never be allowed to survive into this one. */
+            Xcp_Internal.pending_command.program_clear_functional = FALSE;
             /* Xcp_ProgramClear's contract takes the clear range on every call, not only this
              * first one, and Xcp_PgmPollPendingCommand (below) has no other way to recover it once
              * this handler returns -- the same reason PROGRAM_PREPARE's own codeSize is held in
@@ -1189,15 +1261,30 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
         }
         case XCP_PID_CMD_PROGRAM_CLEAR:
         {
-            /* Xcp_ProgramClear's contract also takes address and clearRange on every call, the
-             * same shape Xcp_ProgramPrepare's own case just above has and for the same reason: the
-             * MTA is re-read from Xcp_Internal.memory_transfer.address directly -- stable for the
-             * duration, since DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- and the
-             * clear range comes from the slot, the only place left holding it once the handler
-             * that parsed it has returned. */
-            result = Xcp_ProgramClear(Xcp_Internal.memory_transfer.address,
-                                      Xcp_Internal.pending_command.args.program_clear_range,
-                                      pStatusCode);
+            /* SP4c Task 5: PROGRAM_CLEAR's own PID is shared by both access modes (DD93), so which
+             * callback a deferred poll must re-invoke is no longer implied by pid alone --
+             * program_clear_functional says which (source/Xcp_Internal.h, its own comment). */
+            if (Xcp_Internal.pending_command.program_clear_functional == TRUE)
+            {
+                /* Xcp_ProgramClearFunctional's contract also takes the area bitmask on every call,
+                 * the same shape the absolute-mode branch just below has -- but no address: DD93's
+                 * "the MTA has no influence on the clearing functionality" holds just as much on a
+                 * later poll as it does on the handler's own first call. */
+                result = Xcp_ProgramClearFunctional(
+                        Xcp_Internal.pending_command.args.program_clear_range, pStatusCode);
+            }
+            else
+            {
+                /* Xcp_ProgramClear's contract also takes address and clearRange on every call, the
+                 * same shape Xcp_ProgramPrepare's own case just above has and for the same reason: the
+                 * MTA is re-read from Xcp_Internal.memory_transfer.address directly -- stable for the
+                 * duration, since DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- and the
+                 * clear range comes from the slot, the only place left holding it once the handler
+                 * that parsed it has returned. */
+                result = Xcp_ProgramClear(Xcp_Internal.memory_transfer.address,
+                                          Xcp_Internal.pending_command.args.program_clear_range,
+                                          pStatusCode);
+            }
             break;
         }
         case XCP_PID_CMD_PROGRAM:

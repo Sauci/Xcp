@@ -525,6 +525,13 @@ class XcpTest(object):
         # constructor must supply the attribute unconditionally rather than let it depend on which
         # build a given test happens to be.
         self.xcp_program_clear = MagicMock()
+        # SP4c Task 5 (PROGRAM_CLEAR's functional access mode): same reasoning as xcp_program_clear
+        # immediately above -- Xcp_ProgramClearFunctional is declared in interface/Xcp.h only (not
+        # mirrored into any test/stub/*.h; design Section 4 -- cffi's cdef() rejects a second
+        # declaration reachable from the same header with FFIError: multiple declarations), so this
+        # constructor must supply the attribute unconditionally rather than let it depend on which
+        # build a given test happens to be.
+        self.xcp_program_clear_functional = MagicMock()
         # Task 3 (PROGRAM, PROGRAM_MAX): same reasoning as xcp_program_clear immediately above --
         # Xcp_ProgramWrite is declared in interface/Xcp.h only (not mirrored into
         # test/stub/Xcp_MemoryAccess.h; design Section 4 -- cffi's cdef() rejects a second
@@ -588,6 +595,7 @@ class XcpTest(object):
         self.xcp_program_reset.return_value = self.define('E_OK')
         self.xcp_program_prepare.return_value = self.define('E_OK')
         self.xcp_program_clear.return_value = self.define('E_OK')
+        self.xcp_program_clear_functional.return_value = self.define('E_OK')
         self.xcp_program_write.return_value = self.define('E_OK')
         self.xcp_program_verify.return_value = self.define('E_OK')
         self.xcp_program_format.return_value = self.define('E_OK')

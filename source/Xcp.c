@@ -1271,6 +1271,12 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pending_command.active = FALSE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* SP4c Task 5: pending_command's newest member, held to the same "every member is
+             * reset" policy the comment above already states -- every PROGRAM_CLEAR deferral sets
+             * it explicitly before returning (source/Xcp_Pgm.c), so nothing today reads a stale
+             * value across a session boundary either way, but leaving a new member out of a reset
+             * this comment claims is total would make the claim false the moment one is added. */
+            Xcp_Internal.pending_command.program_clear_functional = FALSE;
             /* DD63. SP3 and SP4a each shipped a defect that was exactly this omission for their
              * own buffers -- a fill level surviving into the next session because Xcp_Init did not
              * reset it. Only length needs clearing: data is never read past it. */

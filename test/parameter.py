@@ -300,6 +300,22 @@ class DefaultConfig(dict):
                  xcp_alloc_odt_api_enable=False,
                  xcp_alloc_odt_entry_api_enable=False,
                  xcp_program_clear_api_enable=True,
+                 # Coordinator ruling (task-5-report.md, "fix section"): unlike every sibling
+                 # xcp_program_*_api_enable kwarg above and below, this one defaults False, not
+                 # True. DD92's PGM_PROPERTIES FUNCTIONAL_MODE bit advertises "functional access is
+                 # available" as ONE combined capability, honestly advertisable only once BOTH
+                 # halves exist (this flag AND Task 6's own xcp_program_write_functional_api_enable)
+                 # -- so defaulting this one flag on, alone, would silently grant every existing
+                 # configuration (this DefaultConfig() included) a mode PGM_PROPERTIES still
+                 # advertises as unavailable (FUNCTIONAL_MODE stays 0 until Task 6). That is D10's
+                 # own defect class, inverted: implementing an unadvertised capability rather than
+                 # advertising an unimplemented one, and this module has refused generation over the
+                 # first shape (DD41) and refused the second at the handler (DD67/DD68) since before
+                 # this task existed. test/pgm_functional_test.py's own handle sets this True
+                 # explicitly, the same way pgm_clear_handle() below sets xcp_program_clear_api_
+                 # enable=True explicitly despite it already defaulting True -- explicit because the
+                 # positive-path tests need the capability on, not because the default should be.
+                 xcp_program_clear_functional_api_enable=False,
                  xcp_program_verify_api_enable=True,
                  xcp_program_format_api_enable=True,
                  xcp_program_api_enable=True,
@@ -447,6 +463,8 @@ class DefaultConfig(dict):
                     "xcp_alloc_odt_api_enable": {"enabled": xcp_alloc_odt_api_enable, "protected": False},
                     "xcp_alloc_odt_entry_api_enable": {"enabled": xcp_alloc_odt_entry_api_enable, "protected": False},
                     "xcp_program_clear_api_enable": {"enabled": xcp_program_clear_api_enable, "protected": False},
+                    "xcp_program_clear_functional_api_enable": {
+                            "enabled": xcp_program_clear_functional_api_enable, "protected": False},
                     "xcp_program_verify_api_enable": {"enabled": xcp_program_verify_api_enable,
                                                        "protected": False},
                     "xcp_program_format_api_enable": {"enabled": xcp_program_format_api_enable,
