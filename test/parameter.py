@@ -242,6 +242,19 @@ class DefaultConfig(dict):
                  # default so every existing test that never mentions a sector keeps generating a
                  # build with MAX_SECTOR 0, exactly as before this task.
                  sectors=(),
+                 # PROGRAM_FORMAT's own PGM_PROPERTIES capability pairs (SP4c Task 3, design doc
+                 # DD89/DD90). False by default, matching every other capability flag's own
+                 # gate-off-friendly default here and keeping GET_PGM_PROCESSOR_INFO's PGM_PROPERTIES
+                 # byte at the pre-existing 0x01 (ABSOLUTE_MODE only) for every test that never
+                 # mentions them -- test/pgm_processor_info_test.py's own
+                 # test_get_pgm_processor_info_reports_pgm_properties_absolute_mode_only relies on
+                 # exactly that.
+                 programming_compression_supported=False,
+                 programming_compression_required=False,
+                 programming_encryption_supported=False,
+                 programming_encryption_required=False,
+                 programming_non_sequential_supported=False,
+                 programming_non_sequential_required=False,
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -288,6 +301,7 @@ class DefaultConfig(dict):
                  xcp_alloc_odt_entry_api_enable=False,
                  xcp_program_clear_api_enable=True,
                  xcp_program_verify_api_enable=True,
+                 xcp_program_format_api_enable=True,
                  xcp_program_api_enable=True,
                  xcp_program_max_api_enable=True,
                  xcp_program_start_api_enable=True,
@@ -378,7 +392,13 @@ class DefaultConfig(dict):
                 "paging": {"freeze_supported": freeze_supported},
                 "programming": {"enabled": programming_enabled,
                                 "max_block_size": programming_max_block_size,
-                                "sectors": list(sectors)},
+                                "sectors": list(sectors),
+                                "compression_supported": programming_compression_supported,
+                                "compression_required": programming_compression_required,
+                                "encryption_supported": programming_encryption_supported,
+                                "encryption_required": programming_encryption_required,
+                                "non_sequential_supported": programming_non_sequential_supported,
+                                "non_sequential_required": programming_non_sequential_required},
                 # event()'s own bare default omits "name" (see its docstring comment), and
                 # publish_names defaults to True two lines above -- so DefaultConfig's own
                 # fallback event needs a name of its own, or every test that builds DefaultConfig()
@@ -428,6 +448,8 @@ class DefaultConfig(dict):
                     "xcp_alloc_odt_entry_api_enable": {"enabled": xcp_alloc_odt_entry_api_enable, "protected": False},
                     "xcp_program_clear_api_enable": {"enabled": xcp_program_clear_api_enable, "protected": False},
                     "xcp_program_verify_api_enable": {"enabled": xcp_program_verify_api_enable,
+                                                       "protected": False},
+                    "xcp_program_format_api_enable": {"enabled": xcp_program_format_api_enable,
                                                        "protected": False},
                     "xcp_program_api_enable": {"enabled": xcp_program_api_enable, "protected": False},
                     "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},

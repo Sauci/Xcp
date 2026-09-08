@@ -344,7 +344,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_NEXT 0xCA, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xCB */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramFormat, /* PROGRAM_FORMAT 0xCB, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_FORMAT 0xCB, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramPrepare, /* PROGRAM_PREPARE 0xCC, optional */
 #else
@@ -1279,6 +1283,17 @@ void Xcp_Init(const Xcp_Type *pConfig)
              * guard alike. */
             Xcp_Internal.pgm_block.requested_elements = 0x00u;
             Xcp_Internal.pgm_block.frame_elements = 0x00u;
+            /* SP4c Task 3, design doc DD85: pgm_format gets the identical cross-session hygiene
+             * pgm_state/pgm_block just above already have, and for the identical reason -- state
+             * surviving into the next session because Xcp_Init did not reset it. Written directly
+             * here, unlike Xcp_CTOCmdStdConnect (Xcp_Std.c) and Xcp_PgmCompleteProgramReset
+             * (Xcp_Pgm.c), which both call the exported Xcp_PgmFormatReset() instead: this is the
+             * module's own constructor, not a command handler reaching into a different file's own
+             * state, and it already writes pgm_state/pgm_block directly the same way. */
+            Xcp_Internal.pgm_format.compression_method = 0x00u;
+            Xcp_Internal.pgm_format.encryption_method = 0x00u;
+            Xcp_Internal.pgm_format.programming_method = 0x00u;
+            Xcp_Internal.pgm_format.access_method = 0x00u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             /* DD78. Every configured-protected group starts protected, which is what
              * `= protectedResource` says and what `= 0x00u` could not: on the old, inverted field

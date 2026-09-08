@@ -109,6 +109,21 @@ static boolean Xcp_PgmBlockIsActive(void);
  */
 static void Xcp_PgmBlockAcknowledgeFrame(void);
 
+/**
+ * @brief Whether DD90's REQUIRED gate refuses a data transfer request right now.
+ * @details SP4c Task 3. Design doc DD90, 1.1/1.6.5.2.4: "If modified data transmission is expected
+ * by the slave and no PROGRAM_FORMAT command is transmitted, the slave responds with
+ * ERR_SEQUENCE." A compound condition, one term per REQUIRED bit, checked against
+ * Xcp_Internal.pgm_format's own matching field rather than against a separate "has PROGRAM_FORMAT
+ * been called" flag: 1.1/1.6.5.2.4 makes an all-defaults request the same thing as the command
+ * never having been sent, and DD85 already resets pgm_format to that same all-defaults state at
+ * every session boundary and at SET_MTA -- so a field still reading 0x00u here means exactly what
+ * this gate needs to know, with no state of its own to keep in step. Shared by
+ * Xcp_DTOCmdPgmProgram, Xcp_DTOCmdPgmProgramMax and Xcp_DTOCmdPgmProgramNext below, all three of
+ * which DD90 names by name ("listed in all three rows").
+ */
+static boolean Xcp_PgmDataTransferRefusedByFormat(void);
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
 /*------------------------------------------------------------------------------------------------*/
@@ -329,6 +344,13 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
+    /* SP4c Task 3, DD90: a data transfer request arriving while this build expects modified data
+     * (a REQUIRED capability configured) but no PROGRAM_FORMAT has told this module how to decode
+     * it is refused the same code as the session gate just above, for the same 1.7.3.2.5 row. */
+    else if (Xcp_PgmDataTransferRefusedByFormat() == TRUE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
     else
     {
         const uint8 number_of_data_elements = pPduInfo->SduDataPtr[0x01u];
@@ -545,6 +567,12 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
+    /* SP4c Task 3, DD90: same gate Xcp_DTOCmdPgmProgram's own handler carries above, and for the
+     * identical reason -- PROGRAM_MAX is the second of the three commands DD90 names by name. */
+    else if (Xcp_PgmDataTransferRefusedByFormat() == TRUE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
     /* DD65 (H1). 1.6.5.2.6: "This command does not support block transfer and it may not be used
      * within a block transfer sequence." Its own 1.7.3.2.5 row lists ERR_SEQUENCE for it. Task 3
      * left this branch untested: nothing yet opened a block, so it could never be TRUE here on the
@@ -687,6 +715,15 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
      * PROGRAM_NEXT arriving with no PGM session open must not be answered by whatever the PGM block
      * state happens to hold left over. */
     if (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* SP4c Task 3, DD90: same gate Xcp_DTOCmdPgmProgram's own handler carries above, and for the
+     * identical reason -- PROGRAM_NEXT is the third of the three commands DD90 names by name.
+     * Checked here, before Xcp_PgmBlockIsActive() below, mirroring the pgm_state check immediately
+     * above it: both are about whether this sequence is in a state that permits a data transfer at
+     * all, which this handler settles before it ever asks whether a block happens to be open. */
+    else if (Xcp_PgmDataTransferRefusedByFormat() == TRUE)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
@@ -854,17 +891,22 @@ uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoT
      * §1.6.5.1.1's "not allowed until PROGRAM_START" list names PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX
      * and PROGRAM_NEXT, not this command. DD68.
      *
-     * PGM_PROPERTIES: XCP_PGM_PROPERTIES_ABSOLUTE_MODE (bit 0) set, every other bit clear. The
-     * mode-bit table (1.0/1.6.5.2.1) reads FUNCTIONAL_MODE:ABSOLUTE_MODE = "0 1" as "Only Absolute
-     * mode supported" -- the one mode this module offers, and the promise
-     * Xcp_DTOCmdPgmProgramClear's own mode-byte refusal (DD67, above in this file) keeps: every
-     * mode byte but 0x00 (absolute) is refused ERR_OUT_OF_RANGE there. Bits 2..7 -- the
-     * COMPRESSION_SUPPORTED/_REQUIRED, ENCRYPTION_SUPPORTED/_REQUIRED and
-     * NON_SEQ_PGM_SUPPORTED/_REQUIRED pairs (Xcp_Internal.h) -- all stay clear: none of the three
-     * is implemented, and 1.0/1.6.5.2.4's PROGRAM_FORMAT, where a slave would accept any of them,
-     * is SP4c's (design doc §8). */
+     * PGM_PROPERTIES: SP4c Task 3 replaces the hardcoded XCP_PGM_PROPERTIES_ABSOLUTE_MODE literal
+     * with this build's own generated byte, Xcp_Ptr->general->pgmProperties
+     * (script/source_cfg.c.jinja2). ABSOLUTE_MODE (bit 0) is still unconditional -- this module
+     * offers absolute access in every build -- and bits 2..7, the COMPRESSION_SUPPORTED/_REQUIRED,
+     * ENCRYPTION_SUPPORTED/_REQUIRED and NON_SEQ_PGM_SUPPORTED/_REQUIRED pairs (Xcp_Internal.h),
+     * now follow this build's own programming.compression_..., .encryption_... and
+     * .non_sequential_... flags:
+     * PROGRAM_FORMAT (Xcp_DTOCmdPgmProgramFormat, below) reads this SAME field to decide what it
+     * accepts (design doc DD89), so the two commands cannot advertise and enforce different
+     * things. Bit 1, FUNCTIONAL_MODE, is still never set here -- a later task's own addition
+     * (DD92), once the functional callbacks it depends on exist; the generated expression is
+     * already shaped (one OR'd, shifted term per bit) so that task only adds a term, it does not
+     * rewrite this line. (MAX_SECTOR, the byte immediately below, is untouched by this change --
+     * SP4c Task 2 made it config-driven; see its own comment there.) */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = XCP_PGM_PROPERTIES_ABSOLUTE_MODE;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Ptr->general->pgmProperties;
 
     /* MAX_SECTOR: the configured sector count (interface/Xcp_Types.h's Xcp_SectorType array,
      * config/xcp.schema.json's programming.sectors, script/source_cfg.c.jinja2). SP4b's DD68
@@ -1013,6 +1055,92 @@ uint8 Xcp_DTOCmdPgmGetSectorInfo(boolean *responseExpected, const PduInfoType *p
                                  Xcp_Ptr->general->byteOrder);
 
         Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 compression_method = pPduInfo->SduDataPtr[0x01u];
+    const uint8 encryption_method = pPduInfo->SduDataPtr[0x02u];
+    const uint8 programming_method = pPduInfo->SduDataPtr[0x03u];
+    const uint8 access_method = pPduInfo->SduDataPtr[0x04u];
+
+    *responseExpected = TRUE;
+
+    /* SP4c Task 3, design doc DD89: "a non-default value is accepted only if the corresponding
+     * property is advertised, and refused ERR_OUT_OF_RANGE otherwise". One term per request field,
+     * each checked against Xcp_Ptr->general->pgmProperties -- the SAME byte
+     * Xcp_DTOCmdPgmGetPgmProcessorInfo reports, so acceptance here can never drift from what was
+     * advertised (DD89's own "closes the gap by construction", not by discipline). The default
+     * value (0x00u) of every field is accepted unconditionally, whatever this build advertises --
+     * DD89 is a rule about NON-default values only, and 1.1/1.6.5.2.4 makes an all-defaults
+     * request the same thing as PROGRAM_FORMAT never having been sent at all.
+     *
+     * Checked before Xcp_ProgramFormat is ever called, not folded into its own contract: the
+     * module owns the structural fact of what this build advertises, and the integrator is asked
+     * only to judge what it cannot -- a user-defined value's own specific meaning (DD91). */
+    if ((compression_method != 0x00u) &&
+        ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if ((encryption_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_ENCRYPTION_SUPPORTED) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if ((programming_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_NON_SEQ_PGM_SUPPORTED) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* access_method's own "advertised" bit is FUNCTIONAL_MODE, covering both 0x01 (functional) and
+     * the 0x80..0xFF user-defined range alike -- PGM_PROPERTIES carries no third access-mode bit to
+     * distinguish them, and 1.1/1.6.5.2.4 gives user-defined access methods no meaning of their own
+     * for this module to check beyond "functional access is available at all". Never TRUE in this
+     * build today: no configuration this task's own schema exposes can set FUNCTIONAL_MODE (design
+     * doc DD92, a later task's own addition once the two functional callbacks it depends on
+     * exist) -- see test/pgm_format_test.py's own module docstring. */
+    else if ((access_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_FUNCTIONAL_MODE) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        uint8 status_code = 0x00u;
+
+        /* Design doc DD91: synchronous, not polled, breaking every other PGM callback's own
+         * contract in this file on purpose -- PROGRAM_FORMAT only sets four bytes, so there is
+         * nothing here worth deferring to Xcp_MainFunction, and this command adds no case to
+         * Xcp_PgmPollPendingCommand/Xcp_PgmCompletePendingCommand below for exactly that reason.
+         * Both a non-E_OK return and a non-zero status_code are treated identically -- refused
+         * ERR_OUT_OF_RANGE, PROGRAM_FORMAT's own 1.7.3.2.5 row's only code for an integrator that
+         * cannot honour a request this module has already confirmed is structurally permitted
+         * (interface/Xcp.h, Xcp_ProgramFormat's own @retval documentation). */
+        if ((Xcp_ProgramFormat(compression_method, encryption_method, programming_method,
+                               access_method, &status_code) != E_OK) ||
+            (status_code != 0x00u))
+        {
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else
+        {
+            /* Stored only now that both the structural check above and the integrator have
+             * accepted the request -- a refused PROGRAM_FORMAT, either way, leaves
+             * Xcp_Internal.pgm_format exactly as it was (Xcp_Internal.h, pgm_format's own
+             * comment). */
+            Xcp_Internal.pgm_format.compression_method = compression_method;
+            Xcp_Internal.pgm_format.encryption_method = encryption_method;
+            Xcp_Internal.pgm_format.programming_method = programming_method;
+            Xcp_Internal.pgm_format.access_method = access_method;
+
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+            Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+        }
     }
 
     return E_OK;
@@ -1280,6 +1408,38 @@ static void Xcp_PgmBlockAcknowledgeFrame(void)
     Xcp_Internal.pgm_block.requested_elements -= Xcp_Internal.pgm_block.frame_elements;
 }
 
+static boolean Xcp_PgmDataTransferRefusedByFormat(void)
+{
+    boolean result;
+
+    /* One term per REQUIRED bit, each checked against pgm_format's own matching field -- see this
+     * function's own forward declaration for why pgm_format itself, and not a separate flag, is
+     * what each term reads. Mutation-verified per term (task report): deleting or inverting any
+     * ONE of the three below must fail only that capability's own parametrisation in
+     * test/pgm_format_test.py, not the other two. */
+    if (((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_COMPRESSION_REQUIRED) != 0x00u) &&
+        (Xcp_Internal.pgm_format.compression_method == 0x00u))
+    {
+        result = TRUE;
+    }
+    else if (((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_ENCRYPTION_REQUIRED) != 0x00u) &&
+             (Xcp_Internal.pgm_format.encryption_method == 0x00u))
+    {
+        result = TRUE;
+    }
+    else if (((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_NON_SEQ_PGM_REQUIRED) != 0x00u) &&
+             (Xcp_Internal.pgm_format.programming_method == 0x00u))
+    {
+        result = TRUE;
+    }
+    else
+    {
+        result = FALSE;
+    }
+
+    return result;
+}
+
 void Xcp_PgmBlockAbort(void)
 {
     Xcp_Internal.pgm_block.requested_elements = 0x00u;
@@ -1295,6 +1455,17 @@ void Xcp_PgmBlockAbort(void)
      * Xcp_DTOCmdPgmProgram's own zero-element branch (F3) call, so it has to leave the same
      * complete, empty state Xcp_Init does. */
     Xcp_Internal.pgm_block.length = 0x0000u;
+}
+
+void Xcp_PgmFormatReset(void)
+{
+    /* SP4c Task 3, DD85: all four fields back to their own spec-default values -- see this
+     * function's own forward declaration (Xcp_Internal.h) and pgm_format's own comment there for
+     * why this is the whole of the format's lifetime, with no separate flag to keep in step. */
+    Xcp_Internal.pgm_format.compression_method = 0x00u;
+    Xcp_Internal.pgm_format.encryption_method = 0x00u;
+    Xcp_Internal.pgm_format.programming_method = 0x00u;
+    Xcp_Internal.pgm_format.access_method = 0x00u;
 }
 
 static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
@@ -1450,6 +1621,14 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
          * where that sequence's state belongs, not correct only by virtue of a line in another
          * file. */
         Xcp_PgmBlockAbort();
+
+        /* SP4c Task 3, DD85: PROGRAM_RESET ends the format's own lifetime exactly as it ends the
+         * session's -- the identical defence-in-depth reasoning the two paragraphs above already
+         * give for pgm_state and pgm_block, and the identical unobservability, for the identical
+         * reason: the CONNECT that necessarily follows a disconnect (Xcp_CTOCmdStdConnect,
+         * Xcp_Std.c) already calls this same function on its own door. */
+        Xcp_PgmFormatReset();
+
         Xcp_DisconnectSession();
     }
     else

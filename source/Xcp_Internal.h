@@ -601,6 +601,37 @@ typedef struct {
         uint8 requested_elements;
         uint8 frame_elements;
     } pgm_block;
+
+    /**
+     * @brief PROGRAM_FORMAT's own four request bytes (SP4c Task 3), DD85's session state.
+     * @details Design doc docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md, DD85: "the
+     * format is session state with a stated lifetime". Stored only once
+     * Xcp_DTOCmdPgmProgramFormat's own structural check (DD89) and synchronous callback
+     * (Xcp_ProgramFormat, DD91) have both accepted the request -- a refused PROGRAM_FORMAT leaves
+     * this struct untouched. All four fields default to 0x00u, which is also PROGRAM_FORMAT's own
+     * all-defaults request: 1.1/1.6.5.2.4 makes that the same thing as the command never having
+     * been sent ("unmodified data and absolute address access method is supposed"), so this struct
+     * needs no separate "has PROGRAM_FORMAT been called" flag alongside it -- Xcp_DTOCmdPgmProgram's
+     * own DD90 gate (source/Xcp_Pgm.c) reads these three fields directly.
+     *
+     * Reset to this same all-zero state at Xcp_Init (source/Xcp.c, direct field writes beside
+     * pgm_state/pgm_block's own identical cross-session hygiene), at CONNECT and PROGRAM_RESET
+     * (both session boundaries pgm_state/pgm_block already clear), and at SET_MTA. The last of
+     * those is why Xcp_PgmFormatReset (source/Xcp_Pgm.c) exists as a function this file exports
+     * rather than four inline field writes repeated at each site: SET_MTA is a STD command
+     * (source/Xcp_Std.c), and DD63 keeps every writer of PGM state inside this file -- a STD
+     * command reaching into PGM state directly is the shape that produced a memory disclosure two
+     * branches ago (SP4b's DD70/task-4-report.md). CONNECT and PROGRAM_RESET call the same
+     * exported function rather than duplicating the reset a third and fourth time, even though
+     * PROGRAM_RESET's own completion function already lives in this file and could write the
+     * fields directly.
+     */
+    struct {
+        uint8 compression_method;
+        uint8 encryption_method;
+        uint8 programming_method;
+        uint8 access_method;
+    } pgm_format;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 
@@ -1128,6 +1159,25 @@ uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *p
 uint8 Xcp_DTOCmdPgmGetSectorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM_FORMAT, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.4.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. SP4c Task 3. Like GET_PGM_PROCESSOR_INFO and GET_SECTOR_INFO
+ * above, it carries no gate on Xcp_Internal.pgm_state: 1.6.5.1.1's "not allowed until
+ * PROGRAM_START" list does not name it either, and its own pre-action in 1.7.3.2.5 is bare SYNCH,
+ * matching that ungated group rather than PROGRAM_CLEAR/PROGRAM/PROGRAM_MAX's own SYNCH+SET_MTA.
+ * Unlike either of those two, it DOES call an integrator function -- Xcp_ProgramVerify's own
+ * neighbour Xcp_ProgramFormat, but SYNCHRONOUS rather than polled (design doc DD91) -- and adds no
+ * case to Xcp_PgmPollPendingCommand or Xcp_PgmCompletePendingCommand below for exactly that reason:
+ * the call always completes on the one exchange that made it, so there is nothing left to poll.
+ * Validates DD89's compound advertise/accept condition (one term per request field: compression,
+ * encryption, programming method and access method, each checked against
+ * Xcp_Ptr->general->pgmProperties -- the same byte GET_PGM_PROCESSOR_INFO reports) before ever
+ * calling Xcp_ProgramFormat, and stores the request into Xcp_Internal.pgm_format only once both
+ * that check and the callback have accepted it.
+ */
+uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
@@ -1189,6 +1239,22 @@ void Xcp_PgmAbandonPendingCommand(void);
  * accepted, writing the previous session's leftover bytes into flash at the new session's MTA.
  */
 void Xcp_PgmBlockAbort(void);
+
+/**
+ * @brief Resets Xcp_Internal.pgm_format to its all-defaults state (SP4c Task 3, DD85).
+ * @details Defined in Xcp_Pgm.c and exported for the identical reason Xcp_PgmBlockAbort above is
+ * exported: a session boundary must clear this state wherever pgm_state/pgm_block are also
+ * cleared, and DD63 keeps every writer of PGM state inside this file. Xcp_DTOCmdStdSetMta
+ * (source/Xcp_Std.c) is the one call site outside the programming session's own doors -- DD85 ends
+ * the format's lifetime there too, and SET_MTA is a STD command, so it reaches this state only
+ * through this function rather than by writing the fields itself. Xcp_CTOCmdStdConnect
+ * (source/Xcp_Std.c) and Xcp_PgmCompleteProgramReset (this file) call the same function at their
+ * own, pre-existing pgm_state/pgm_block reset points; Xcp_Init (source/Xcp.c) writes the four
+ * fields directly instead, beside its own identical direct writes to pgm_state and pgm_block,
+ * since it is the module's own constructor rather than a command handler reaching into state that
+ * belongs to a different file.
+ */
+void Xcp_PgmFormatReset(void);
 
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);

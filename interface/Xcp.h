@@ -600,6 +600,42 @@ extern Std_ReturnType Xcp_ProgramWrite(void *address, const uint8 *pData, uint16
  */
 extern Std_ReturnType Xcp_ProgramVerify(uint8 verificationMode, uint16 verificationType, uint32 verificationValue, uint8 *pStatusCode);
 
+/**
+ * @brief Tells the integrator how the flash content about to be downloaded is encoded.
+ * @param [in] compressionMethod The request's own compression method, 0x00 for uncompressed
+ * (default) or an implementation-specific non-zero value. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.5.2.4 leaves the meaning of a non-zero value to the ASAM MCD-2 MC description; passed
+ * through verbatim, only checked structurally (design doc DD89, below) before this is ever called.
+ * @param [in] encryptionMethod The request's own encryption method, 0x00 for unencrypted (default)
+ * or an implementation-specific non-zero value. Same rule as compressionMethod above.
+ * @param [in] programmingMethod The request's own programming method, 0x00 for sequential (default)
+ * or an implementation-specific non-zero value (e.g. non-sequential). Same rule as
+ * compressionMethod above.
+ * @param [in] accessMethod The request's own access method: 0x00 Absolute Access Mode (default,
+ * the MTA is a physical address), 0x01 Functional Access Mode (the MTA is a block sequence
+ * number), 0x80..0xFF user defined. This slave never passes anything but 0x00 here today: 0x01 and
+ * the user-defined range both require PGM_PROPERTIES' FUNCTIONAL_MODE bit advertised, which is
+ * this build's own configuration to grant (design doc DD92) and none does yet.
+ * @param [out] pStatusCode Result of the request, read only when this function returns E_OK: zero
+ * to accept the format, non-zero for a value this integrator cannot honour -- the only case that
+ * matters in practice is a user-defined compression/encryption/programming method (0x80..0xFF)
+ * whose meaning only the integrator's own ASAM MCD-2 MC description knows (design doc DD89).
+ * @retval E_OK: the format has been judged, successfully or not -- read pStatusCode.
+ * @retval E_NOT_OK: must not be returned. Unlike every other PGM callback in this header, this one
+ * is synchronous by contract (design doc DD91): PROGRAM_FORMAT only sets four bytes, so there is no
+ * polled path for it and Xcp_MainFunction never calls this a second time for the same request. A
+ * return value other than E_OK is treated exactly like a non-zero pStatusCode -- refused, since
+ * PROGRAM_FORMAT's own XCP part 2 - Protocol Layer Specification 1.7.3.2.5 row leaves no other
+ * failure code for an integrator that could not honour a structurally-permitted request.
+ * @details Called once, synchronously, from the PROGRAM_FORMAT handler -- never polled, unlike
+ * every other callback this file declares for the PGM command group. The module's own structural
+ * check (design doc DD89: a non-default value is accepted only if PGM_PROPERTIES advertises the
+ * matching capability) runs first, so this is reached only for a request this build has already
+ * promised to support; what remains for the integrator to judge is a user-defined value's own
+ * specific meaning.
+ */
+extern Std_ReturnType Xcp_ProgramFormat(uint8 compressionMethod, uint8 encryptionMethod, uint8 programmingMethod, uint8 accessMethod, uint8 *pStatusCode);
+
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
 /** @} */
