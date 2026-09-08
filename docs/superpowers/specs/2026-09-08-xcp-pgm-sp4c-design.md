@@ -27,7 +27,15 @@ branches, several of which had reached shipped source comments before anyone che
 | §1.6.5.2.3 | Prepare non-volatile memory programming (`PROGRAM_PREPARE`) |
 | §1.6.5.2.4 | Set data format before programming (`PROGRAM_FORMAT`) |
 | §1.6.5.2.7 | Program Verify (`PROGRAM_VERIFY`) |
+| §1.6.5.1.2 | Clear a part of non-volatile memory (`PROGRAM_CLEAR`) |
+| §1.6.5.1.3 | Program a non-volatile memory segment (`PROGRAM`) |
 | §1.7.3.2.5 | Non-volatile memory programming commands (PGM) — the error/pre-action table |
+
+**§1.6.5.1.2 and §1.6.5.1.3 are in this list because an earlier draft of this design did not read
+them, and was wrong in three decisions as a result.** They define what functional access mode
+actually *means* for clearing and programming; the three SP4c command sections alone do not. Both
+revisions were then re-read line by line for the corrections below, and where 1.0 and 1.1 differ it
+is now recorded rather than silently resolved.
 
 ---
 
@@ -59,9 +67,17 @@ the integrator must be told which it is receiving. Two new callbacks, config-gat
 existing five:
 
 ```c
-Std_ReturnType Xcp_ProgramClearFunctional(uint32 blockSequenceNumber, uint32 clearRange, uint8 *pStatusCode);
-Std_ReturnType Xcp_ProgramWriteFunctional(uint32 blockSequenceNumber, const uint8 *pData, uint16 length, uint8 *pStatusCode);
+Std_ReturnType Xcp_ProgramClearFunctional(uint32 clearRange, uint8 *pStatusCode);
+Std_ReturnType Xcp_ProgramWriteFunctional(uint32 blockSequenceCounter, const uint8 *pData,
+                                          uint16 length, uint8 *pStatusCode);
 ```
+
+**The clear variant takes no address and no counter, and that is not an omission.** §1.6.5.1.2 says
+in both revisions that under functional mode "the MTA has no influence on the clearing
+functionality", and the clear range stops being a length and becomes an **area bitmask**:
+`0x00000001` all calibration data areas, `0x00000002` all code areas (excluding boot),
+`0x00000004` NVRAM areas, `0x00000008…0x00000080` reserved, `0x00000100…0xFFFFFF00` user defined.
+Passing an address there would invent a parameter the protocol does not carry.
 
 **The rejected alternative, and why the obvious precedent does not apply.** Adding an access-mode
 parameter to the existing `Xcp_ProgramClear`/`Xcp_ProgramWrite` would give every shipped integrator
@@ -102,18 +118,45 @@ in force — the more dangerous direction, since a master that expects a wider r
 re-send `PROGRAM_FORMAT`, while one whose format was dropped underneath it programs with the wrong
 decoding.
 
-### DD86 — `SET_MTA` is not modified; PGM reinterprets at the point of use
+### DD86 — the Block Sequence Counter is module-maintained state, not a value the master sets
 
-§1.6.5.2.4 lists `SET_MTA` among `PROGRAM_FORMAT`'s affected commands, so under functional mode the
-value it sets is a block sequence number. `Xcp_DTOCmdStdSetMta` (`source/Xcp_Std.c`) already writes
-the raw 32-bit wire value into `memory_transfer.address`, so those same bits are the sequence
-number; nothing about SET_MTA needs to change.
+**This decision replaces an earlier draft that was simply wrong.** That draft had `SET_MTA` supply
+the block sequence number, with `Xcp_Pgm.c` reinterpreting `memory_transfer.address` at the point of
+use. §1.6.5.1.3 says otherwise, identically in both revisions:
 
-`source/Xcp_Pgm.c` converts them back to `uint32` at the point of call, and **only there**. This is
-DD63's rule — *a command group may not write shared state whose readers live outside its own file* —
-honoured in the direction that matters: PGM writes nothing shared, and the reinterpretation has
-exactly one reader, in one file. Putting an access-mode fork inside `SET_MTA` would do the opposite,
-making a STD command's behaviour depend on PGM state, which is how the SP4b disclosure happened.
+> The MTA works as a Block Sequence Counter and it is counted inside the master and the server. […]
+> The Block Sequence Counter of the server **shall be initialized to one (1) when receiving a
+> PROGRAM_FORMAT request message**. This means that the first PROGRAM request message following the
+> PROGRAM_FORMAT request message starts with a Block Sequence Counter of one (1). Its value is
+> **incremented by 1 for each subsequent data transfer request**. At the maximum value the Block
+> Sequence Counter **rolls over and starts at 0x00** with the next data transfer request message.
+
+So it is state the slave *counts*, with a specified initial value, increment point and rollover —
+not a number the master transmits. `Xcp_Internal.pgm_block_sequence_counter`:
+
+| Event | Effect |
+|---|---|
+| `PROGRAM_FORMAT` received | set to `1` |
+| each data transfer request (`PROGRAM`, `PROGRAM_NEXT`, `PROGRAM_MAX`) | incremented by 1 |
+| at maximum | rolls over to `0x00` |
+| `PROGRAM_RESET`, `CONNECT` | reset with the rest of the programming session |
+
+Its purpose is the one the specification gives it — "an improved error handling in case a
+programming service fails during a sequence of multiple programming requests". Both sides count
+independently, so a divergence is detectable. The module passes its own value to
+`Xcp_ProgramWriteFunctional` so the integrator can cross-check rather than re-derive it.
+
+**One ambiguity is recorded rather than resolved silently: the counter's width.** The text says the
+MTA works as the counter, which would make it 32-bit, but writes the rollover value as `0x00`, which
+reads byte-sized. Neither revision states a width. This design takes **`uint32`**, matching the MTA
+the sentence names, because that is the only width the specification actually mentions; a byte-wide
+counter would be a narrowing nothing in the text requires. Anyone finding a master that disagrees
+should read this entry first.
+
+**`SET_MTA` is untouched, and now for a simpler reason than the earlier draft gave**: in functional
+mode the MTA carries no address the module needs — §1.6.5.1.3 says "the ECU software knows the start
+address for the new flash content automatically. It depends on the PROGRAM_CLEAR command." The
+module neither reads nor writes `memory_transfer.address` on the functional programming path.
 
 ### DD87 — the sector configuration model
 
@@ -122,7 +165,7 @@ The configuration gains a `sectors` array; each entry carries what §1.6.5.2.2's
 | Field | Wire position | Note |
 |---|---|---|
 | `start_address` | bytes 4–7, mode 0 | |
-| `length` | bytes 4–7, mode 1 | in AG |
+| `length` | bytes 4–7, mode 1 | **in bytes** — see below |
 | `clear_sequence_number` | byte 1 | |
 | `program_sequence_number` | byte 2 | |
 | `programming_method` | byte 3 | |
@@ -131,6 +174,16 @@ The two sequence numbers are integrator data the module reports verbatim, neithe
 enforced: §1.6.5.2.2 makes them the order in which the master must clear and program, and its own
 examples show those orders differing from each other and from sector order — clear 0,1,2 while
 programming 5,4,3.
+
+**The length's unit differs between revisions, and this design follows 1.1.** 1.0 gives the mode-1
+value as "Length of this SECTOR **[AG]**". 1.1 says the command "returns **in bytes** the length of
+this SECTOR", and adds a constraint 1.0 does not have: "The following rule applies: Length mod
+AG = 0." Bytes is taken, because 1.1 is the later revision and because that added rule only needs
+stating if the value is in bytes — in AG units it would be trivially true. The two agree whenever
+AG is BYTE, which is where this suite tests almost exclusively, so the divergence would otherwise
+go unnoticed until someone built at AG = WORD. Generation validates `length mod AG == 0` and refuses
+otherwise, turning 1.1's rule into something the build enforces rather than something a comment
+asserts.
 
 **`MAX_SECTOR` stops being hardcoded and becomes the array length.** `GET_PGM_PROCESSOR_INFO` and
 `GET_SECTOR_INFO` must agree about how many sectors exist, or a master enumerating them walks off
@@ -210,6 +263,27 @@ its inverse — a master reads `PGM_PROPERTIES` to decide what to use, so an una
 is an unreachable one. Generation refuses functional mode enabled without the callbacks, matching
 how this module already prevents unbuildable configurations.
 
+### DD93 — `PROGRAM_CLEAR` carries its own access mode, independent of `PROGRAM_FORMAT`
+
+`PROGRAM_CLEAR`'s byte 1 is a mode byte in both revisions (§1.6.5.1.2): `0x00` absolute (default),
+`0x01` functional. It is **not** governed by `PROGRAM_FORMAT`'s access method, and the specification
+says so outright in `PROGRAM_FORMAT`'s own table: *"It is possible to use different access modes for
+clearing and programming."*
+
+So a master may clear functionally and program absolutely, or the reverse, and the module must
+support the combinations independently rather than deriving one from the other.
+
+This makes the integration smaller than the earlier draft assumed. SP4b already implemented that
+mode byte and refuses everything except `0x00` — deliberately, and with a test pinning it. SP4c's
+work on the clear path is to implement the `0x01` branch that already exists and is already refused,
+not to route clearing through format state.
+
+Under functional clear the module validates the area bitmask before delegating: bits
+`0x00000008…0x00000080` are **reserved** in both revisions, so a master setting them is refused
+`ERR_OUT_OF_RANGE`, which is in `PROGRAM_CLEAR`'s §1.7.3.2.5 row. Everything else — the three defined
+areas and the user-defined range — passes to `Xcp_ProgramClearFunctional`, since only the integrator
+knows what a user-defined area means.
+
 ---
 
 ## 3. What this does not change
@@ -252,14 +326,24 @@ rule that surfaced a genuinely missing test on the immediately preceding branch.
 
 1. Each of the three commands has tests that fail before its handler exists and pass after.
 2. **The end-to-end proof:** with functional access mode configured, `CONNECT` → `GET_SEED`/`UNLOCK`
-   → `PROGRAM_START` → `PROGRAM_FORMAT(access = 0x01)` → `PROGRAM_CLEAR` → `PROGRAM` →
-   `PROGRAM_RESET` completes with every step answering positively, `Xcp_ProgramWriteFunctional`
-   receiving the block sequence numbers, and `Xcp_ProgramWrite` never called.
-3. `MAX_SECTOR` agreement between `GET_PGM_PROCESSOR_INFO` and `GET_SECTOR_INFO` is pinned by a test
+   → `PROGRAM_START` → `PROGRAM_FORMAT(access = 0x01)` → `PROGRAM_CLEAR(mode = 0x01)` → `PROGRAM` →
+   `PROGRAM_RESET` completes with every step answering positively, `Xcp_ProgramWriteFunctional` and
+   `Xcp_ProgramClearFunctional` receiving the calls, and the absolute callbacks never invoked.
+3. A second end-to-end run **mixes the modes** — functional clear with absolute programming — since
+   §1.6.5.2.4 permits it explicitly (DD93) and nothing else in the suite would catch the two paths
+   being wrongly coupled.
+4. `MAX_SECTOR` agreement between `GET_PGM_PROCESSOR_INFO` and `GET_SECTOR_INFO` is pinned by a test
    that fails if either drifts.
-4. DD89's accept-only-what-you-advertise rule is pinned by the property test, both directions.
-5. DD90's `ERR_SEQUENCE` on a missing `PROGRAM_FORMAT` under a `REQUIRED` property is pinned.
-6. Mutation verifications carried out and recorded, each naming the test that failed.
-7. `./test.sh` green in the CI container, both ctest targets, on a clean build tree.
-8. SP4b's DD68 comment is corrected (DD88), and no other comment predicts SP4c behaviour that
-   differs from what shipped.
+5. The Block Sequence Counter's three specified behaviours are pinned **separately**: initialised to
+   `1` by `PROGRAM_FORMAT`, incremented once per data transfer request, and rolling over to `0x00`
+   at maximum (DD86). A test checking only the first would pass against a counter that never
+   increments.
+6. `GET_SECTOR_INFO`'s mode-1 length is asserted at an AG **wider than BYTE**, where 1.0 and 1.1
+   diverge (DD87). At AG = BYTE the two readings are indistinguishable and the test would prove
+   nothing.
+7. DD89's accept-only-what-you-advertise rule is pinned by the property test, in both directions.
+8. DD90's `ERR_SEQUENCE` on a missing `PROGRAM_FORMAT` under a `REQUIRED` property is pinned.
+9. Mutation verifications carried out and recorded, each naming the test that failed.
+10. `./test.sh` green in the CI container, both ctest targets, on a clean build tree.
+11. SP4b's DD68 comment is corrected (DD88), and no other comment predicts SP4c behaviour that
+    differs from what shipped.
