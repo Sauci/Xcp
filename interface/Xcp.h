@@ -693,7 +693,10 @@ extern Std_ReturnType Xcp_ProgramClearFunctional(uint32 clearRange, uint8 *pStat
  * request, and rolling over to 0x00 past its maximum -- so an integrator can compare it against the
  * master's own count rather than re-deriving it. Not a value the master transmits: it is counted
  * independently on both sides, which is what makes a divergence detectable at all (design doc
- * DD86).
+ * DD86). **Two words in that sentence are readings of an ambiguous specification rather than
+ * settled facts -- what counts as one "data transfer request", and how wide "its maximum" is. Both
+ * are spelled out in the last two notes below; read them before treating a disagreement with a
+ * master's own count as a defect on either side.**
  * @param [in] pData The data to write, `length` bytes, taken directly from the request. The same
  * lifetime rule @ref Xcp_ProgramWrite's own pData carries applies here unchanged: valid for the
  * duration of THIS call only.
@@ -724,6 +727,27 @@ extern Std_ReturnType Xcp_ProgramClearFunctional(uint32 clearRange, uint8 *pStat
  * "advertised" and "accepted" cannot drift apart.
  * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, the same code and the same reasoning
  * @ref Xcp_ProgramWrite's own note gives for a failed write -- the two share one completion path.
+ * @note **"Per data transfer request" counts every FRAME of a master block mode block, and that is
+ * a reading of 1.6.5.1.3 rather than a settled fact.** A block spanning PROGRAM plus two
+ * PROGRAM_NEXT frames reaches this callback ONCE, carrying 3 -- the third request's own count --
+ * not 1. The reading rests on both operative sentences naming a request message as the trigger
+ * ("incremented by 1 for each subsequent data transfer request", "rolls over and starts at 0x00
+ * with the next data transfer request message") and on PROGRAM_NEXT being one of the three data
+ * transfer requests. The defensible alternative, recorded because an integrator comparing this
+ * value against a real master's own count is exactly who would meet it: the same paragraph says
+ * the MTA IS this counter, and the MTA advances once per completed BLOCK (@ref Xcp_ProgramWrite's
+ * own post-increment note above), so a per-block count could be argued from the field's name alone.
+ * A master built on that alternative disagrees with this slave by the number of PROGRAM_NEXT frames
+ * per block -- which looks like a counter divergence but is a specification ambiguity. Design doc
+ * DD86 (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) carries the full reasoning. A
+ * zero-element PROGRAM ("the end of the memory segment is indicated, when the number of data
+ * elements is 0") does NOT count: it transfers no data and never reaches this callback.
+ * @note **The counter's WIDTH is not stated anywhere in either revision, and uint32 is a choice.**
+ * 1.6.5.1.3 names the MTA -- 32-bit -- as the counter, which argues for 32 bits, but writes the
+ * rollover value as `0x00`, which reads byte-sized. uint32 is taken because it is the only width
+ * the specification actually mentions; a byte-wide counter would be a narrowing nothing in the text
+ * requires. An integrator whose master rolls over at 0xFF rather than 0xFFFFFFFF is meeting this
+ * ambiguity, not a defect -- read DD86 first.
  */
 extern Std_ReturnType Xcp_ProgramWriteFunctional(uint32 blockSequenceCounter, const uint8 *pData, uint16 length, uint8 *pStatusCode);
 

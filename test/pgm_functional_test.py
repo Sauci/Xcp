@@ -642,6 +642,79 @@ def test_a_functional_write_defers_through_the_pending_slot_and_keeps_passing_th
         'a deferred functional write must never continue through the absolute-mode callback'
 
 
+def test_a_zero_element_program_does_not_count_as_a_data_transfer_request():
+    """The third interpretive choice DD86 leaves open, pinned beside its two siblings (the first
+    request's own value, and every frame of a block counting) rather than left in a source comment.
+
+    1.6.5.1.3: "The end of the memory segment is indicated, when the number of data elements is 0."
+    That request transfers no data and never reaches a write callback at all (DD64), so this module
+    does not count it -- the transfer after it carries 2, continuing from the one real transfer
+    before it, not 3. Recorded as a choice because the alternative is arguable: a zero-element
+    PROGRAM is still a PROGRAM *request message*, and 1.6.5.1.3's own increment sentence is phrased
+    against request messages, which is exactly the argument that makes every PROGRAM_NEXT frame
+    count (test_every_frame_of_a_master_block_counts_as_its_own_data_transfer_request above). The
+    two are separated on "transfers data": a PROGRAM_NEXT frame carries a share of the block, and
+    this one carries nothing.
+
+    It matters to a master, which is why it is a test and not only a comment: a master that DID
+    count it diverges from this slave by one for the whole remainder of the stream, and the counter
+    exists to make divergence visible.
+
+    Mutation (measured, fix round 1): advancing the counter in Xcp_DTOCmdPgmProgram's own
+    zero-element branch makes the second call carry 3 and fails this test alone."""
+    handle = pgm_functional_handle()
+    _functional_session(handle)
+
+    assert send(handle, (0xD0, 0x02, 0xAA, 0xBB))[0] == 0xFF, 'the one real transfer before the end'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xD0, 0x00))[0] == 0xFF, \
+        'a zero-element PROGRAM ends the segment with a positive response (DD64)'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert send(handle, (0xD0, 0x02, 0xCC, 0xDD))[0] == 0xFF, 'the transfer after the segment end'
+
+    counters = [call[0][0] for call in handle.xcp_program_write_functional.call_args_list]
+    assert counters == [1, 2], \
+        'the zero-element PROGRAM transfers nothing, so it must not advance the counter: %r' \
+        % (counters,)
+
+
+def test_the_block_sequence_counter_reaches_the_integrator_as_a_uint32():
+    """DD86's recorded width ambiguity, pinned at the one place the harness can actually see it: the
+    type of the parameter an integrator's own Xcp_ProgramWriteFunctional receives.
+
+    The rollover itself is unreachable from this suite -- it takes 2^32 data transfer requests, and
+    Xcp_Internal is not in the CFFI harness -- and the task report says so plainly rather than
+    shipping a test that cannot fail. What IS reachable is the property the rollover rests on: the
+    counter is modular over 32 bits because the field and this parameter are uint32, so an unsigned
+    add past 0xFFFFFFFF yields 0x00 by C's own definition, with no branch to get wrong
+    (Xcp_PgmAdvanceBlockSequenceCounter, source/Xcp_Pgm.c). Narrowing the type to uint8 or uint16
+    would silently move the rollover point to 0xFF or 0xFFFF -- a real behaviour change no other
+    test in this suite would report, since every counter any test observes is a single digit. This
+    assertion is what makes that change non-silent.
+
+    ffi.typeof() reads the declaration cffi parsed from interface/Xcp.h itself, so this is a
+    statement about the published integrator contract, not about anything internal.
+
+    Mutation (measured, fix round 1): declaring blockSequenceCounter as uint8 in interface/Xcp.h
+    fails this test alone -- the whole rest of the suite stays green, which is precisely the point
+    of adding it."""
+    handle = pgm_functional_handle()
+
+    # typeof(lib.<function>), not typeof('<name>'): the string form parses a C TYPE expression and
+    # a function name is not one (ffi.error: undefined type name -- measured, not guessed). Handed
+    # the lib attribute instead, cffi returns the function pointer's own ctype, whose .args carries
+    # one entry per declared parameter.
+    counter_type = handle.ffi.typeof(handle.lib.Xcp_ProgramWriteFunctional).args[0]
+
+    assert counter_type == handle.ffi.typeof('uint32'), \
+        'the Block Sequence Counter must reach the integrator as uint32 (DD86): got %r' \
+        % (counter_type,)
+    assert handle.ffi.sizeof(counter_type) == 4, \
+        'and uint32 must actually be 32 bits wide on this build, or the rollover point moves'
+
+
 def test_a_functional_write_never_moves_the_mta():
     """1.6.5.1.3 puts "The MTA will be post-incremented by the number of data bytes" under *Absolute
     Access mode* alone; under *Functional Access mode* the same paragraph says the ECU knows the
