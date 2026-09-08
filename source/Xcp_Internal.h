@@ -236,12 +236,20 @@ extern "C" {
  * 1.0's own pdftotext -layout dump, since the 1.1 OCR garbles tables -- design doc §0). Defined
  * unconditionally, the same convention the PID defines above follow, and for the same reason nothing
  * in this block depends on XCP_FLASH_PROGRAMMING_ENABLED: these are names for bit positions, not
- * state, and cost nothing to leave visible in a gate-off build. Task 5 (source/Xcp_Pgm.c) sets only
- * XCP_PGM_PROPERTIES_ABSOLUTE_MODE -- this module offers absolute mode alone (DD68) -- and leaves
- * every other bit clear; the rest are named here regardless, both because 1.0's own table defines
- * the whole byte at once and because SP4c (design doc §8) will need FUNCTIONAL_MODE and the
- * COMPRESSION_x/ENCRYPTION_x/NON_SEQ_PGM_x pairs by these exact names once it implements what they
- * advertise. */
+ * state, and cost nothing to leave visible in a gate-off build.
+ *
+ * Final review F9: this comment used to say that "this module offers absolute mode alone (DD68)" and
+ * "leaves every other bit clear", and to refer to SP4c in the future tense as the sub-project that
+ * "will need FUNCTIONAL_MODE and the COMPRESSION_x/ENCRYPTION_x/NON_SEQ_PGM_x pairs by these exact
+ * names once it implements what they advertise". SP4c has shipped and every one of the eight is now
+ * live: script/source_cfg.c.jinja2 assembles the whole byte from configuration (bit 0 unconditional,
+ * bit 1 from DD92's two functional callbacks, bits 2-7 from the six programming.* capability flags),
+ * Xcp_DTOCmdPgmGetPgmProcessorInfo reports it, and Xcp_DTOCmdPgmProgramFormat and
+ * Xcp_PgmDataTransferRefusedByFormat (source/Xcp_Pgm.c) read the SUPPORTED and REQUIRED halves
+ * respectively -- DD89 and DD90. The generator's own literal shifts and these macros are deliberately
+ * independent statements of the same eight bit positions, which is what makes a single-bit
+ * disagreement between them observable rather than latent. DD68's absolute-only claim is history now,
+ * and is kept named here only so that whoever finds it in an older revision can see where it went. */
 #define XCP_PGM_PROPERTIES_ABSOLUTE_MODE (0x01u << 0x00u)
 #define XCP_PGM_PROPERTIES_FUNCTIONAL_MODE (0x01u << 0x01u)
 #define XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED (0x01u << 0x02u)
@@ -595,8 +603,9 @@ typedef struct {
          * block_transfer active across a CTO confirmation except a genuine UPLOAD, so the two
          * purposes never collided. Task 4 made PROGRAM leave it active for as long as a block
          * stays open -- which can span several unrelated command/response exchanges, e.g. a
-         * PROGRAM_MAX refused mid-block, or a SET_MTA, both of which 1.1/1.6.5.1.1 requires to stay
-         * available during a programming sequence -- so confirming THEIR ordinary response also
+         * PROGRAM_MAX refused mid-block, or (until final review F1 made SET_MTA abort the block --
+         * Xcp_PgmFormatReset, source/Xcp_Pgm.c) a SET_MTA, both of which 1.1/1.6.5.1.1 requires to
+         * stay available during a programming sequence -- so confirming THEIR ordinary response also
          * triggered the identical unsolicited-UPLOAD path: Xcp_ReadSlaveMemoryU8 read MAX_CTO-1
          * bytes at the current MTA, transmitted them as an unrequested 0xFF frame, advanced the MTA
          * by that many bytes (silently breaching DD66), and repeated -- disclosing slave memory on
@@ -1311,6 +1320,14 @@ void Xcp_PgmBlockAbort(void);
  * fields directly instead, beside its own identical direct writes to pgm_state and pgm_block,
  * since it is the module's own constructor rather than a command handler reaching into state that
  * belongs to a different file.
+ *
+ * Final review F1: this function now also calls Xcp_PgmBlockAbort() above, so every door that ends
+ * the format's lifetime also ends the data transfer that format described -- 1.6.5.2.4 states the
+ * two as one fact ("valid till end of this sequence. The sequence will be terminated by other
+ * commands e.g. SET_MTA"). That makes it the mechanism by which a SET_MTA arriving mid-block can no
+ * longer retarget the block to the other write callback, or to an address its opening PROGRAM never
+ * named; see the function's own comment for the full reasoning and for why PROGRAM_FORMAT is
+ * refused ERR_SEQUENCE instead of aborting.
  */
 void Xcp_PgmFormatReset(void);
 

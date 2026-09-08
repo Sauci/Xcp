@@ -807,6 +807,51 @@ def test_generation_refuses_functional_mode_configured_by_halves(clear_enabled, 
                               xcp_program_write_functional_api_enable=write_enabled)
 
 
+def test_generation_refuses_functional_mode_without_the_command_that_selects_it():
+    """Final review F2, DD92's third term. The guard above keeps the two functional CALLBACKS in step
+    with each other and says nothing about the one command through which a master SELECTS functional
+    access. PROGRAM_FORMAT's access method byte is the only way pgm_format.access_method can ever
+    become non-zero (source/Xcp_Pgm.c), so with xcp_program_format_api_enable off the FUNCTIONAL_MODE
+    bit advertises a capability no command in the build can reach.
+
+    Measured before the guard: this exact configuration generated cleanly, pgmProperties = 0x03
+    (ABSOLUTE_MODE | FUNCTIONAL_MODE), PROGRAM_FORMAT's ctoInfo row disabled. A master would read
+    PGM_PROPERTIES, conclude functional access is available, send `CB 00 00 00 01`, and be answered
+    ERR_CMD_UNKNOWN -- D10 verbatim ("CONNECT once advertised flash programming that answered
+    ERR_CMD_UNKNOWN"), one level down, in the byte whose whole purpose on this branch was to stop it.
+
+    Not covered by test_get_pgm_processor_info_advertises_functional_mode_exactly_when_it_is_available
+    above, and that is the gap worth naming: that test reads the advertisement against a build where
+    0xCB is enabled, so it confirms the bit is set when the callbacks exist and never asks whether the
+    command that consumes the bit is reachable.
+
+    `raise(...)` is not a registered Jinja global anywhere in script/source_cfg.c.jinja2, so this
+    surfaces as jinja2.exceptions.UndefinedError with no message to match on -- see the guard test
+    above for the same note."""
+    with pytest.raises(UndefinedError):
+        pgm_functional_handle(xcp_program_format_api_enable=False)
+
+
+def test_generation_still_accepts_functional_mode_with_program_format_enabled():
+    """The other half of F2's guard, so it is a statement about the CONJUNCTION rather than about
+    xcp_program_format_api_enable alone -- the discriminator every other generation guard in this
+    suite carries (test/pgm_configuration_test.py's own
+    test_generation_accepts_a_programming_build_that_does_not_claim_the_pgm_resource makes the same
+    point). Without this, a guard written as "refuse functional mode, full stop" would pass the test
+    above and take every other test in this file down with it.
+
+    Asserted on the wire rather than at generation, so it proves the accepted configuration is also
+    the one that works: FUNCTIONAL_MODE advertised AND 0xCB answering it."""
+    handle = pgm_functional_handle()  # xcp_program_format_api_enable defaults True
+
+    assert get_pgm_processor_info(handle)[0:2] == (0xFF, ABSOLUTE_MODE | FUNCTIONAL_MODE), \
+        'the accepted configuration still advertises functional mode'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    assert program_format(handle, access=0x01)[0] == 0xFF, \
+        'and PROGRAM_FORMAT is reachable to select it, which is what the guard exists to guarantee'
+
+
 def test_a_pure_functional_programming_sequence_composes_end_to_end():
     """Acceptance run A: CONNECT -> GET_SEED/UNLOCK -> PROGRAM_START -> PROGRAM_FORMAT(access=0x01)
     -> PROGRAM_CLEAR(mode=0x01) -> PROGRAM -> PROGRAM_RESET, every step answering positively, on a
@@ -926,3 +971,135 @@ def test_a_functional_clear_and_an_absolute_program_compose_in_one_session():
         "the absolute write must carry the request's own payload"
     assert handle.xcp_program_write_functional.call_count == 0, \
         'an absolute program must never reach the functional write callback, whatever the clear did'
+
+
+def test_a_program_format_inside_an_open_program_block_is_refused_err_sequence():
+    """Final review F1. A master block mode block open between an intermediate PROGRAM and its
+    completing PROGRAM_NEXT is a window DD55's ERR_CMD_BUSY gate does not close: no command is
+    pending and cto_response.successful_transmission_pending is FALSE, so PROGRAM_FORMAT (0xCB) is
+    fully dispatchable. Measured before the fix: `CB 00 00 00 00` was answered 0xFF, reset
+    pgm_format.access_method to 0, and the completing PROGRAM_NEXT then handed the WHOLE accumulated
+    block to Xcp_ProgramWrite at whatever the MTA held -- an absolute flash write of a block the
+    master had opened functionally, reported successful, with no diagnostic anywhere.
+
+    Refused ERR_SEQUENCE, per both revisions' 1.6.5.2.4: this command's subject is the format of
+    "following, UNINTERRUPTED data transfer", "set direct at begin of the programming sequence", so
+    one arriving midway through a transfer it did not describe is out of sequence by the command's
+    own definition -- and ERR_SEQUENCE is in PROGRAM_FORMAT's own 1.7.3.2.5 row in both revisions
+    (1.0 p.144, 1.1 p.156), so no deviation is taken. The same shape as PROGRAM_MAX's own DD65 gate.
+
+    The second half is what makes this a REFUSAL rather than an abort, and is the half that would
+    pass against three of the four candidate remedies: the block must still be there afterwards, and
+    must still complete FUNCTIONALLY, at the counter the per-frame rule (DD86) gives it. A module
+    that aborted the block instead, or that accepted the format change and merely latched the old
+    mode, answers this request differently or completes the block differently.
+
+    Mutation: deleting the Xcp_PgmBlockIsActive() gate from Xcp_DTOCmdPgmProgramFormat makes the
+    first assertion fail with 0xFF, and the call_count assertions then fail as well -- the block
+    reaches Xcp_ProgramWrite instead. Measured; see final-fix-report.md."""
+    handle = pgm_functional_handle()
+    _functional_session(handle)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # opens a block, 4 elements outstanding
+    handle.lib.Xcp_MainFunction()
+
+    assert program_format(handle)[0:2] == (0xFE, 0x29), \
+        'PROGRAM_FORMAT must be refused ERR_SEQUENCE while a PGM block is still open'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    # The refusal stored nothing and aborted nothing: the block completes exactly as it would have
+    # without the interloping command at all.
+    program_next(handle, 0x04, data=(0x07, 0x08, 0x09, 0x0A))
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF, 'the block still completes normally after the refusal'
+    assert handle.xcp_program_write.call_count == 0, \
+        'a refused PROGRAM_FORMAT must not retarget the open block to the absolute callback'
+    counter, data, length = _write_functional_call(handle)
+    assert (counter, length, data) == (0x02, 0x0A, bytes(range(0x01, 0x0B))), \
+        'the block completes functionally, at the counter its own completing frame earns (DD86)'
+
+
+def test_a_program_format_inside_an_open_block_cannot_switch_an_absolute_block_to_functional():
+    """Final review F1, the mirror direction. The defect was symmetric: an absolute block open,
+    `CB 00 00 00 01` accepted mid-block, and the completing PROGRAM_NEXT went to
+    Xcp_ProgramWriteFunctional with a block the master had addressed by MTA -- so a test on the
+    functional-to-absolute direction alone would leave half the hole unpinned.
+
+    This build advertises FUNCTIONAL_MODE, so the interloping request is one DD89 would otherwise
+    ACCEPT -- which is the point: the refusal must come from the open block, not from the access
+    method being unavailable. On a build without functional mode the same request is refused
+    ERR_OUT_OF_RANGE by DD89's fourth term instead, and would prove nothing about F1."""
+    handle = pgm_functional_handle()
+    _active_session_with_mta(handle, address=0x9000)  # absolute: no PROGRAM_FORMAT sent at all
+
+    program(handle, 0x08, data=tuple(range(0x01, 0x07)))  # opens a block, 2 elements outstanding
+    handle.lib.Xcp_MainFunction()
+
+    assert program_format(handle, access=0x01)[0:2] == (0xFE, 0x29), \
+        'a mid-block PROGRAM_FORMAT is refused for the open block, not for its parameters'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    program_next(handle, 0x02, data=(0x07, 0x08))
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0] == 0xFF
+    assert handle.xcp_program_write_functional.call_count == 0, \
+        'a refused PROGRAM_FORMAT must not retarget the open block to the functional callback'
+    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
+    assert int(handle.ffi.cast('uintptr_t', address)) == 0x9000, \
+        'the absolute block still lands at the MTA its own opening PROGRAM was accepted under'
+    assert (length, bytes(p_data[0:length])) == (0x08, bytes(range(0x01, 0x09)))
+
+
+def test_a_set_mta_inside_an_open_functional_block_ends_the_transfer_rather_than_retargeting_it():
+    """Final review F1, the half PROGRAM_FORMAT's ERR_SEQUENCE gate cannot reach. SET_MTA cannot be
+    refused: 1.6.5.1.1 lists it FIRST among the commands that "must always be available during a
+    memory programming sequence", and its own 1.7.3.2.1 row carries no ERR_SEQUENCE to refuse it with
+    (1.0: ERR_CMD_BUSY, ERR_PGM_ACTIVE, ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE). So it
+    still answers 0xFF and still moves the MTA -- and DD85 still resets pgm_format there, which is
+    exactly what made it retarget an in-flight block.
+
+    1.6.5.2.4 resolves it in one sentence: the format "is valid till end of this sequence. The
+    sequence will be terminated by other commands e.g. SET_MTA." If SET_MTA terminates the sequence,
+    the block half-delivered inside that sequence is part of what it terminated -- so the block is
+    ABORTED, and the master learns on its next PROGRAM_NEXT, refused ERR_SEQUENCE by that command's
+    own block gate. PROGRAM_NEXT's 1.7.3.2.5 pre-action is "SYNCH+PROGRAM", i.e. re-open the block,
+    which is precisely the recovery this state calls for.
+
+    Discarding the partial block loses nothing the master was promised: 1.6.5.1.3 has the slave
+    acknowledge only the LAST frame of a block transfer, so nothing in an incomplete one was ever
+    agreed final -- DD64's own reasoning for the zero-element PROGRAM.
+
+    Neither write callback may be reached, and that pair of zeroes is the whole assertion: a module
+    that aborted the format but kept the block calls Xcp_ProgramWrite (the defect), one that latched
+    the mode calls Xcp_ProgramWriteFunctional with a counter the master never counted, and only one
+    that ends the transfer calls neither.
+
+    Mutation: removing Xcp_PgmBlockAbort() from Xcp_PgmFormatReset makes the PROGRAM_NEXT answer 0xFF
+    and Xcp_ProgramWrite receive all ten bytes at 0xDEADBEEF. Measured; see final-fix-report.md."""
+    handle = pgm_functional_handle()
+    _functional_session(handle)
+
+    program(handle, 0x0A, data=tuple(range(0x01, 0x07)))  # opens a block, 4 elements outstanding
+    handle.lib.Xcp_MainFunction()
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_CanIfRxIndication(
+            0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x00) +
+                                        tuple(u32_to_array(0xDEADBEEF, 'LITTLE_ENDIAN'))))
+    handle.lib.Xcp_MainFunction()
+    assert transmitted(handle)[0] == 0xFF, \
+        'SET_MTA must still succeed inside a programming sequence (1.1/1.6.5.1.1)'
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    program_next(handle, 0x04, data=(0x07, 0x08, 0x09, 0x0A))
+    handle.lib.Xcp_MainFunction()
+
+    assert transmitted(handle)[0:2] == (0xFE, 0x29), \
+        'the transfer SET_MTA terminated cannot be continued: ERR_SEQUENCE, not a flash write'
+    assert handle.xcp_program_write.call_count == 0, \
+        'the block the master opened functionally must never reach the absolute write callback'
+    assert handle.xcp_program_write_functional.call_count == 0, \
+        'nor may a terminated transfer be written functionally at a counter the master never counted'

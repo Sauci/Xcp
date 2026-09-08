@@ -93,11 +93,18 @@ static void Xcp_PgmCompleteProgramVerify(uint8 statusCode);
  * OWN counter -- deliberately not Xcp_BlockTransferIsActive()/Xcp_Internal.block_transfer, which
  * Xcp_CanIfTxConfirmation (source/Xcp.c) also reads, unconditionally, to decide whether to keep
  * streaming an UPLOAD. A PGM block staying open across several unrelated command/response
- * exchanges -- a refused PROGRAM_MAX, a SET_MTA, both legal mid-sequence per 1.1/1.6.5.1.1 -- must
- * never look like an outstanding UPLOAD to that confirmation path, or it disclosed slave memory on
- * the wire (source/Xcp_Internal.h, pgm_block's own comment; task-4-report.md, "Fix round 1",
- * finding 1). Mirrors Xcp_BlockTransferIsActive()'s own shape exactly, against pgm_block instead of
+ * exchanges -- a refused PROGRAM_MAX, legal mid-sequence per 1.1/1.6.5.1.1 -- must never look like
+ * an outstanding UPLOAD to that confirmation path, or it disclosed slave memory on the wire
+ * (source/Xcp_Internal.h, pgm_block's own comment; task-4-report.md, "Fix round 1", finding 1).
+ * Mirrors Xcp_BlockTransferIsActive()'s own shape exactly, against pgm_block instead of
  * block_transfer.
+ *
+ * SET_MTA used to be named here as a second such exchange and no longer is: since final review F1
+ * it ABORTS the open block (Xcp_PgmFormatReset below), so no block survives it to be confirmed
+ * across. The separate-state argument above is unchanged and still load-bearing -- a refused
+ * PROGRAM_MAX still leaves a block open across its own confirmed error response, which is trigger
+ * enough on its own, and F1's abort is a fix for a different defect that must not be mistaken for
+ * this one's.
  */
 static boolean Xcp_PgmBlockIsActive(void);
 
@@ -155,6 +162,17 @@ static void Xcp_PgmAdvanceBlockSequenceCounter(void);
  * to avoid (Task 5) -- not needed here, because pgm_format is standing session state that DD55's
  * ERR_CMD_BUSY gate keeps stable for the duration of a deferred command, exactly as it keeps the
  * MTA and pgm_block stable, whereas PROGRAM_CLEAR's own mode arrives in the request and is gone.
+ *
+ * Final review F1: DD55's gate is the whole of the argument only for the DEFERRED window, where
+ * pending_command.active is TRUE (source/Xcp.c). It never covered the OTHER window this state has
+ * to survive -- a master block mode block open between an intermediate PROGRAM and its completing
+ * PROGRAM_NEXT, where no command is pending and cto_response.successful_transmission_pending is
+ * FALSE, so DD55's gate is wide open and both PROGRAM_FORMAT (0xCB) and SET_MTA (0xF6) dispatch
+ * normally. Two additions close it, and between them the "reading the same standing state" claim
+ * above is now true for both windows rather than only one: Xcp_DTOCmdPgmProgramFormat below refuses
+ * ERR_SEQUENCE while a block is open, and Xcp_PgmFormatReset below aborts the block, so no path
+ * reaches this function with an access method other than the one the block's own opening frame was
+ * accepted under. Each carries its own specification reasoning at its own site.
  */
 static Std_ReturnType Xcp_PgmCallProgramWrite(uint8 *pStatusCode);
 
@@ -607,9 +625,12 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
                  * Xcp_BlockTransferAcknowledgeFrame pair, on DD63's own advice, and that shared
                  * state is also read by Xcp_CanIfTxConfirmation (source/Xcp.c) to decide whether an
                  * UPLOAD is still owed to the master. A PGM block staying open across an unrelated
-                 * command's own confirmed response -- a refused PROGRAM_MAX, a SET_MTA, both legal
-                 * mid-sequence per 1.1/1.6.5.1.1 -- made that confirmation path read slave memory
-                 * and transmit it unsolicited (source/Xcp_Internal.h, pgm_block's own comment).
+                 * command's own confirmed response -- a refused PROGRAM_MAX, legal mid-sequence per
+                 * 1.1/1.6.5.1.1 -- made that confirmation path read slave memory and transmit it
+                 * unsolicited (source/Xcp_Internal.h, pgm_block's own comment). SET_MTA was a second
+                 * such exchange until final review F1 made it abort the block instead
+                 * (Xcp_PgmFormatReset below); see Xcp_PgmBlockIsActive's own forward declaration for
+                 * why that changes nothing about this choice of state.
                  * Xcp_PgmBlockAcknowledgeFrame (below) is Xcp_BlockTransferAcknowledgeFrame's own
                  * shape, against this separate pair instead. Set to the FULL declared count here,
                  * then immediately brought down by this frame's own contribution. A count that fits
@@ -1208,6 +1229,30 @@ uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *p
 
     *responseExpected = TRUE;
 
+    /* Final review F1: a PROGRAM_FORMAT arriving while a master block mode PGM block is still open
+     * is refused ERR_SEQUENCE, before any of DD89's own parameter checks below and before anything
+     * is stored. Both revisions' 1.6.5.2.4 make this command's whole subject the format of
+     * "following, UNINTERRUPTED data transfer", "set direct at begin of the programming sequence" --
+     * so one arriving midway through a transfer it did not describe is out of sequence by the
+     * command's own definition, and ERR_SEQUENCE is in its own 1.7.3.2.5 row in BOTH revisions
+     * (1.0 p.144, 1.1 p.156), so no deviation is taken. Mirrors PROGRAM_MAX's own DD65 gate
+     * (Xcp_DTOCmdPgmProgramMax above) exactly: the one other command that refuses ERR_SEQUENCE for
+     * no reason but an open block, checked the same way, before its own payload is read.
+     *
+     * Measured before this gate existed (final review F1's own frame sequence): with a functional
+     * block open, `CB 00 00 00 00` was answered 0xFF and reset access_method to 0, and the
+     * completing PROGRAM_NEXT then handed the WHOLE accumulated block to Xcp_ProgramWrite at
+     * whatever the MTA held -- an absolute flash write the master never asked for, reported
+     * successful. The mirror case (absolute block open, `CB 00 00 00 01`) sent it to
+     * Xcp_ProgramWriteFunctional instead. Refusing is preferred over silently latching the mode the
+     * block opened under: a latch would answer 0xFF to a format change this module then declined to
+     * apply, leaving the master to program the REST of its image under a format the slave never
+     * adopted, and it would also leave DD86's counter re-based mid-block -- so the master's own
+     * count and this slave's would diverge exactly where the counter exists to agree. */
+    if (Xcp_PgmBlockIsActive() == TRUE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
     /* SP4c Task 3, design doc DD89: "a non-default value is accepted only if the corresponding
      * property is advertised, and refused ERR_OUT_OF_RANGE otherwise". One term per request field,
      * each checked against Xcp_Ptr->general->pgmProperties -- the SAME byte
@@ -1220,8 +1265,8 @@ uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *p
      * Checked before Xcp_ProgramFormat is ever called, not folded into its own contract: the
      * module owns the structural fact of what this build advertises, and the integrator is asked
      * only to judge what it cannot -- a user-defined value's own specific meaning (DD91). */
-    if ((compression_method != 0x00u) &&
-        ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED) == 0x00u))
+    else if ((compression_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED) == 0x00u))
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
@@ -1653,8 +1698,42 @@ void Xcp_PgmFormatReset(void)
      * incidental: the counter counts ONE stream, the stream is the one PROGRAM_FORMAT opened, and
      * DD85 ends that format's life at SET_MTA. Nothing can observe the difference either way, since
      * every path back to the functional callback runs through a fresh PROGRAM_FORMAT, which
-     * re-initialises this field regardless (Xcp_DTOCmdPgmProgramFormat above). */
+     * re-initialises this field regardless (Xcp_DTOCmdPgmProgramFormat above) -- and, since final
+     * review F1, because the abort below leaves no in-flight block that could reach a write callback
+     * carrying the re-based value. Before that abort existed the claim was too strong: a functional
+     * block open across a SET_MTA had its counter re-based here and then advanced back to 1 by the
+     * completing frame, so the integrator was handed 1 for a frame the master had counted as 2. */
     Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
+
+    /* Final review F1, the half PROGRAM_FORMAT's own ERR_SEQUENCE gate cannot reach. A format that
+     * has just died cannot go on describing a transfer still in flight: 1.6.5.2.4 puts the two in
+     * ONE sentence -- the format "is valid till end of this sequence. The sequence will be
+     * terminated by other commands e.g. SET_MTA" -- so whatever ends the format ends the transfer it
+     * described, and a block half-delivered inside that sequence is part of what was terminated.
+     *
+     * Placed here rather than in Xcp_DTOCmdStdSetMta (source/Xcp_Std.c), which is the caller that
+     * needs it: SET_MTA is the ONE door out of the three that did not already abort the block on its
+     * own (Xcp_CTOCmdStdConnect and Xcp_PgmCompleteProgramReset both call Xcp_PgmBlockAbort()
+     * immediately beside their own call to this function, so for them this line is an idempotent
+     * no-op), and putting the abort inside the format's own reset makes the invariant hold at every
+     * door there will ever be instead of at the two somebody remembered.
+     *
+     * Aborting rather than refusing, and that asymmetry with PROGRAM_FORMAT above is forced by the
+     * specification rather than chosen: 1.6.5.1.1 lists SET_MTA FIRST among the commands that "must
+     * always be available during a memory programming sequence", and SET_MTA's own 1.7.3.2.1 row
+     * carries no ERR_SEQUENCE to refuse it with (1.0: ERR_CMD_BUSY, ERR_PGM_ACTIVE,
+     * ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE). So SET_MTA still answers 0xFF and still
+     * moves the MTA; what it may not do is leave a block behind that a later PROGRAM_NEXT completes
+     * into the wrong callback, or at an address the opening PROGRAM never named. The master learns
+     * on its next PROGRAM_NEXT, which is refused ERR_SEQUENCE by Xcp_DTOCmdPgmProgramNext's own
+     * block gate -- a code in THAT command's 1.7.3.2.5 row, whose stated master action is
+     * "SYNCH+PROGRAM", i.e. re-open the block, which is exactly the recovery this state calls for.
+     *
+     * Discarding the partial block loses nothing the master was ever promised: 1.6.5.1.3 has the
+     * slave acknowledge only the LAST frame of a block transfer, so nothing in an incomplete one was
+     * agreed final -- DD64's own reasoning for the zero-element PROGRAM, which discards rather than
+     * flushes for that same reason (Xcp_DTOCmdPgmProgram above). */
+    Xcp_PgmBlockAbort();
 }
 
 static void Xcp_PgmAdvanceBlockSequenceCounter(void)

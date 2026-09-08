@@ -35,6 +35,8 @@ the other three."""
 
 import pytest
 
+from jinja2.exceptions import UndefinedError
+
 from .parameter import u32_to_array
 from .pgm_deferred_test import program_start, program_reset, transmitted
 from .pgm_session_test import send
@@ -163,12 +165,12 @@ def test_program_format_refuses_functional_access_when_not_advertised():
         'functional access must never reach the integrator while unadvertised'
 
 
-@pytest.mark.parametrize('required_kwarg', (
-    'programming_compression_required',
-    'programming_encryption_required',
-    'programming_non_sequential_required',
+@pytest.mark.parametrize('required_kwarg,supported_kwarg', (
+    ('programming_compression_required', 'programming_compression_supported'),
+    ('programming_encryption_required', 'programming_encryption_supported'),
+    ('programming_non_sequential_required', 'programming_non_sequential_supported'),
 ), ids=('compression_required', 'encryption_required', 'non_sequential_required'))
-def test_program_is_refused_err_sequence_without_a_preceding_program_format_when_required(required_kwarg):
+def test_program_is_refused_err_sequence_without_a_preceding_program_format_when_required(required_kwarg, supported_kwarg):
     """Brief test 4, DD90: 'If modified data transmission is expected by the slave and no
     PROGRAM_FORMAT command is transmitted, the slave responds with ERR_SEQUENCE' (1.6.5.2.4).
     Parametrised over the three REQUIRED bits individually, mirroring test 2's own per-capability
@@ -181,8 +183,18 @@ def test_program_is_refused_err_sequence_without_a_preceding_program_format_when
     already pins that separate gate).
 
     Mutation (per term, Step 6): deleting or inverting only THIS required flag's own check in the
-    shared static helper must fail only this parametrisation's own case, not the other two."""
-    handle = pgm_format_handle(**{required_kwarg: True})
+    shared static helper must fail only this parametrisation's own case, not the other two.
+
+    Final review F3 adds the matching SUPPORTED flag to each case, and it is a correction to the
+    CONFIGURATION rather than to the claim. This test used to pass the REQUIRED flag alone, which
+    script/source_cfg.c.jinja2 now refuses to generate: a slave that REQUIRES an encoding it does not
+    SUPPORT demands a PROGRAM_FORMAT (DD90, the gate below) that DD89 then refuses ERR_OUT_OF_RANGE,
+    so every PROGRAM/PROGRAM_MAX/PROGRAM_NEXT on such a build is permanently refused and the two
+    error codes point the master in mutually exclusive directions. The four format-lifetime tests
+    further down this file already paired the two flags; only this one did not. The refusal asserted
+    below is unchanged either way -- DD90's gate reads the REQUIRED bit and pgm_format's own matching
+    field, never the SUPPORTED bit -- so nothing about what this test proves has moved."""
+    handle = pgm_format_handle(**{required_kwarg: True, supported_kwarg: True})
     _active_session_with_mta(handle)
 
     frame = send(handle, (0xD0, 0x01, 0xAA))
@@ -191,6 +203,87 @@ def test_program_is_refused_err_sequence_without_a_preceding_program_format_when
         'ERR_SEQUENCE: %s is configured but no PROGRAM_FORMAT preceded this PROGRAM' % required_kwarg
     assert handle.xcp_program_write.call_count == 0, \
         'a PROGRAM refused by DD90 must never reach Xcp_ProgramWrite'
+
+
+@pytest.mark.parametrize('required_kwarg,supported_kwarg', (
+    ('programming_compression_required', 'programming_compression_supported'),
+    ('programming_encryption_required', 'programming_encryption_supported'),
+    ('programming_non_sequential_required', 'programming_non_sequential_supported'),
+), ids=('compression', 'encryption', 'non_sequential'))
+def test_generation_refuses_a_required_capability_the_build_cannot_support(required_kwarg,
+                                                                          supported_kwarg):
+    """Final review F3. A REQUIRED bit with no matching SUPPORTED bit generates a build in which
+    every PROGRAM, PROGRAM_MAX and PROGRAM_NEXT is PERMANENTLY refused, and the two error codes the
+    master receives point it in mutually exclusive directions:
+
+    - `D0 02 AA BB` -> DD90's gate (Xcp_PgmDataTransferRefusedByFormat) sees the REQUIRED bit set and
+      pgm_format's matching field still 0x00 -> ERR_SEQUENCE, whose 1.7.3.2.5 action is "repeat".
+    - the master obliges with `CB 01 00 00 00`, naming the method the REQUIRED bit demands -> DD89's
+      own check sees a non-zero field with the SUPPORTED bit clear -> ERR_OUT_OF_RANGE, whose action
+      is "retry other parameter".
+
+    Every retry loops between those two. Measured before this guard: compression_required alone
+    generated cleanly at pgmProperties = 0x09, encryption_required at 0x21, non_sequential_required at
+    0x81, all three together at 0xA9.
+
+    This is the direction of the advertise/accept invariant the branch's own tests did not cover --
+    REFUSED where it must be ACCEPTED, rather than advertised where it cannot be honoured -- and the
+    more damaging one, because such a build looks healthy at CONNECT and at PROGRAM_START and fails
+    only at the first byte of real flash data. Parametrised per capability rather than asserted once
+    on all three, mirroring the DD90 test above: a guard that only checked compression would still
+    refuse an all-three configuration and pass a single combined case.
+
+    Refused at generation rather than checked in Xcp_Init: nothing about the combination depends on
+    runtime state, and a slave that cannot ever program should not be built. `raise(...)` surfaces as
+    jinja2.exceptions.UndefinedError with no message to match on."""
+    with pytest.raises(UndefinedError):
+        pgm_format_handle(**{required_kwarg: True})
+
+
+@pytest.mark.parametrize('required_kwarg,supported_kwarg', (
+    ('programming_compression_required', 'programming_compression_supported'),
+    ('programming_encryption_required', 'programming_encryption_supported'),
+    ('programming_non_sequential_required', 'programming_non_sequential_supported'),
+), ids=('compression', 'encryption', 'non_sequential'))
+def test_generation_refuses_a_required_capability_with_no_program_format_to_satisfy_it(required_kwarg,
+                                                                                      supported_kwarg):
+    """Final review F3, the second dead end -- the same one reached a step earlier. With the
+    capability properly SUPPORTED but PROGRAM_FORMAT disabled, DD90's gate still refuses every data
+    transfer ERR_SEQUENCE, and the only command that could clear that refusal answers
+    ERR_CMD_UNKNOWN. Measured before this guard: compression supported and required with
+    xcp_program_format_api_enable off generated cleanly at pgmProperties = 0x0D with 0xCB's row
+    disabled.
+
+    A separate test from the one above rather than a third parametrisation of it, because it is a
+    separate conjunct of the guard and a separate sentence of the message: a slave cannot require an
+    encoding it does not support, and it cannot require a format it gives the master no command to
+    set. Deleting either conjunct alone must leave the other's tests passing."""
+    with pytest.raises(UndefinedError):
+        pgm_format_handle(**{required_kwarg: True,
+                             supported_kwarg: True,
+                             'xcp_program_format_api_enable': False})
+
+
+@pytest.mark.parametrize('supported_kwarg', (
+    'programming_compression_supported',
+    'programming_encryption_supported',
+    'programming_non_sequential_supported',
+), ids=('compression', 'encryption', 'non_sequential'))
+def test_generation_accepts_a_supported_capability_that_is_not_required(supported_kwarg):
+    """F3's discriminator, and what makes the two guards above statements about the CONJUNCTION
+    rather than about the REQUIRED flags alone. SUPPORTED without REQUIRED is the ordinary,
+    fully-working configuration -- the slave CAN decode a compressed image and does not insist on
+    one -- so a guard written as "refuse any capability flag" would refuse it, and
+    test_program_format_accepts_exactly_what_get_pgm_processor_info_advertises above (which builds
+    exactly these three configurations) would go down with it.
+
+    Asserted on the wire, not merely at generation: the SUPPORTED bit reaches PGM_PROPERTIES and a
+    PROGRAM with no preceding PROGRAM_FORMAT still succeeds, since nothing is REQUIRED."""
+    handle = pgm_format_handle(**{supported_kwarg: True})
+    _active_session_with_mta(handle)
+
+    assert send(handle, (0xD0, 0x01, 0xAA))[0] == 0xFF, \
+        'a SUPPORTED-but-not-REQUIRED capability leaves every data transfer reachable'
 
 
 def test_program_succeeds_without_a_preceding_program_format_when_nothing_is_required():

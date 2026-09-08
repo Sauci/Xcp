@@ -48,6 +48,64 @@
     {%- if configuration.programming.enabled | default(false) and (configuration.apis.xcp_program_clear_functional_api_enable.enabled != configuration.apis.xcp_program_write_functional_api_enable.enabled) %}
 {{ raise('xcp_program_clear_functional_api_enable is {} and xcp_program_write_functional_api_enable is {}; functional access mode is ONE capability advertised by ONE bit (PGM_PROPERTIES FUNCTIONAL_MODE, XCP part 2 1.1/1.6.5.2.1), so enabling one half without the other either implements a mode the slave never advertises or advertises nothing while the flag goes nowhere (DD92, docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) -- enable both, or neither'.format(configuration.apis.xcp_program_clear_functional_api_enable.enabled, configuration.apis.xcp_program_write_functional_api_enable.enabled)) }}
     {%- endif %}
+{#- Final review F2, the third term of DD92's own condition. The guard immediately above keeps the
+    two functional CALLBACKS in step with each other; it says nothing about the one command through
+    which a master SELECTS functional access. PROGRAM_FORMAT's access method byte is the only way
+    Xcp_Internal.pgm_format.access_method can ever become non-zero (source/Xcp_Pgm.c), so with
+    xcp_program_format_api_enable off the FUNCTIONAL_MODE bit generated further down advertises a
+    capability no command in the build can reach: the dispatcher answers ERR_CMD_UNKNOWN for 0xCB
+    (source/Xcp.c reads the row's own enable bit), and a master that read PGM_PROPERTIES and believed
+    it has no second way to ask.
+
+    Measured before this guard existed: programming.enabled with both functional flags on and
+    xcp_program_format_api_enable off generated cleanly, pgmProperties = 0x03
+    (ABSOLUTE_MODE | FUNCTIONAL_MODE), PROGRAM_FORMAT's ctoInfo row disabled. That is D10 verbatim --
+    "CONNECT once advertised flash programming that answered ERR_CMD_UNKNOWN" -- one level down, in
+    the byte whose whole purpose on this branch was to stop it. Refused at generation, the same
+    mechanism DD92's own guard above and the daq_dynamic guards further up already use, rather than
+    as an Xcp_Init dependency check: nothing about the combination depends on runtime state.
+
+    Guarded on programming.enabled for the reason the guard above is: with the gate off both
+    functional flags are inert and PROGRAM_FORMAT's row generates disabled regardless, so there is no
+    advertisement to be wrong about. #}
+    {%- if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_clear_functional_api_enable.enabled and configuration.apis.xcp_program_write_functional_api_enable.enabled and not configuration.apis.xcp_program_format_api_enable.enabled %}
+{{ raise('functional access mode is configured (xcp_program_clear_functional_api_enable and xcp_program_write_functional_api_enable) but xcp_program_format_api_enable is disabled; PROGRAM_FORMAT is the ONLY command through which a master selects functional access (XCP part 2 1.1/1.6.5.2.4, access method byte), so PGM_PROPERTIES would advertise FUNCTIONAL_MODE while 0xCB answered ERR_CMD_UNKNOWN and the advertised capability stayed unreachable -- D10\'s defect class, which DD92 exists to prevent (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) -- enable xcp_program_format_api_enable, or disable functional access') }}
+    {%- endif %}
+{#- Final review F3. A REQUIRED capability is a demand the master must satisfy with a PROGRAM_FORMAT
+    before any data transfer is accepted (DD90, Xcp_PgmDataTransferRefusedByFormat in
+    source/Xcp_Pgm.c refuses PROGRAM/PROGRAM_MAX/PROGRAM_NEXT with ERR_SEQUENCE until the matching
+    pgm_format field is non-zero). Two configurations make that demand impossible to satisfy, and
+    both generated cleanly before this guard, producing a build in which every PROGRAM, PROGRAM_MAX
+    and PROGRAM_NEXT is PERMANENTLY refused:
+
+    - REQUIRED without the matching SUPPORTED (measured: compression_required alone gives
+      pgmProperties = 0x09). DD89's own check (Xcp_DTOCmdPgmProgramFormat) refuses a non-zero field
+      whose SUPPORTED bit is clear with ERR_OUT_OF_RANGE, so the master loops forever between
+      ERR_SEQUENCE ("send a PROGRAM_FORMAT") and ERR_OUT_OF_RANGE ("retry other parameter") -- two
+      listed actions pointing in mutually exclusive directions. A slave cannot REQUIRE an encoding it
+      does not SUPPORT.
+    - any REQUIRED with PROGRAM_FORMAT disabled (measured: compression supported and required with
+      xcp_program_format_api_enable off gives pgmProperties = 0x0D, 0xCB's row disabled). Same dead
+      end one step earlier: PROGRAM answers ERR_SEQUENCE and the only command that could clear it
+      answers ERR_CMD_UNKNOWN. A slave cannot require a format it gives the master no command to set.
+
+    This is the OTHER direction of the advertise/accept invariant this branch exists to establish --
+    refused where it must be accepted -- and the more damaging one, because such a build looks
+    healthy at CONNECT and at PROGRAM_START and fails only at the first byte of real flash data.
+
+    One loop over the three pairs rather than three written-out conditions, mirroring the
+    xcp_*_daq_api_enable loop further up: the rule is identical for all three and a fourth pair would
+    otherwise need the guard rewritten instead of the list extended. #}
+    {%- for required, supported in [('compression_required', 'compression_supported'), ('encryption_required', 'encryption_supported'), ('non_sequential_required', 'non_sequential_supported')] %}
+        {%- if configuration.programming.enabled | default(false) and configuration.programming[required] | default(false) %}
+            {%- if not configuration.programming[supported] | default(false) %}
+{{ raise('programming.{} is set but programming.{} is not; a REQUIRED capability makes every PROGRAM/PROGRAM_MAX/PROGRAM_NEXT wait for a PROGRAM_FORMAT that names it (XCP part 2 1.1/1.6.5.2.4, DD90) while an unSUPPORTED one makes that very PROGRAM_FORMAT refused ERR_OUT_OF_RANGE (DD89), so no data transfer on this build could ever succeed -- a slave cannot require an encoding it does not support'.format(required, supported)) }}
+            {%- endif %}
+            {%- if not configuration.apis.xcp_program_format_api_enable.enabled %}
+{{ raise('programming.{} is set but xcp_program_format_api_enable is disabled; the REQUIRED bit refuses every PROGRAM/PROGRAM_MAX/PROGRAM_NEXT with ERR_SEQUENCE until a PROGRAM_FORMAT names the capability (XCP part 2 1.1/1.6.5.2.4, DD90), and with 0xCB disabled that command answers ERR_CMD_UNKNOWN -- a slave cannot require a format it gives the master no command to set'.format(required)) }}
+            {%- endif %}
+        {%- endif %}
+    {%- endfor %}
 {%- endfor %}
 {% for configuration in configurations %}
 #ifndef {{configuration.communication.channel_rx_pdu_ref}}
@@ -503,9 +561,27 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
     Jinja global as every other guard in this file (see the FIRST_PID guard's own comment further
     down for what that means); it enforces DD87's own build-time rule (design doc
     docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md): 1.1/1.6.5.2.2 requires
-    "Length mod AG = 0" for the length GET_SECTOR_INFO mode 1 reports in bytes. #}
+    "Length mod AG = 0" for the length GET_SECTOR_INFO mode 1 reports in bytes.
+
+    Final review F5: `emitted_sectors` below, and NOT configuration.programming.sectors directly, is
+    what the array's own length and initialisers are generated from -- it is the declared list when
+    programming.enabled is true and empty when it is not, so with the gate off this array is the
+    lone sentinel whatever `sectors` holds. Measured before that: one declared sector changed
+    Xcp_SectorConfig00[0x01u] to [0x02u] plus five initialiser lines with the gate off, and maxSector
+    further down from 0x00u to 0x01u -- a real byte difference the design doc's own "byte-for-byte
+    identical with the gate off" criterion does not tolerate, on a row source/Xcp.c's own dispatcher
+    cannot reach while every PGM ctoInfo row is disabled. The same conjunct pgmProperties' bit 1 and
+    pgmClearFunctionalSupported already carried, applied to the two places that had been left out.
+
+    The "Length mod AG = 0" validation immediately below is deliberately NOT gated the same way, and
+    that asymmetry is the point: it is a check on whether the CONFIGURATION means anything, not a
+    decision about what to emit, so a sector list that violates 1.1/1.6.5.2.2 is refused whether or
+    not this build currently programs. Gating it would let a broken list ship silently and fail only
+    for whoever later flips the gate on. A raise is not generated output, so the invariance property
+    above is untouched by it. #}
 {%- for configuration in configurations %}
 {%- set address_granularity_bytes = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[configuration.protocol_layer.address_granularity] %}
+{%- set emitted_sectors = configuration.programming.sectors | default([]) if configuration.programming.enabled | default(false) else [] %}
 {%- for sector in configuration.programming.sectors | default([]) %}
 {%- if (sector.length % address_granularity_bytes) != 0 %}
 {{ raise('sector {} (start_address 0x{:X}) has length {}, not a multiple of the {}-byte address_granularity ({}) -- XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.2: "Length mod AG = 0" (DD87, docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md)'.format(loop.index0, sector.start_address, sector.length, address_granularity_bytes, configuration.protocol_layer.address_granularity)) }}
@@ -514,8 +590,8 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-static const Xcp_SectorType Xcp_SectorConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % ((configuration.programming.sectors | default([]))|length + 1)}}] = {
-{%- for sector in configuration.programming.sectors | default([]) %}
+static const Xcp_SectorType Xcp_SectorConfig{{'%02X' % loop.index0}}[{{'0x%02Xu' % (emitted_sectors|length + 1)}}] = {
+{%- for sector in emitted_sectors %}
     {
         {{'0x%08Xu' % sector.start_address}},
         {{'0x%08Xu' % sector.length}},
@@ -991,25 +1067,26 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     DD60's per-conjunct sweep, restored now that it has three real commands to sweep.
 
     The other two PGM rows (PROGRAM_NEXT 0xCA, GET_PGM_PROCESSOR_INFO 0xCE) were never part of this
-    guard, deliberately: they have no configuration key of their own, nothing reads their ctoInfo
-    bit except the dispatcher, and the dispatcher answers ERR_CMD_UNKNOWN for an enabled row pointing
-    at Xcp_CmdNotImplemented exactly as it does for a disabled one. No master is told anything untrue
-    about them. It was the CONNECT advertisement that made PROGRAM_CLEAR, PROGRAM and PROGRAM_MAX
-    different, and that is also why lifting their own refusal here is what closes D10, not merely
-    what implements three more commands.
+    guard, deliberately: they have no configuration key of their own, and nothing reads their ctoInfo
+    bit except the dispatcher. It was the CONNECT advertisement that made PROGRAM_CLEAR, PROGRAM and
+    PROGRAM_MAX different, and that is also why lifting their own refusal here is what closes D10,
+    not merely what implements three more commands.
 
-    GET_PGM_PROCESSOR_INFO (0xCE) already points at a real handler (SP4b), and PROGRAM_NEXT (0xCA)
-    has since SP4b Task 4 -- both predate this list being written down in this exact form and are
-    left as pre-existing staleness in this paragraph's second clause rather than patched here, since
-    neither is this task's own change (SP4c task-2-report.md records it as a concern instead).
-    GET_SECTOR_INFO (0xCD) is the one row in the original list SP4c Task 2 itself moves: it now
-    points at a real handler too (Xcp_DTOCmdPgmGetSectorInfo, source/Xcp_Pgm.c), so leaving it in
-    the list above would make this task repeat the exact mistake DD88 corrects a few lines below --
-    a comment predicting behaviour the code no longer has. Like PROGRAM_NEXT and
-    GET_PGM_PROCESSOR_INFO, it gains no configuration key of its own (no
-    xcp_get_sector_info_api_enable exists), so its own row just below is unchanged by this task,
-    conjoined with only programming.enabled -- the first clause of the paragraph above still holds
-    for it, only the second (Xcp_CmdNotImplemented) one no longer does.
+    Final review F12: this paragraph used to carry a second clause -- that the dispatcher "answers
+    ERR_CMD_UNKNOWN for an enabled row pointing at Xcp_CmdNotImplemented exactly as it does for a
+    disabled one" -- plus a paragraph deferring its own correction, on the grounds that neither row
+    was the task at hand's own change. Both are deleted rather than re-deferred, because the claim is
+    now false of every PGM row without exception: SP4c completes SP4, and with it the whole PGM
+    command group, so in a gate-ON build all ELEVEN PGM PIDs point at real handlers in Xcp_PIDTable
+    (source/Xcp.c), whose Xcp_CmdNotImplemented entries for those PIDs now survive only in the
+    XCP_FLASH_PROGRAMMING_ENABLED == STD_OFF arm --
+    GET_PGM_PROCESSOR_INFO since SP4b, PROGRAM_NEXT since SP4b Task 4, GET_SECTOR_INFO,
+    PROGRAM_FORMAT and PROGRAM_VERIFY in SP4c. No PGM row routes to Xcp_CmdNotImplemented any more,
+    so an enabled PGM row and a disabled one are no longer interchangeable for any of them: a disabled
+    row answers ERR_CMD_UNKNOWN and an enabled one runs a handler. Three of the eleven
+    (PROGRAM_NEXT 0xCA, GET_PGM_PROCESSOR_INFO 0xCE, GET_SECTOR_INFO 0xCD) still have no
+    api_enable key of their own and are conjoined with programming.enabled alone, which is the first
+    clause above and is unaffected.
 
     PROGRAM_VERIFY (0xC8) used to be a fifth row in that list -- SP4c Task 1 removes it, the first
     of the three SP4c PIDs to gain both a handler and a configuration key of its own
@@ -1157,7 +1234,14 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
     "{{configuration.protocol_layer.identification}}", /* identification */
     {{'0x%02Xu' % (configuration.segments | default([]))|length}}, /* maxSegment */
-    {{'0x%02Xu' % (configuration.programming.sectors | default([]))|length}}, /* maxSector */
+{#- MAX_SECTOR (SP4c Task 2, DD87): the sectors array's own length, so GET_PGM_PROCESSOR_INFO and
+    GET_SECTOR_INFO cannot disagree about how many sectors exist. Final review F5 adds the
+    programming.enabled conjunct -- 0 whenever this build cannot program, matching Xcp_SectorConfig's
+    own emitted_sectors further up (see that block's comment for the measurement and for why the
+    "Length mod AG = 0" validation is deliberately NOT gated the same way). Deliberately unlike
+    maxSegment immediately above, which has no such conjunct and needs none: segments are a paging/
+    calibration concept with no programming.enabled gate of their own. #}
+    {{'0x%02Xu' % ((configuration.programming.sectors | default([]))|length if configuration.programming.enabled | default(false) else 0)}}, /* maxSector */
 {#- PGM_PROPERTIES (SP4c Task 3, design doc DD89): mirrors pagProperties' own conditional-OR shape
     immediately below, one term per configured capability. Bit 0 (ABSOLUTE_MODE) is unconditional --
     every build this module ever generates offers absolute access -- and bit 1 (FUNCTIONAL_MODE) has
@@ -1167,14 +1251,23 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     back at Xcp_Ptr->general->pgmProperties by both Xcp_DTOCmdPgmGetPgmProcessorInfo (which reports
     it) and Xcp_DTOCmdPgmProgramFormat (which checks it before accepting a non-default request
     field), so the two commands cannot drift apart -- DD89's own "closes the gap by construction".
-    Computed unconditionally, the same way maxSector/maxSegment/pagProperties already are: this is a
-    general-config property, not a ctoInfo row, and source/Xcp.c's own dispatcher never reads it
-    unless the PGM command group is actually reachable, so nothing here needs its own
-    `programming.enabled` guard for design doc Section 9's own "byte-for-byte identical with the
-    gate off" criterion to hold (test/pgm_configuration_test.py's own
-    test_gate_off_output_does_not_depend_on_any_other_programming_setting and
-    test_the_gate_touches_only_pgm_ctoinfo_rows both confirm it does, since neither test's own
-    configurations ever set any of these six flags away from their own shared False default). #}
+    Final review F4: every one of bits 2-7 below now carries a `programming.enabled` conjunct, the
+    same one bit 1 and pgmClearFunctionalSupported already carried on the adjacent lines. This
+    paragraph used to argue the opposite -- that they were "computed unconditionally, the same way
+    maxSector/maxSegment/pagProperties already are", because source/Xcp.c's own dispatcher never
+    reads this byte unless a PGM row is enabled -- and that argument was wrong in a way worth
+    preserving here rather than deleting, because it is the second time this template has made it.
+    The dispatcher not READING a byte does not make the byte identical: design doc Section 9's
+    criterion is byte-for-byte identity of the GENERATED FILE with the gate off, and six settings
+    changed it (measured, one per bit, at the generated `(0x00u << 0x0Nu)` lines). Inert on the wire
+    is not the test.
+
+    The paragraph then cited the two configuration tests as confirmation, which was the real error:
+    it read "these tests pass" as "the property holds", and said so in as many words ("since neither
+    test's own configurations ever set any of these six flags away from their own shared False
+    default") -- a statement about the tests' own coverage, offered as a statement about the
+    template. test_gate_off_output_does_not_depend_on_any_other_programming_setting is now extended
+    over all eleven settings SP4c added, so it is confirmation rather than coincidence. #}
     0x01u /* ABSOLUTE_MODE, always -- this module offers absolute access unconditionally */ |
 {#- SP4c Task 6, design doc DD92: "The FUNCTIONAL_MODE bit is set if and only if DD84's callbacks
     are configured." ONE bit for BOTH halves of the one capability -- Xcp_ProgramClearFunctional
@@ -1187,12 +1280,12 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     line identical between a gate-off build and a gate-on one (test/pgm_configuration_test.py's own
     test_gate_off_output_does_not_depend_on_any_other_programming_setting). #}
     ({% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_clear_functional_api_enable.enabled and configuration.apis.xcp_program_write_functional_api_enable.enabled %}0x01u{% else %}0x00u{% endif %} << 0x01u) |
-    ({% if configuration.programming.compression_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
-    ({% if configuration.programming.compression_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
-    ({% if configuration.programming.encryption_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x04u) |
-    ({% if configuration.programming.encryption_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x05u) |
-    ({% if configuration.programming.non_sequential_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x06u) |
-    ({% if configuration.programming.non_sequential_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u), /* pgmProperties */
+    ({% if configuration.programming.enabled | default(false) and configuration.programming.compression_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x02u) |
+    ({% if configuration.programming.enabled | default(false) and configuration.programming.compression_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x03u) |
+    ({% if configuration.programming.enabled | default(false) and configuration.programming.encryption_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x04u) |
+    ({% if configuration.programming.enabled | default(false) and configuration.programming.encryption_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x05u) |
+    ({% if configuration.programming.enabled | default(false) and configuration.programming.non_sequential_supported | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x06u) |
+    ({% if configuration.programming.enabled | default(false) and configuration.programming.non_sequential_required | default(false) %}0x01u{% else %}0x00u{% endif %} << 0x07u), /* pgmProperties */
 {#- SP4c Task 5, design doc DD84/DD93: whether THIS build's own PROGRAM_CLEAR handler may accept
     mode 0x01 (functional access, clearing by area rather than by address) and forward it to
     Xcp_ProgramClearFunctional. Deliberately NOT another pgmProperties bit immediately above,
