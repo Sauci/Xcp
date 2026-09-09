@@ -89,9 +89,8 @@ Accessors cost neither. They expose state the module already holds — selection
 **This is the hazard that dominates the design, and it is not hypothetical.** The `ERR_PGM_ACTIVE`
 gate in `Xcp_CanIfRxIndication` refuses every command whose `Xcp_CTOErrorMatrix` row carries that
 bit — 45 rows, `DISCONNECT` among them — while any of the three request bits is set. DD77/R1 found
-`STORE_CAL_REQ` able to wedge exactly that way: it clears only on `E_OK`, so an integrator whose NVM
-write never succeeds holds the bit forever. Adding two more such bits without changing the rule
-would triple the exposure.
+`STORE_CAL_REQ` able to wedge exactly that way: an integrator whose NVM write never *completes*
+returns `E_NOT_OK` forever and holds the bit. Adding two more such bits triples that exposure.
 
 So: **`E_OK` with a non-zero status code is still an exit.** The request was attempted and
 concluded; the bit clears and the failure is the integrator's to surface. Only `E_NOT_OK` holds the
@@ -104,12 +103,29 @@ imposed, because the module has no honest basis for choosing one: `Xcp_MainFunct
 converted into "too long". Its blast radius is bounded by DD77/R1 — `CONNECT` re-clears the request
 bits, so a reconnect recovers where once only a power cycle did.
 
-### DD96 — the calibration bit is aligned to the same rule, in this phase
+### DD96 — calibration already implements DD95's rule; nothing is aligned
 
-`STORE_CAL_REQ` currently clears only on `E_OK`. Leaving it that way would ship two behaviours for
-one pattern: two bits that clear on a failed store and one that does not. The change is one
-condition at an existing call site in `Xcp_MainFunction`, and it is called out here rather than
-smuggled in as incidental cleanup.
+**This entry exists to record a check, not a change.** An earlier draft of this design asserted that
+`STORE_CAL_REQ` "clears only on `E_OK`" and treated that as a defect to fix alongside the new bits.
+Reading `Xcp_MainFunction` before planning showed the assertion was true and the conclusion wrong:
+
+```c
+if (Xcp_StoreCalibrationDataToNonVolatileMemory(&store_calibration_status) == E_OK) {
+    Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_STORE_CAL_REQ;
+    /* pushes EV_STORE_CAL carrying store_calibration_status */
+}
+```
+
+`E_OK` means *finished*, whatever the status code says, so a completed-but-failed store already
+clears the bit and already reports the failure in the event payload. That is DD95's rule, already
+in the module. The two new bits copy it rather than improve on it.
+
+The residual exposure — a callback returning `E_NOT_OK` forever — is identical for all three bits,
+is what DD95 declines to solve, and is bounded for all three by DD77/R1's `CONNECT` reset.
+
+**A regression test is still worth having** for all three bits (§5.2), because nothing currently
+pins this behaviour for calibration: the rule is implemented but untested, and a later change could
+narrow the clear to a zero status code without any test objecting.
 
 ### DD97 — the store's ordering, and how a partial store becomes detectable
 
@@ -254,9 +270,10 @@ from the CFFI harness, so every assertion observes transmitted bytes or callback
 
 1. `STORE_DAQ_REQ` and `CLEAR_DAQ_REQ` are accepted, each reaching its callback, each raising its
    event (`EV_STORE_DAQ`, `EV_CLEAR_DAQ`) on success.
-2. **The wedge is closed for all three bits**: a failed store or clear clears the request bit, and a
-   `DISCONNECT` immediately afterwards is answered rather than refused. Tested for `STORE_DAQ_REQ`,
-   `CLEAR_DAQ_REQ` and `STORE_CAL_REQ` (DD96).
+2. **A completed-but-failed request clears its bit, for all three**: a store or clear returning
+   `E_OK` with a non-zero status code clears the request bit, and a `DISCONNECT` immediately
+   afterwards is answered rather than refused. Tested for `STORE_DAQ_REQ`, `CLEAR_DAQ_REQ` and —
+   as a regression pin on behaviour that exists but is untested — `STORE_CAL_REQ` (DD96).
 3. The store passes the session configuration id from `SET_REQUEST` bytes 2–3, and the id is adopted
    only on success.
 4. `GET_STATUS` reports the id in bytes 4–5, `0` after a successful clear, and **unchanged across a
