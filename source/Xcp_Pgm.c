@@ -79,16 +79,32 @@ static void Xcp_PgmCompleteProgramClear(uint8 statusCode);
 static void Xcp_PgmCompleteProgramWrite(uint8 statusCode);
 
 /**
+ * @brief Finishes PROGRAM_VERIFY, building the positive response or ERR_VERIFY from statusCode.
+ * @details Forward-declared for the same reason Xcp_PgmCompleteProgramStart above is:
+ * Xcp_DTOCmdPgmProgramVerify below calls it directly for an integrator whose work completes
+ * instantaneously (spec Section 4) -- the same function Xcp_PgmCompletePendingCommand dispatches to
+ * when the same command instead completes on a later Xcp_MainFunction poll.
+ */
+static void Xcp_PgmCompleteProgramVerify(uint8 statusCode);
+
+/**
  * @brief Whether a PGM master block mode block is currently open, awaiting a PROGRAM_NEXT.
  * @details Task 4 fix round 1, finding 1. Reads Xcp_Internal.pgm_block.requested_elements, PGM's
  * OWN counter -- deliberately not Xcp_BlockTransferIsActive()/Xcp_Internal.block_transfer, which
  * Xcp_CanIfTxConfirmation (source/Xcp.c) also reads, unconditionally, to decide whether to keep
  * streaming an UPLOAD. A PGM block staying open across several unrelated command/response
- * exchanges -- a refused PROGRAM_MAX, a SET_MTA, both legal mid-sequence per 1.1/1.6.5.1.1 -- must
- * never look like an outstanding UPLOAD to that confirmation path, or it disclosed slave memory on
- * the wire (source/Xcp_Internal.h, pgm_block's own comment; task-4-report.md, "Fix round 1",
- * finding 1). Mirrors Xcp_BlockTransferIsActive()'s own shape exactly, against pgm_block instead of
+ * exchanges -- a refused PROGRAM_MAX, legal mid-sequence per 1.1/1.6.5.1.1 -- must never look like
+ * an outstanding UPLOAD to that confirmation path, or it disclosed slave memory on the wire
+ * (source/Xcp_Internal.h, pgm_block's own comment; task-4-report.md, "Fix round 1", finding 1).
+ * Mirrors Xcp_BlockTransferIsActive()'s own shape exactly, against pgm_block instead of
  * block_transfer.
+ *
+ * SET_MTA used to be named here as a second such exchange and no longer is: since final review F1
+ * it ABORTS the open block (Xcp_PgmFormatReset below), so no block survives it to be confirmed
+ * across. The separate-state argument above is unchanged and still load-bearing -- a refused
+ * PROGRAM_MAX still leaves a block open across its own confirmed error response, which is trigger
+ * enough on its own, and F1's abort is a fix for a different defect that must not be mistaken for
+ * this one's.
  */
 static boolean Xcp_PgmBlockIsActive(void);
 
@@ -99,6 +115,66 @@ static boolean Xcp_PgmBlockIsActive(void);
  * above for why the two must not share state.
  */
 static void Xcp_PgmBlockAcknowledgeFrame(void);
+
+/**
+ * @brief Whether DD90's REQUIRED gate refuses a data transfer request right now.
+ * @details SP4c Task 3. Design doc DD90, 1.1/1.6.5.2.4: "If modified data transmission is expected
+ * by the slave and no PROGRAM_FORMAT command is transmitted, the slave responds with
+ * ERR_SEQUENCE." A compound condition, one term per REQUIRED bit, checked against
+ * Xcp_Internal.pgm_format's own matching field rather than against a separate "has PROGRAM_FORMAT
+ * been called" flag: 1.1/1.6.5.2.4 makes an all-defaults request the same thing as the command
+ * never having been sent, and DD85 already resets pgm_format to that same all-defaults state at
+ * every session boundary and at SET_MTA -- so a field still reading 0x00u here means exactly what
+ * this gate needs to know, with no state of its own to keep in step. Shared by
+ * Xcp_DTOCmdPgmProgram, Xcp_DTOCmdPgmProgramMax and Xcp_DTOCmdPgmProgramNext below, all three of
+ * which DD90 names by name ("listed in all three rows").
+ */
+static boolean Xcp_PgmDataTransferRefusedByFormat(void);
+
+/**
+ * @brief Counts one accepted data transfer request into the Block Sequence Counter.
+ * @details SP4c Task 6. Design doc DD86, 1.1/1.6.5.1.3: "Its value is incremented by 1 for each
+ * subsequent data transfer request. At the maximum value the Block Sequence Counter rolls over and
+ * starts at 0x00 with the next data transfer request message." Called from Xcp_DTOCmdPgmProgram,
+ * Xcp_DTOCmdPgmProgramMax and Xcp_DTOCmdPgmProgramNext below -- the three commands DD86 names --
+ * at the point each one accepts a frame's data, so a refused request never counts and a master
+ * that was told ERR_SEQUENCE or ERR_CMD_SYNTAX stays in step with this slave's own count.
+ * See Xcp_Internal.pgm_block_sequence_counter's own comment (source/Xcp_Internal.h) for why the
+ * advance happens BEFORE the value is used, and for why the rollover needs no branch here.
+ */
+static void Xcp_PgmAdvanceBlockSequenceCounter(void);
+
+/**
+ * @brief Hands the block currently in Xcp_Internal.pgm_block to whichever write callback this
+ * stream's access mode calls for, and reports what it answered.
+ * @details SP4c Task 6, design doc DD84/DD85. PROGRAM_FORMAT's own access method
+ * (Xcp_Internal.pgm_format.access_method) selects between Xcp_ProgramWrite -- absolute access, the
+ * MTA is an address -- and Xcp_ProgramWriteFunctional, which takes no address at all and receives
+ * the Block Sequence Counter instead (1.6.5.1.3: "the ECU software knows the start address for the
+ * new flash content automatically"). Any non-zero access method selects the functional callback,
+ * user-defined values (0x80..0xFF) included, matching Xcp_DTOCmdPgmProgramFormat's own fourth DD89
+ * term, which admits them on the identical FUNCTIONAL_MODE bit and gives them no separate meaning.
+ *
+ * One helper rather than the same if/else written out four times, and specifically so that
+ * Xcp_PgmPollPendingCommand below cannot dispatch a later poll to a DIFFERENT callback than the
+ * handler's own first call reached: both go through this function, reading the same standing state.
+ * That is the defect PROGRAM_CLEAR needed a dedicated pending_command.program_clear_functional flag
+ * to avoid (Task 5) -- not needed here, because pgm_format is standing session state that DD55's
+ * ERR_CMD_BUSY gate keeps stable for the duration of a deferred command, exactly as it keeps the
+ * MTA and pgm_block stable, whereas PROGRAM_CLEAR's own mode arrives in the request and is gone.
+ *
+ * Final review F1: DD55's gate is the whole of the argument only for the DEFERRED window, where
+ * pending_command.active is TRUE (source/Xcp.c). It never covered the OTHER window this state has
+ * to survive -- a master block mode block open between an intermediate PROGRAM and its completing
+ * PROGRAM_NEXT, where no command is pending and cto_response.successful_transmission_pending is
+ * FALSE, so DD55's gate is wide open and both PROGRAM_FORMAT (0xCB) and SET_MTA (0xF6) dispatch
+ * normally. Two additions close it, and between them the "reading the same standing state" claim
+ * above is now true for both windows rather than only one: Xcp_DTOCmdPgmProgramFormat below refuses
+ * ERR_SEQUENCE while a block is open, and Xcp_PgmFormatReset below aborts the block, so no path
+ * reaches this function with an access method other than the one the block's own opening frame was
+ * accepted under. Each carries its own specification reasoning at its own site.
+ */
+static Std_ReturnType Xcp_PgmCallProgramWrite(uint8 *pStatusCode);
 
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                   */
@@ -253,22 +329,90 @@ uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pP
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
-    /* Fix round 2. 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default)
-     * and 0x01 (functional access mode), as a table -- an enumeration of the values this command
-     * recognises, not a bit field with reserved-but-harmless positions -- and this slave offers
-     * only the first (DD68's PGM_PROPERTIES says so on the wire too). There is therefore exactly
-     * one mode byte to ACCEPT, not one to refuse: testing `!= 0x00u` refuses 0x01 and every value
-     * neither this slave nor the specification itself gives a meaning to (0x02..0xFF), where
-     * testing `== 0x01u` (the first form of this check) refused only 0x01 and silently accepted
-     * every one of those undefined values as if it were 0x00 -- absolute mode, on a field that is
-     * about to be read as a byte length and handed to an erase. Refused ERR_OUT_OF_RANGE, whose
-     * own 1.7.3.2.5 row lists the action "retry other parameter", correct for ANY mode byte this
-     * slave does not implement, not only for 0x01 specifically. Checked, and refused, BEFORE the
-     * clear range is even read below: 1.6.5.1.2 gives that same DWORD field completely different
-     * readings depending on the mode -- a length in absolute mode, a bit mask of memory areas in
-     * functional mode -- so a handler that read it as a length first would already have called
-     * Xcp_ProgramClear with whatever the DWORD means as a length, under a mode byte the master may
-     * not have meant as absolute at all. */
+    /* SP4c Task 5, design doc DD84/DD93: functional access mode. Checked here, ahead of the
+     * unrecognised-mode refusal just below, so that refusal's own `!= 0x00u` no longer has to (and
+     * no longer does) speak for 0x01 -- this branch does. DD93 is explicit that this mode byte is
+     * independent of PROGRAM_FORMAT's own access method: read directly off THIS request, never off
+     * Xcp_Internal.pgm_format.access_method, so a master may clear functionally and program
+     * absolutely, or the reverse (1.1/1.6.5.2.4: "It is possible to use different access modes for
+     * clearing and programming"). */
+    else if (pPduInfo->SduDataPtr[0x01u] == 0x01u)
+    {
+        uint32 clear_range;
+
+        /* Harmless ahead of the capability/reserved-bit checks just below: this only copies the
+         * request's own raw bytes into a local, the same DWORD offset absolute mode reads, and
+         * commits to no interpretation of them yet -- unlike calling Xcp_ProgramClear itself, which
+         * the comment on the unrecognised-mode branch below warns against doing before the mode
+         * byte is settled. 1.6.5.1.2 (both revisions): "The MTA has no influence on the clearing
+         * functionality" under this mode, so Xcp_Internal.memory_transfer.address is never read in
+         * this branch, unlike the absolute-mode branch below. */
+        Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &clear_range, Xcp_Ptr->general->byteOrder);
+
+        if (Xcp_Ptr->general->pgmClearFunctionalSupported != TRUE)
+        {
+            /* This build's own configuration does not offer Xcp_ProgramClearFunctional
+             * (xcp_program_clear_functional_api_enable, config/xcp.schema.json) -- refused before
+             * the area bitmask below is even validated, the same "nothing this build cannot honour
+             * reaches the integrator" discipline Xcp_DTOCmdPgmProgramFormat's own DD89 check
+             * follows against pgmProperties. */
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        }
+        /* 1.6.5.1.2 (both revisions) reserves 0x00000008..0x00000080 of the area bitmask; checked
+         * as one mask (0x000000F8u covers exactly those five bits together), not five separate
+         * equality checks, the same reasoning Xcp_DTOCmdPgmProgramVerify's own verificationType
+         * check above gives: a master is free to combine a reserved bit with a defined one in the
+         * same request, which a chain of `==` comparisons against only the single-bit values would
+         * not catch. 0x00000001/0x02/0x04 (the three defined areas) and 0x00000100..0xFFFFFF00
+         * (user defined) both pass this check untouched -- the latter is, by this same paragraph's
+         * own words, the integrator's to interpret, not this module's to refuse. */
+        else if ((clear_range & 0x000000F8u) != 0x00000000u)
+        {
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else
+        {
+            uint8 status_code = 0x00u;
+
+            /* The FIRST call happens here, not on the next Xcp_MainFunction, for the identical
+             * reason the absolute-mode branch below calls Xcp_ProgramClear at this same point. */
+            if (Xcp_ProgramClearFunctional(clear_range, &status_code) == E_OK)
+            {
+                Xcp_PgmCompleteProgramClear(status_code);
+            }
+            else
+            {
+                Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_CLEAR;
+                Xcp_Internal.pending_command.active = TRUE;
+                Xcp_Internal.pending_command.abandoned = FALSE;
+                Xcp_Internal.pending_command.event_outstanding = FALSE;
+                /* Told apart from an absolute-mode deferral by pid alone until now -- both share
+                 * XCP_PID_CMD_PROGRAM_CLEAR, since DD93 keeps this one request's own mode byte from
+                 * ever becoming a separate command -- so Xcp_PgmPollPendingCommand (below) also
+                 * needs this flag to know which callback to re-invoke (source/Xcp_Internal.h,
+                 * program_clear_functional's own comment). */
+                Xcp_Internal.pending_command.program_clear_functional = TRUE;
+                /* Xcp_ProgramClearFunctional's contract takes the area bitmask on every call, not
+                 * only this first one, for the identical reason the absolute-mode branch below
+                 * holds onto its own clear range the same way. */
+                Xcp_Internal.pending_command.args.program_clear_range = clear_range;
+
+                /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+                *responseExpected = FALSE;
+            }
+        }
+    }
+    /* 1.6.5.1.2 defines exactly two mode bytes, 0x00 (absolute access mode, default) and 0x01
+     * (functional access mode, the branch immediately above) -- a table, an enumeration of the
+     * values this command recognises at all, not a bit field with reserved-but-harmless positions.
+     * Every other byte (0x02..0xFF) is therefore unrecognised regardless of what this build
+     * configures for either mode, and is refused ERR_OUT_OF_RANGE, whose own 1.7.3.2.5 row lists
+     * the action "retry other parameter". Checked, and refused, BEFORE the clear range is even read
+     * below: 1.6.5.1.2 gives that same DWORD field completely different readings depending on the
+     * mode -- a length in absolute mode, a bit mask of memory areas in functional mode -- so a
+     * handler that read it as a length first would already have called Xcp_ProgramClear with
+     * whatever the DWORD means as a length, under a mode byte the master may not have meant as
+     * absolute at all. */
     else if (pPduInfo->SduDataPtr[0x01u] != 0x00u)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
@@ -293,6 +437,10 @@ uint8 Xcp_DTOCmdPgmProgramClear(boolean *responseExpected, const PduInfoType *pP
             Xcp_Internal.pending_command.active = TRUE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* SP4c Task 5: explicit, not merely defaulted -- this slot is shared with the
+             * functional-mode branch above, so a stale TRUE left over from a previous deferral
+             * must never be allowed to survive into this one. */
+            Xcp_Internal.pending_command.program_clear_functional = FALSE;
             /* Xcp_ProgramClear's contract takes the clear range on every call, not only this
              * first one, and Xcp_PgmPollPendingCommand (below) has no other way to recover it once
              * this handler returns -- the same reason PROGRAM_PREPARE's own codeSize is held in
@@ -317,6 +465,13 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
      * identical reason: 1.1/1.6.5.1.1 refuses PROGRAM until PROGRAM_START has succeeded, and
      * 1.7.3.2.5 lists ERR_SEQUENCE on THIS command's own row for exactly that condition. */
     if (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* SP4c Task 3, DD90: a data transfer request arriving while this build expects modified data
+     * (a REQUIRED capability configured) but no PROGRAM_FORMAT has told this module how to decode
+     * it is refused the same code as the session gate just above, for the same 1.7.3.2.5 row. */
+    else if (Xcp_PgmDataTransferRefusedByFormat() == TRUE)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
@@ -442,6 +597,16 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
             {
                 uint8_least idx;
 
+                /* SP4c Task 6, DD86: this frame is an accepted data transfer request, so it counts
+                 * -- whether it completes a block by itself or opens a multi-frame one. Counted
+                 * here, past every refusal above (the session and format gates, the oversized
+                 * count, the buffer bound and the short frame), so nothing this module answered
+                 * with an error ever advances a counter the master is keeping in step with. The
+                 * zero-element PROGRAM branch above does NOT reach this point and does not count
+                 * either: 1.6.5.1.3 gives it no data to transfer, DD64 makes it the end of a
+                 * segment rather than a transfer, and it never calls a write callback at all. */
+                Xcp_PgmAdvanceBlockSequenceCounter();
+
                 /* DD63/design Section 5: copied into pgm_block from index 0 by direct assignment,
                  * not accumulated onto whatever the buffer already held -- this IS the opening
                  * frame of a (possibly new) block, so it always starts one, the same way it did in
@@ -460,9 +625,12 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
                  * Xcp_BlockTransferAcknowledgeFrame pair, on DD63's own advice, and that shared
                  * state is also read by Xcp_CanIfTxConfirmation (source/Xcp.c) to decide whether an
                  * UPLOAD is still owed to the master. A PGM block staying open across an unrelated
-                 * command's own confirmed response -- a refused PROGRAM_MAX, a SET_MTA, both legal
-                 * mid-sequence per 1.1/1.6.5.1.1 -- made that confirmation path read slave memory
-                 * and transmit it unsolicited (source/Xcp_Internal.h, pgm_block's own comment).
+                 * command's own confirmed response -- a refused PROGRAM_MAX, legal mid-sequence per
+                 * 1.1/1.6.5.1.1 -- made that confirmation path read slave memory and transmit it
+                 * unsolicited (source/Xcp_Internal.h, pgm_block's own comment). SET_MTA was a second
+                 * such exchange until final review F1 made it abort the block instead
+                 * (Xcp_PgmFormatReset below); see Xcp_PgmBlockIsActive's own forward declaration for
+                 * why that changes nothing about this choice of state.
                  * Xcp_PgmBlockAcknowledgeFrame (below) is Xcp_BlockTransferAcknowledgeFrame's own
                  * shape, against this separate pair instead. Set to the FULL declared count here,
                  * then immediately brought down by this frame's own contribution. A count that fits
@@ -486,11 +654,13 @@ uint8 Xcp_DTOCmdPgmProgram(boolean *responseExpected, const PduInfoType *pPduInf
                      * FIRST one happening here rather than on the next Xcp_MainFunction, for the
                      * same reason PROGRAM_CLEAR's own first call does above: an integrator whose
                      * work is instantaneous returns E_OK from it and the master is answered on this
-                     * very exchange. Spec Section 4. */
-                    if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                         Xcp_Internal.pgm_block.data,
-                                         Xcp_Internal.pgm_block.length,
-                                         &status_code) == E_OK)
+                     * very exchange. Spec Section 4.
+                     *
+                     * SP4c Task 6: through Xcp_PgmCallProgramWrite (below), not Xcp_ProgramWrite
+                     * directly -- this stream's own access method decides which of the two write
+                     * callbacks receives the block (DD84), and routing every call site through one
+                     * helper is what keeps a later poll from reaching the other one. */
+                    if (Xcp_PgmCallProgramWrite(&status_code) == E_OK)
                     {
                         Xcp_PgmCompleteProgramWrite(status_code);
                     }
@@ -533,6 +703,12 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
 
     /* Same session gate as Xcp_DTOCmdPgmProgram above. */
     if (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* SP4c Task 3, DD90: same gate Xcp_DTOCmdPgmProgram's own handler carries above, and for the
+     * identical reason -- PROGRAM_MAX is the second of the three commands DD90 names by name. */
+    else if (Xcp_PgmDataTransferRefusedByFormat() == TRUE)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
@@ -632,6 +808,12 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
             uint8_least idx;
             uint8 status_code = 0x00u;
 
+            /* SP4c Task 6, DD86: PROGRAM_MAX is the second of the three commands DD86 counts, and
+             * this is the point past every refusal above at which its own fixed-size transfer is
+             * accepted -- the same placement Xcp_DTOCmdPgmProgram's own call carries, and for the
+             * same reason. */
+            Xcp_PgmAdvanceBlockSequenceCounter();
+
             /* Data starts at position AG (== element_size): 1.6.5.2.6's own layout is "1..AG-1
              * alignment, only if AG>1" then "AG..MAX_CTO-AG data" -- Xcp_DTOCmdCalDownloadMax's
              * identical arithmetic for the identical layout (source/Xcp_Cal.c). Copied into
@@ -644,10 +826,9 @@ uint8 Xcp_DTOCmdPgmProgramMax(boolean *responseExpected, const PduInfoType *pPdu
 
             Xcp_Internal.pgm_block.length = length;
 
-            if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                 Xcp_Internal.pgm_block.data,
-                                 Xcp_Internal.pgm_block.length,
-                                 &status_code) == E_OK)
+            /* SP4c Task 6: through Xcp_PgmCallProgramWrite, for the reason Xcp_DTOCmdPgmProgram's
+             * own identical call above gives. */
+            if (Xcp_PgmCallProgramWrite(&status_code) == E_OK)
             {
                 Xcp_PgmCompleteProgramWrite(status_code);
             }
@@ -678,6 +859,15 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
      * PROGRAM_NEXT arriving with no PGM session open must not be answered by whatever the PGM block
      * state happens to hold left over. */
     if (Xcp_Internal.pgm_state != XCP_PGM_ACTIVE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* SP4c Task 3, DD90: same gate Xcp_DTOCmdPgmProgram's own handler carries above, and for the
+     * identical reason -- PROGRAM_NEXT is the third of the three commands DD90 names by name.
+     * Checked here, before Xcp_PgmBlockIsActive() below, mirroring the pgm_state check immediately
+     * above it: both are about whether this sequence is in a state that permits a data transfer at
+     * all, which this handler settles before it ever asks whether a block happens to be open. */
+    else if (Xcp_PgmDataTransferRefusedByFormat() == TRUE)
     {
         Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
     }
@@ -748,6 +938,20 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
                 const uint16 offset = Xcp_Internal.pgm_block.length;
                 uint8_least idx;
 
+                /* SP4c Task 6, DD86: PROGRAM_NEXT is the third of the three commands DD86 counts,
+                 * so EVERY frame of a master block mode block advances the counter -- not only the
+                 * one that completes it and calls the integrator. DD86's own table says "each data
+                 * transfer request", and 1.6.5.1.3's rollover sentence is phrased against a request
+                 * message arriving ("rolls over and starts at 0x00 with the next data transfer
+                 * request message"), not against a write completing. The alternative reading is
+                 * recorded rather than dismissed: the same paragraph also says the MTA IS this
+                 * counter, and the MTA advances once per completed BLOCK here (DD66,
+                 * Xcp_PgmCompleteProgramWrite below), so a per-block counter would have been
+                 * defensible too. test/pgm_functional_test.py's own
+                 * test_every_frame_of_a_master_block_counts_as_its_own_data_transfer_request pins
+                 * the reading actually taken, so it cannot drift silently. */
+                Xcp_PgmAdvanceBlockSequenceCounter();
+
                 for (idx = 0x00u; idx < frame_length; idx++)
                 {
                     Xcp_Internal.pgm_block.data[offset + idx] = pPduInfo->SduDataPtr[0x02u + alignment + idx];
@@ -773,11 +977,10 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
                      * accumulated contribution rather than only the first one's. The FIRST call
                      * happens here, not on the next Xcp_MainFunction, for the same reason it does
                      * there: an integrator whose work is instantaneous returns E_OK from it and
-                     * the master is answered on this very exchange. Spec Section 4. */
-                    if (Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                         Xcp_Internal.pgm_block.data,
-                                         Xcp_Internal.pgm_block.length,
-                                         &status_code) == E_OK)
+                     * the master is answered on this very exchange. Spec Section 4. Through
+                     * Xcp_PgmCallProgramWrite since SP4c Task 6, for the reason
+                     * Xcp_DTOCmdPgmProgram's own identical call above gives. */
+                    if (Xcp_PgmCallProgramWrite(&status_code) == E_OK)
                     {
                         Xcp_PgmCompleteProgramWrite(status_code);
                     }
@@ -845,24 +1048,305 @@ uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoT
      * §1.6.5.1.1's "not allowed until PROGRAM_START" list names PROGRAM_CLEAR, PROGRAM, PROGRAM_MAX
      * and PROGRAM_NEXT, not this command. DD68.
      *
-     * PGM_PROPERTIES: XCP_PGM_PROPERTIES_ABSOLUTE_MODE (bit 0) set, every other bit clear. The
-     * mode-bit table (1.0/1.6.5.2.1) reads FUNCTIONAL_MODE:ABSOLUTE_MODE = "0 1" as "Only Absolute
-     * mode supported" -- the one mode this module offers, and the promise
-     * Xcp_DTOCmdPgmProgramClear's own mode-byte refusal (DD67, above in this file) keeps: every
-     * mode byte but 0x00 (absolute) is refused ERR_OUT_OF_RANGE there. Bits 2..7 -- the
-     * COMPRESSION_SUPPORTED/_REQUIRED, ENCRYPTION_SUPPORTED/_REQUIRED and
-     * NON_SEQ_PGM_SUPPORTED/_REQUIRED pairs (Xcp_Internal.h) -- all stay clear: none of the three
-     * is implemented, and 1.0/1.6.5.2.4's PROGRAM_FORMAT, where a slave would accept any of them,
-     * is SP4c's (design doc §8). */
+     * PGM_PROPERTIES: SP4c Task 3 replaces the hardcoded XCP_PGM_PROPERTIES_ABSOLUTE_MODE literal
+     * with this build's own generated byte, Xcp_Ptr->general->pgmProperties
+     * (script/source_cfg.c.jinja2). ABSOLUTE_MODE (bit 0) is still unconditional -- this module
+     * offers absolute access in every build -- and bits 2..7, the COMPRESSION_SUPPORTED/_REQUIRED,
+     * ENCRYPTION_SUPPORTED/_REQUIRED and NON_SEQ_PGM_SUPPORTED/_REQUIRED pairs (Xcp_Internal.h),
+     * now follow this build's own programming.compression_..., .encryption_... and
+     * .non_sequential_... flags:
+     * PROGRAM_FORMAT (Xcp_DTOCmdPgmProgramFormat, below) reads this SAME field to decide what it
+     * accepts (design doc DD89), so the two commands cannot advertise and enforce different
+     * things. Bit 1, FUNCTIONAL_MODE, is SP4c Task 6's own addition to that same generated
+     * expression (DD92) and the only one this handler needed no change for: it is set exactly when
+     * this build configures BOTH functional callbacks -- Xcp_ProgramClearFunctional and
+     * Xcp_ProgramWriteFunctional (interface/Xcp.h) -- which generation refuses to let a
+     * configuration offer one at a time, so what this byte advertises and what
+     * Xcp_DTOCmdPgmProgramFormat accepts are the same fact rather than two that must be kept in
+     * step. (MAX_SECTOR, the byte immediately below, is untouched by this change -- SP4c Task 2
+     * made it config-driven; see its own comment there.) */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = XCP_PGM_PROPERTIES_ABSOLUTE_MODE;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Ptr->general->pgmProperties;
 
-    /* MAX_SECTOR: 0. Truthful for a slave with no sector description (DD68) -- GET_SECTOR_INFO
-     * (still unimplemented; SP4c) answers ERR_OUT_OF_RANGE for a sector that is not available
-     * (1.0/1.6.5.2.2), and every sector number is out of range when MAX_SECTOR itself is 0. */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+    /* MAX_SECTOR: the configured sector count (interface/Xcp_Types.h's Xcp_SectorType array,
+     * config/xcp.schema.json's programming.sectors, script/source_cfg.c.jinja2). SP4b's DD68
+     * hardcoded this at 0, with no sector configuration to derive it from yet, and predicted here
+     * that GET_SECTOR_INFO would answer ERR_OUT_OF_RANGE for a sector that is not available
+     * (1.0/1.6.5.2.2's own prose). SP4c's DD88
+     * (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) corrects that prediction before it
+     * ever shipped: 1.7.3.2.5's own row for GET_SECTOR_INFO lists ERR_MODE_NOT_VALID and
+     * ERR_SEGMENT_NOT_VALID, not ERR_OUT_OF_RANGE, and Xcp_DTOCmdPgmGetSectorInfo (below) answers
+     * accordingly. This is still a slave with no sector description whenever maxSector reads back
+     * 0, exactly as DD68 intended -- only the byte's SOURCE changed, from a literal to this count.
+     * (PGM_PROPERTIES, the byte immediately above, is untouched by this change -- later SP4c tasks
+     * make it config-driven and set a bit within it; see their own comments there.) */
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_Ptr->general->maxSector;
 
     Xcp_FinalizeResPacket(0x03u, &Xcp_Internal.cto_response.pdu_info);
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    uint16 verification_type;
+
+    *responseExpected = TRUE;
+
+    /* verificationType (the WORD at bytes 2-3) has to be parsed before anything else in this
+     * handler runs: the one structural check 1.1/1.6.5.2.7 permits a slave to make (design doc
+     * DD91) is over this field's own reserved bits, and reading it out of order would either check
+     * stale bytes or, worse, read verificationValue's own bytes by mistake. No gate on
+     * Xcp_Internal.pgm_state, unlike PROGRAM_CLEAR/PROGRAM/PROGRAM_MAX/PROGRAM_NEXT above:
+     * 1.1/1.6.5.1.1's "not allowed until PROGRAM_START" list does not name PROGRAM_VERIFY, and
+     * design doc Section 1 records this command as consuming nothing from the rest of the module --
+     * no address, no session state -- unlike every other PGM command in this file. */
+    Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &verification_type, Xcp_Ptr->general->byteOrder);
+
+    /* Design doc DD91: "1.6.5.2.7 marks verification types 0x0008...0x0080 reserved, so a master
+     * setting those bits is refused ERR_OUT_OF_RANGE (in the row)." Checked as a bit mask
+     * (0x00F8u covers exactly 0x0008, 0x0010, 0x0020, 0x0040 and 0x0080 together), not as five
+     * separate equality checks: 1.6.5.2.7 reserves the whole 0x0008..0x0080 range, and a master is
+     * free to combine a reserved bit with a defined one (e.g. 0x0001 | 0x0008) in the same request,
+     * which a chain of `== ` comparisons against only the single-bit values would not catch. Bits
+     * 0x0001/0x0002/0x0004 (calibration areas/code areas/complete flash) and 0x0100..0xFF00 (user
+     * defined) both pass this check untouched: the former are this specification's own defined
+     * values, and the latter are, by the same paragraph's own words, the integrator's to interpret,
+     * not this module's to refuse. */
+    if ((verification_type & 0x00F8u) != 0x0000u)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        uint8 status_code = 0x00u;
+        const uint8 verification_mode = pPduInfo->SduDataPtr[0x01u];
+        uint32 verification_value;
+
+        Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &verification_value, Xcp_Ptr->general->byteOrder);
+
+        /* The FIRST call happens here, not on the next Xcp_MainFunction, for the same reason
+         * PROGRAM_CLEAR's own first call does above: an integrator whose work is instantaneous
+         * returns E_OK from it and the master is answered on this very exchange. Spec Section 4. */
+        if (Xcp_ProgramVerify(verification_mode, verification_type, verification_value, &status_code) == E_OK)
+        {
+            Xcp_PgmCompleteProgramVerify(status_code);
+        }
+        else
+        {
+            Xcp_Internal.pending_command.pid = XCP_PID_CMD_PROGRAM_VERIFY;
+            Xcp_Internal.pending_command.active = TRUE;
+            Xcp_Internal.pending_command.abandoned = FALSE;
+            Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* Xcp_ProgramVerify's contract takes mode, type and value on every call, not only this
+             * first one, and Xcp_PgmPollPendingCommand (below) has no other way to recover any of
+             * the three once this handler returns -- unlike every other PGM command in this file,
+             * PROGRAM_VERIFY has no address of its own to fall back on either (source/Xcp_Internal.h,
+             * pending_command.args' own program_verify member). */
+            Xcp_Internal.pending_command.args.program_verify.mode = verification_mode;
+            Xcp_Internal.pending_command.args.program_verify.type = verification_type;
+            Xcp_Internal.pending_command.args.program_verify.value = verification_value;
+
+            /* Withheld; Xcp_MainFunction answers, however long the integrator takes. DD53. */
+            *responseExpected = FALSE;
+        }
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdPgmGetSectorInfo(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 mode = pPduInfo->SduDataPtr[0x01u];
+    const uint8 sector_number = pPduInfo->SduDataPtr[0x02u];
+
+    *responseExpected = TRUE;
+
+    /* 1.0/1.6.5.2.2: mode 0 = SECTOR_INFO is the SECTOR's start address, mode 1 = SECTOR_INFO is
+     * its length. No other mode byte is defined, and unlike PROGRAM_CLEAR's own mode byte a few
+     * functions above -- refused ERR_OUT_OF_RANGE, because its own 1.7.3.2.5 row has no
+     * ERR_MODE_NOT_VALID to answer with (DD67) -- this command's own row DOES list
+     * ERR_MODE_NOT_VALID, so that is what an undefined mode byte answers here, checked before
+     * SECTOR_NUMBER (below) so a request that gets both wrong is answered for the reason a reader
+     * checking the request top-to-bottom would expect. */
+    if ((mode != 0x00u) && (mode != 0x01u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_MODE_NOT_VALID, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* DD88 (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md): the specification
+     * contradicts itself on what an out-of-range SECTOR_NUMBER answers. 1.6.5.2.2's own prose says
+     * ERR_OUT_OF_RANGE; 1.7.3.2.5's row for this same command lists ERR_MODE_NOT_VALID and
+     * ERR_SEGMENT_NOT_VALID, and not ERR_OUT_OF_RANGE. DD65 (SP4b) already settled this class of
+     * contradiction, on PROGRAM_MAX's own self-contradictory length: where a listed code fits, use
+     * it and take no deviation. ERR_SEGMENT_NOT_VALID fits -- in a command whose only parameters
+     * are a mode and a sector number, it can mean nothing else -- so that is what this branch
+     * answers, not the prose's ERR_OUT_OF_RANGE. maxSector is this build's own configured sector
+     * count (Xcp_Ptr->general->maxSector, script/source_cfg.c.jinja2), so SECTOR_NUMBER in
+     * [0, maxSector) is exactly the valid range 1.6.5.2.2's own [0, MAX_SECTOR-1] describes. */
+    else if (sector_number >= Xcp_Ptr->general->maxSector)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEGMENT_NOT_VALID, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        const Xcp_SectorType *p_sector = &Xcp_Ptr->config->sector[sector_number];
+        const uint32 sector_info = (mode == 0x00u) ? p_sector->address : p_sector->length;
+
+        /* Bytes 1-3: the two SEQUENCE_NUMBERs and PROGRAMMING_METHOD, reported verbatim regardless
+         * of MODE (1.0/1.6.5.2.2's own response layout puts them ahead of SECTOR_INFO, unconditional
+         * on the mode byte that only selects what SECTOR_INFO itself, bytes 4-7, means). Neither
+         * derived nor enforced by this module -- Xcp_SectorType's own @note (interface/Xcp_Types.h)
+         * records why. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = p_sector->clearSequenceNumber;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = p_sector->programSequenceNumber;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = p_sector->programmingMethod;
+
+        /* SECTOR_INFO, bytes 4-7: the DWORD mode selects, in the configured byte order -- never
+         * converted against addressGranularity here, in either direction: p_sector->length is
+         * already in BYTES (Xcp_SectorType's own @note), and generation (script/source_cfg.c.jinja2)
+         * is what refuses a configured length that is not a multiple of AG, per DD87. A handler
+         * that instead divided by the element size for AG WORD/DWORD would report a DIFFERENT,
+         * smaller value here -- test/pgm_sector_test.py's own mode-1 test is deliberately run at an
+         * AG wider than BYTE so such a regression could not hide behind AG=BYTE's trivial equality
+         * of the two readings. */
+        Xcp_CopyFromU32WithOrder(sector_info,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    return E_OK;
+}
+
+uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *pPduInfo)
+{
+    const uint8 compression_method = pPduInfo->SduDataPtr[0x01u];
+    const uint8 encryption_method = pPduInfo->SduDataPtr[0x02u];
+    const uint8 programming_method = pPduInfo->SduDataPtr[0x03u];
+    const uint8 access_method = pPduInfo->SduDataPtr[0x04u];
+
+    *responseExpected = TRUE;
+
+    /* Final review F1: a PROGRAM_FORMAT arriving while a master block mode PGM block is still open
+     * is refused ERR_SEQUENCE, before any of DD89's own parameter checks below and before anything
+     * is stored. Both revisions' 1.6.5.2.4 make this command's whole subject the format of
+     * "following, UNINTERRUPTED data transfer", "set direct at begin of the programming sequence" --
+     * so one arriving midway through a transfer it did not describe is out of sequence by the
+     * command's own definition, and ERR_SEQUENCE is in its own 1.7.3.2.5 row in BOTH revisions
+     * (1.0 p.144, 1.1 p.156), so no deviation is taken. Mirrors PROGRAM_MAX's own DD65 gate
+     * (Xcp_DTOCmdPgmProgramMax above) exactly: the one other command that refuses ERR_SEQUENCE for
+     * no reason but an open block, checked the same way, before its own payload is read.
+     *
+     * Measured before this gate existed (final review F1's own frame sequence): with a functional
+     * block open, `CB 00 00 00 00` was answered 0xFF and reset access_method to 0, and the
+     * completing PROGRAM_NEXT then handed the WHOLE accumulated block to Xcp_ProgramWrite at
+     * whatever the MTA held -- an absolute flash write the master never asked for, reported
+     * successful. The mirror case (absolute block open, `CB 00 00 00 01`) sent it to
+     * Xcp_ProgramWriteFunctional instead. Refusing is preferred over silently latching the mode the
+     * block opened under: a latch would answer 0xFF to a format change this module then declined to
+     * apply, leaving the master to program the REST of its image under a format the slave never
+     * adopted, and it would also leave DD86's counter re-based mid-block -- so the master's own
+     * count and this slave's would diverge exactly where the counter exists to agree. */
+    if (Xcp_PgmBlockIsActive() == TRUE)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_SEQUENCE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* SP4c Task 3, design doc DD89: "a non-default value is accepted only if the corresponding
+     * property is advertised, and refused ERR_OUT_OF_RANGE otherwise". One term per request field,
+     * each checked against Xcp_Ptr->general->pgmProperties -- the SAME byte
+     * Xcp_DTOCmdPgmGetPgmProcessorInfo reports, so acceptance here can never drift from what was
+     * advertised (DD89's own "closes the gap by construction", not by discipline). The default
+     * value (0x00u) of every field is accepted unconditionally, whatever this build advertises --
+     * DD89 is a rule about NON-default values only, and 1.1/1.6.5.2.4 makes an all-defaults
+     * request the same thing as PROGRAM_FORMAT never having been sent at all.
+     *
+     * Checked before Xcp_ProgramFormat is ever called, not folded into its own contract: the
+     * module owns the structural fact of what this build advertises, and the integrator is asked
+     * only to judge what it cannot -- a user-defined value's own specific meaning (DD91). */
+    else if ((compression_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if ((encryption_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_ENCRYPTION_SUPPORTED) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else if ((programming_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_NON_SEQ_PGM_SUPPORTED) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    /* access_method's own "advertised" bit is FUNCTIONAL_MODE, covering both 0x01 (functional) and
+     * the 0x80..0xFF user-defined range alike -- PGM_PROPERTIES carries no third access-mode bit to
+     * distinguish them, and 1.1/1.6.5.2.4 gives user-defined access methods no meaning of their own
+     * for this module to check beyond "functional access is available at all". Never TRUE in this
+     * build today: no configuration this task's own schema exposes can set FUNCTIONAL_MODE (design
+     * doc DD92, a later task's own addition once the two functional callbacks it depends on
+     * exist) -- see test/pgm_format_test.py's own module docstring. */
+    else if ((access_method != 0x00u) &&
+             ((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_FUNCTIONAL_MODE) == 0x00u))
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        uint8 status_code = 0x00u;
+
+        /* Design doc DD91: synchronous, not polled, breaking every other PGM callback's own
+         * contract in this file on purpose -- PROGRAM_FORMAT only sets four bytes, so there is
+         * nothing here worth deferring to Xcp_MainFunction, and this command adds no case to
+         * Xcp_PgmPollPendingCommand/Xcp_PgmCompletePendingCommand below for exactly that reason.
+         * Both a non-E_OK return and a non-zero status_code are treated identically -- refused
+         * ERR_OUT_OF_RANGE, PROGRAM_FORMAT's own 1.7.3.2.5 row's only code for an integrator that
+         * cannot honour a request this module has already confirmed is structurally permitted
+         * (interface/Xcp.h, Xcp_ProgramFormat's own @retval documentation). */
+        if ((Xcp_ProgramFormat(compression_method, encryption_method, programming_method,
+                               access_method, &status_code) != E_OK) ||
+            (status_code != 0x00u))
+        {
+            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        }
+        else
+        {
+            /* Stored only now that both the structural check above and the integrator have
+             * accepted the request -- a refused PROGRAM_FORMAT, either way, leaves
+             * Xcp_Internal.pgm_format exactly as it was (Xcp_Internal.h, pgm_format's own
+             * comment). */
+            Xcp_Internal.pgm_format.compression_method = compression_method;
+            Xcp_Internal.pgm_format.encryption_method = encryption_method;
+            Xcp_Internal.pgm_format.programming_method = programming_method;
+            Xcp_Internal.pgm_format.access_method = access_method;
+
+            /* SP4c Task 6, DD86. 1.1/1.6.5.1.3: the Block Sequence Counter "shall be initialized to
+             * one (1) when receiving a PROGRAM_FORMAT request message. This means that the first
+             * PROGRAM request message following the PROGRAM_FORMAT request message starts with a
+             * Block Sequence Counter of one (1)." Written as 0x00u here, which is that same
+             * statement rather than a different one: this field holds the counter of the data
+             * transfer request being served, and every data transfer request advances it BEFORE
+             * reading it (Xcp_PgmAdvanceBlockSequenceCounter, below), so the first PROGRAM after
+             * this command reads exactly the 1 the sentence names. Storing 1 here and advancing
+             * after the read would need a second copy of the value for the deferred path --
+             * Xcp_PgmPollPendingCommand must hand Xcp_ProgramWriteFunctional the SAME counter on
+             * every poll of one transfer, which a field already advanced past that transfer's own
+             * value cannot supply.
+             *
+             * Inside the acceptance branch, not at the top of this handler: 1.6.5.1.3's "when
+             * receiving" taken to the letter would re-base the counter for a request this slave
+             * then REFUSES, and a master answered ERR_OUT_OF_RANGE has no reason to restart its own
+             * count -- so re-basing this one alone would manufacture exactly the divergence the
+             * counter exists to detect. The same reasoning DD85 already applies to pgm_format's own
+             * four fields immediately above, which a refused request likewise leaves untouched. */
+            Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
+
+            Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+            Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+        }
+    }
 
     return E_OK;
 }
@@ -910,33 +1394,65 @@ Std_ReturnType Xcp_PgmPollPendingCommand(uint8 *pStatusCode)
         }
         case XCP_PID_CMD_PROGRAM_CLEAR:
         {
-            /* Xcp_ProgramClear's contract also takes address and clearRange on every call, the
-             * same shape Xcp_ProgramPrepare's own case just above has and for the same reason: the
-             * MTA is re-read from Xcp_Internal.memory_transfer.address directly -- stable for the
-             * duration, since DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- and the
-             * clear range comes from the slot, the only place left holding it once the handler
-             * that parsed it has returned. */
-            result = Xcp_ProgramClear(Xcp_Internal.memory_transfer.address,
-                                      Xcp_Internal.pending_command.args.program_clear_range,
-                                      pStatusCode);
+            /* SP4c Task 5: PROGRAM_CLEAR's own PID is shared by both access modes (DD93), so which
+             * callback a deferred poll must re-invoke is no longer implied by pid alone --
+             * program_clear_functional says which (source/Xcp_Internal.h, its own comment). */
+            if (Xcp_Internal.pending_command.program_clear_functional == TRUE)
+            {
+                /* Xcp_ProgramClearFunctional's contract also takes the area bitmask on every call,
+                 * the same shape the absolute-mode branch just below has -- but no address: DD93's
+                 * "the MTA has no influence on the clearing functionality" holds just as much on a
+                 * later poll as it does on the handler's own first call. */
+                result = Xcp_ProgramClearFunctional(
+                        Xcp_Internal.pending_command.args.program_clear_range, pStatusCode);
+            }
+            else
+            {
+                /* Xcp_ProgramClear's contract also takes address and clearRange on every call, the
+                 * same shape Xcp_ProgramPrepare's own case just above has and for the same reason: the
+                 * MTA is re-read from Xcp_Internal.memory_transfer.address directly -- stable for the
+                 * duration, since DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- and the
+                 * clear range comes from the slot, the only place left holding it once the handler
+                 * that parsed it has returned. */
+                result = Xcp_ProgramClear(Xcp_Internal.memory_transfer.address,
+                                          Xcp_Internal.pending_command.args.program_clear_range,
+                                          pStatusCode);
+            }
             break;
         }
         case XCP_PID_CMD_PROGRAM:
         case XCP_PID_CMD_PROGRAM_MAX:
         case XCP_PID_CMD_PROGRAM_NEXT:
         {
-            /* All three commands write through the identical Xcp_ProgramWrite contract, from the
-             * identical Xcp_Internal.pgm_block standing state (Task 3; PROGRAM_NEXT joins it in
-             * Task 4, DD63) -- pData and length are re-read directly from it on every poll, exactly
-             * as the MTA is re-read from Xcp_Internal.memory_transfer.address just below, and for
-             * the same reason: stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any
-             * interloping command that could touch either. None of the three handlers stores
-             * anything in pending_command.args -- pgm_block already IS that storage, and a union
-             * member here would only duplicate it. */
-            result = Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
-                                      Xcp_Internal.pgm_block.data,
-                                      Xcp_Internal.pgm_block.length,
-                                      pStatusCode);
+            /* All three commands write through the identical write contract, from the identical
+             * Xcp_Internal.pgm_block standing state (Task 3; PROGRAM_NEXT joins it in Task 4,
+             * DD63) -- pData and length are re-read directly from it on every poll, exactly as the
+             * MTA is re-read from Xcp_Internal.memory_transfer.address, and for the same reason:
+             * stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping
+             * command that could touch either. None of the three handlers stores anything in
+             * pending_command.args -- pgm_block already IS that storage, and a union member here
+             * would only duplicate it.
+             *
+             * SP4c Task 6: WHICH write contract is Xcp_PgmCallProgramWrite's own question (below),
+             * asked here through the very same helper each handler's own first call went through,
+             * so a poll can never continue a functional write through the absolute callback or the
+             * reverse. The Block Sequence Counter that helper passes is likewise re-read from
+             * standing state, and is still this transfer's own value: nothing advances it until the
+             * NEXT data transfer request, which DD55's gate cannot let in while this one is still
+             * pending. */
+            result = Xcp_PgmCallProgramWrite(pStatusCode);
+            break;
+        }
+        case XCP_PID_CMD_PROGRAM_VERIFY:
+        {
+            /* Xcp_ProgramVerify's contract also takes mode, type and value on every call, the same
+             * shape PROGRAM_PREPARE's and PROGRAM_CLEAR's own cases above have -- all three are
+             * re-read from pending_command.args directly, since none of them is standing module
+             * state elsewhere the way the MTA is for every other PGM command's own case here. */
+            result = Xcp_ProgramVerify(Xcp_Internal.pending_command.args.program_verify.mode,
+                                       Xcp_Internal.pending_command.args.program_verify.type,
+                                       Xcp_Internal.pending_command.args.program_verify.value,
+                                       pStatusCode);
             break;
         }
         default:
@@ -996,6 +1512,11 @@ void Xcp_PgmCompletePendingCommand(uint8 statusCode)
             case XCP_PID_CMD_PROGRAM_NEXT:
             {
                 Xcp_PgmCompleteProgramWrite(statusCode);
+                break;
+            }
+            case XCP_PID_CMD_PROGRAM_VERIFY:
+            {
+                Xcp_PgmCompleteProgramVerify(statusCode);
                 break;
             }
             default:
@@ -1112,6 +1633,38 @@ static void Xcp_PgmBlockAcknowledgeFrame(void)
     Xcp_Internal.pgm_block.requested_elements -= Xcp_Internal.pgm_block.frame_elements;
 }
 
+static boolean Xcp_PgmDataTransferRefusedByFormat(void)
+{
+    boolean result;
+
+    /* One term per REQUIRED bit, each checked against pgm_format's own matching field -- see this
+     * function's own forward declaration for why pgm_format itself, and not a separate flag, is
+     * what each term reads. Mutation-verified per term (task report): deleting or inverting any
+     * ONE of the three below must fail only that capability's own parametrisation in
+     * test/pgm_format_test.py, not the other two. */
+    if (((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_COMPRESSION_REQUIRED) != 0x00u) &&
+        (Xcp_Internal.pgm_format.compression_method == 0x00u))
+    {
+        result = TRUE;
+    }
+    else if (((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_ENCRYPTION_REQUIRED) != 0x00u) &&
+             (Xcp_Internal.pgm_format.encryption_method == 0x00u))
+    {
+        result = TRUE;
+    }
+    else if (((Xcp_Ptr->general->pgmProperties & XCP_PGM_PROPERTIES_NON_SEQ_PGM_REQUIRED) != 0x00u) &&
+             (Xcp_Internal.pgm_format.programming_method == 0x00u))
+    {
+        result = TRUE;
+    }
+    else
+    {
+        result = FALSE;
+    }
+
+    return result;
+}
+
 void Xcp_PgmBlockAbort(void)
 {
     Xcp_Internal.pgm_block.requested_elements = 0x00u;
@@ -1127,6 +1680,98 @@ void Xcp_PgmBlockAbort(void)
      * Xcp_DTOCmdPgmProgram's own zero-element branch (F3) call, so it has to leave the same
      * complete, empty state Xcp_Init does. */
     Xcp_Internal.pgm_block.length = 0x0000u;
+}
+
+void Xcp_PgmFormatReset(void)
+{
+    /* SP4c Task 3, DD85: all four fields back to their own spec-default values -- see this
+     * function's own forward declaration (Xcp_Internal.h) and pgm_format's own comment there for
+     * why this is the whole of the format's lifetime, with no separate flag to keep in step. */
+    Xcp_Internal.pgm_format.compression_method = 0x00u;
+    Xcp_Internal.pgm_format.encryption_method = 0x00u;
+    Xcp_Internal.pgm_format.programming_method = 0x00u;
+    Xcp_Internal.pgm_format.access_method = 0x00u;
+
+    /* SP4c Task 6, DD86: the counter goes with the format it belongs to. DD86's own table names
+     * PROGRAM_RESET and CONNECT as its reset points, and both of those reach here -- so does
+     * SET_MTA, which DD86 does not name, and resetting there too is deliberate rather than
+     * incidental: the counter counts ONE stream, the stream is the one PROGRAM_FORMAT opened, and
+     * DD85 ends that format's life at SET_MTA. Nothing can observe the difference either way, since
+     * every path back to the functional callback runs through a fresh PROGRAM_FORMAT, which
+     * re-initialises this field regardless (Xcp_DTOCmdPgmProgramFormat above) -- and, since final
+     * review F1, because the abort below leaves no in-flight block that could reach a write callback
+     * carrying the re-based value. Before that abort existed the claim was too strong: a functional
+     * block open across a SET_MTA had its counter re-based here and then advanced back to 1 by the
+     * completing frame, so the integrator was handed 1 for a frame the master had counted as 2. */
+    Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
+
+    /* Final review F1, the half PROGRAM_FORMAT's own ERR_SEQUENCE gate cannot reach. A format that
+     * has just died cannot go on describing a transfer still in flight: 1.6.5.2.4 puts the two in
+     * ONE sentence -- the format "is valid till end of this sequence. The sequence will be
+     * terminated by other commands e.g. SET_MTA" -- so whatever ends the format ends the transfer it
+     * described, and a block half-delivered inside that sequence is part of what was terminated.
+     *
+     * Placed here rather than in Xcp_DTOCmdStdSetMta (source/Xcp_Std.c), which is the caller that
+     * needs it: SET_MTA is the ONE door out of the three that did not already abort the block on its
+     * own (Xcp_CTOCmdStdConnect and Xcp_PgmCompleteProgramReset both call Xcp_PgmBlockAbort()
+     * immediately beside their own call to this function, so for them this line is an idempotent
+     * no-op), and putting the abort inside the format's own reset makes the invariant hold at every
+     * door there will ever be instead of at the two somebody remembered.
+     *
+     * Aborting rather than refusing, and that asymmetry with PROGRAM_FORMAT above is forced by the
+     * specification rather than chosen: 1.6.5.1.1 lists SET_MTA FIRST among the commands that "must
+     * always be available during a memory programming sequence", and SET_MTA's own 1.7.3.2.1 row
+     * carries no ERR_SEQUENCE to refuse it with (1.0: ERR_CMD_BUSY, ERR_PGM_ACTIVE,
+     * ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE). So SET_MTA still answers 0xFF and still
+     * moves the MTA; what it may not do is leave a block behind that a later PROGRAM_NEXT completes
+     * into the wrong callback, or at an address the opening PROGRAM never named. The master learns
+     * on its next PROGRAM_NEXT, which is refused ERR_SEQUENCE by Xcp_DTOCmdPgmProgramNext's own
+     * block gate -- a code in THAT command's 1.7.3.2.5 row, whose stated master action is
+     * "SYNCH+PROGRAM", i.e. re-open the block, which is exactly the recovery this state calls for.
+     *
+     * Discarding the partial block loses nothing the master was ever promised: 1.6.5.1.3 has the
+     * slave acknowledge only the LAST frame of a block transfer, so nothing in an incomplete one was
+     * agreed final -- DD64's own reasoning for the zero-element PROGRAM, which discards rather than
+     * flushes for that same reason (Xcp_DTOCmdPgmProgram above). */
+    Xcp_PgmBlockAbort();
+}
+
+static void Xcp_PgmAdvanceBlockSequenceCounter(void)
+{
+    /* One statement, and the rollover comes free with it: 1.1/1.6.5.1.3's "at the maximum value the
+     * Block Sequence Counter rolls over and starts at 0x00 with the next data transfer request
+     * message" is exactly what an unsigned addition past this type's maximum already does, by C's
+     * own definition of unsigned arithmetic. An explicit `== 0xFFFFFFFFu ? 0x00u : n + 0x01u`
+     * would restate that in a branch this suite could never execute -- reaching it takes 2^32 data
+     * transfer requests -- and an unreachable branch is one nothing can prove right; see this
+     * field's own comment in source/Xcp_Internal.h, and the task report, for how the rollover was
+     * verified instead. */
+    Xcp_Internal.pgm_block_sequence_counter += 0x00000001u;
+}
+
+static Std_ReturnType Xcp_PgmCallProgramWrite(uint8 *pStatusCode)
+{
+    Std_ReturnType result;
+
+    /* See this function's own forward declaration above for why one helper serves all four call
+     * sites, and why any non-zero access method -- not only 0x01 -- selects the functional
+     * callback. */
+    if (Xcp_Internal.pgm_format.access_method != 0x00u)
+    {
+        result = Xcp_ProgramWriteFunctional(Xcp_Internal.pgm_block_sequence_counter,
+                                            Xcp_Internal.pgm_block.data,
+                                            Xcp_Internal.pgm_block.length,
+                                            pStatusCode);
+    }
+    else
+    {
+        result = Xcp_ProgramWrite(Xcp_Internal.memory_transfer.address,
+                                  Xcp_Internal.pgm_block.data,
+                                  Xcp_Internal.pgm_block.length,
+                                  pStatusCode);
+    }
+
+    return result;
 }
 
 static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
@@ -1282,6 +1927,14 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
          * where that sequence's state belongs, not correct only by virtue of a line in another
          * file. */
         Xcp_PgmBlockAbort();
+
+        /* SP4c Task 3, DD85: PROGRAM_RESET ends the format's own lifetime exactly as it ends the
+         * session's -- the identical defence-in-depth reasoning the two paragraphs above already
+         * give for pgm_state and pgm_block, and the identical unobservability, for the identical
+         * reason: the CONNECT that necessarily follows a disconnect (Xcp_CTOCmdStdConnect,
+         * Xcp_Std.c) already calls this same function on its own door. */
+        Xcp_PgmFormatReset();
+
         Xcp_DisconnectSession();
     }
     else
@@ -1369,8 +2022,22 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
          * length by the time this runs, whether it was set once by a single-frame PROGRAM/
          * PROGRAM_MAX (Task 3) or accumulated across a PROGRAM plus however many PROGRAM_NEXT
          * frames a master block mode sequence needed (DD63) -- this line has no way to tell the
-         * two shapes apart, and does not need to. */
-        Xcp_Internal.memory_transfer.address += Xcp_Internal.pgm_block.length;
+         * two shapes apart, and does not need to.
+         *
+         * SP4c Task 6 conditions it on the access mode, and the specification's own layout is why:
+         * the sentence quoted above sits under 1.6.5.1.3's *Absolute Access mode* heading, while
+         * its *Functional Access mode* paragraph -- the one that says "the ECU software knows the
+         * start address for the new flash content automatically" -- replaces the MTA's meaning
+         * entirely with the Block Sequence Counter (DD86) and never post-increments an address.
+         * Advancing it anyway would be silent and, for a master that programmed functionally and
+         * then switched to absolute access without re-sending SET_MTA, wrong by one whole block.
+         * test/pgm_functional_test.py's own test_a_functional_write_never_moves_the_mta observes
+         * exactly that, through the only window the harness has on this field: a following absolute
+         * write's own address argument. */
+        if (Xcp_Internal.pgm_format.access_method == 0x00u)
+        {
+            Xcp_Internal.memory_transfer.address += Xcp_Internal.pgm_block.length;
+        }
 
         /* 1.1/1.6.5.1.3 and 1.6.5.2.6 both specify no response payload beyond the standard
          * positive response, matching PROGRAM_RESET's, PROGRAM_PREPARE's and PROGRAM_CLEAR's own
@@ -1409,6 +2076,33 @@ static void Xcp_PgmCompleteProgramWrite(uint8 statusCode)
          * others -- the same code PROGRAM's own row gives for the identical situation, so no new
          * recorded exception is needed for this third command to reach it. */
         Xcp_FillErrorPacket(XCP_E_ASAM_ACCESS_DENIED, &Xcp_Internal.cto_response.pdu_info);
+    }
+
+    /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */
+    Xcp_Internal.cto_response.successful_transmission_pending = TRUE;
+}
+
+static void Xcp_PgmCompleteProgramVerify(uint8 statusCode)
+{
+    if (statusCode == 0x00u)
+    {
+        /* 1.1/1.6.5.2.7 specifies no response payload beyond the standard positive response --
+         * matching PROGRAM_RESET's, PROGRAM_PREPARE's and PROGRAM_CLEAR's own success responses
+         * above. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        /* Design doc DD91: "ERR_VERIFY, also in the row, is answered when the integrator reports
+         * failure." Unlike PROGRAM_CLEAR's and PROGRAM_WRITE's own ERR_ACCESS_DENIED just above --
+         * both statements about memory that could not be reached -- a failed verification is a
+         * statement about content that WAS reached and read, but did not pass the check, which is
+         * the more precise condition XCP part 2 - Protocol Layer Specification 1.7.3.2.5's own
+         * ERR_VERIFY names directly for this row. No deviation: this is the listed code, not a
+         * substitute for one the row omits. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_VERIFY, &Xcp_Internal.cto_response.pdu_info);
     }
 
     /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */

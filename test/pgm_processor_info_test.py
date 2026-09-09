@@ -36,9 +36,23 @@ def test_get_pgm_processor_info_reports_pgm_properties_absolute_mode_only():
 
 
 def test_get_pgm_processor_info_reports_max_sector_zero():
-    """DD68. Truthful for a slave with no sector description: GET_SECTOR_INFO (still unimplemented,
-    SP4c) answers ERR_OUT_OF_RANGE for a sector that is not available (1.0/1.6.5.2.2), and every
-    sector number is out of range when MAX_SECTOR is 0.
+    """DD68's original claim, still truthful for a slave with no sector description: GET_SECTOR_INFO
+    answers ERR_SEGMENT_NOT_VALID for a sector that is not available, and every sector number is out
+    of range when MAX_SECTOR is 0.
+
+    Final review F10: this docstring used to say GET_SECTOR_INFO was "still unimplemented, SP4c" and
+    answered ERR_OUT_OF_RANGE, and it was wrong twice over. SP4c Task 2 implements the command
+    (Xcp_DTOCmdPgmGetSectorInfo, source/Xcp_Pgm.c), and DD88 settles the code against 1.6.5.2.2's own
+    self-contradiction: the section's PROSE says ERR_OUT_OF_RANGE, but §1.7.3.2.5's row for that same
+    command lists ERR_CMD_BUSY, ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_MODE_NOT_VALID and
+    ERR_SEGMENT_NOT_VALID and no ERR_OUT_OF_RANGE at all -- so the listed code that fits is used and
+    no deviation is taken (DD65's rule from SP4b). This was the last surviving copy of the prediction
+    DD88 falsified; test/pgm_sector_test.py asserts the actual code, and MAX_SECTOR's own agreement
+    with a GET_SECTOR_INFO walk is pinned there too.
+
+    Still MAX_SECTOR zero here, and by configuration rather than by the hardcoding DD68 described:
+    `sectors` defaults empty (test/parameter.py), MAX_SECTOR is that array's length (DD87), and this
+    test's own handle declares no sector.
 
     The PID is checked too, and deliberately not left implicit: this suite's own default
     trailing_value is 0 (test/parameter.py), and Xcp_FillErrorPacket's own 2-byte error shape
@@ -135,10 +149,17 @@ def test_get_pgm_processor_info_advertised_absolute_only_mode_matches_program_cl
     the SAME fact, checked together in one test, rather than trusted to stay in step because two
     separate test files each happen to assert their own half forever. DD68 is the advertisement --
     ABSOLUTE_MODE only; DD67 is the enforcement -- PROGRAM_CLEAR mode 0x01 (functional) refused
-    ERR_OUT_OF_RANGE. pgm_clear_test.py's own
-    test_program_clear_functional_mode_is_refused_err_out_of_range_without_calling_the_integrator
-    already pins DD67 in isolation; what only THIS test pins is the two facts drifting apart, which
-    asserting each alone in its own file cannot catch."""
+    ERR_OUT_OF_RANGE. What only THIS test pins is the two facts drifting apart, which asserting each
+    alone in its own file cannot catch.
+
+    Final review F11: the sentence removed here cited
+    test_program_clear_functional_mode_is_refused_err_out_of_range_without_calling_the_integrator as
+    the test that "already pins DD67 in isolation". SP4c Task 5 deleted that test, because DD93
+    falsifies its whole premise -- this slave CAN offer functional clear, and does when configured.
+    The isolated half now lives in test/pgm_functional_test.py's own
+    test_program_clear_functional_is_refused_when_not_configured. This test's own claim is unchanged
+    and still worth making: it is the pairing, on a build that configures no functional access, that
+    nothing else asserts in one place."""
     handle = pgm_clear_handle()
 
     info_response = get_pgm_processor_info(handle)

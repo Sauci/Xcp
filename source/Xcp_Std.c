@@ -757,6 +757,16 @@ uint8 Xcp_DTOCmdStdSetMta(boolean *responseExpected, const PduInfoType *pPduInfo
     Xcp_Internal.memory_transfer.extension = pPduInfo->SduDataPtr[0x03u];
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], (uint32 *)&Xcp_Internal.memory_transfer.address, Xcp_Ptr->general->byteOrder);
 
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    /* SP4c Task 3, design doc DD85: "the format resets to defaults on SET_MTA" -- one of the three
+     * doors that end PROGRAM_FORMAT's own lifetime, and the one this module reaches through
+     * Xcp_PgmFormatReset (source/Xcp_Pgm.c) rather than by writing Xcp_Internal.pgm_format's own
+     * fields directly: SET_MTA is a STD command, and DD63 keeps every writer of PGM state inside
+     * Xcp_Pgm.c -- a STD command reaching into PGM state directly is the shape that produced a
+     * memory disclosure two branches ago (SP4b's DD70). */
+    Xcp_PgmFormatReset();
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
+
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);
 
@@ -1513,6 +1523,13 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
      * already clears this on its own door into a fresh session; this is the same clearing on the
      * other one. */
     Xcp_PgmBlockAbort();
+
+    /* SP4c Task 3, design doc DD85: CONNECT is one of the three doors that end PROGRAM_FORMAT's
+     * own lifetime, the same session-boundary reasoning the two paragraphs above already give for
+     * pgm_state and pgm_block -- a programming session's format is exactly the kind of state
+     * 1.0/2.3 has reset between sessions, and until this line it would have been the one piece
+     * still surviving a reconnect. */
+    Xcp_PgmFormatReset();
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 
     /* DD74 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). This

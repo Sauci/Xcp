@@ -321,7 +321,19 @@
               "xcp_program_clear_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_program_clear_functional_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_program_verify_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_program_format_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "xcp_program_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
+              "xcp_program_write_functional_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
               "xcp_program_max_api_enable": {
@@ -424,7 +436,11 @@
               "xcp_alloc_odt_api_enable",
               "xcp_alloc_odt_entry_api_enable",
               "xcp_program_clear_api_enable",
+              "xcp_program_clear_functional_api_enable",
+              "xcp_program_verify_api_enable",
+              "xcp_program_format_api_enable",
               "xcp_program_api_enable",
+              "xcp_program_write_functional_api_enable",
               "xcp_program_max_api_enable",
               "xcp_program_start_api_enable",
               "xcp_program_reset_api_enable",
@@ -779,6 +795,19 @@
       "required": ["freeze_supported"],
       "additionalProperties": false
     },
+    "sector": {
+      "type": "object",
+      "properties": {
+        "start_address": {"type": "integer", "minimum": 0},
+        "length": {"type": "integer", "minimum": 0},
+        "clear_sequence_number": {"type": "integer", "minimum": 0, "maximum": 255},
+        "program_sequence_number": {"type": "integer", "minimum": 0, "maximum": 255},
+        "programming_method": {"type": "integer", "minimum": 0, "maximum": 255}
+      },
+      "required": ["start_address", "length", "clear_sequence_number",
+                   "program_sequence_number", "programming_method"],
+      "additionalProperties": false
+    },
     "programming": {
       "type": "object",
       "properties": {
@@ -789,9 +818,47 @@
           "default": 8,
           "minimum": 1,
           "maximum": 255
+        },
+        "sectors": {
+          "description": "Flash SECTORs GET_SECTOR_INFO reports (XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.2). MAX_SECTOR -- GET_PGM_PROCESSOR_INFO's own byte 2 -- is derived as this array's length (design doc DD87, docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md), so the two commands cannot drift apart. Capped at 255, one less than the 256 a naive count could reach, so MAX_SECTOR itself, and every valid SECTOR_NUMBER in [0, MAX_SECTOR), still fit the uint8 the wire carries them in -- the same reasoning `segments` above is capped at 255 for maxSegment.",
+          "type": "array",
+          "maxItems": 255,
+          "items": {"$ref": "#/definitions/sector"}
+        },
+        "compression_supported": {
+          "description": "PGM_PROPERTIES bit 2, COMPRESSION_SUPPORTED (XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.1). PROGRAM_FORMAT (SP4c Task 3, design doc DD89) accepts a non-zero compression method only when this is true; GET_PGM_PROCESSOR_INFO advertises the identical bit, from the identical flag, so the two cannot drift apart.",
+          "type": "boolean",
+          "default": false
+        },
+        "compression_required": {
+          "description": "PGM_PROPERTIES bit 3, COMPRESSION_REQUIRED. Design doc DD90: with this true, a PROGRAM/PROGRAM_MAX/PROGRAM_NEXT arriving with no preceding PROGRAM_FORMAT in the current sequence is refused ERR_SEQUENCE (XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.4).",
+          "type": "boolean",
+          "default": false
+        },
+        "encryption_supported": {
+          "description": "PGM_PROPERTIES bit 4, ENCRYPTION_SUPPORTED. Same rule as compression_supported above, applied to PROGRAM_FORMAT's encryption method byte.",
+          "type": "boolean",
+          "default": false
+        },
+        "encryption_required": {
+          "description": "PGM_PROPERTIES bit 5, ENCRYPTION_REQUIRED. Same rule as compression_required above, applied to the encryption method.",
+          "type": "boolean",
+          "default": false
+        },
+        "non_sequential_supported": {
+          "description": "PGM_PROPERTIES bit 6, NON_SEQ_PGM_SUPPORTED. Same rule as compression_supported above, applied to PROGRAM_FORMAT's programming method byte (sequential vs non-sequential).",
+          "type": "boolean",
+          "default": false
+        },
+        "non_sequential_required": {
+          "description": "PGM_PROPERTIES bit 7, NON_SEQ_PGM_REQUIRED. Same rule as compression_required above, applied to the programming method.",
+          "type": "boolean",
+          "default": false
         }
       },
-      "required": ["enabled", "max_block_size"],
+      "required": ["enabled", "max_block_size", "compression_supported", "compression_required",
+                   "encryption_supported", "encryption_required", "non_sequential_supported",
+                   "non_sequential_required"],
       "additionalProperties": false
     }
   }

@@ -353,29 +353,55 @@ configuration, exactly the way a declared segment turns on **PAG**. The generato
 listed below are compiled in. With the flag clear they are compiled out and their dispatch entries answer
 `ERR_CMD_UNKNOWN`, which is also what an individually disabled command answers.
 
-Three commands exist today. Each has its own `apis.xcp_program_*_api_enable` key, so a build may compile the group in
-and still withhold one:
+**All eleven PGM commands are implemented.** Eight have their own `apis.xcp_program_*_api_enable` key, so a build may
+compile the group in and still withhold one; the other three have no key and are reachable whenever the group is:
 
-| command                | key                                | purpose                                                                       |
-|:-----------------------|:-----------------------------------|:-------------------------------------------------------------------------------|
-| ```PROGRAM_START```    | `xcp_program_start_api_enable`     | opens the programming sequence, and reports the programming-mode communication parameters |
-| ```PROGRAM_PREPARE```  | `xcp_program_prepare_api_enable`   | declares the target and size of a code download, before or during a sequence  |
-| ```PROGRAM_RESET```    | `xcp_program_reset_api_enable`     | ends the sequence, answers, and disconnects                                   |
+| command                        | key                                | purpose                                                                       |
+|:-------------------------------|:-----------------------------------|:-------------------------------------------------------------------------------|
+| ```PROGRAM_START```            | `xcp_program_start_api_enable`     | opens the programming sequence, and reports the programming-mode communication parameters |
+| ```PROGRAM_CLEAR```            | `xcp_program_clear_api_enable`     | erases flash — by address and length, or by memory *area* in functional access mode |
+| ```PROGRAM```                  | `xcp_program_api_enable`           | transfers code, opening a master block mode block when the declared count needs one |
+| ```PROGRAM_NEXT```             | *(none)*                           | continues an open block; the slave answers only its last frame                 |
+| ```PROGRAM_MAX```              | `xcp_program_max_api_enable`       | transfers a fixed `MAX_CTO - 1` block with no element count in the frame       |
+| ```PROGRAM_PREPARE```          | `xcp_program_prepare_api_enable`   | declares the target and size of a code download, before or during a sequence  |
+| ```PROGRAM_FORMAT```           | `xcp_program_format_api_enable`    | sets compression, encryption, programming and **access** mode for the transfer to follow |
+| ```PROGRAM_VERIFY```           | `xcp_program_verify_api_enable`    | asks the ECU to verify the new flash contents                                  |
+| ```PROGRAM_RESET```            | `xcp_program_reset_api_enable`     | ends the sequence, answers, and disconnects                                   |
+| ```GET_PGM_PROCESSOR_INFO```   | *(none)*                           | reports `PGM_PROPERTIES` and `MAX_SECTOR`                                      |
+| ```GET_SECTOR_INFO```          | *(none)*                           | reports one flash sector's address, length, clear/program order and method     |
 
-The work behind each is delegated to the integrator through three functions, whose prototypes are declared directly in
-[Xcp.h](./interface/Xcp.h) — unlike the paging and seed/key callbacks, which live in their own headers — under the same
-`XCP_FLASH_PROGRAMMING_ENABLED` guard, so a build with the group compiled out neither declares nor requires them:
+The work behind them is delegated to the integrator through **nine** functions, whose prototypes are declared directly
+in [Xcp.h](./interface/Xcp.h) — unlike the paging and seed/key callbacks, which live in their own headers — under the
+same `XCP_FLASH_PROGRAMMING_ENABLED` guard, so a build with the group compiled out neither declares nor requires them.
+**A programming build requires all nine**: the guard is the group's own, not per-command, so the four functional and
+verification callbacks must be supplied even by a build that leaves `xcp_program_verify_api_enable` and both
+`*_functional_api_enable` keys clear. Provisioning fewer than nine is a link failure, not a runtime one:
 
-| function                 | called by         | purpose                                                                        |
-|:-------------------------|:------------------|:--------------------------------------------------------------------------------|
-| ```Xcp_ProgramStart```   | `PROGRAM_START`   | enter programming mode                                                          |
-| ```Xcp_ProgramPrepare``` | `PROGRAM_PREPARE` | make the target memory area ready for a code download of the announced size     |
-| ```Xcp_ProgramReset```   | `PROGRAM_RESET`   | leave programming mode, and perform a device reset if the ECU wants one         |
+| function                            | called by                        | purpose                                                                        |
+|:------------------------------------|:---------------------------------|:--------------------------------------------------------------------------------|
+| ```Xcp_ProgramStart```              | `PROGRAM_START`                  | enter programming mode                                                          |
+| ```Xcp_ProgramPrepare```            | `PROGRAM_PREPARE`                | make the target memory area ready for a code download of the announced size     |
+| ```Xcp_ProgramReset```              | `PROGRAM_RESET`                  | leave programming mode, and perform a device reset if the ECU wants one         |
+| ```Xcp_ProgramClear```              | `PROGRAM_CLEAR` (mode `0x00`)    | erase `clearRange` bytes starting at the MTA                                    |
+| ```Xcp_ProgramWrite```              | `PROGRAM`/`_MAX`/`_NEXT`         | write a completed block at the MTA — absolute access mode                       |
+| ```Xcp_ProgramVerify```             | `PROGRAM_VERIFY`                 | verify the new flash contents; report failure as `ERR_VERIFY`                   |
+| ```Xcp_ProgramFormat```             | `PROGRAM_FORMAT`                 | accept, or decline, the compression/encryption/programming/access methods requested |
+| ```Xcp_ProgramClearFunctional```    | `PROGRAM_CLEAR` (mode `0x01`)    | erase whole memory *areas* named by a bitmask — no address is passed at all     |
+| ```Xcp_ProgramWriteFunctional```    | `PROGRAM`/`_MAX`/`_NEXT`         | write a completed block the ECU places itself, given a Block Sequence Counter   |
 
-All three are **polled**, copying `Xcp_StoreCalibrationDataToNonVolatileMemory`'s contract: the command handler calls
-the function once, and `Xcp_MainFunction` keeps calling it until it returns `E_OK`. An implementation whose work is
+The last two are functional access mode, which `PROGRAM_FORMAT`'s access method byte selects and which changes what the
+MTA *means* — under it the ECU knows where the new image goes, and the counter, not an address, is what the module
+hands over. They are the reason the absolute and functional callbacks are separate rather than one callback with a mode
+parameter: a block sequence number cannot be passed in a `void *`. Both are advertised as one capability by
+`PGM_PROPERTIES`' `FUNCTIONAL_MODE` bit, so generation refuses a configuration that enables one without the other, or
+that enables either without `PROGRAM_FORMAT` — the command through which a master selects the mode at all.
+
+**Eight of the nine are polled**, copying `Xcp_StoreCalibrationDataToNonVolatileMemory`'s contract: the command handler
+calls the function once, and `Xcp_MainFunction` keeps calling it until it returns `E_OK`. An implementation whose work is
 instantaneous returns `E_OK` from the first call and the master is answered on that very exchange, with no deferral at
 all; one that erases flash returns `E_NOT_OK` for as long as it needs, and the response is withheld until it finishes.
+`Xcp_ProgramFormat` is the exception and is **synchronous** — it sets four bytes rather than driving flash, so there is
+nothing in it worth deferring; a non-`E_OK` return or a non-zero status code there is answered `ERR_OUT_OF_RANGE`.
 While it is unfinished the slave emits `EV_CMD_PENDING` to keep the master's time-out from expiring — one event at a
 time, re-emitted after each is confirmed rather than on a schedule — and answers any other command with `ERR_CMD_BUSY`,
 except `SYNCH`, which the specification requires to stay available. A `SYNCH` in that window abandons the response, not
@@ -397,12 +423,11 @@ the ECU. Because the module declines the reset, it takes on what the reset would
 programming session to idle, so a master that disappears mid-sequence — or a build with no `PROGRAM_RESET` compiled in
 — leaves nothing behind for the next session.
 
-The remaining eight **PGM** commands (`PROGRAM_CLEAR`, `PROGRAM`, `PROGRAM_MAX`, `PROGRAM_NEXT`, `PROGRAM_FORMAT`,
-`PROGRAM_VERIFY`, `GET_SECTOR_INFO`, `GET_PGM_PROCESSOR_INFO`) are not implemented and answer `ERR_CMD_UNKNOWN`. Three
-of them define `CONNECT`'s "flash programming available" resource bit, so enabling
-`xcp_program_clear_api_enable`, `xcp_program_api_enable` or `xcp_program_max_api_enable` in a build with
-`programming.enabled` set is refused at code generation rather than shipped as an advertisement with nothing behind it.
-`resource_protection.programming`, by contrast, is accepted in such a build. A granted resource lasts the whole XCP
+`PROGRAM_CLEAR`, `PROGRAM` and `PROGRAM_MAX` are the three commands XCP part 2 §1.6.1.1.1 defines `CONNECT`'s "flash
+programming available" resource bit by naming, so that bit is set only when all three are enabled — earlier releases
+refused such a configuration at code generation instead, because the commands did not yet exist; all three are
+implemented now, so the refusal is gone and `config/xcp.json` enables all three by default.
+`resource_protection.programming` is likewise accepted in a programming build. A granted resource lasts the whole XCP
 session (see *Key lifetime* above), so the `GET_SEED`/`UNLOCK` round that admits `PROGRAM_START` is still in effect when
 `PROGRAM_RESET` — itself a **PGM** command, and the only one that ends the session — is due. That is what makes a
 protected **PGM** group able to leave programming mode at all, given that `GET_SEED` and `UNLOCK` are themselves
@@ -435,11 +460,15 @@ refused `ERR_PGM_ACTIVE` while the session is open.
 - Synchronous data stimulation is implemented (SP3), less `BIT_STIM` and `EV_STIM_TIMEOUT`, and less runtime
   protection of the `STIM` resource — a configuration that is stimulation-capable *and* declares `STIM` protected
   is refused at generation rather than shipped with a gate that does nothing.
-- Flash programming (see *Flash programming* above) covers `PROGRAM_START`, `PROGRAM_PREPARE` and `PROGRAM_RESET`.
-  The other eight **PGM** commands answer `ERR_CMD_UNKNOWN`; `PROGRAM_CLEAR`, `PROGRAM` and `PROGRAM_MAX` are the
-  three `CONNECT`'s flash-programming resource bit is defined by, so enabling their API keys in a programming build
-  is refused at generation and that bit is never set until they exist. Until they do, the group can open, prepare
-  and end a programming sequence, but nothing in it transfers or erases code.
+- Flash programming (see *Flash programming* above) is **complete**: all eleven **PGM** commands are implemented, in
+  both absolute and functional access mode, and the group is compiled out by default (`programming.enabled`). Two
+  limitations remain inside it. Functional access mode ships **off** by default — `xcp_program_clear_functional_api_enable`
+  and `xcp_program_write_functional_api_enable` are both clear in `config/xcp.json` — because enabling it obliges the
+  integrator to implement two more callbacks and changes what the MTA means; a build that wants it must also enable
+  `PROGRAM_FORMAT`, which generation enforces. And the Block Sequence Counter's rollover at `0xFFFFFFFF` is a property
+  of C's unsigned arithmetic rather than of a branch, so no test in this suite executes it: reaching it takes 2^32 data
+  transfer requests. What is tested is the width the integrator actually receives, which is the only way a silent
+  narrowing could be caught.
 - At most one DTO frame is in flight at a time (SP2c): `Xcp_StartNextTransmission` arbitrates a single transmit
   slot across command responses, event packets and DAQ frames alike, and starts the next one only once the
   current one is confirmed. This is mandatory rather than a simplification, not merely a design choice this

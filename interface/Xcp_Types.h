@@ -564,6 +564,28 @@ typedef struct
     const Xcp_AddressMappingType *addressMapping;
 } Xcp_SegmentType;
 
+/**
+ * @brief a flash SECTOR, as GET_SECTOR_INFO reports it.
+ * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.2. `length` is in BYTES, not address
+ * granularity units: 1.0 reads mode 1's SECTOR_INFO as "[AG]" but 1.1 says "in bytes" and adds
+ * "Length mod AG = 0" -- a rule that only needs stating if the value is bytes, since it is
+ * trivially true in AG units. This design follows 1.1 (design doc DD87,
+ * docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md); generation refuses a configured
+ * length that is not a multiple of the configured address granularity
+ * (script/source_cfg.c.jinja2), turning the rule into a build-time check.
+ * @note clearSequenceNumber and programSequenceNumber are reported verbatim, never derived or
+ * enforced by this module -- 1.6.5.2.2's own example shows the clear order (0,1,2) and the program
+ * order (5,4,3) differing from each other and from sector order.
+ */
+typedef struct
+{
+    const uint32 address;
+    const uint32 length;
+    const uint8 clearSequenceNumber;
+    const uint8 programSequenceNumber;
+    const uint8 programmingMethod;
+} Xcp_SectorType;
+
 typedef struct
 {
     const Xcp_DaqConfigTypeType daqConfigType;
@@ -611,6 +633,9 @@ typedef struct
     const uint8 trailingValue; /* not part of the specification... */
     const char *identification; /* not part of the specification... */
     const uint8 maxSegment; /* not part of the specification... */
+    const uint8 maxSector; /* not part of the specification... */
+    const uint8 pgmProperties; /* not part of the specification... */
+    const boolean pgmClearFunctionalSupported; /* not part of the specification... */
     const uint8 pagProperties; /* not part of the specification... */
     const boolean overloadEvent; /* not part of the specification... */
 } Xcp_GeneralType;
@@ -626,6 +651,7 @@ typedef struct
     const Xcp_EventChannelType *eventChannel;
     const void *pdu;
     const Xcp_SegmentType *segment;
+    const Xcp_SectorType *sector;
 } Xcp_ConfigType;
 
 typedef struct {

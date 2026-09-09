@@ -134,6 +134,18 @@ def segment(name='CAL_SEG',
             "address_mappings": list(address_mappings) if address_mappings is not None else []}
 
 
+def sector(start_address=0,
+          length=0,
+          clear_sequence_number=0,
+          program_sequence_number=0,
+          programming_method=0):
+    return {"start_address": start_address,
+            "length": length,
+            "clear_sequence_number": clear_sequence_number,
+            "program_sequence_number": program_sequence_number,
+            "programming_method": programming_method}
+
+
 def daq(name='DAQ1',
         type='DAQ',
         max_odt=1,
@@ -225,6 +237,24 @@ class DefaultConfig(dict):
                  # own max_bs, which this module no longer reports in programming mode. Defaults
                  # to the schema's own default of 8.
                  programming_max_block_size=8,
+                 # GET_SECTOR_INFO's own config array (SP4c Task 2), threaded through the same way
+                 # `segments` above is: always present in the rendered configuration, empty by
+                 # default so every existing test that never mentions a sector keeps generating a
+                 # build with MAX_SECTOR 0, exactly as before this task.
+                 sectors=(),
+                 # PROGRAM_FORMAT's own PGM_PROPERTIES capability pairs (SP4c Task 3, design doc
+                 # DD89/DD90). False by default, matching every other capability flag's own
+                 # gate-off-friendly default here and keeping GET_PGM_PROCESSOR_INFO's PGM_PROPERTIES
+                 # byte at the pre-existing 0x01 (ABSOLUTE_MODE only) for every test that never
+                 # mentions them -- test/pgm_processor_info_test.py's own
+                 # test_get_pgm_processor_info_reports_pgm_properties_absolute_mode_only relies on
+                 # exactly that.
+                 programming_compression_supported=False,
+                 programming_compression_required=False,
+                 programming_encryption_supported=False,
+                 programming_encryption_required=False,
+                 programming_non_sequential_supported=False,
+                 programming_non_sequential_required=False,
                  xcp_set_request_api_enable=True,
                  xcp_get_id_api_enable=True,
                  xcp_get_seed_api_enable=True,
@@ -270,7 +300,41 @@ class DefaultConfig(dict):
                  xcp_alloc_odt_api_enable=False,
                  xcp_alloc_odt_entry_api_enable=False,
                  xcp_program_clear_api_enable=True,
+                 # Coordinator ruling (task-5-report.md, "fix section"): unlike every sibling
+                 # xcp_program_*_api_enable kwarg above and below, this one defaults False, not
+                 # True. DD92's PGM_PROPERTIES FUNCTIONAL_MODE bit advertises "functional access is
+                 # available" as ONE combined capability, honestly advertisable only once BOTH
+                 # halves exist (this flag AND Task 6's own xcp_program_write_functional_api_enable)
+                 # -- so defaulting this one flag on, alone, would silently grant every existing
+                 # configuration (this DefaultConfig() included) a mode PGM_PROPERTIES still
+                 # advertises as unavailable (FUNCTIONAL_MODE stays 0 until Task 6). That is D10's
+                 # own defect class, inverted: implementing an unadvertised capability rather than
+                 # advertising an unimplemented one, and this module has refused generation over the
+                 # first shape (DD41) and refused the second at the handler (DD67/DD68) since before
+                 # this task existed. test/pgm_functional_test.py's own handle sets this True
+                 # explicitly, the same way pgm_clear_handle() below sets xcp_program_clear_api_
+                 # enable=True explicitly despite it already defaulting True -- explicit because the
+                 # positive-path tests need the capability on, not because the default should be.
+                 xcp_program_clear_functional_api_enable=False,
+                 xcp_program_verify_api_enable=True,
+                 xcp_program_format_api_enable=True,
                  xcp_program_api_enable=True,
+                 # SP4c Task 6: defaults False, for the same reason
+                 # xcp_program_clear_functional_api_enable above does, and the two must now agree --
+                 # script/source_cfg.c.jinja2 refuses to generate a configuration that enables one
+                 # without the other (DD92: PGM_PROPERTIES carries ONE FUNCTIONAL_MODE bit for both
+                 # halves of the one capability). With both halves finally implemented the pair
+                 # COULD honestly default True, and the coordinator left the choice to this task;
+                 # False is deliberate. Functional access is not a property of this module -- it is
+                 # a property of the integrator's flash driver, which 1.6.5.1.3 requires to know
+                 # "the start address for the new flash content automatically", and 1.6.5.1.2 to
+                 # erase by AREA rather than by address. A default that advertised FUNCTIONAL_MODE
+                 # would promise a master those two behaviours from every build whose integrator has
+                 # not written them, which is D10's own defect class -- the same argument that put
+                 # this pair's first half at False, now standing on its own rather than on the
+                 # advertisement being impossible. Absolute access stays unconditional, so no
+                 # existing build changes.
+                 xcp_program_write_functional_api_enable=False,
                  xcp_program_max_api_enable=True,
                  xcp_program_start_api_enable=True,
                  xcp_program_reset_api_enable=True,
@@ -359,7 +423,14 @@ class DefaultConfig(dict):
                 "segments": list(segments),
                 "paging": {"freeze_supported": freeze_supported},
                 "programming": {"enabled": programming_enabled,
-                                "max_block_size": programming_max_block_size},
+                                "max_block_size": programming_max_block_size,
+                                "sectors": list(sectors),
+                                "compression_supported": programming_compression_supported,
+                                "compression_required": programming_compression_required,
+                                "encryption_supported": programming_encryption_supported,
+                                "encryption_required": programming_encryption_required,
+                                "non_sequential_supported": programming_non_sequential_supported,
+                                "non_sequential_required": programming_non_sequential_required},
                 # event()'s own bare default omits "name" (see its docstring comment), and
                 # publish_names defaults to True two lines above -- so DefaultConfig's own
                 # fallback event needs a name of its own, or every test that builds DefaultConfig()
@@ -408,7 +479,15 @@ class DefaultConfig(dict):
                     "xcp_alloc_odt_api_enable": {"enabled": xcp_alloc_odt_api_enable, "protected": False},
                     "xcp_alloc_odt_entry_api_enable": {"enabled": xcp_alloc_odt_entry_api_enable, "protected": False},
                     "xcp_program_clear_api_enable": {"enabled": xcp_program_clear_api_enable, "protected": False},
+                    "xcp_program_clear_functional_api_enable": {
+                            "enabled": xcp_program_clear_functional_api_enable, "protected": False},
+                    "xcp_program_verify_api_enable": {"enabled": xcp_program_verify_api_enable,
+                                                       "protected": False},
+                    "xcp_program_format_api_enable": {"enabled": xcp_program_format_api_enable,
+                                                       "protected": False},
                     "xcp_program_api_enable": {"enabled": xcp_program_api_enable, "protected": False},
+                    "xcp_program_write_functional_api_enable": {
+                            "enabled": xcp_program_write_functional_api_enable, "protected": False},
                     "xcp_program_max_api_enable": {"enabled": xcp_program_max_api_enable, "protected": False},
                     "xcp_program_start_api_enable": {"enabled": xcp_program_start_api_enable, "protected": False},
                     "xcp_program_reset_api_enable": {"enabled": xcp_program_reset_api_enable, "protected": False},

@@ -329,7 +329,11 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
     Xcp_CmdNotImplemented, /* 0xC5 */
     Xcp_CmdNotImplemented, /* 0xC6 */
     Xcp_DTOCmdDaqWriteDaqMultiple, /* WRITE_DAQ_MULTIPLE 0xC7, new in 1.1, optional */
-    Xcp_CmdNotImplemented, /* 0xC8 */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramVerify, /* PROGRAM_VERIFY 0xC8, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_VERIFY 0xC8, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramMax, /* PROGRAM_MAX 0xC9 */
 #else
@@ -340,13 +344,21 @@ static uint8 (* const Xcp_PIDTable[0x100u])(boolean *responseExpected, const Pdu
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_NEXT 0xCA, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xCB */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmProgramFormat, /* PROGRAM_FORMAT 0xCB, optional */
+#else
+    Xcp_CmdNotImplemented, /* PROGRAM_FORMAT 0xCB, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmProgramPrepare, /* PROGRAM_PREPARE 0xCC, optional */
 #else
     Xcp_CmdNotImplemented, /* PROGRAM_PREPARE 0xCC, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    Xcp_CmdNotImplemented, /* 0xCD */
+#if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
+    Xcp_DTOCmdPgmGetSectorInfo, /* GET_SECTOR_INFO 0xCD, optional */
+#else
+    Xcp_CmdNotImplemented, /* GET_SECTOR_INFO 0xCD, optional */
+#endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     Xcp_DTOCmdPgmGetPgmProcessorInfo, /* GET_PGM_PROCESSOR_INFO 0xCE, optional */
 #else
@@ -1259,6 +1271,12 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.pending_command.active = FALSE;
             Xcp_Internal.pending_command.abandoned = FALSE;
             Xcp_Internal.pending_command.event_outstanding = FALSE;
+            /* SP4c Task 5: pending_command's newest member, held to the same "every member is
+             * reset" policy the comment above already states -- every PROGRAM_CLEAR deferral sets
+             * it explicitly before returning (source/Xcp_Pgm.c), so nothing today reads a stale
+             * value across a session boundary either way, but leaving a new member out of a reset
+             * this comment claims is total would make the claim false the moment one is added. */
+            Xcp_Internal.pending_command.program_clear_functional = FALSE;
             /* DD63. SP3 and SP4a each shipped a defect that was exactly this omission for their
              * own buffers -- a fill level surviving into the next session because Xcp_Init did not
              * reset it. Only length needs clearing: data is never read past it. */
@@ -1271,6 +1289,26 @@ void Xcp_Init(const Xcp_Type *pConfig)
              * guard alike. */
             Xcp_Internal.pgm_block.requested_elements = 0x00u;
             Xcp_Internal.pgm_block.frame_elements = 0x00u;
+            /* SP4c Task 3, design doc DD85: pgm_format gets the identical cross-session hygiene
+             * pgm_state/pgm_block just above already have, and for the identical reason -- state
+             * surviving into the next session because Xcp_Init did not reset it. Written directly
+             * here, unlike Xcp_CTOCmdStdConnect (Xcp_Std.c) and Xcp_PgmCompleteProgramReset
+             * (Xcp_Pgm.c), which both call the exported Xcp_PgmFormatReset() instead: this is the
+             * module's own constructor, not a command handler reaching into a different file's own
+             * state, and it already writes pgm_state/pgm_block directly the same way. */
+            Xcp_Internal.pgm_format.compression_method = 0x00u;
+            Xcp_Internal.pgm_format.encryption_method = 0x00u;
+            Xcp_Internal.pgm_format.programming_method = 0x00u;
+            Xcp_Internal.pgm_format.access_method = 0x00u;
+            /* SP4c Task 6, design doc DD86: the Block Sequence Counter belongs to the format
+             * immediately above and gets the same cross-session hygiene, written directly here for
+             * the identical reason the four fields above are (this is the module's own constructor,
+             * not a command handler reaching into another file's state). Nothing reads it while
+             * pgm_format.access_method is 0x00u, so a stale value could not be observed today --
+             * which is exactly the argument SP3's own surviving-state defect made before it
+             * shipped, and the reason this block resets everything rather than only what some
+             * reader currently depends on. */
+            Xcp_Internal.pgm_block_sequence_counter = 0x00000000u;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
             /* DD78. Every configured-protected group starts protected, which is what
              * `= protectedResource` says and what `= 0x00u` could not: on the old, inverted field

@@ -506,9 +506,11 @@ extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *
  * @param [in] clearRange The request's own Clear Range: the length, in bytes, of the memory part to
  * be cleared. 1.1/1.6.5.1.2: "The Clear Range indicates the length of the memory part to be
  * cleared. The PROGRAM_CLEAR service clears a complete sector or multiple sectors at once." Always
- * a length -- this module implements absolute access mode only (DD67, DD68), so the alternative
- * reading functional access mode gives the same field (a bit mask of memory areas) never reaches
- * this callback; a request naming that mode is refused ERR_OUT_OF_RANGE before this is called.
+ * a length here: this callback answers absolute access mode alone (request mode byte 0x00). Under
+ * functional access mode (0x01) the same request field is a bit mask of memory areas instead, and
+ * reaches @ref Xcp_ProgramClearFunctional, a separate callback, never this one (design doc DD84,
+ * DD93) -- a request naming a mode neither callback is configured for is refused ERR_OUT_OF_RANGE
+ * before either is ever called.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
  * for success, non-zero for failure.
  * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
@@ -564,8 +566,190 @@ extern Std_ReturnType Xcp_ProgramClear(void *address, uint32 clearRange, uint8 *
  * the codes PROGRAM's row does list and, per the specification's own error-code definitions, the
  * precise description of memory this callback could not write to -- the same choice
  * @ref Xcp_ProgramClear above makes for a failed erase, generalised here to a failed write.
+ * @note This callback answers ABSOLUTE access mode alone. Once a PROGRAM_FORMAT has announced
+ * functional access (access method non-zero, 1.6.5.2.4), the identical three commands reach
+ * @ref Xcp_ProgramWriteFunctional instead -- a separate callback taking a block sequence counter
+ * where this one takes an address, since under that mode the MTA is not one (design doc DD84,
+ * DD86). A given data transfer reaches exactly one of the two.
  */
 extern Std_ReturnType Xcp_ProgramWrite(void *address, const uint8 *pData, uint16 length, uint8 *pStatusCode);
+
+/**
+ * @brief Checks whether non-volatile memory content is valid.
+ * @param [in] verificationMode The request's own Mode byte. XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.5.2.7 gives this slave no meaning of its own to enforce on it, so it is
+ * passed through verbatim, for an integrator whose ASAM MCD-2 MC description defines what its own
+ * values mean.
+ * @param [in] verificationType The request's own Verification Type, a bit mask of the areas to
+ * verify. 1.1/1.6.5.2.7 defines bit 0x0001 (calibration areas), 0x0002 (code areas) and 0x0004
+ * (complete flash), reserves 0x0008..0x0080, and leaves 0x0100..0xFF00 user defined. A request
+ * naming a reserved bit is refused ERR_OUT_OF_RANGE before this callback is ever reached -- the one
+ * structural check 1.1/1.6.5.2.7 itself permits a slave to make -- so every value this callback
+ * actually receives already has every reserved bit clear.
+ * @param [in] verificationValue The request's own Verification Value, in the configured byte
+ * order. 1.1/1.6.5.2.7 leaves its meaning to the slave and its ASAM MCD-2 MC description; passed
+ * through verbatim, the same way verificationMode is.
+ * @param [out] pStatusCode Result of the verification, read only when this function returns E_OK:
+ * zero for success, non-zero for a verification that completed but did not pass.
+ * @retval E_OK: the verification is finished (no matter if it passed or not)
+ * @retval E_NOT_OK: the verification is not finished
+ * @details Polled, exactly as @ref Xcp_ProgramClear is: called once from the PROGRAM_VERIFY handler
+ * to start the work and then once per Xcp_MainFunction until it reports completion. An
+ * implementation whose work is instantaneous returns E_OK from the first call and the command is
+ * answered without ever deferring -- though checking newly programmed content against the rest of
+ * flash is exactly the kind of long-running work this module's polled contract exists for, the same
+ * reason @ref Xcp_ProgramClear tends to defer more often than @ref Xcp_ProgramStart or
+ * @ref Xcp_ProgramPrepare do.
+ * @note A non-zero pStatusCode answers ERR_VERIFY, XCP part 2 - Protocol Layer Specification
+ * 1.7.3.2.5's own code for a verification that completed but did not pass -- unlike @ref
+ * Xcp_ProgramClear and @ref Xcp_ProgramWrite above, which both answer ERR_ACCESS_DENIED for a
+ * failure of their own, different kind.
+ */
+extern Std_ReturnType Xcp_ProgramVerify(uint8 verificationMode, uint16 verificationType, uint32 verificationValue, uint8 *pStatusCode);
+
+/**
+ * @brief Tells the integrator how the flash content about to be downloaded is encoded.
+ * @param [in] compressionMethod The request's own compression method, 0x00 for uncompressed
+ * (default) or an implementation-specific non-zero value. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.5.2.4 leaves the meaning of a non-zero value to the ASAM MCD-2 MC description; passed
+ * through verbatim, only checked structurally (design doc DD89, below) before this is ever called.
+ * @param [in] encryptionMethod The request's own encryption method, 0x00 for unencrypted (default)
+ * or an implementation-specific non-zero value. Same rule as compressionMethod above.
+ * @param [in] programmingMethod The request's own programming method, 0x00 for sequential (default)
+ * or an implementation-specific non-zero value (e.g. non-sequential). Same rule as
+ * compressionMethod above.
+ * @param [in] accessMethod The request's own access method: 0x00 Absolute Access Mode (default,
+ * the MTA is a physical address), 0x01 Functional Access Mode (the MTA is a block sequence
+ * number), 0x80..0xFF user defined. Anything but 0x00 requires PGM_PROPERTIES' FUNCTIONAL_MODE bit
+ * advertised, which is this build's own configuration to grant (design doc DD92): a build
+ * configuring both functional callbacks -- @ref Xcp_ProgramClearFunctional and
+ * @ref Xcp_ProgramWriteFunctional -- passes 0x01 and the user-defined range through to this
+ * callback, and one configuring neither refuses them ERR_OUT_OF_RANGE before ever reaching here.
+ * Accepting a non-zero value here is what routes every following data transfer of this stream to
+ * @ref Xcp_ProgramWriteFunctional instead of @ref Xcp_ProgramWrite.
+ * @param [out] pStatusCode Result of the request, read only when this function returns E_OK: zero
+ * to accept the format, non-zero for a value this integrator cannot honour -- the only case that
+ * matters in practice is a user-defined compression/encryption/programming method (0x80..0xFF)
+ * whose meaning only the integrator's own ASAM MCD-2 MC description knows (design doc DD89).
+ * @retval E_OK: the format has been judged, successfully or not -- read pStatusCode.
+ * @retval E_NOT_OK: must not be returned. Unlike every other PGM callback in this header, this one
+ * is synchronous by contract (design doc DD91): PROGRAM_FORMAT only sets four bytes, so there is no
+ * polled path for it and Xcp_MainFunction never calls this a second time for the same request. A
+ * return value other than E_OK is treated exactly like a non-zero pStatusCode -- refused, since
+ * PROGRAM_FORMAT's own XCP part 2 - Protocol Layer Specification 1.7.3.2.5 row leaves no other
+ * failure code for an integrator that could not honour a structurally-permitted request.
+ * @details Called once, synchronously, from the PROGRAM_FORMAT handler -- never polled, unlike
+ * every other callback this file declares for the PGM command group. The module's own structural
+ * check (design doc DD89: a non-default value is accepted only if PGM_PROPERTIES advertises the
+ * matching capability) runs first, so this is reached only for a request this build has already
+ * promised to support; what remains for the integrator to judge is a user-defined value's own
+ * specific meaning.
+ */
+extern Std_ReturnType Xcp_ProgramFormat(uint8 compressionMethod, uint8 encryptionMethod, uint8 programmingMethod, uint8 accessMethod, uint8 *pStatusCode);
+
+/**
+ * @brief Clears (erases) memory by AREA rather than by address: PROGRAM_CLEAR's functional access
+ * mode.
+ * @param [in] clearRange The request's own Clear Range, reinterpreted under functional access mode
+ * (design doc DD84, DD93): no longer a length, but a bit mask of the memory areas to clear. XCP
+ * part 2 - Protocol Layer Specification 1.1/1.6.5.1.2 (both revisions): "The MTA has no influence on
+ * the clearing functionality" under this mode -- which is why, unlike @ref Xcp_ProgramClear, this
+ * callback takes no address parameter at all; passing one would invent a parameter the protocol does
+ * not carry. 0x00000001 all calibration data areas, 0x00000002 all code areas (the boot area is not
+ * covered), 0x00000004 NVRAM areas, 0x00000100..0xFFFFFF00 user defined. 0x00000008..0x00000080 are
+ * reserved and refused ERR_OUT_OF_RANGE before this callback is ever reached -- the one structural
+ * check this command's own 1.7.3.2.5 row permits a slave to make.
+ * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK: zero
+ * for success, non-zero for failure.
+ * @retval E_OK: the sequence is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the sequence is not finished
+ * @details Polled, exactly as @ref Xcp_ProgramClear is: called once from the PROGRAM_CLEAR handler
+ * to start the work and then once per Xcp_MainFunction until it reports completion. An
+ * implementation whose work is instantaneous returns E_OK from the first call and the command is
+ * answered without ever deferring.
+ * @note Reachable only once both PROGRAM_START has succeeded (1.1/1.6.5.1.1, the same session gate
+ * @ref Xcp_ProgramClear itself carries) and this build's own configuration offers this callback
+ * (xcp_program_clear_functional_api_enable, config/xcp.schema.json); a mode 0x01 request otherwise
+ * is refused ERR_OUT_OF_RANGE and never reaches here.
+ * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, the same code and the same reasoning
+ * @ref Xcp_ProgramClear's own note gives for a failed erase.
+ * @note Independent of PROGRAM_FORMAT's own access method (design doc DD93): XCP part 2 - Protocol
+ * Layer Specification 1.1/1.6.5.2.4 states outright that "it is possible to use different access
+ * modes for clearing and programming", so a master may reach this callback while
+ * Xcp_Internal.pgm_format.access_method still reads absolute access mode, or the reverse for
+ * @ref Xcp_ProgramWrite.
+ */
+extern Std_ReturnType Xcp_ProgramClearFunctional(uint32 clearRange, uint8 *pStatusCode);
+
+/**
+ * @brief Writes a block of data into non-volatile memory without being told where: PROGRAM's
+ * functional access mode.
+ * @param [in] blockSequenceCounter This module's own count of the data transfer requests received
+ * since the PROGRAM_FORMAT that opened this stream. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.5.1.3 (both revisions): "The MTA works as a Block Sequence Counter and it is counted
+ * inside the master and the server. The Block Sequence Counter allows an improved error handling in
+ * case a programming service fails during a sequence of multiple programming requests." Initialised
+ * so that the first data transfer after PROGRAM_FORMAT carries 1, advanced by one per data transfer
+ * request, and rolling over to 0x00 past its maximum -- so an integrator can compare it against the
+ * master's own count rather than re-deriving it. Not a value the master transmits: it is counted
+ * independently on both sides, which is what makes a divergence detectable at all (design doc
+ * DD86). **Two words in that sentence are readings of an ambiguous specification rather than
+ * settled facts -- what counts as one "data transfer request", and how wide "its maximum" is. Both
+ * are spelled out in the last two notes below; read them before treating a disagreement with a
+ * master's own count as a defect on either side.**
+ * @param [in] pData The data to write, `length` bytes, taken directly from the request. The same
+ * lifetime rule @ref Xcp_ProgramWrite's own pData carries applies here unchanged: valid for the
+ * duration of THIS call only.
+ * @param [in] length Number of bytes pData holds.
+ * @param [out] pStatusCode Result of the write, read only when this function returns E_OK: zero for
+ * success, non-zero for failure.
+ * @retval E_OK: the write is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the write is not finished
+ * @details Polled, exactly as @ref Xcp_ProgramWrite is, and reached from the same three commands
+ * (PROGRAM, PROGRAM_MAX, and the PROGRAM_NEXT frame that completes a master block mode block) --
+ * this is that callback's functional-access twin, not an addition beside it: a given data transfer
+ * reaches exactly one of the two.
+ * @note **No address parameter, and that is not an omission.** 1.1/1.6.5.1.3's Functional Access
+ * mode paragraph says "The ECU software knows the start address for the new flash content
+ * automatically. It depends on the PROGRAM_CLEAR command. The ECU expects the new flash content in
+ * one data stream and the assignment is done by the ECU automatically." There is no address in the
+ * protocol for this module to pass on, and the MTA is not one either under this mode -- it is the
+ * counter above. Passing @ref Xcp_ProgramWrite's own `void *address` here would hand the integrator
+ * a pointer the specification never defined (design doc DD84).
+ * @note The MTA is left exactly where the master last set it, unlike @ref Xcp_ProgramWrite's own
+ * post-increment: 1.6.5.1.3 states that post-increment under *Absolute Access mode* only, and this
+ * mode's own paragraph replaces it with the Block Sequence Counter.
+ * @note Reachable only once PROGRAM_FORMAT has been accepted with a non-default access method,
+ * which in turn requires this build to advertise PGM_PROPERTIES' FUNCTIONAL_MODE bit -- i.e. to
+ * configure BOTH this callback and @ref Xcp_ProgramClearFunctional (design doc DD92,
+ * xcp_program_write_functional_api_enable and xcp_program_clear_functional_api_enable,
+ * config/xcp.schema.json). Generation refuses a configuration offering one without the other, so
+ * "advertised" and "accepted" cannot drift apart.
+ * @note A non-zero pStatusCode answers ERR_ACCESS_DENIED, the same code and the same reasoning
+ * @ref Xcp_ProgramWrite's own note gives for a failed write -- the two share one completion path.
+ * @note **"Per data transfer request" counts every FRAME of a master block mode block, and that is
+ * a reading of 1.6.5.1.3 rather than a settled fact.** A block spanning PROGRAM plus two
+ * PROGRAM_NEXT frames reaches this callback ONCE, carrying 3 -- the third request's own count --
+ * not 1. The reading rests on both operative sentences naming a request message as the trigger
+ * ("incremented by 1 for each subsequent data transfer request", "rolls over and starts at 0x00
+ * with the next data transfer request message") and on PROGRAM_NEXT being one of the three data
+ * transfer requests. The defensible alternative, recorded because an integrator comparing this
+ * value against a real master's own count is exactly who would meet it: the same paragraph says
+ * the MTA IS this counter, and the MTA advances once per completed BLOCK (@ref Xcp_ProgramWrite's
+ * own post-increment note above), so a per-block count could be argued from the field's name alone.
+ * A master built on that alternative disagrees with this slave by the number of PROGRAM_NEXT frames
+ * per block -- which looks like a counter divergence but is a specification ambiguity. Design doc
+ * DD86 (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) carries the full reasoning. A
+ * zero-element PROGRAM ("the end of the memory segment is indicated, when the number of data
+ * elements is 0") does NOT count: it transfers no data and never reaches this callback.
+ * @note **The counter's WIDTH is not stated anywhere in either revision, and uint32 is a choice.**
+ * 1.6.5.1.3 names the MTA -- 32-bit -- as the counter, which argues for 32 bits, but writes the
+ * rollover value as `0x00`, which reads byte-sized. uint32 is taken because it is the only width
+ * the specification actually mentions; a byte-wide counter would be a narrowing nothing in the text
+ * requires. An integrator whose master rolls over at 0xFF rather than 0xFFFFFFFF is meeting this
+ * ambiguity, not a defect -- read DD86 first.
+ */
+extern Std_ReturnType Xcp_ProgramWriteFunctional(uint32 blockSequenceCounter, const uint8 *pData, uint16 length, uint8 *pStatusCode);
 
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 

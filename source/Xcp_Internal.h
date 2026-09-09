@@ -236,12 +236,20 @@ extern "C" {
  * 1.0's own pdftotext -layout dump, since the 1.1 OCR garbles tables -- design doc §0). Defined
  * unconditionally, the same convention the PID defines above follow, and for the same reason nothing
  * in this block depends on XCP_FLASH_PROGRAMMING_ENABLED: these are names for bit positions, not
- * state, and cost nothing to leave visible in a gate-off build. Task 5 (source/Xcp_Pgm.c) sets only
- * XCP_PGM_PROPERTIES_ABSOLUTE_MODE -- this module offers absolute mode alone (DD68) -- and leaves
- * every other bit clear; the rest are named here regardless, both because 1.0's own table defines
- * the whole byte at once and because SP4c (design doc §8) will need FUNCTIONAL_MODE and the
- * COMPRESSION_x/ENCRYPTION_x/NON_SEQ_PGM_x pairs by these exact names once it implements what they
- * advertise. */
+ * state, and cost nothing to leave visible in a gate-off build.
+ *
+ * Final review F9: this comment used to say that "this module offers absolute mode alone (DD68)" and
+ * "leaves every other bit clear", and to refer to SP4c in the future tense as the sub-project that
+ * "will need FUNCTIONAL_MODE and the COMPRESSION_x/ENCRYPTION_x/NON_SEQ_PGM_x pairs by these exact
+ * names once it implements what they advertise". SP4c has shipped and every one of the eight is now
+ * live: script/source_cfg.c.jinja2 assembles the whole byte from configuration (bit 0 unconditional,
+ * bit 1 from DD92's two functional callbacks, bits 2-7 from the six programming.* capability flags),
+ * Xcp_DTOCmdPgmGetPgmProcessorInfo reports it, and Xcp_DTOCmdPgmProgramFormat and
+ * Xcp_PgmDataTransferRefusedByFormat (source/Xcp_Pgm.c) read the SUPPORTED and REQUIRED halves
+ * respectively -- DD89 and DD90. The generator's own literal shifts and these macros are deliberately
+ * independent statements of the same eight bit positions, which is what makes a single-bit
+ * disagreement between them observable rather than latent. DD68's absolute-only claim is history now,
+ * and is kept named here only so that whoever finds it in an older revision can see where it went. */
 #define XCP_PGM_PROPERTIES_ABSOLUTE_MODE (0x01u << 0x00u)
 #define XCP_PGM_PROPERTIES_FUNCTIONAL_MODE (0x01u << 0x01u)
 #define XCP_PGM_PROPERTIES_COMPRESSION_SUPPORTED (0x01u << 0x02u)
@@ -486,30 +494,68 @@ typedef struct {
         boolean event_outstanding;
 
         /**
+         * @brief SP4c Task 5: which PROGRAM_CLEAR callback a later poll must re-invoke, valid only
+         * while pid names XCP_PID_CMD_PROGRAM_CLEAR.
+         * @details PROGRAM_CLEAR's own PID is shared by both access modes (DD93 -- the mode byte is
+         * not a separate command), so args.program_clear_range alone no longer says which callback
+         * deferred: TRUE means Xcp_DTOCmdPgmProgramClear's own mode==0x01 branch deferred and
+         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) must re-invoke Xcp_ProgramClearFunctional, FALSE
+         * means the existing absolute-mode branch deferred and Xcp_ProgramClear is still the right
+         * callback, exactly as it was before this task. Not part of the args union just below: it
+         * has to be readable at the same time as args.program_clear_range on the very same poll,
+         * where a union member would only overlay one or the other in the same storage.
+         */
+        boolean program_clear_functional;
+
+        /**
          * @brief per-command arguments a poll needs but the handler that parsed them has already
          * returned by the time it runs, valid only while pid names the matching command.
          * @details A union keyed by pid, not a growing set of flat fields. PROGRAM_PREPARE's own
          * Codesize (uint16) was the first member here, added as a single flat field because it was
          * the only one that existed yet; SP4a's final review anticipated exactly this growth and
          * asked for a union before a second command needed one. PROGRAM_CLEAR's clear range
-         * (uint32, Task 2) is that second member, and Tasks 3 and 4 both add their own -- a second
-         * flat field beside the first would have invited a third. Both callbacks take address and
-         * a second argument on EVERY call, not only the first -- unlike the single-pStatusCode-
-         * argument PROGRAM_START/PROGRAM_RESET callbacks, which need nothing beyond this struct's
-         * other fields. Only one member is ever live at a time, exactly like pid itself, so this
-         * union costs nothing a struct holding every member unconditionally would not already have
-         * wasted on padding, and it makes the keyed-by-pid discipline visible in the type instead
-         * of only in this comment.
-         * @note The MTA needs no member here at all, for either command: Xcp_PgmPollPendingCommand
-         * (Xcp_Pgm.c) re-reads it directly from Xcp_Internal.memory_transfer.address on every poll
-         * -- stable for the duration, since DD55's ERR_CMD_BUSY gate refuses any interloping
-         * SET_MTA -- which is standing state neither Codesize nor the clear range has anywhere
-         * else once the handler that parsed the request has returned.
+         * (uint32, Task 2) is that second member. Both callbacks take address and a second argument
+         * on EVERY call, not only the first -- unlike the single-pStatusCode-argument
+         * PROGRAM_START/PROGRAM_RESET callbacks, which need nothing beyond this struct's other
+         * fields. Only one member is ever live at a time, exactly like pid itself, so this union
+         * costs nothing a struct holding every member unconditionally would not already have wasted
+         * on padding, and it makes the keyed-by-pid discipline visible in the type instead of only
+         * in this comment.
+         *
+         * SP4b Tasks 3 and 4 (PROGRAM, PROGRAM_MAX, PROGRAM_NEXT) never added a third member here,
+         * unlike what this comment used to predict: all three write through the identical
+         * Xcp_ProgramWrite contract from Xcp_Internal.pgm_block below, which is itself already the
+         * standing state a poll needs, so a slot here would only have duplicated it
+         * (Xcp_PgmPollPendingCommand's own comment, Xcp_Pgm.c, explains this for each of the three).
+         * SP4c Task 1's program_verify is this union's actual second growth: PROGRAM_VERIFY has no
+         * address of its own to fall back on the way every other PGM command's MTA does (design doc
+         * docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md, DD91 -- Xcp_ProgramVerify takes
+         * no address parameter at all), so all three of its request fields need a home here, not
+         * only the one PROGRAM_PREPARE's and PROGRAM_CLEAR's own members each needed.
+         * @note The MTA needs no member here at all, for PROGRAM_PREPARE or PROGRAM_CLEAR:
+         * Xcp_PgmPollPendingCommand (Xcp_Pgm.c) re-reads it directly from
+         * Xcp_Internal.memory_transfer.address on every poll -- stable for the duration, since
+         * DD55's ERR_CMD_BUSY gate refuses any interloping SET_MTA -- which is standing state
+         * neither Codesize nor the clear range has anywhere else once the handler that parsed the
+         * request has returned. PROGRAM_VERIFY has no MTA dependency to fall back on in the first
+         * place (design doc Section 1, "Consumes: nothing").
          */
         union
         {
             uint16 program_prepare_code_size;
             uint32 program_clear_range;
+
+            /**
+             * @brief PROGRAM_VERIFY's own three request fields (SP4c Task 1), all of which a poll
+             * needs on every call for the identical reason program_clear_range is here: none of
+             * the three is standing module state elsewhere, unlike the MTA.
+             */
+            struct
+            {
+                uint8 mode;
+                uint16 type;
+                uint32 value;
+            } program_verify;
         } args;
     } pending_command; /* DD52 */
 
@@ -557,8 +603,9 @@ typedef struct {
          * block_transfer active across a CTO confirmation except a genuine UPLOAD, so the two
          * purposes never collided. Task 4 made PROGRAM leave it active for as long as a block
          * stays open -- which can span several unrelated command/response exchanges, e.g. a
-         * PROGRAM_MAX refused mid-block, or a SET_MTA, both of which 1.1/1.6.5.1.1 requires to stay
-         * available during a programming sequence -- so confirming THEIR ordinary response also
+         * PROGRAM_MAX refused mid-block, or (until final review F1 made SET_MTA abort the block --
+         * Xcp_PgmFormatReset, source/Xcp_Pgm.c) a SET_MTA, both of which 1.1/1.6.5.1.1 requires to
+         * stay available during a programming sequence -- so confirming THEIR ordinary response also
          * triggered the identical unsolicited-UPLOAD path: Xcp_ReadSlaveMemoryU8 read MAX_CTO-1
          * bytes at the current MTA, transmitted them as an unrequested 0xFF frame, advanced the MTA
          * by that many bytes (silently breaching DD66), and repeated -- disclosing slave memory on
@@ -577,6 +624,81 @@ typedef struct {
         uint8 requested_elements;
         uint8 frame_elements;
     } pgm_block;
+
+    /**
+     * @brief PROGRAM_FORMAT's own four request bytes (SP4c Task 3), DD85's session state.
+     * @details Design doc docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md, DD85: "the
+     * format is session state with a stated lifetime". Stored only once
+     * Xcp_DTOCmdPgmProgramFormat's own structural check (DD89) and synchronous callback
+     * (Xcp_ProgramFormat, DD91) have both accepted the request -- a refused PROGRAM_FORMAT leaves
+     * this struct untouched. All four fields default to 0x00u, which is also PROGRAM_FORMAT's own
+     * all-defaults request: 1.1/1.6.5.2.4 makes that the same thing as the command never having
+     * been sent ("unmodified data and absolute address access method is supposed"), so this struct
+     * needs no separate "has PROGRAM_FORMAT been called" flag alongside it -- Xcp_DTOCmdPgmProgram's
+     * own DD90 gate (source/Xcp_Pgm.c) reads these three fields directly.
+     *
+     * Reset to this same all-zero state at Xcp_Init (source/Xcp.c, direct field writes beside
+     * pgm_state/pgm_block's own identical cross-session hygiene), at CONNECT and PROGRAM_RESET
+     * (both session boundaries pgm_state/pgm_block already clear), and at SET_MTA. The last of
+     * those is why Xcp_PgmFormatReset (source/Xcp_Pgm.c) exists as a function this file exports
+     * rather than four inline field writes repeated at each site: SET_MTA is a STD command
+     * (source/Xcp_Std.c), and DD63 keeps every writer of PGM state inside this file -- a STD
+     * command reaching into PGM state directly is the shape that produced a memory disclosure two
+     * branches ago (SP4b's DD70/task-4-report.md). CONNECT and PROGRAM_RESET call the same
+     * exported function rather than duplicating the reset a third and fourth time, even though
+     * PROGRAM_RESET's own completion function already lives in this file and could write the
+     * fields directly.
+     */
+    struct {
+        uint8 compression_method;
+        uint8 encryption_method;
+        uint8 programming_method;
+        uint8 access_method;
+    } pgm_format;
+
+    /**
+     * @brief The Block Sequence Counter of the data transfer request currently being served
+     * (SP4c Task 6, DD86), valid only while pgm_format.access_method names functional access.
+     * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.3, identically in 1.0: "The MTA
+     * works as a Block Sequence Counter and it is counted inside the master and the server. [...]
+     * The Block Sequence Counter of the server shall be initialized to one (1) when receiving a
+     * PROGRAM_FORMAT request message. This means that the first PROGRAM request message following
+     * the PROGRAM_FORMAT request message starts with a Block Sequence Counter of one (1). Its value
+     * is incremented by 1 for each subsequent data transfer request. At the maximum value the Block
+     * Sequence Counter rolls over and starts at 0x00 with the next data transfer request message."
+     *
+     * So this is state the slave COUNTS, not a value the master transmits, and SET_MTA plays no part
+     * in it -- an earlier draft of DD86 had SET_MTA supply it, and the sentences above are what
+     * corrected that. Both sides count independently, which is the whole point: a divergence between
+     * the two is detectable, "an improved error handling in case a programming service fails during
+     * a sequence of multiple programming requests". Xcp_PgmCallProgramWrite (source/Xcp_Pgm.c) hands
+     * this value to Xcp_ProgramWriteFunctional so the integrator can compare rather than re-derive.
+     *
+     * **uint32, and the specification does not actually say.** DD86 records this ambiguity rather
+     * than resolving it silently: the text names the MTA (32-bit) as the counter, which would make
+     * it 32 bits wide, but writes the rollover value as `0x00`, which reads byte-sized -- and
+     * neither revision states a width anywhere. uint32 is taken because it is the only width the
+     * specification actually mentions; a byte-wide counter would be a narrowing nothing in the text
+     * requires. Anyone meeting a master that disagrees should read DD86 first
+     * (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md).
+     *
+     * The rollover is the type's own modular arithmetic, not a branch: an unsigned addition past
+     * UINT32_MAX yields 0 by C's own definition, which is exactly "rolls over and starts at 0x00
+     * with the next data transfer request message". Written that way deliberately -- an explicit
+     * `== 0xFFFFFFFFu ? 0u : n + 1u` would add a branch no test in this suite could ever reach
+     * (2^32 requests) and could itself be written wrong, where this cannot be
+     * (Xcp_PgmAdvanceBlockSequenceCounter, source/Xcp_Pgm.c).
+     *
+     * Holds the counter of the request being served, so a deferred write's every poll re-reads the
+     * same value the handler's own first call passed (Xcp_PgmPollPendingCommand) -- the same
+     * standing-state argument pgm_block and the MTA already rely on, and the reason it is advanced
+     * BEFORE the value is used rather than after: PROGRAM_FORMAT leaves 0 here, and the first data
+     * transfer request advances it to the 1 the specification names. Reset with pgm_format itself
+     * (Xcp_PgmFormatReset, and Xcp_Init's own direct writes), which covers DD86's own PROGRAM_RESET
+     * and CONNECT plus SET_MTA: the format's lifetime IS this counter's lifetime, since reaching
+     * this field again takes a fresh PROGRAM_FORMAT, which re-initialises it regardless.
+     */
+    uint32 pgm_block_sequence_counter;
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 } Xcp_InternalType;
 
@@ -1066,12 +1188,71 @@ uint8 Xcp_DTOCmdPgmProgramNext(boolean *responseExpected, const PduInfoType *pPd
 uint8 Xcp_DTOCmdPgmGetPgmProcessorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief PROGRAM_VERIFY, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.7.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. SP4c Task 1. Unlike every other handler in this group, it carries
+ * no gate on Xcp_Internal.pgm_state at all (design doc
+ * docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md, Section 1: "Consumes: nothing") --
+ * 1.6.5.1.1's "not allowed until PROGRAM_START" list does not name it, so it answers identically
+ * from XCP_PGM_IDLE and XCP_PGM_ACTIVE, the same as GET_PGM_PROCESSOR_INFO just above. Unlike
+ * GET_PGM_PROCESSOR_INFO, though, it does call an integrator function -- Xcp_ProgramVerify,
+ * polled exactly like Xcp_ProgramClear's own contract (DD91) -- and does add a case to both
+ * Xcp_PgmPollPendingCommand and Xcp_PgmCompletePendingCommand below, one that reads its own three
+ * request fields from pending_command.args' new program_verify member rather than from any
+ * existing standing module state: unlike every other PGM command, PROGRAM_VERIFY has no address of
+ * its own to fall back on.
+ */
+uint8 Xcp_DTOCmdPgmProgramVerify(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief GET_SECTOR_INFO, XCP part 2 - Protocol Layer Specification 1.0/1.6.5.2.2.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. SP4c Task 2. Like GET_PGM_PROCESSOR_INFO above and unlike every
+ * gated handler in this group, it carries no gate on Xcp_Internal.pgm_state at all and calls no
+ * integrator function: Xcp_CTOErrorMatrix[0xCD] (source/Xcp.c) carries neither
+ * XCP_INTERNAL_ERR_SEQUENCE nor XCP_INTERNAL_ERR_PGM_ACTIVE, matching §1.7.3.2.5's own row for this
+ * command (ERR_CMD_BUSY, ERR_CMD_UNKNOWN, ERR_CMD_SYNTAX, ERR_MODE_NOT_VALID and
+ * ERR_SEGMENT_NOT_VALID only), and §1.6.5.1.1's "not allowed until PROGRAM_START" list does not
+ * name it either. It reports one configured Xcp_SectorType entry (interface/Xcp_Types.h), selected
+ * by SECTOR_NUMBER and read out according to MODE -- never defers, and therefore adds no case to
+ * Xcp_PgmPollPendingCommand or Xcp_PgmCompletePendingCommand below, the same reasoning
+ * GET_PGM_PROCESSOR_INFO's own @details gives just above. An invalid SECTOR_NUMBER (>= MAX_SECTOR)
+ * answers XCP_E_ASAM_SEGMENT_NOT_VALID, not §1.6.5.2.2's own prose ERR_OUT_OF_RANGE -- the
+ * specification contradicts itself here, and DD88
+ * (docs/superpowers/specs/2026-09-08-xcp-pgm-sp4c-design.md) resolves it in the listed code's
+ * favour, the same rule DD65 already established for PROGRAM_MAX's own self-contradiction in SP4b.
+ * An invalid MODE byte (neither 0 nor 1) answers XCP_E_ASAM_MODE_NOT_VALID.
+ */
+uint8 Xcp_DTOCmdPgmGetSectorInfo(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
+ * @brief PROGRAM_FORMAT, XCP part 2 - Protocol Layer Specification 1.1/1.6.5.2.4.
+ * @details Defined in Xcp_Pgm.c. Declared unconditionally here for the same reason
+ * Xcp_DTOCmdPgmProgram above is. SP4c Task 3. Like GET_PGM_PROCESSOR_INFO and GET_SECTOR_INFO
+ * above, it carries no gate on Xcp_Internal.pgm_state: 1.6.5.1.1's "not allowed until
+ * PROGRAM_START" list does not name it either, and its own pre-action in 1.7.3.2.5 is bare SYNCH,
+ * matching that ungated group rather than PROGRAM_CLEAR/PROGRAM/PROGRAM_MAX's own SYNCH+SET_MTA.
+ * Unlike either of those two, it DOES call an integrator function -- Xcp_ProgramVerify's own
+ * neighbour Xcp_ProgramFormat, but SYNCHRONOUS rather than polled (design doc DD91) -- and adds no
+ * case to Xcp_PgmPollPendingCommand or Xcp_PgmCompletePendingCommand below for exactly that reason:
+ * the call always completes on the one exchange that made it, so there is nothing left to poll.
+ * Validates DD89's compound advertise/accept condition (one term per request field: compression,
+ * encryption, programming method and access method, each checked against
+ * Xcp_Ptr->general->pgmProperties -- the same byte GET_PGM_PROCESSOR_INFO reports) before ever
+ * calling Xcp_ProgramFormat, and stores the request into Xcp_Internal.pgm_format only once both
+ * that check and the callback have accepted it.
+ */
+uint8 Xcp_DTOCmdPgmProgramFormat(boolean *responseExpected, const PduInfoType *pPduInfo);
+
+/**
  * @brief Polls the integrator callback for whichever PGM command is in Xcp_Internal.pending_command.
  * @details Defined in Xcp_Pgm.c and called from Xcp_MainFunction (DD53), which must not itself grow
  * a per-command switch. Switches on pending_command.pid rather than storing a function pointer in
  * the slot, so Task 4 adds a case for PROGRAM_NEXT instead of a hard-coded single-command function.
  * Task 5's own GET_PGM_PROCESSOR_INFO adds none: it never defers (Xcp_DTOCmdPgmGetPgmProcessorInfo's
  * own @details above), so there is nothing pending for this function to ever poll on its behalf.
+ * SP4c Task 1's own PROGRAM_VERIFY adds a case the same way Task 4's PROGRAM_NEXT did: another
+ * command joining the switch, not a reason to change its shape.
  * @param [out] pStatusCode Result of the sequence, read only when this function returns E_OK.
  * @retval E_OK the integrator callback has finished, successfully or not.
  * @retval E_NOT_OK the integrator callback has not finished; pStatusCode is not read.
@@ -1125,6 +1306,30 @@ void Xcp_PgmAbandonPendingCommand(void);
  * accepted, writing the previous session's leftover bytes into flash at the new session's MTA.
  */
 void Xcp_PgmBlockAbort(void);
+
+/**
+ * @brief Resets Xcp_Internal.pgm_format to its all-defaults state (SP4c Task 3, DD85).
+ * @details Defined in Xcp_Pgm.c and exported for the identical reason Xcp_PgmBlockAbort above is
+ * exported: a session boundary must clear this state wherever pgm_state/pgm_block are also
+ * cleared, and DD63 keeps every writer of PGM state inside this file. Xcp_DTOCmdStdSetMta
+ * (source/Xcp_Std.c) is the one call site outside the programming session's own doors -- DD85 ends
+ * the format's lifetime there too, and SET_MTA is a STD command, so it reaches this state only
+ * through this function rather than by writing the fields itself. Xcp_CTOCmdStdConnect
+ * (source/Xcp_Std.c) and Xcp_PgmCompleteProgramReset (this file) call the same function at their
+ * own, pre-existing pgm_state/pgm_block reset points; Xcp_Init (source/Xcp.c) writes the four
+ * fields directly instead, beside its own identical direct writes to pgm_state and pgm_block,
+ * since it is the module's own constructor rather than a command handler reaching into state that
+ * belongs to a different file.
+ *
+ * Final review F1: this function now also calls Xcp_PgmBlockAbort() above, so every door that ends
+ * the format's lifetime also ends the data transfer that format described -- 1.6.5.2.4 states the
+ * two as one fact ("valid till end of this sequence. The sequence will be terminated by other
+ * commands e.g. SET_MTA"). That makes it the mechanism by which a SET_MTA arriving mid-block can no
+ * longer retarget the block to the other write callback, or to an address its opening PROGRAM never
+ * named; see the function's own comment for the full reasoning and for why PROGRAM_FORMAT is
+ * refused ERR_SEQUENCE instead of aborting.
+ */
+void Xcp_PgmFormatReset(void);
 
 uint8 Xcp_CTOCmdStdSynch(boolean *responseExpected, const PduInfoType *pPduInfo);
 uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduInfo);

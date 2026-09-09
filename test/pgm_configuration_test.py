@@ -240,11 +240,31 @@ def test_gate_off_output_does_not_depend_on_any_other_programming_setting():
     ANY other configuration value while the gate stays off. A baseline gate-off build is compared,
     byte for byte, against one variant per OTHER setting this command group's own implementation
     status could plausibly leak through -- `programming.max_block_size` moved to each of its two
-    extremes, and each of the six `xcp_program_*_api_enable` keys flipped off -- all eight with the
-    gate itself left off throughout. Comparing the WHOLE generated file, not only the ctoInfo
-    table, matches acceptance criterion 1's own scope (design doc Section 9): a leak could in
-    principle land anywhere the generator touches, not only in the block this sub-project's own two
-    siblings happen to read.
+    extremes, each of the TEN `xcp_program_*_api_enable` keys flipped away from its own default,
+    each of the six `programming.*` PGM_PROPERTIES capability flags turned on, and a declared
+    `programming.sectors` entry -- all with the gate itself left off throughout. Comparing the WHOLE
+    generated file, not only the ctoInfo table, matches acceptance criterion 1's own scope (design
+    doc Section 9): a leak could in principle land anywhere the generator touches, not only in the
+    block this sub-project's own two siblings happen to read.
+
+    **Final review F6: SP4c added eleven settings and extended this sweep by none, and that -- not
+    correct gating -- is the only reason it kept passing.** Seven of the eleven were measured
+    changing gate-off output when the sweep was finally extended: `pgmProperties` bits 2-7 carried no
+    `programming.enabled` conjunct while bit 1 and `pgmClearFunctionalSupported` on the adjacent
+    lines did (F4), and `maxSector` with the `Xcp_SectorConfig` array were ungated the same way (F5).
+    The eleven axes are named individually below rather than folded into a loop over
+    test/parameter.py's own keyword list, so that adding a twelfth setting without adding a variant
+    is a visible omission in this dict rather than an invisible one in a helper.
+
+    Two shapes of variant, and the difference matters: a flag whose DefaultConfig value is True is
+    flipped False, and one whose default is False is flipped True. Flipping a False default "off"
+    would compare the baseline against itself and pass unconditionally -- which is exactly how a
+    sweep silently stops testing anything. `xcp_program_clear_functional_api_enable` and
+    `xcp_program_write_functional_api_enable` are the two that default False, and they are varied
+    INDIVIDUALLY here even though script/source_cfg.c.jinja2 refuses to generate one without the
+    other: that DD92 guard is itself conjoined with `programming.enabled`, so with the gate off each
+    flag alone generates cleanly, and one at a time is the stricter test. The both-on case is swept
+    too, since that is the combination that actually sets a bit once the gate is on.
 
     `resource_protection_programming` is deliberately NOT one of the variants, and finding out why
     the hard way is exactly what building this test caught: it changes `protectedResource`'s own
@@ -268,13 +288,58 @@ def test_gate_off_output_does_not_depend_on_any_other_programming_setting():
     variants = {
         'programming_max_block_size=1': DefaultConfig(programming_max_block_size=1),
         'programming_max_block_size=255': DefaultConfig(programming_max_block_size=255),
+        # The six api keys this sweep has carried since Task 4, all of them True by default.
         'xcp_program_clear_api_enable=False': DefaultConfig(xcp_program_clear_api_enable=False),
         'xcp_program_api_enable=False': DefaultConfig(xcp_program_api_enable=False),
         'xcp_program_max_api_enable=False': DefaultConfig(xcp_program_max_api_enable=False),
         'xcp_program_start_api_enable=False': DefaultConfig(xcp_program_start_api_enable=False),
         'xcp_program_reset_api_enable=False': DefaultConfig(xcp_program_reset_api_enable=False),
         'xcp_program_prepare_api_enable=False': DefaultConfig(xcp_program_prepare_api_enable=False),
+        # F6, axis 1-2 of eleven: SP4c's two new api keys that default True, so flipped False.
+        'xcp_program_verify_api_enable=False': DefaultConfig(xcp_program_verify_api_enable=False),
+        'xcp_program_format_api_enable=False': DefaultConfig(xcp_program_format_api_enable=False),
+        # F6, axis 3-5: SP4c's two api keys that default False, so flipped TRUE -- individually
+        # (legal with the gate off, see the docstring) and together.
+        'xcp_program_clear_functional_api_enable=True':
+            DefaultConfig(xcp_program_clear_functional_api_enable=True),
+        'xcp_program_write_functional_api_enable=True':
+            DefaultConfig(xcp_program_write_functional_api_enable=True),
+        'both functional api keys=True':
+            DefaultConfig(xcp_program_clear_functional_api_enable=True,
+                          xcp_program_write_functional_api_enable=True),
+        # F6, axis 6-11: the six PGM_PROPERTIES capability flags (DD89/DD90), all False by default.
+        # Every one of these six was measured changing gate-off output before F4 gated
+        # pgmProperties' bits 2-7 (script/source_cfg.c.jinja2).
+        'programming_compression_supported=True':
+            DefaultConfig(programming_compression_supported=True),
+        'programming_compression_required=True':
+            DefaultConfig(programming_compression_required=True),
+        'programming_encryption_supported=True':
+            DefaultConfig(programming_encryption_supported=True),
+        'programming_encryption_required=True':
+            DefaultConfig(programming_encryption_required=True),
+        'programming_non_sequential_supported=True':
+            DefaultConfig(programming_non_sequential_supported=True),
+        'programming_non_sequential_required=True':
+            DefaultConfig(programming_non_sequential_required=True),
+        # F6, the eleventh axis: a declared sector. Measured before F5 gated maxSector and the
+        # Xcp_SectorConfig array, this one variant moved SEVEN lines of gate-off output --
+        # Xcp_SectorConfig00[0x01u] to [0x02u], five initialiser lines, and maxSector 0x00u to
+        # 0x01u. `length` is a multiple of the default AG (BYTE) so DD87's own "Length mod AG = 0"
+        # generation guard, which is deliberately NOT gated on programming.enabled, stays quiet.
+        'sectors=[one sector]': DefaultConfig(sectors=(sector(start_address=0x08000000,
+                                                             length=0x1000,
+                                                             clear_sequence_number=1,
+                                                             program_sequence_number=2,
+                                                             programming_method=3),)),
     }
+
+    # A guard on the sweep itself, not on the generator: a variant that does not actually differ from
+    # the baseline CONFIGURATION would compare the baseline against itself and pass no matter what
+    # the template did. Cheap to state, and it is the failure mode that let F4 and F5 through.
+    for label, config in variants.items():
+        assert config != DefaultConfig(), \
+            '%s does not differ from DefaultConfig(), so it tests nothing' % label
 
     for label, config in variants.items():
         assert _generated_source(config) == baseline, \

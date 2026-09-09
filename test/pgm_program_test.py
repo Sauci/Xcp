@@ -792,14 +792,34 @@ def test_confirming_a_set_mta_response_while_a_program_block_is_open_does_not_le
     Three consecutive SET_MTA/confirm cycles are exercised, matching the review's own reproduction
     ('quiet across three consecutive SET_MTA/confirm cycles'), each to a distinct address, so a
     module that only stayed quiet on the FIRST confirmation (say, because some one-shot guard
-    happened to suppress it) would still be caught by the second or third. The still-open block,
-    completed afterward with the correct remaining count, must land at the LAST of the three
-    addresses -- proof none of the three confirmations silently advanced the MTA on their own.
+    happened to suppress it) would still be caught by the second or third.
 
-    Mutation: reverting Xcp_Internal.pgm_block's own requested_elements/frame_elements back to
-    Xcp_Internal.block_transfer's (fix round 1, finding 1's own defect) makes this test fail
-    identically to its own companion above -- confirmed by actually performing that reversion
-    (task report)."""
+    **Final review F1 changes this test's tail, and narrows what it covers. Read this before
+    concluding it was weakened to accommodate a fix.** It used to complete the still-open block after
+    the three cycles and assert that Xcp_ProgramWrite received all ten bytes at the LAST of the three
+    addresses -- i.e. it asserted that a block opened while the MTA was 0x3000 is written to 0x6000,
+    which is the absolute-mode half of the very defect F1 names: a mid-block SET_MTA silently
+    retargeting an in-flight block. 1.6.5.2.4 says SET_MTA TERMINATES the sequence the format
+    described, so the block is now aborted with it and the completing PROGRAM_NEXT is refused
+    ERR_SEQUENCE (source/Xcp_Pgm.c, Xcp_PgmFormatReset; the full reasoning, and why PROGRAM_FORMAT is
+    refused rather than aborted, are at that call site). The tail asserts that instead.
+
+    What this test no longer covers, and what does: the mutation it was built for -- reverting
+    Xcp_Internal.pgm_block's own requested_elements/frame_elements back to
+    Xcp_Internal.block_transfer's (fix round 1, finding 1's own defect) -- is no longer reachable
+    THROUGH SET_MTA, because the abort now clears whichever pair the module uses before the response
+    is ever confirmed. Its companion test above is unaffected and still catches that reversion in
+    full: a refused PROGRAM_MAX leaves the block open across its own confirmed error response, which
+    was always the stronger of the review's two reproductions and never involved SET_MTA. Nothing is
+    lost; the coverage moved to the sibling that already had it.
+
+    What this test uniquely covers now: SET_MTA stays available inside a programming sequence
+    (1.1/1.6.5.1.1) and answers 0xFF, confirming it transmits nothing unsolicited, and the transfer
+    it terminated cannot afterwards be completed into a flash write at an address the opening PROGRAM
+    never named. That last claim is F1's absolute-mode half, pinned here from the SET_MTA side;
+    test/pgm_functional_test.py's own
+    test_a_set_mta_inside_an_open_functional_block_ends_the_transfer_rather_than_retargeting_it pins
+    the functional-mode half, where the callback rather than the address was being switched."""
     handle = pgm_program_handle()
     _active_session_with_mta(handle, address=0x3000)
 
@@ -824,17 +844,18 @@ def test_confirming_a_set_mta_response_while_a_program_block_is_open_does_not_le
         assert handle.can_if_transmit.call_count == 0, \
             'confirming SET_MTA must not trigger any further, unsolicited transmission'
 
-    # the block itself must still be exactly as it was: completed with the correct remaining count,
-    # it must write at the LAST of the three addresses set above -- proof none of the three
-    # confirmations silently advanced it instead.
+    # Final review F1: the block did not survive the first of those three SET_MTAs, so the frame that
+    # would have completed it has no block to complete and is refused. Asserting the write callback
+    # was never reached at all is what distinguishes this from a module that kept the block and wrote
+    # it to 0x6000 -- an address the opening PROGRAM, accepted while the MTA was 0x3000, never named.
+    handle.can_if_transmit.reset_mock()
     program_next(handle, 0x04, data=(0x07, 0x08, 0x09, 0x0A))
     handle.lib.Xcp_MainFunction()
 
-    address, p_data, length, _p_status_code = handle.xcp_program_write.call_args[0]
-    assert int(handle.ffi.cast('uintptr_t', address)) == 0x6000, 'the LAST of the three SET_MTA addresses'
-    assert length == 0x0A
-    assert bytes(p_data[0:length]) == bytes(range(0x01, 0x0B))
-    assert transmitted(handle)[0] == 0xFF
+    assert transmitted(handle)[0:2] == (0xFE, 0x29), \
+        'the transfer SET_MTA terminated (1.6.5.2.4) cannot be continued: ERR_SEQUENCE'
+    assert handle.xcp_program_write.call_count == 0, \
+        'and no part of the abandoned block may reach flash, at 0x6000 or anywhere else'
 
 
 def test_program_block_of_max_bs_pgm_frames_succeeds():
