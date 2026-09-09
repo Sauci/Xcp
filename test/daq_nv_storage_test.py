@@ -206,6 +206,46 @@ def test_set_request_refuses_the_daq_modes_when_their_api_flags_are_disabled(mod
     assert exchange(handle, (0xF9, mode, 0x00, 0x00))[0:2] == (0xFE, 0x22)
 
 
+@pytest.mark.parametrize('mode, mock_attr, api_enable_kwarg', (
+        (0b00000100, 'xcp_store_daq_configuration', 'xcp_store_daq_configuration_api_enable'),
+        (0b00001000, 'xcp_clear_daq_configuration', 'xcp_clear_daq_configuration_api_enable'),
+))
+def test_an_unconfirmed_event_still_occupies_its_slot_so_a_new_push_can_fail(mode, mock_attr, api_enable_kwarg):
+    """The STORE_DAQ_REQ/CLEAR_DAQ_REQ twin of set_request_test.py's own test of the same name,
+    which covers the identical XCP_E_EVENT_QUEUE_FULL line for STORE_CAL_REQ -- source/Xcp.c:1643
+    (STORE_DAQ_REQ) and :1691 (CLEAR_DAQ_REQ) push into the same event queue, through the same
+    ring, on the same mechanism that test already pins: Xcp_EventQueueGet peeks -- it does not
+    advance `read` -- so an event selected for transmission stays counted as occupying its ring
+    slot until Xcp_EventQueuePop runs in the confirmation, and the ring keeps one slot always empty
+    to tell full from empty. At event_queue_size=2 the usable capacity for a *new* push while one
+    event is in flight, unconfirmed, is eventQueueSize - 2 == 0: the second SET_REQUEST's push
+    fails outright and Xcp_ReportError(..., XCP_E_EVENT_QUEUE_FULL) fires. Exactly one such DET
+    call is asserted, as the precedent does, not merely more than zero, so a handler that reported
+    it on every iteration would not pass by accident. Lives here rather than in
+    set_request_test.py because STORE_DAQ_REQ/CLEAR_DAQ_REQ are this file's own feature -- the
+    completion/event-push behaviour they share is already pinned together in this file's own
+    test_completion_clears_the_bit_and_raises_the_matching_event_carrying_the_status_byte above,
+    and this needs nothing set_request_test.py's STORE_CAL_REQ-only tests already provide."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, event_queue_size=2, **{api_enable_kwarg: True}))
+
+    def finish_successfully(*args):
+        args[-1][0] = 0x00  # zero status: a clean completion
+        return handle.define('E_OK')
+
+    getattr(handle, mock_attr).side_effect = finish_successfully
+
+    connect(handle)
+
+    for _ in range(2):
+        # SET_REQUEST
+        handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, mode, 0x00, 0x00)))
+        handle.lib.Xcp_MainFunction()
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert len([c for c in handle.det_report_error.call_args_list
+                if c[0][3] == handle.define('XCP_E_EVENT_QUEUE_FULL')]) == 1
+
+
 @pytest.mark.parametrize('byte_order', byte_orders)
 def test_set_request_passes_the_session_configuration_id_to_the_store_callback(byte_order):
     """Task 2, brief test 1. XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3: SET_REQUEST's
@@ -594,4 +634,55 @@ def test_a_completed_store_retires_a_still_outstanding_start_up_read():
     handle.lib.Xcp_MainFunction()  # poll #3: the read would complete here, if still polled
 
     assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)  # poll #4
+    assert handle.xcp_read_stored_session_configuration_id.call_count == 1
+
+
+def test_a_completed_clear_retires_a_still_outstanding_start_up_read():
+    """Final review fix wave, F1 -- the clear-side twin of
+    test_a_completed_store_retires_a_still_outstanding_start_up_read above. source/Xcp.c:1671 is
+    the CLEAR_DAQ_REQ block's own copy of the guard, reviewed alongside the STORE_DAQ_REQ one but,
+    before this test, never actually executed -- the store-side test above is the only one that
+    builds all three API flags together, and it only ever drives the store path. Same live state
+    bug, same fix, same mechanism: within one Xcp_MainFunction, the CLEAR_DAQ_REQ block runs before
+    the start-up read's own poll, and both write Xcp_Internal.session_configuration_id. Sequence:
+    the read is armed OUTSTANDING and still not-yet-readable (E_NOT_OK) when CLEAR_DAQ_REQ
+    completes successfully and resets the id to 0x0000u; the read is then made to complete too,
+    E_OK with status 0 and a NON-ZERO id, 0x4321 -- deliberately not 0x0000, because both Xcp_Init
+    and a successful clear already leave the id at 0x0000u, so a read that also reported 0x0000
+    would pass this test whether or not the guard exists. Without the fix, that later completion
+    overwrites session_configuration_id with 0x4321, and GET_STATUS reports it instead of the
+    0x0000 the clear just committed -- the same clobber the store-side test above catches, seen
+    from the clear side. The fix retires the read the moment a store or clear completes with a
+    zero status, so it is never polled again afterwards; the call_count assertion below pins that
+    directly, not only the GET_STATUS symptom -- one call here, where the unfixed code would reach
+    three (armed by connect(), polled again alongside the clear's own completion since nothing yet
+    retires it, and finally completed with the non-zero value)."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_store_daq_configuration_api_enable=True,
+                                    xcp_clear_daq_configuration_api_enable=True,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+    handle.xcp_read_stored_session_configuration_id.return_value = handle.define('E_NOT_OK')
+
+    connect(handle)  # poll #1 (connect's own Xcp_MainFunction call): read polled, still E_NOT_OK
+
+    def clear_daq_configuration(p_status_code):
+        p_status_code[0] = 0x00  # zero status: a clean completion
+        return handle.define('E_OK')
+
+    handle.xcp_clear_daq_configuration.side_effect = clear_daq_configuration
+
+    # poll #2 (exchange's own Xcp_MainFunction call): CLEAR_DAQ_REQ completes and resets to 0x0000.
+    exchange(handle, (0xF9, 0b00001000, 0x00, 0x00))
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_CLEAR_DAQ
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        p_session_configuration_id[0] = 0x4321  # non-zero: must NOT be adopted if the guard holds
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    handle.lib.Xcp_MainFunction()  # poll #3: the read would complete here, if still polled
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x00, 0x00)  # poll #4
     assert handle.xcp_read_stored_session_configuration_id.call_count == 1
