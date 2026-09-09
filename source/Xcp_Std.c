@@ -1154,13 +1154,21 @@ uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPdu
     {
         /* The session configuration id in bytes 2,3 belongs to STORE_DAQ_REQ: 1.0/1.6.1.2.3 has the
          * slave store it in non-volatile memory alongside the DAQ lists, and CLEAR_DAQ_REQ reset it
-         * to 0. Still ignored here regardless of whether STORE_DAQ_REQ was just accepted above:
-         * Xcp_StoreDaqConfiguration is polled with a placeholder in its place (Xcp_MainFunction,
-         * Xcp.c) -- design doc DD99 threads the real value through in a later task, which changes no
-         * signature here since Xcp_StoreDaqConfiguration's own parameter for it already exists. The
-         * check that once stood here rejected a non-zero id, but did so after this branch had
-         * already been entered: it set `result` and then finalized a positive response regardless,
-         * so it never reached the master. */
+         * to 0. Staged into requested_session_configuration_id unconditionally, regardless of which
+         * mode bit(s) this request actually carried: Xcp_MainFunction (Xcp.c) reads it only while
+         * STORE_DAQ_REQ is pending, and this handler's own dispatch gate refuses every SET_REQUEST
+         * with ERR_PGM_ACTIVE (Xcp_CTOErrorMatrix, Xcp_CanIfRxIndication in Xcp.c) for as long as
+         * any of the three session-status request bits is set -- so a store already in flight can
+         * never have its id overwritten by a later, unrelated SET_REQUEST landing here first.
+         * Xcp_StoreDaqConfiguration itself is still called from Xcp_MainFunction, not here (design
+         * doc DD99/DD100, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md): reading
+         * the bytes is this handler's job, committing them is the polled callback's. The check that
+         * once stood here rejected a non-zero id, but did so after this branch had already been
+         * entered: it set `result` and then finalized a positive response regardless, so it never
+         * reached the master. 1.0/1.6.1.2.3 gives the id the full uint16 range and reserves no
+         * values, so nothing here validates it either. */
+        Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &Xcp_Internal.requested_session_configuration_id, Xcp_Ptr->general->byteOrder);
+
         Xcp_Internal.session_status |= pPduInfo->SduDataPtr[0x01u];
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
@@ -1309,16 +1317,18 @@ uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduI
      * Xcp_Internal.locked_resource holds exactly that (DD78). */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_GetLockedResources();
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5: session configuration id.
-     * 1.6.1.2.3 has it set by a prior SET_REQUEST carrying STORE_DAQ_REQ, held in non-volatile
-     * memory alongside the stored DAQ lists and reset to 0 by CLEAR_DAQ_REQ, so that a master can
-     * check that automatically started (RESUME) DAQ lists carry the configuration it expects.
-     * SET_REQUEST refuses STORE_DAQ_REQ and GET_DAQ_PROCESSOR_INFO reports RESUME unsupported, so
-     * no configuration is ever stored and 0 -- the value the specification itself resets the id to
-     * -- is the truthful answer here, not a placeholder. This reported 0xABCD until defect D9 was
-     * closed; see the roadmap for the non-volatile storage work that would give it a real value. */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = 0x00u;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = 0x00u;
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5: session configuration id,
+     * in the configured byte order. Xcp_Internal.session_configuration_id (source/Xcp_Internal.h)
+     * is the module's own held copy of what design doc DD99
+     * (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) tracks: adopted from a
+     * SET_REQUEST carrying STORE_DAQ_REQ once Xcp_StoreDaqConfiguration reports a zero status
+     * (Xcp_MainFunction, source/Xcp.c), reset to 0 once CLEAR_DAQ_REQ similarly completes clean, and
+     * left untouched by CONNECT -- it reflects what non-volatile memory holds, which a reconnect
+     * does not alter. Transmitted verbatim, the same shape Xcp_Internal.locked_resource above
+     * already has for byte 2. This reported the hardcoded constant 0 -- honest only because no code
+     * fulfilled STORE_DAQ_REQ yet -- until this task gave the field a real value; before that it
+     * reported the fabricated constant 0xABCD, until defect D9 was closed. */
+    Xcp_CopyFromU16WithOrder(Xcp_Internal.session_configuration_id, &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
 
     Xcp_FinalizeResPacket(0x06u, &Xcp_Internal.cto_response.pdu_info);
 

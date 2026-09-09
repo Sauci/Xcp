@@ -1257,6 +1257,13 @@ void Xcp_Init(const Xcp_Type *pConfig)
             Xcp_Internal.connect_mode = XCP_CONNECT_MODE_NORMAL;
             Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
             Xcp_Internal.session_status = 0x00u;
+            /* Design doc DD99. A power cycle is the one door DD99's own "CONNECT must not touch
+             * it" exception does not cover -- Xcp_Init is the module's own constructor, not a
+             * command handler reaching into a fresh session's state, and nothing has been read
+             * from non-volatile storage yet for this field to hold instead. Task 4's start-up read
+             * (Xcp_MainFunction) adopts the real value once it completes; until then this is the
+             * "no valid stored configuration" answer DD100 itself reads as. */
+            Xcp_Internal.session_configuration_id = 0x0000u;
             Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
             Xcp_Internal.allocated_daq_count =
                     (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC) ? 0x0000u
@@ -1562,16 +1569,25 @@ void Xcp_MainFunction(void)
      * working". Holding it forever is the denial-of-service hazard this task exists to avoid -- Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate
      * refuses 42 commands in the default build (38 with flash programming enabled -- four Xcp_CTOErrorMatrix rows carry the bit only with that
      * gate off; counted from the matrix's own initializer entries per preprocessor branch, not by grepping the macro name, which also matches
-     * the dispatch gate's own uses), DISCONNECT among them, for as long as any request bit is set. sessionConfigurationId is a placeholder here:
-     * design doc DD99 threads the real value (SET_REQUEST's own bytes 2,3) through in a later task, which changes no signature here since
-     * Xcp_StoreDaqConfiguration's own parameter for it already exists (interface/Xcp.h). */
+     * the dispatch gate's own uses), DISCONNECT among them, for as long as any request bit is set.
+     *
+     * Xcp_Internal.requested_session_configuration_id (source/Xcp_Internal.h) is SET_REQUEST's own bytes 2,3
+     * (Xcp_DTOCmdStdSetRequest, source/Xcp_Std.c); design doc DD99's second row adopts it into the reported
+     * Xcp_Internal.session_configuration_id below, but only once this call reports a zero status -- a failed store leaves the previously
+     * reported id standing (DD99's fourth row), which is why that adoption is a separate statement from the bit clear above it rather than
+     * folded into the same condition. */
     if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) != 0x00u)
     {
-        if (Xcp_StoreDaqConfiguration(0x0000u, &store_daq_configuration_status) == E_OK)
+        if (Xcp_StoreDaqConfiguration(Xcp_Internal.requested_session_configuration_id, &store_daq_configuration_status) == E_OK)
         {
             Std_ReturnType push_result;
 
             Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ;
+
+            if (store_daq_configuration_status == 0x00u)
+            {
+                Xcp_Internal.session_configuration_id = Xcp_Internal.requested_session_configuration_id;
+            }
 
             /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
              * exclusive area, and this and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are two
@@ -1596,7 +1612,10 @@ void Xcp_MainFunction(void)
 
     /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
      * The CLEAR_DAQ_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
-     * by transmitting an EV_CLEAR_DAQ event packet. Copies the STORE_CAL_REQ/STORE_DAQ_REQ blocks' rule exactly -- see the comment above. */
+     * by transmitting an EV_CLEAR_DAQ event packet. Copies the STORE_CAL_REQ/STORE_DAQ_REQ blocks' rule exactly -- see the comment above.
+     * DD98/DD99's third row: a zero status also resets the reported Xcp_Internal.session_configuration_id to 0x0000u -- 1.0/1.6.1.2.3's own
+     * CLEAR_DAQ_REQ postcondition, stated observably because this module never sees the integrator's non-volatile memory. A failed clear
+     * leaves the id standing, the same as a failed store does above. */
     if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) != 0x00u)
     {
         if (Xcp_ClearDaqConfiguration(&clear_daq_configuration_status) == E_OK)
@@ -1604,6 +1623,11 @@ void Xcp_MainFunction(void)
             Std_ReturnType push_result;
 
             Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ;
+
+            if (clear_daq_configuration_status == 0x00u)
+            {
+                Xcp_Internal.session_configuration_id = 0x0000u;
+            }
 
             /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
              * exclusive area, and this and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are two

@@ -4,7 +4,10 @@
 """SP5-NV Task 1: SET_REQUEST's STORE_DAQ_REQ and CLEAR_DAQ_REQ, and their polled integrator
 callbacks Xcp_StoreDaqConfiguration / Xcp_ClearDaqConfiguration (interface/Xcp.h).
 
-Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD97).
+Task 2 extends this file: the session configuration id SET_REQUEST carries in bytes 2,3, held in
+Xcp_Internal.session_configuration_id and reported by GET_STATUS bytes 4,5 (DD98/DD99).
+
+Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD99).
 
 DD95 is the hazard this whole task exists around: the ERR_PGM_ACTIVE gate in Xcp_CanIfRxIndication
 refuses every command whose Xcp_CTOErrorMatrix row carries that bit -- 42 rows in the default build,
@@ -191,3 +194,128 @@ def test_set_request_refuses_the_daq_modes_when_their_api_flags_are_disabled(mod
     connect(handle)
 
     assert exchange(handle, (0xF9, mode, 0x00, 0x00))[0:2] == (0xFE, 0x22)
+
+
+def test_set_request_passes_the_session_configuration_id_to_the_store_callback():
+    """Task 2, brief test 1. XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3: SET_REQUEST's
+    WORD session_configuration_id sits at bytes 2,3 and must reach Xcp_StoreDaqConfiguration's own
+    first parameter -- asserted on the callback's actual argument, not merely that it was called,
+    which would also pass with Task 1's own 0x0000 placeholder."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+    handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')
+
+    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, LITTLE_ENDIAN (DefaultConfig's own default)
+
+    assert handle.xcp_store_daq_configuration.call_args[0][0] == 0x1234
+
+
+@pytest.mark.parametrize('byte_order', byte_orders)
+def test_get_status_reports_the_session_configuration_id_after_a_successful_store(byte_order):
+    """Task 2, brief test 2. XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5, in
+    the configured byte order -- DD99's second row: STORE_DAQ_REQ completing with a zero status
+    adopts the id SET_REQUEST carried into Xcp_Internal.session_configuration_id. Parametrized over
+    byte order (unlike test 1 above) because this is the one assertion that exercises both the read
+    side (SET_REQUEST, Xcp_CopyToU16WithOrder) and the write side (GET_STATUS,
+    Xcp_CopyFromU16WithOrder) together -- a byte-order defect in either would show up here even if
+    the other side were correct."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, byte_order=byte_order,
+                                    xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x00  # zero status: a clean completion
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    exchange(handle, (0xF9, 0b00000100) + tuple(u16_to_array(0x1234, byte_order)))
+    # Drains the queued EV_STORE_DAQ (see test_completion_clears_the_bit_and_raises_the_matching_
+    # event_carrying_the_status_byte above) so GET_STATUS below is not racing a still-unconfirmed
+    # frame.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == tuple(u16_to_array(0x1234, byte_order))
+
+
+def test_a_failed_store_leaves_the_previously_reported_id_unchanged():
+    """Task 2, brief test 3. DD99's fourth row: a store that completes but fails (E_OK, non-zero
+    status) leaves Xcp_Internal.session_configuration_id unchanged. A prior successful store gives
+    it something to leave unchanged -- without one, an implementation that always adopts the id
+    (ignoring the status) and one that never does would be indistinguishable from a fresh 0."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+
+    def store_daq_configuration_ok(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration_ok
+
+    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, completes successfully
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
+
+    def store_daq_configuration_failed(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x01  # non-zero: failed, but E_OK still means "finished" (DD95/DD96)
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration_failed
+
+    exchange(handle, (0xF9, 0b00000100, 0x78, 0x56))  # id = 0x5678, but this store fails
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)
+
+
+def test_a_successful_clear_resets_the_reported_id_to_zero():
+    """Task 2, brief test 4. DD98: XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3's
+    CLEAR_DAQ_REQ postcondition resets the session configuration id to 0 -- stated here as an
+    observable outcome, since this module never sees the integrator's non-volatile memory."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_store_daq_configuration_api_enable=True,
+                                    xcp_clear_daq_configuration_api_enable=True))
+    connect(handle)
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, completes successfully
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
+
+    def clear_daq_configuration(p_status_code):
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_clear_daq_configuration.side_effect = clear_daq_configuration
+
+    exchange(handle, (0xF9, 0b00001000, 0x00, 0x00))
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_CLEAR_DAQ
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x00, 0x00)
+
+
+def test_connect_does_not_reset_the_session_configuration_id():
+    """Task 2, brief test 5 -- the assertion this task cares most about. DD99: CONNECT clears the
+    three session-status REQUEST bits (DD77/R1, Xcp_CTOCmdStdConnect's own final review R1 comment,
+    source/Xcp_Std.c) but must leave the id standing -- it reflects what non-volatile memory holds,
+    which a reconnect does not alter. Clearing it would make GET_STATUS report 0 while storage still
+    holds a configuration. This is the assertion most likely to be broken later, because the
+    instinct is to reset everything at the session boundary."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, completes successfully
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
+
+    connect(handle)  # reconnect: must clear the request bits, must not touch the id
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)

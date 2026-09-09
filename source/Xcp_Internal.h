@@ -366,6 +366,28 @@ typedef struct {
     uint8 connect_mode;
     Xcp_ConnectionState connection_status;
     uint8 session_status;
+    /* GET_STATUS bytes 4,5 (XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3), transmitted
+     * verbatim in the configured byte order (Xcp_CTOCmdStdGetStatus, source/Xcp_Std.c). Design doc
+     * DD99 (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) is this field's own
+     * exhaustive table of writers -- adopted from requested_session_configuration_id below when
+     * STORE_DAQ_REQ completes with a zero status code, reset to 0x0000u when CLEAR_DAQ_REQ
+     * completes with a zero status code, and (a later task) adopted from non-volatile storage once
+     * Xcp_Init's own start-up read completes (Xcp_MainFunction, source/Xcp.c, all three). A store
+     * or clear that completes but fails -- E_OK with a non-zero status -- leaves it untouched, and
+     * so does CONNECT (Xcp_CTOCmdStdConnect, source/Xcp_Std.c): unlike the session-status REQUEST
+     * bits beside it above, which CONNECT does clear (DD77/R1), this field reflects what
+     * non-volatile memory holds, which a reconnect does not alter. */
+    uint16 session_configuration_id;
+    /* SET_REQUEST's own bytes 2,3 (1.0/1.6.1.2.3), staged here by Xcp_DTOCmdStdSetRequest
+     * (source/Xcp_Std.c) on every accepted SET_REQUEST, regardless of which mode bit(s) it
+     * carried -- safe unconditionally because SET_REQUEST's own Xcp_CTOErrorMatrix row carries
+     * XCP_INTERNAL_ERR_PGM_ACTIVE, so a new one cannot be dispatched while STORE_DAQ_REQ is still
+     * pending on an earlier one to have its id overwritten out from under it. Xcp_MainFunction
+     * (source/Xcp.c) reads this field on every poll of a pending STORE_DAQ_REQ and passes it to
+     * Xcp_StoreDaqConfiguration, until that call reports completion. Not the reported field above:
+     * this is what the request CARRIED, session_configuration_id is what the module has ADOPTED,
+     * and the two differ for as long as a store is pending or after one that failed. */
+    uint16 requested_session_configuration_id;
     /* The Current Resource Protection Mask of XCP part 2 1.0/1.6.1.1.3: a set bit means the group
      * IS still protected. This is the value transmitted verbatim by GET_STATUS byte 2 and UNLOCK
      * response byte 1, so no reader inverts it and no reader can get the polarity wrong.
