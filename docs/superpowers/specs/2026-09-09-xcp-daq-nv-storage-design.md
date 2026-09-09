@@ -216,13 +216,31 @@ papered over.
 ### DD102 — RESUME stays out of scope, and stays unadvertised
 
 This phase builds persistence. RESUME mode — `CONNECT`'s resume handshake,
-`XCP_CONNECTION_STATE_RESUME` which is declared but never entered, `SET_DAQ_LIST_MODE`'s RESUME bit,
-and lists starting automatically after power-up — is a later phase.
+`XCP_CONNECTION_STATE_RESUME` which is declared but never entered, the RESUME bit `GET_DAQ_LIST_MODE`
+reports, and lists starting automatically after power-up — is a later phase.
 
-`RESUME_SUPPORTED` therefore stays clear in `GET_DAQ_PROCESSOR_INFO` (1.1/§1.6.4.1.2.4), and
-`SET_DAQ_LIST_MODE` keeps refusing the RESUME bit. That remains coherent: 1.0/§1.6.1.2.3 gates
+`RESUME_SUPPORTED` therefore stays clear in `GET_DAQ_PROCESSOR_INFO` (1.1/§1.6.4.1.2.4), and the
+module never reports RESUME in `GET_DAQ_LIST_MODE`. That remains coherent: 1.0/§1.6.1.2.3 gates
 `STORE_DAQ_REQ` and `CLEAR_DAQ_REQ` on their own support, not on RESUME, so a slave may store
 without resuming.
+
+**Correction, made while implementing Task 4.** This decision first read "`SET_DAQ_LIST_MODE` keeps
+refusing the RESUME bit". That was wrong, and asserting it would have shipped a false test. The
+module keeps two distinct mode layouts, and RESUME exists in only one of them:
+
+| | bit 7 | bit 6 | bit 5 | bit 4 | bit 1 | bit 0 |
+|---|---|---|---|---|---|---|
+| `XCP_DAQ_LIST_MODE_REQ_*` — the `SET_DAQ_LIST_MODE` **request** | don't care | don't care | PID_OFF | TIMESTAMP | DIRECTION | ALTERNATING |
+| `XCP_DAQ_LIST_MODE_*` — the `GET_DAQ_LIST_MODE` **response** | RESUME | RUNNING | PID_OFF | TIMESTAMP | DIRECTION | SELECTED |
+
+The request byte has no RESUME bit to refuse; bits 6 and 7 are don't-care in both revisions, and
+commit `13f59c2` stopped refusing them because refusing bits the specification marks don't-care was
+over-strict. `XCP_DAQ_LIST_MODE_RESUME` (`source/Xcp_Internal.h:202`) belongs to the response
+direction alone.
+
+The load-bearing property is therefore that RESUME is never *honoured*, not that it is *refused*:
+a `SET_DAQ_LIST_MODE` carrying bit 7 is accepted, and `GET_DAQ_LIST_MODE` still reports RESUME clear.
+That is what the test asserts.
 
 **DD100's read therefore reads without restoring.** The module adopts the session configuration id
 and nothing else; it does not rebuild DAQ lists. A slave coming up with lists this session's master
