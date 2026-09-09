@@ -1267,10 +1267,15 @@ uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType 
         comm_mode_optional |= (0x01u << 0x00u);
     }
 
-    if (Xcp_Ptr->general->interleavedModeSupported == TRUE)
-    {
-        comm_mode_optional |= (0x01u << 0x01u);
-    }
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3
+     * INTERLEAVED_MODE (bit 1) says the interleaved mode is available, and "if interleaved mode is
+     * available, QUEUE_SIZE indicates the maximum number of consecutive command packets the master
+     * can send to the receipt queue of the slave". This module has no receipt queue: a second
+     * request arriving while a response is still unconfirmed is refused ERR_CMD_BUSY
+     * (Xcp_CanIfRxIndication, source/Xcp.c). The bit is therefore hardcoded clear rather than
+     * configurable -- an integrator cannot turn on a queue that does not exist, and advertising one
+     * would promise a depth the slave refuses at the second packet. QUEUE_SIZE below reports 0 for
+     * the same reason. */
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
@@ -1278,7 +1283,7 @@ uint8 Xcp_DTOCmdStdGetCommModeInfo(boolean *responseExpected, const PduInfoType 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->maxBS;
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = Xcp_Ptr->general->minST;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->ctoQueueSize;
+    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u; /* QUEUE_SIZE, see above */
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x07u] = ((XCP_SW_MAJOR_VERSION & 0x0Fu) << 0x04u) | (XCP_SW_MINOR_VERSION & 0x0F);
 
     Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);

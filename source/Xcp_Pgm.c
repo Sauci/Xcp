@@ -1790,10 +1790,13 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
             comm_mode_pgm |= (0x01u << 0x00u);
         }
 
-        if (Xcp_Ptr->general->interleavedModeSupported == TRUE)
-        {
-            comm_mode_pgm |= (0x01u << 0x01u);
-        }
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.5.1.3
+         * INTERLEAVED_MODE (bit 1) "indicates whether the Interleaved Mode is available during
+         * Programming", sized by QUEUE_SIZE_PGM. Hardcoded clear for the same reason
+         * Xcp_DTOCmdStdGetCommModeInfo (source/Xcp_Std.c) clears COMM_MODE_OPTIONAL's bit 1: this
+         * module implements no receipt queue in either mode, and a master told it may send
+         * QUEUE_SIZE_PGM consecutive commands would be refused ERR_CMD_BUSY on the second.
+         * QUEUE_SIZE_PGM below reports 0 to match. */
 
         if (Xcp_Ptr->general->slaveBlockModeSupported == TRUE)
         {
@@ -1827,7 +1830,7 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
          * field from ever exceeding it. */
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u] = Xcp_Ptr->general->maxBsPgm;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x05u] = Xcp_Ptr->general->minST;
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = Xcp_Ptr->general->ctoQueueSize;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x06u] = 0x00u; /* QUEUE_SIZE_PGM, see above */
 
         Xcp_FinalizeResPacket(0x07u, &Xcp_Internal.cto_response.pdu_info);
     }
