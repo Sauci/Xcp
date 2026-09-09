@@ -204,6 +204,8 @@ Seed `-DXCP_PYTEST_ARGS="-k;daq_nv_accessor"`. Expected: all fail at link or att
 
 `xcp_daq_nv_accessors_api_enable`, gating all four together — they exist to serve one caller and splitting them buys nothing.
 
+> **Withdrawn during Task 3** (commit `b7c4d86`, "fix: remove xcp_daq_nv_accessors_api_enable, a flag DD94 never asked for"). DD94 asked only for the four accessors themselves; this flag's own runtime check made a disabled build's accessors return values indistinguishable from legitimate out-of-range answers — the exact D9 shape this whole plan exists to close. The four accessors are declared and implemented unconditionally instead, below.
+
 - [ ] **Step 4: Declare and implement**
 
 Declare in `interface/Xcp.h` with doc comments matching `Xcp_GetSegmentFreezeState`'s style, each stating what it returns for an out-of-range argument. Implement in `source/Xcp_Daq.c` beside the existing DAQ helpers, reading the runtime list state the module already holds — selection is `XCP_DAQ_LIST_MODE_SELECTED` in the list's mode byte.
@@ -273,5 +275,20 @@ git add -A && git commit -m "feat: read the stored session configuration id at s
 - [ ] Full `./test.sh` in the container on a clean build tree, both ctest targets green.
 - [ ] Every mutation verification recorded, each naming the test that failed — including any honest negatives, reported rather than papered over.
 - [ ] `RESUME_SUPPORTED` is still clear in `GET_DAQ_PROCESSOR_INFO` and `SET_DAQ_LIST_MODE` still refuses the RESUME bit (DD102) — assert it, since nothing else in this plan touches those and a reviewer should see it was checked rather than assumed.
+
+> **"Refuses" corrected to "tolerates" during Task 4.** `RESUME_SUPPORTED` clear is accurate and
+> reasserted directly by this task. The RESUME bit itself is not refused, and has not been since
+> commit `13f59c2` ("fix: put DIRECTION and ALTERNATING at the bits the specification gives
+> them"), which predates this plan: 1.1's own SET_DAQ_LIST_MODE mode-byte table marks bits 2, 3, 6
+> and 7 don't-care, and refusing bits 6 and 7 — believing ALTERNATING lived there, where 1.1
+> actually places it at bit 0 — was itself the defect that commit fixed
+> (`source/Xcp_Internal.h`'s own `XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED`
+> comment, and `test/set_daq_list_mode_test.py::test_set_daq_list_mode_tolerates_the_bits_the_
+> specification_marks_dont_care[0x80]`, both already pin the tolerant behaviour). What DD102
+> actually needs, and what Task 4 asserts instead: the bit is not *honoured* —
+> `Xcp_DTOCmdDaqSetDaqListMode` never writes it into a list's stored mode, so `GET_DAQ_LIST_MODE`
+> never reports it set. Recorded here rather than silently asserting a refusal that would not
+> match the shipped, spec-correct behaviour.
+
 - [ ] No DAQ list is restored at start-up: the read adopts the id and nothing else (DD102).
 - [ ] Update `docs/superpowers/specs/2026-08-29-xcp-part2-roadmap.md`: SP5-NV complete, and correct the SP5 entry's dependency note. Fold into the final commit, matching PRs #5 and #8.

@@ -164,8 +164,8 @@ All eleven commands — `PROGRAM_START` (0xD2) through `PROGRAM_VERIFY` (0xC8) �
 | Time-out values t1…t7 | §1.7.2 | **not a slave concern.** §1.7.2 assigns the timers entirely to the master, which reads t1…t6 from the A2L file. The slave implements nothing here |
 | `EV_CMD_PENDING` | §1.7.2.4.2 | absent. This is the slave's only obligation under §1.7.2 — the one way it can ask the master to restart time-out detection |
 | Interleaved communication model | §1.7.2.3 | absent. Requires the slave to accept request *k+1* before answering *k*; `cto_queue_size` and `interleaved_mode` exist in `xcp.json` but nothing reads them |
-| RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | `XCP_CONNECTION_STATE_RESUME` is declared but never entered. The DAQ list infrastructure it needs now exists (SP2a), but `SET_DAQ_LIST_MODE` rejects the RESUME bit with `ERR_MODE_NOT_VALID` and `STORE_DAQ_REQ` persistence is unbuilt. Scheduled into SP5 |
-| Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x01), the latter added in SP2a and configurable through `overload_indication`. Absent: `EV_RESUME_MODE`, `EV_CLEAR_DAQ`, `EV_STORE_DAQ`, `EV_CMD_PENDING`, `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
+| RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | `XCP_CONNECTION_STATE_RESUME` is declared but never entered. The DAQ list infrastructure it needs has existed since SP2a, and SP5-NV built the persistence it needs — `STORE_DAQ_REQ`/`CLEAR_DAQ_REQ` and the session configuration id — deliberately stopping short of RESUME itself (DD102). `SET_DAQ_LIST_MODE` does not reject the RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV: 1.1 marks that bit don't-care, and the slave tolerates it without honouring it (the claim in this row was stale before SP5-NV existed, and is corrected here as part of it). Scheduled into SP5's residue, now depending on SP5-NV as well as SP2a |
+| Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x06), the latter added in SP2a and configurable through `overload_indication`. `EV_CLEAR_DAQ` (0x01) and `EV_STORE_DAQ` (0x02) added in SP5-NV. Absent: `EV_RESUME_MODE`, `EV_CMD_PENDING`, `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
 | Extended error payloads | §1.1.3.3 | absent — see defect D6 |
 
@@ -525,41 +525,67 @@ Note that time-out handling itself is *not* here: §1.7.2 places the t1…t6 tim
 the master. `EV_CMD_PENDING` and the interleaved request queue are the slave's whole share
 of that chapter.
 
-#### SP5-NV — non-volatile DAQ storage
+#### SP5-NV — non-volatile DAQ storage — **complete**
 
 Everything the module currently refuses because it keeps no non-volatile DAQ configuration:
 `SET_REQUEST`'s `STORE_DAQ_REQ` and `CLEAR_DAQ_REQ` modes, the session configuration id that is
-stored and cleared alongside them (§1.6.1.2.3), the `GET_STATUS` byte pair that reports it, and
-RESUME mode itself, which is what the whole mechanism exists to serve. D9 closed the
-*misreporting* by refusing these modes outright; this item is what would let them be accepted.
+stored and cleared alongside them (§1.6.1.2.3), and the `GET_STATUS` byte pair that reports it. D9
+closed the *misreporting* by refusing these modes outright; this item is what let them be accepted.
 
-**Intended shape** (agreed 2026-09-03, not yet designed): an integrator-provided callback pair
-for storing and reading the configuration, **asynchronous**, following the pattern already
-established by `Xcp_StoreCalibrationDataToNonVolatileMemory` — which `Xcp_MainFunction` polls
-until it reports completion, then clears the request bit and raises `EV_STORE_CAL`. The DAQ side
-needs the same treatment for `EV_STORE_DAQ` and `EV_CLEAR_DAQ`, plus a read path at
-initialisation that RESUME depends on and that calibration has no equivalent of.
+Design: `2026-09-09-xcp-daq-nv-storage-design.md` (DD94–DD102).
 
-Three things this must get right, all of them discovered by D9:
+**Landed storage-only — not RESUME mode, which this entry originally bundled in as "what the whole
+mechanism exists to serve."** DD102 split it back out while designing: RESUME needs a `CONNECT`
+handshake and a running-list restore that persisting a configuration does not by itself supply,
+and building it unspecified alongside storage was the wrong trade against shipping storage on its
+own first. What this phase actually built: `STORE_DAQ_REQ`/`CLEAR_DAQ_REQ` accepted and polled
+through the integrator's own `Xcp_StoreDaqConfiguration`/`Xcp_ClearDaqConfiguration`, each request
+bit clearing on every exit including a failed one (DD94/DD95, and DD96 pinned the same rule
+already implemented but untested for `STORE_CAL_REQ`); the session configuration id held and
+reported at `GET_STATUS` bytes 4–5, provably `CONNECT`-proof (DD99); four read-only accessors an
+integrator implementing the store queries to learn what to persist (DD94); and a polled start-up
+read that adopts the id alone — no DAQ list — answering `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE`
+from `GET_STATUS` while outstanding (DD100/DD101). `RESUME_SUPPORTED` stays clear, unchanged.
+
+**Intended shape** (agreed 2026-09-03, superseded by the design linked above): an integrator-
+provided callback pair for storing and reading the configuration, **asynchronous**, following the
+pattern already established by `Xcp_StoreCalibrationDataToNonVolatileMemory` — which
+`Xcp_MainFunction` polls until it reports completion, then clears the request bit and raises
+`EV_STORE_CAL`. The DAQ side needs the same treatment for `EV_STORE_DAQ` and `EV_CLEAR_DAQ`, plus
+a read path at initialisation that calibration has no equivalent of. This held up: DD100 built
+that read path polled rather than asynchronous in some other shape, for a reason worth keeping
+alongside the original note — a synchronous call from `Xcp_Init` was the alternative actually
+considered and rejected, since this module can neither verify nor enforce that the integrator's
+own non-volatile memory abstraction has finished populating its RAM mirror by the time `Xcp_Init`
+runs. The phrase "that RESUME depends on" is the one part superseded — read without restoring, as
+the paragraph above explains.
+
+Three things this had to get right, all of them discovered by D9:
 
 - **A request bit that is never cleared is a denial of service, not a cosmetic flaw.** The
   `ERR_PGM_ACTIVE` gate in `Xcp_CanIfRxIndication` refuses the 42 commands that carry it while
-  any of the three request bits is set. Any asynchronous store must guarantee the bit is
-  cleared on *every* exit path, including callback failure, or it reintroduces exactly what D9
-  removed.
+  any of the three request bits is set. Confirmed done for all three bits, `STORE_CAL_REQ`
+  included, by a dedicated denial-of-service test per bit (DD95's own acceptance bar).
 - **Storing has an ordering requirement.** §1.6.1.2.3: the slave must first clear any DAQ list
   configuration already in non-volatile memory, then store the new one — so a store interrupted
-  midway must not leave a configuration the master would take for complete.
-- **`GET_DAQ_PROCESSOR_INFO` must stop reporting RESUME unsupported at the same time**, and the
-  refusals in `SET_REQUEST` and `SET_DAQ_LIST_MODE` must be lifted together with it. The
-  module's advertisement and its refusals are currently consistent; changing one without the
-  others is what would make it incoherent.
+  midway must not leave a configuration the master would take for complete. Answered by DD97: the
+  session configuration id is committed last, so an interrupted store simply leaves none — an
+  *integrator* obligation this module states but cannot itself test, since it never sees the
+  integrator's own non-volatile memory.
+- ~~`GET_DAQ_PROCESSOR_INFO` must stop reporting RESUME unsupported at the same time, and the
+  refusals in `SET_REQUEST` and `SET_DAQ_LIST_MODE` must be lifted together with it.~~ **Did not
+  happen, deliberately — see DD102 above.** This bullet assumed RESUME shipped alongside storage;
+  once it did not, advertising `RESUME_SUPPORTED` while nothing restores a list would be the exact
+  incoherence this bullet itself warned against, the other way round. `SET_REQUEST` accepting
+  `STORE_DAQ_REQ`/`CLEAR_DAQ_REQ` is real and independent of RESUME: 1.0/§1.6.1.2.3 gates them on
+  their own support, not on RESUME, so a slave may store without resuming.
 
-**Dependencies.** RESUME and SP5-NV both depend on SP2 — RESUME is a
-`SET_DAQ_LIST_MODE` bit backed by `STORE_DAQ_REQ` persistence, and the session configuration
-id is persisted and cleared through the same DAQ storage mechanism. Only the interleaved
-model, `EV_CMD_PENDING`, `GET_ID` types and the `SERV_*` codes are genuinely independent and
-can be pulled forward if one of them blocks an integration.
+**Dependencies, corrected.** This paragraph originally read RESUME and SP5-NV as two siblings both
+depending on SP2 alone. With SP5-NV complete and RESUME still not built, that symmetry no longer
+holds: RESUME now depends on SP5-NV as well, not only on SP2 — the persistence and the session
+configuration id this phase built are exactly what a resume handshake needs something to resume
+*from*. Only the interleaved model, `EV_CMD_PENDING`, `GET_ID` types and the `SERV_*` codes are
+genuinely independent and can be pulled forward if one of them blocks an integration.
 
 ---
 

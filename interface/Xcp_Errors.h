@@ -105,8 +105,11 @@
 
 /**
 * @brief Access to the requested resource is temporary not possible (see ASAM protocol layer
-* specification 1.7.3.1). Introduced in version 1.1; absent from 1.0. Nothing in this module
-* emits it, since it describes a condition only an integrator's callbacks can detect.
+* specification 1.7.3.1). Introduced in version 1.1; absent from 1.0. Emitted by
+* Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) while design doc DD101's start-up read of the session
+* configuration id is still outstanding (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-
+* design.md) -- a condition only an integrator's own Xcp_ReadStoredSessionConfigurationId callback
+* can resolve, which is why the module can only report it, not shorten it.
  */
 #define XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE (0x33u)
 

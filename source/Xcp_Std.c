@@ -1310,27 +1310,47 @@ uint8 Xcp_CTOCmdStdGetStatus(boolean *responseExpected, const PduInfoType *pPduI
 
     *responseExpected = TRUE;
 
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.session_status;
-    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, byte 2: the Current Resource
-     * Protection Status -- a set bit means that group IS protected. Transmitted verbatim, because
-     * Xcp_Internal.locked_resource holds exactly that (DD78). */
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_GetLockedResources();
-    Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5: session configuration id,
-     * in the configured byte order. Xcp_Internal.session_configuration_id (source/Xcp_Internal.h)
-     * is the module's own held copy of what design doc DD99
-     * (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) tracks: adopted from a
-     * SET_REQUEST carrying STORE_DAQ_REQ once Xcp_StoreDaqConfiguration reports a zero status
-     * (Xcp_MainFunction, source/Xcp.c), reset to 0 once CLEAR_DAQ_REQ similarly completes clean, and
-     * left untouched by CONNECT -- it reflects what non-volatile memory holds, which a reconnect
-     * does not alter. Transmitted verbatim, the same shape Xcp_Internal.locked_resource above
-     * already has for byte 2. This reported the hardcoded constant 0 -- honest only because no code
-     * fulfilled STORE_DAQ_REQ yet -- until this task gave the field a real value; before that it
-     * reported the fabricated constant 0xABCD, until defect D9 was closed. */
-    Xcp_CopyFromU16WithOrder(Xcp_Internal.session_configuration_id, &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
+    /* Design doc DD101 (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md): while
+     * DD100's start-up read of the session configuration id is still outstanding, this module
+     * does not yet know it, and reporting the field's pre-read value below would be
+     * indistinguishable from a legitimate "nothing stored" answer. XCP part 2 - Protocol Layer
+     * Specification 1.1/1.7.3.2.1 gives GET_STATUS's row exactly one error code for this,
+     * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE, with the prescribed master action "display error /
+     * repeat" -- precisely "ask again once the read has finished". 1.0 has no error codes on this
+     * row at all. Reachable only once readStoredSessionConfigurationIdApiEnable has armed
+     * Xcp_Internal.session_configuration_id_read_state OUTSTANDING (Xcp_Init, source/Xcp.c), so a
+     * build with nothing to read never takes this branch and GET_STATUS answers normally from the
+     * first call, exactly as it always has. */
+    if (Xcp_Internal.session_configuration_id_read_state == XCP_NV_READ_OUTSTANDING)
+    {
+        Xcp_FillErrorPacket(XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE, &Xcp_Internal.cto_response.pdu_info);
+    }
+    else
+    {
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = Xcp_Internal.session_status;
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, byte 2: the Current Resource
+         * Protection Status -- a set bit means that group IS protected. Transmitted verbatim, because
+         * Xcp_Internal.locked_resource holds exactly that (DD78). */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = Xcp_GetLockedResources();
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+        /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5: session configuration id,
+         * in the configured byte order. Xcp_Internal.session_configuration_id (source/Xcp_Internal.h)
+         * is the module's own held copy of what design doc DD99
+         * (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) tracks: adopted from a
+         * SET_REQUEST carrying STORE_DAQ_REQ once Xcp_StoreDaqConfiguration reports a zero status
+         * (Xcp_MainFunction, source/Xcp.c), reset to 0 once CLEAR_DAQ_REQ similarly completes clean,
+         * adopted from non-volatile storage once DD100's own read above completes (the condition
+         * this branch's own gate exists to wait out), and left untouched by CONNECT -- it reflects
+         * what non-volatile memory holds, which a reconnect does not alter. Transmitted verbatim,
+         * the same shape Xcp_Internal.locked_resource above already has for byte 2. This reported
+         * the hardcoded constant 0 -- honest only because no code fulfilled STORE_DAQ_REQ yet --
+         * until Task 2 gave the field a real value; before that it reported the fabricated constant
+         * 0xABCD, until defect D9 was closed. */
+        Xcp_CopyFromU16WithOrder(Xcp_Internal.session_configuration_id, &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
 
-    Xcp_FinalizeResPacket(0x06u, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FinalizeResPacket(0x06u, &Xcp_Internal.cto_response.pdu_info);
+    }
 
     return E_OK;
 }

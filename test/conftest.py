@@ -515,6 +515,14 @@ class XcpTest(object):
         # with AttributeError, not the test that happens to ask for it, if the attribute is missing.
         self.xcp_store_daq_configuration = MagicMock()
         self.xcp_clear_daq_configuration = MagicMock()
+        # SP5-NV Task 4 (design doc DD100, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-
+        # design.md): same reasoning as xcp_store_daq_configuration/xcp_clear_daq_configuration
+        # immediately above -- Xcp_ReadStoredSessionConfigurationId is declared unconditionally in
+        # interface/Xcp.h, not behind xcp_read_stored_session_configuration_id_api_enable (that
+        # flag gates Xcp_Init arming the poll at runtime, through Xcp_GeneralType, not the
+        # declaration itself) -- so this reaches self.code.mocked in every configuration this
+        # harness builds and must be supplied unconditionally here.
+        self.xcp_read_stored_session_configuration_id = MagicMock()
         self.xcp_program_start = MagicMock()
         # Task 4 (PROGRAM_RESET): Xcp_ProgramReset copies Xcp_ProgramStart's own polled contract
         # (design Section 4) exactly, so this mock exists unconditionally here for the same reason
@@ -612,6 +620,10 @@ class XcpTest(object):
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
         self.xcp_store_daq_configuration.return_value = self.define('E_OK')
         self.xcp_clear_daq_configuration.return_value = self.define('E_OK')
+        # Harmless even though DefaultConfig() itself defaults the matching API flag off (test/
+        # parameter.py), which keeps Xcp_Init from ever arming the poll that would call this: set
+        # for the same blanket-default hygiene as every mock on this and the surrounding lines.
+        self.xcp_read_stored_session_configuration_id.return_value = self.define('E_OK')
         self.xcp_program_start.return_value = self.define('E_OK')
         self.xcp_program_reset.return_value = self.define('E_OK')
         self.xcp_program_prepare.return_value = self.define('E_OK')

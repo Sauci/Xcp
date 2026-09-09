@@ -7,7 +7,13 @@ callbacks Xcp_StoreDaqConfiguration / Xcp_ClearDaqConfiguration (interface/Xcp.h
 Task 2 extends this file: the session configuration id SET_REQUEST carries in bytes 2,3, held in
 Xcp_Internal.session_configuration_id and reported by GET_STATUS bytes 4,5 (DD98/DD99).
 
-Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD99).
+Task 4 extends this file again: Xcp_ReadStoredSessionConfigurationId (interface/Xcp.h), the polled
+start-up read that adopts session_configuration_id from non-volatile storage, and
+XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE (0xFE, 0x33), what GET_STATUS answers while that read
+is still outstanding (DD100/DD101). The Final verification section at the end also covers DD102:
+RESUME_SUPPORTED stays clear, SET_DAQ_LIST_MODE is unaffected, and no DAQ list is restored.
+
+Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD102).
 
 DD95 is the hazard this whole task exists around: the ERR_PGM_ACTIVE gate in Xcp_CanIfRxIndication
 refuses every command whose Xcp_CTOErrorMatrix row carries that bit -- 42 rows in the default build,
@@ -325,3 +331,203 @@ def test_connect_does_not_reset_the_session_configuration_id():
     connect(handle)  # reconnect: must clear the request bits, must not touch the id
 
     assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)
+
+
+# ---------------------------------------------------------------------------------------------
+# Task 4: the start-up read, and the error it reports while outstanding (DD100/DD101).
+#
+# Unlike STORE_DAQ_REQ/CLEAR_DAQ_REQ above, nothing in SET_REQUEST arms this read -- Xcp_Init
+# arms it directly from xcp_read_stored_session_configuration_id_api_enable, so every test below
+# that wants the read outstanding configures
+# Xcp_ReadStoredSessionConfigurationId's mock BEFORE the first Xcp_MainFunction call, including
+# the one connect() itself makes: XcpTest's own constructor already calls Xcp_Init (test/
+# conftest.py), so the state is armed by the time DefaultConfig() returns, and connect()'s own
+# Xcp_MainFunction is this module's first poll of it.
+# ---------------------------------------------------------------------------------------------
+
+def test_the_stored_session_configuration_id_read_is_retried_while_not_yet_readable():
+    """Task 4, brief test 1. DD100: Xcp_ReadStoredSessionConfigurationId is polled from
+    Xcp_MainFunction on the identical contract Xcp_StoreDaqConfiguration/
+    Xcp_ClearDaqConfiguration already use -- E_NOT_OK means "not yet readable, ask again". Two
+    E_NOT_OK answers and then E_OK with 0x4321 pins the RETRY, not merely the adoption: a one-shot
+    read that gave up after its first E_NOT_OK would never reach the third, successful call, and
+    this would still read back as 0x0000."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        if handle.xcp_read_stored_session_configuration_id.call_count < 3:
+            return handle.define('E_NOT_OK')
+        p_session_configuration_id[0] = 0x4321
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    connect(handle)                # poll #1: E_NOT_OK
+    handle.lib.Xcp_MainFunction()  # poll #2: E_NOT_OK
+    handle.lib.Xcp_MainFunction()  # poll #3: E_OK, 0x4321
+
+    assert handle.xcp_read_stored_session_configuration_id.call_count == 3
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x21, 0x43)
+
+
+def test_get_status_answers_resource_temporary_not_accessible_while_the_read_is_outstanding():
+    """Task 4, brief test 2, and design doc DD101. GET_STATUS is reachable only once CONNECTed --
+    XCP part 1 - Overview 1.0/2.3: "In 'DISCONNECTED' state, the slave processes no XCP commands
+    except for CONNECT" (Xcp_CanIfRxIndication's own dispatch gate, source/Xcp.c, quotes this
+    verbatim) -- so this test connects FIRST, while the read is still outstanding --
+    connecting only after the read has already completed would pin nothing about the window at
+    all. Both halves -- refused during the window, answered normally once it closes -- are
+    asserted in the one test so the TRANSITION is what is pinned, not two facts that could each
+    pass independently for the wrong reason."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+    handle.xcp_read_stored_session_configuration_id.return_value = handle.define('E_NOT_OK')
+
+    connect(handle)  # poll #1: E_NOT_OK -- the read is still outstanding once CONNECT returns
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[0:2] == (0xFE, 0x33)
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        p_session_configuration_id[0] = 0x0000
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    handle.lib.Xcp_MainFunction()  # poll #2: E_OK -- the read completes
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[0] == 0xFF
+
+
+def test_a_read_completing_with_nothing_stored_leaves_the_id_at_zero():
+    """Task 4, brief test 3. DD100: E_OK with a non-zero status code means non-volatile memory
+    holds no valid configuration -- the same "E_OK means finished, the status code carries the
+    outcome" contract STORE_DAQ_REQ/CLEAR_DAQ_REQ already use (DD95/DD96). The mock reports a
+    non-zero id here specifically so adopting it regardless of the status code would be caught:
+    Xcp_Init already leaves session_configuration_id at 0x0000u, so a handler that copied the id
+    unconditionally would still pass this test if it always reported 0."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        p_session_configuration_id[0] = 0xBEEF  # must NOT be adopted: the status below says invalid
+        p_status_code[0] = 0x01  # non-zero: nothing stored
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    connect(handle)  # poll #1: E_OK, but "nothing stored"
+
+    response = exchange(handle, (0xFD, 0x00, 0x00, 0x00))
+    assert response[0] == 0xFF
+    assert response[4:6] == (0x00, 0x00)
+
+
+def test_the_read_is_not_repeated_once_it_has_completed():
+    """Task 4, brief test 4. Xcp_Internal.session_configuration_id_read_state (source/
+    Xcp_Internal.h) moves to COMPLETE the moment Xcp_ReadStoredSessionConfigurationId first
+    reports E_OK, and Xcp_MainFunction's own poll site never calls it again for the rest of the
+    session. Checked directly on the mock's call_count rather than only inferred from GET_STATUS,
+    since a handler that kept polling but discarded a later answer could still leave GET_STATUS
+    looking right."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        p_session_configuration_id[0] = 0x0001
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    connect(handle)  # poll #1: completes the read
+
+    assert handle.xcp_read_stored_session_configuration_id.call_count == 1
+
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.xcp_read_stored_session_configuration_id.call_count == 1
+
+
+def test_with_the_api_flag_disabled_there_is_no_read_and_get_status_answers_normally():
+    """Task 4, brief test 5. xcp_read_stored_session_configuration_id_api_enable gates whether
+    Xcp_Init arms the read at all (Xcp_Init, source/Xcp.c) and so whether Xcp_MainFunction ever
+    polls Xcp_ReadStoredSessionConfigurationId, which is what DD101's GET_STATUS window depends
+    on -- an unconfigured build has nowhere to read a stored configuration from and so nothing to
+    poll. DefaultConfig() itself defaults the flag off (test/parameter.py), which is what keeps
+    every other test in this suite, none of which mentions this flag, unaffected by this task."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    assert handle.xcp_read_stored_session_configuration_id.called is False
+
+    response = exchange(handle, (0xFD, 0x00, 0x00, 0x00))
+    assert response[0] == 0xFF
+    assert response[4:6] == (0x00, 0x00)
+
+
+# ---------------------------------------------------------------------------------------------
+# Final verification (docs/superpowers/plans/2026-09-09-xcp-daq-nv-storage.md). DD102: this plan
+# builds persistence, not RESUME, and the two tests below exist so a reviewer sees that checked
+# rather than assumed, since nothing else in this plan touches GET_DAQ_PROCESSOR_INFO or
+# SET_DAQ_LIST_MODE at all.
+# ---------------------------------------------------------------------------------------------
+
+def test_resume_stays_unadvertised_and_unhonoured_after_this_task():
+    """Final verification, DD102. RESUME_SUPPORTED (DAQ_PROPERTIES bit 2, GET_DAQ_PROCESSOR_INFO,
+    1.1/1.6.4.1.2.4) is checked directly here, not only cross-referenced, so this task's own
+    verification shows it was looked at rather than assumed from test/get_daq_processor_info_
+    test.py's own (unrelated) coverage.
+
+    SET_DAQ_LIST_MODE's own bit 7 is checked too, worded carefully. This plan's design doc and its
+    own Final Verification checklist both say SET_DAQ_LIST_MODE "still refuses the RESUME bit" --
+    that does not match current code, and predates this task: 1.1's own SET_DAQ_LIST_MODE mode-
+    byte table (source/Xcp_Internal.h) marks bits 2, 3, 6 and 7 don't-care ("a master may set them
+    to anything and the slave ignores them"), and test/set_daq_list_mode_test.py's own
+    test_set_daq_list_mode_tolerates_the_bits_the_specification_marks_dont_care[0x80] already pins
+    exactly that -- bit 7 is ACCEPTED (0xFF), not refused with an error. Commit 13f59c2 deliberately
+    stopped refusing bits 6/7, as over-strict, before this plan existed; asserting a refusal here
+    would either fail honestly or force a mischaracterisation of passing, spec-correct behaviour,
+    neither of which this task should do quietly. What DD102 actually needs -- and what this
+    checks -- is the part that IS still true: the bit is not HONOURED. Xcp_DTOCmdDaqSetDaqListMode
+    never writes XCP_DAQ_LIST_MODE_RESUME into the list's own stored mode, so GET_DAQ_LIST_MODE
+    never reports it set, whatever SET_DAQ_LIST_MODE's request carried."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    assert exchange(handle, (0xDA,))[1] & 0b00000100 == 0x00  # RESUME_SUPPORTED, bit 2
+
+    # SET_DAQ_LIST_MODE(RESUME=1, daq_list=0, channel=0, prescaler=1, priority=0): accepted, not
+    # refused -- see the docstring above for why "accepted" is the correct, current behaviour.
+    assert exchange(handle, (0xE0, 0b10000000, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF
+
+    assert exchange(handle, (0xDF, 0x00, 0x00, 0x00))[1] & 0b10000000 == 0x00  # RESUME, bit 7
+
+
+def test_the_read_does_not_restore_any_daq_list():
+    """Final verification, DD102. The start-up read adopts the session configuration id and
+    nothing else -- restoring DAQ lists is RESUME's job, and RESUME is a later phase. Configures
+    a non-zero id, the shape a resumed session would need if one were ever restored, and confirms
+    DAQ list 0 comes up exactly as Xcp_Init always leaves it: not selected, not running."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        p_session_configuration_id[0] = 0x1234
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    connect(handle)  # poll #1: completes the read, adopts 0x1234
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)  # the id WAS adopted
+
+    mode = exchange(handle, (0xDF, 0x00, 0x00, 0x00))[1]
+    assert mode & 0b00000001 == 0x00  # SELECTED
+    assert mode & 0b01000000 == 0x00  # RUNNING

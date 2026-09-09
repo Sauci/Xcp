@@ -381,6 +381,9 @@
               "xcp_clear_daq_configuration_api_enable": {
                 "$ref": "#/definitions/api_activation_information"
               },
+              "xcp_read_stored_session_configuration_id_api_enable": {
+                "$ref": "#/definitions/api_activation_information"
+              },
               "resource_protection": {
                 "type": "object",
                 "properties": {
@@ -462,6 +465,7 @@
               "xcp_copy_cal_page_api_enable",
               "xcp_store_daq_configuration_api_enable",
               "xcp_clear_daq_configuration_api_enable",
+              "xcp_read_stored_session_configuration_id_api_enable",
               "resource_protection"
             ]
           },

@@ -275,6 +275,10 @@
           "enabled": false,
           "protected": false
         },
+        "xcp_read_stored_session_configuration_id_api_enable": {
+          "enabled": false,
+          "protected": false
+        },
         "resource_protection": {
           "calibration_paging": false,
           "data_acquisition": false,

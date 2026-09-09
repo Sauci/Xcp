@@ -518,6 +518,38 @@ uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber);
 Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
                                Xcp_OdtEntryType *pEntry);
 
+/**
+ * @brief Reads the session configuration id held in non-volatile memory, if any.
+ * @param [out] pSessionConfigurationId Where the stored id is copied, read only when this function
+ * returns E_OK with a zero pStatusCode. Left untouched otherwise.
+ * @param [out] pStatusCode Result of the read, read only when this function returns E_OK: zero
+ * when pSessionConfigurationId holds a valid stored configuration's id, non-zero when
+ * non-volatile memory holds none.
+ * @retval E_OK: the read is finished (whether or not a stored configuration was found)
+ * @retval E_NOT_OK: non-volatile memory is not yet readable
+ * @details Polled, on a contract close to @ref Xcp_StoreCalibrationDataToNonVolatileMemory's own
+ * but with a different trigger: Xcp_Init arms the poll rather than calling this directly, and
+ * Xcp_MainFunction is the only caller, once per cycle from the very first one after Xcp_Init until
+ * this reports completion, after which it is never called again for the rest of the session. An
+ * implementation whose work is instantaneous still returns E_OK only on that first
+ * Xcp_MainFunction call, not from within Xcp_Init itself.
+ * @note Design doc DD100: this is polled rather than called synchronously from Xcp_Init, because
+ * this module can neither verify nor enforce that the integrator's own non-volatile memory
+ * abstraction has finished populating its RAM mirror (e.g. AUTOSAR NvM's own NvM_ReadAll) by the
+ * time Xcp_Init runs -- that depends on the EcuM/BswM start-up configuration and is itself
+ * asynchronous. Calling this synchronously and trusting a first E_NOT_OK to mean "nothing stored"
+ * would adopt 0 permanently, with nothing to indicate why.
+ * @note Design doc DD101: while this read is outstanding, GET_STATUS answers
+ * XCP part 2 - Protocol Layer Specification 1.1/1.7.3.2.1's own
+ * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE rather than a session configuration id this module does
+ * not yet have -- reporting 0 in the meantime would be indistinguishable from a legitimate
+ * "nothing stored" answer from pStatusCode above.
+ * @note Design doc DD102: a successful read adopts the id alone. No DAQ list configuration is
+ * restored, since RESUME -- the feature that would give a restored list somewhere to run -- is a
+ * later phase and stays unadvertised (GET_DAQ_PROCESSOR_INFO's RESUME_SUPPORTED).
+ */
+extern Std_ReturnType Xcp_ReadStoredSessionConfigurationId(uint16 *pSessionConfigurationId, uint8 *pStatusCode);
+
 #define Xcp_STOP_SEC_CODE_SLOW
 #include "Xcp_MemMap.h"
 

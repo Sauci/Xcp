@@ -1098,7 +1098,15 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_ID 0xFA, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX, /* GET_COMM_MOD_INFO 0xFB, optional */
     XCP_INTERNAL_ERR_CMD_SYNCH | XCP_INTERNAL_ERR_CMD_UNKNOWN, /* SYNCH 0xFC */
-    0x00u, /* GET_STATUS 0xFD */
+    /* DD101: RES_TEMP_NOT_ACCESSIBLE is not in GET_STATUS's 1.0/1.7.3.2.1 row at all -- 1.0 lists
+     * a timeout entry for this command and no error codes whatsoever. It is 1.1 that adds
+     * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE to GET_STATUS's row (1.1/1.7.3.2.1), the answer
+     * Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) gives while design doc DD100's start-up read is
+     * still outstanding. Declared here for the same reason DD76 declared ERR_GENERIC on UNLOCK's
+     * row above: a row that does not list what its handler can answer is a row that lies to
+     * whoever reads it next. No behavioural effect: only CMD_BUSY, CMD_SYNTAX and PGM_ACTIVE are
+     * ever tested against this table. */
+    XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* GET_STATUS 0xFD */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE, /* DISCONNECT0xFE */
     0x00u, /* CONNECT 0xFF */
 };
@@ -1264,6 +1272,18 @@ void Xcp_Init(const Xcp_Type *pConfig)
              * (Xcp_MainFunction) adopts the real value once it completes; until then this is the
              * "no valid stored configuration" answer DD100 itself reads as. */
             Xcp_Internal.session_configuration_id = 0x0000u;
+            /* Design doc DD100. Arms the start-up read's own state machine (Xcp_NvReadStateType,
+             * source/Xcp_Internal.h) for this session: OUTSTANDING when the build has a
+             * Xcp_ReadStoredSessionConfigurationId to poll, so Xcp_MainFunction's own poll site
+             * below starts calling it on the very next cycle; NOT_REQUIRED otherwise, so it never
+             * does and DD101's GET_STATUS window (Xcp_CTOCmdStdGetStatus, source/Xcp_Std.c) never
+             * opens. A power cycle is the one door DD99's "CONNECT must not touch
+             * session_configuration_id" exception does not cover, and re-arming here, every time,
+             * is what lets a later Xcp_Init (a genuine restart, not a reconnect) ask non-volatile
+             * storage again rather than trust whatever the previous session last read. */
+            Xcp_Internal.session_configuration_id_read_state =
+                    (Xcp_Ptr->general->readStoredSessionConfigurationIdApiEnable == TRUE) ?
+                            XCP_NV_READ_OUTSTANDING : XCP_NV_READ_NOT_REQUIRED;
             Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
             Xcp_Internal.allocated_daq_count =
                     (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC) ? 0x0000u
@@ -1470,6 +1490,8 @@ void Xcp_MainFunction(void)
     uint8 store_calibration_status;
     uint8 store_daq_configuration_status;
     uint8 clear_daq_configuration_status;
+    uint16 read_session_configuration_id;
+    uint8 read_session_configuration_id_status;
 
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     /* Polled ahead of STORE_CAL_REQ below: a programming master is waiting on a response with a
@@ -1646,6 +1668,39 @@ void Xcp_MainFunction(void)
                  * be recompiled with a bigger event queue size (defined by XCP_EVENT_QUEUE_SIZE), or the reason for receiving such a lot of events
                  * should be identified. */
                 Xcp_ReportError(0x00u, XCP_MAIN_FUNCTION_API_ID, XCP_E_EVENT_QUEUE_FULL);
+            }
+        }
+    }
+
+    /* Design doc DD100/DD101 (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md):
+     * the start-up read of the stored session configuration id, polled on no session-status
+     * request bit -- unlike the three blocks above, nothing in SET_REQUEST arms this one, so the
+     * gate is Xcp_Internal.session_configuration_id_read_state alone, which Xcp_Init (source/
+     * Xcp.c) has already set OUTSTANDING or NOT_REQUIRED for this session before Xcp_MainFunction
+     * is ever called. Copies the STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ blocks' own rule
+     * (DD95/DD96): E_OK means finished, whatever the status code says -- here, "whatever
+     * non-volatile memory turned out to hold" -- so this moves OUTSTANDING to COMPLETE and stops
+     * polling on the very call that finishes, never revisiting it again for the rest of the
+     * session; only E_NOT_OK leaves it polling, because that means "not yet readable". Unlike the
+     * three blocks above, a completed read raises no event -- DD100/DD101 name none, and nothing
+     * downstream of Xcp_Init is waiting on a response the way a master-initiated SET_REQUEST is.
+     *
+     * Xcp_Internal.session_configuration_id (DD99's own field, populated above) is adopted from
+     * read_session_configuration_id only when read_session_configuration_id_status is zero; a
+     * non-zero status means "non-volatile memory holds no valid configuration" (DD100), which
+     * Xcp_Init's own reset to 0x0000u already leaves this field reporting, so there is nothing
+     * further to write for that outcome -- the same asymmetry STORE_DAQ_REQ/CLEAR_DAQ_REQ above
+     * do not have, since a store or clear that fails must leave a PREVIOUSLY adopted id standing
+     * rather than the fresh session's own untouched default. */
+    if (Xcp_Internal.session_configuration_id_read_state == XCP_NV_READ_OUTSTANDING)
+    {
+        if (Xcp_ReadStoredSessionConfigurationId(&read_session_configuration_id, &read_session_configuration_id_status) == E_OK)
+        {
+            Xcp_Internal.session_configuration_id_read_state = XCP_NV_READ_COMPLETE;
+
+            if (read_session_configuration_id_status == 0x00u)
+            {
+                Xcp_Internal.session_configuration_id = read_session_configuration_id;
             }
         }
     }
