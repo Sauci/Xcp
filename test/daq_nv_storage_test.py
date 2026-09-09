@@ -13,6 +13,10 @@ XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE (0xFE, 0x33), what GET_STATUS answe
 is still outstanding (DD100/DD101). The Final verification section at the end also covers DD102:
 RESUME_SUPPORTED stays clear, SET_DAQ_LIST_MODE is unaffected, and no DAQ list is restored.
 
+The final review's fix wave adds one more section at the very end: F1, a live state bug in the
+interaction between the store/clear blocks above and Task 4's read, reachable only once all three
+API flags are on together -- a configuration none of the sections above build.
+
 Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD102).
 
 DD95 is the hazard this whole task exists around: the ERR_PGM_ACTIVE gate in Xcp_CanIfRxIndication
@@ -500,13 +504,17 @@ def test_resume_stays_unadvertised_and_unhonoured_after_this_task():
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     connect(handle)
 
-    assert exchange(handle, (0xDA,))[1] & 0b00000100 == 0x00  # RESUME_SUPPORTED, bit 2
+    daq_processor_info = exchange(handle, (0xDA,))
+    assert daq_processor_info[0] == 0xFF  # an error response would also satisfy the bit check below
+    assert daq_processor_info[1] & 0b00000100 == 0x00  # RESUME_SUPPORTED, bit 2
 
     # SET_DAQ_LIST_MODE(RESUME=1, daq_list=0, channel=0, prescaler=1, priority=0): accepted, not
     # refused -- see the docstring above for why "accepted" is the correct, current behaviour.
     assert exchange(handle, (0xE0, 0b10000000, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00))[0] == 0xFF
 
-    assert exchange(handle, (0xDF, 0x00, 0x00, 0x00))[1] & 0b10000000 == 0x00  # RESUME, bit 7
+    daq_list_mode = exchange(handle, (0xDF, 0x00, 0x00, 0x00))
+    assert daq_list_mode[0] == 0xFF  # an error response would also satisfy the bit check below
+    assert daq_list_mode[1] & 0b10000000 == 0x00  # RESUME, bit 7
 
 
 def test_the_read_does_not_restore_any_daq_list():
@@ -528,6 +536,62 @@ def test_the_read_does_not_restore_any_daq_list():
 
     assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)  # the id WAS adopted
 
-    mode = exchange(handle, (0xDF, 0x00, 0x00, 0x00))[1]
+    daq_list_mode = exchange(handle, (0xDF, 0x00, 0x00, 0x00))
+    assert daq_list_mode[0] == 0xFF  # an error response would also satisfy the two bit checks below
+    mode = daq_list_mode[1]
     assert mode & 0b00000001 == 0x00  # SELECTED
     assert mode & 0b01000000 == 0x00  # RUNNING
+
+
+# ---------------------------------------------------------------------------------------------
+# Final review fix wave, F1: a live state bug the branch's own tests never built the
+# configuration to reach. Task 4's tests above pass only the read flag; Tasks 1-2's only the
+# store/clear flags -- the three-flag configuration below, the shape an integrator running all of
+# DD94-DD102 in production would build, was never exercised by any existing test, and the bug is
+# invisible without it.
+# ---------------------------------------------------------------------------------------------
+
+def test_a_completed_store_retires_a_still_outstanding_start_up_read():
+    """Final review fix wave, F1. Within one Xcp_MainFunction, the STORE_DAQ_REQ block runs
+    before the start-up read's own poll, and both write Xcp_Internal.session_configuration_id --
+    the read had no guard against a store having already completed. Sequence: the read is armed
+    OUTSTANDING and still not-yet-readable (E_NOT_OK) when STORE_DAQ_REQ(id=0x1234) completes
+    successfully and adopts it; the read is then made to complete too, E_OK with status 0 and
+    0x0000 -- "whatever storage held when ITS OWN job started", i.e. before the master's store
+    reached it. Without the fix, that later completion overwrites session_configuration_id with
+    the stale 0x0000, and GET_STATUS reports it instead of the id the master just committed --
+    design doc DD99's own words: "Clearing it would make GET_STATUS report 0 while storage still
+    holds a configuration." The fix retires the read the moment a store or clear completes with a
+    zero status, so it is never polled again afterwards; the call_count assertion below pins that
+    directly, not only the GET_STATUS symptom -- one call here, where the unfixed code reaches
+    three (armed by connect(), polled again alongside the store's own completion since nothing
+    yet retires it, and finally completed with the stale value)."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_store_daq_configuration_api_enable=True,
+                                    xcp_clear_daq_configuration_api_enable=True,
+                                    xcp_read_stored_session_configuration_id_api_enable=True))
+    handle.xcp_read_stored_session_configuration_id.return_value = handle.define('E_NOT_OK')
+
+    connect(handle)  # poll #1 (connect's own Xcp_MainFunction call): read polled, still E_NOT_OK
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x00  # zero status: a clean completion
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    # poll #2 (exchange's own Xcp_MainFunction call): STORE_DAQ_REQ completes and adopts 0x1234.
+    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
+
+    def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
+        p_session_configuration_id[0] = 0x0000  # whatever storage held when THIS job started
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_read_stored_session_configuration_id.side_effect = read_stored_session_configuration_id
+
+    handle.lib.Xcp_MainFunction()  # poll #3: the read would complete here, if still polled
+
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)  # poll #4
+    assert handle.xcp_read_stored_session_configuration_id.call_count == 1

@@ -1597,7 +1597,15 @@ void Xcp_MainFunction(void)
      * (Xcp_DTOCmdStdSetRequest, source/Xcp_Std.c); design doc DD99's second row adopts it into the reported
      * Xcp_Internal.session_configuration_id below, but only once this call reports a zero status -- a failed store leaves the previously
      * reported id standing (DD99's fourth row), which is why that adoption is a separate statement from the bit clear above it rather than
-     * folded into the same condition. */
+     * folded into the same condition.
+     *
+     * A zero status also retires an outstanding start-up read (design doc DD99/DD100/DD101): non-volatile memory now holds the id
+     * this call just adopted, so whatever Xcp_ReadStoredSessionConfigurationId's own poll below is still waiting on is stale by
+     * construction -- DD97 commits the id last, so post-store storage already reflects it -- and letting that poll complete later
+     * would overwrite the id just adopted above with whatever storage held when THAT poll's own job started. Moving
+     * session_configuration_id_read_state from OUTSTANDING to COMPLETE here, without adopting anything through it, stops that poll
+     * on the same call that makes its answer moot rather than racing it. A non-zero status leaves the read polling: non-volatile
+     * memory is unchanged, so its eventual answer is still the right one to adopt. */
     if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) != 0x00u)
     {
         if (Xcp_StoreDaqConfiguration(Xcp_Internal.requested_session_configuration_id, &store_daq_configuration_status) == E_OK)
@@ -1609,6 +1617,11 @@ void Xcp_MainFunction(void)
             if (store_daq_configuration_status == 0x00u)
             {
                 Xcp_Internal.session_configuration_id = Xcp_Internal.requested_session_configuration_id;
+
+                if (Xcp_Internal.session_configuration_id_read_state == XCP_NV_READ_OUTSTANDING)
+                {
+                    Xcp_Internal.session_configuration_id_read_state = XCP_NV_READ_COMPLETE;
+                }
             }
 
             /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
@@ -1637,7 +1650,10 @@ void Xcp_MainFunction(void)
      * by transmitting an EV_CLEAR_DAQ event packet. Copies the STORE_CAL_REQ/STORE_DAQ_REQ blocks' rule exactly -- see the comment above.
      * DD98/DD99's third row: a zero status also resets the reported Xcp_Internal.session_configuration_id to 0x0000u -- 1.0/1.6.1.2.3's own
      * CLEAR_DAQ_REQ postcondition, stated observably because this module never sees the integrator's non-volatile memory. A failed clear
-     * leaves the id standing, the same as a failed store does above. */
+     * leaves the id standing, the same as a failed store does above.
+     *
+     * A zero status also retires an outstanding start-up read, the same way and for the same reason as the STORE_DAQ_REQ block
+     * above: non-volatile memory now holds nothing, so a read still in flight can only report something already stale. */
     if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) != 0x00u)
     {
         if (Xcp_ClearDaqConfiguration(&clear_daq_configuration_status) == E_OK)
@@ -1649,6 +1665,11 @@ void Xcp_MainFunction(void)
             if (clear_daq_configuration_status == 0x00u)
             {
                 Xcp_Internal.session_configuration_id = 0x0000u;
+
+                if (Xcp_Internal.session_configuration_id_read_state == XCP_NV_READ_OUTSTANDING)
+                {
+                    Xcp_Internal.session_configuration_id_read_state = XCP_NV_READ_COMPLETE;
+                }
             }
 
             /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
@@ -1680,18 +1701,29 @@ void Xcp_MainFunction(void)
      * is ever called. Copies the STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ blocks' own rule
      * (DD95/DD96): E_OK means finished, whatever the status code says -- here, "whatever
      * non-volatile memory turned out to hold" -- so this moves OUTSTANDING to COMPLETE and stops
-     * polling on the very call that finishes, never revisiting it again for the rest of the
-     * session; only E_NOT_OK leaves it polling, because that means "not yet readable". Unlike the
-     * three blocks above, a completed read raises no event -- DD100/DD101 name none, and nothing
-     * downstream of Xcp_Init is waiting on a response the way a master-initiated SET_REQUEST is.
+     * polling on the very call that finishes; only E_NOT_OK leaves it polling, because that means
+     * "not yet readable". That is not the only path to COMPLETE any more, though, and not
+     * necessarily the first one taken: the STORE_DAQ_REQ/CLEAR_DAQ_REQ blocks above retire this
+     * same poll the moment either completes with a zero status, on the reasoning that a store or
+     * clear the module has already committed makes whatever this read was still waiting on stale
+     * by construction. Whichever block gets there first, this is never revisited again for the
+     * rest of the session. Unlike the three blocks above, a completed read raises no event --
+     * DD100/DD101 name none, and nothing downstream of Xcp_Init is waiting on a response the way
+     * a master-initiated SET_REQUEST is.
      *
      * Xcp_Internal.session_configuration_id (DD99's own field, populated above) is adopted from
      * read_session_configuration_id only when read_session_configuration_id_status is zero; a
      * non-zero status means "non-volatile memory holds no valid configuration" (DD100), which
-     * Xcp_Init's own reset to 0x0000u already leaves this field reporting, so there is nothing
-     * further to write for that outcome -- the same asymmetry STORE_DAQ_REQ/CLEAR_DAQ_REQ above
-     * do not have, since a store or clear that fails must leave a PREVIOUSLY adopted id standing
-     * rather than the fresh session's own untouched default. */
+     * calls for leaving Xcp_Internal.session_configuration_id exactly as it stands rather than
+     * writing anything. Reaching this branch at all already implies no store or clear has
+     * completed successfully since this read was last armed OUTSTANDING -- a successful one would
+     * have retired this poll above before this call was ever reached, this cycle or an earlier
+     * one -- so what "as it stands" holds is either Xcp_Init's own 0x0000u reset, if nothing has
+     * adopted an id yet, or an id a PREVIOUSLY FAILED store or clear left standing (DD99's fourth
+     * row); either way, a non-zero status from this read must not disturb it. This is the same
+     * asymmetry STORE_DAQ_REQ/CLEAR_DAQ_REQ above do not have, since a store or clear that fails
+     * must leave a previously adopted id standing rather than the fresh session's own untouched
+     * default. */
     if (Xcp_Internal.session_configuration_id_read_state == XCP_NV_READ_OUTSTANDING)
     {
         if (Xcp_ReadStoredSessionConfigurationId(&read_session_configuration_id, &read_session_configuration_id_status) == E_OK)

@@ -51,6 +51,17 @@ RESUME bit — consistently, and its own comment says so: *"RESUME and BIT_STIM 
 and so remain reported unsupported, which is what lets `SET_DAQ_LIST_MODE` refuse the matching mode
 bits."*
 
+**Correction, made in the final review's fix wave (F4).** `SET_DAQ_LIST_MODE` does not refuse the
+RESUME bit and has not since commit `13f59c2`: bit 7 is don't-care in the request layout in both
+revisions, so a request carrying it is accepted, not refused. The quoted comment
+(`source/Xcp_Daq.c`) was itself wrong in exactly the way DD102 below corrects —
+`XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED` (`source/Xcp_Internal.h`) is `ALTERNATING` alone; RESUME is bit
+7 of the **response** layout, and BIT_STIM is a `DAQ_PROPERTIES` capability bit, not a mode bit at
+all, so neither is a bit `SET_DAQ_LIST_MODE` could refuse in the first place. What is true, and
+what DD102 states correctly: RESUME is never *honoured* — `GET_DAQ_LIST_MODE` never reports it set
+— which is a different claim from being refused. See DD102's own correction for the full
+two-layout account.
+
 ---
 
 ## 2. Design decisions
@@ -163,6 +174,20 @@ gives the id the full `uint16` range and reserves no values.
 | `CLEAR_DAQ_REQ` completes successfully | reset to `0` |
 | a store or clear that **fails** | unchanged |
 
+**A completed store or clear takes precedence over a later-completing start-up read.** The table
+above lists four writes with no ordering between them, but the first row and the two below it can
+race: DD100's read is polled independently of `STORE_DAQ_REQ`/`CLEAR_DAQ_REQ`, and nothing stopped
+it from completing — adopting whatever non-volatile memory held when *its own* job started — after
+a store or clear had already committed a newer id. Because DD97 requires the id be committed last,
+a store or clear that has completed means non-volatile memory already reflects the master's own
+most recent write, and anything an in-flight read still returns is stale by construction. So a
+store or clear completing with a **zero** status also retires an outstanding read —
+`session_configuration_id_read_state` moves `OUTSTANDING` to `COMPLETE` without adopting anything
+through it — rather than leaving it to complete later and overwrite the id just adopted. A store or
+clear completing with a **non-zero** status leaves the read polling: non-volatile memory is
+unchanged, so the read's eventual answer is still the right one to adopt. The existing three-state
+`Xcp_NvReadStateType` (`source/Xcp_Internal.h`) expresses this; no new state is needed.
+
 **`CONNECT` must not touch it.** DD77/R1 made `CONNECT` clear the three request bits, and the
 instinct will be to reset the id beside them. The bits are session state; the id reflects what is in
 non-volatile memory, which a reconnect does not alter. Clearing it would make `GET_STATUS` report
@@ -213,6 +238,25 @@ The window is short — responses only leave via `Xcp_MainFunction`, so the modu
 once before it can answer anything — but it is not zero, and it is now reportable rather than
 papered over.
 
+**What this design does not pretend to solve, and does not try to.** An integrator whose
+`Xcp_ReadStoredSessionConfigurationId` returns `E_NOT_OK` forever — a mis-scoped NvM block, one
+omitted from `NvM_ReadAll`, an unfinished stub — leaves `session_configuration_id_read_state`
+`OUTSTANDING` for the life of the ECU, and `GET_STATUS` refuses `ERR_RESOURCE_TEMPORARY_NOT_
+ACCESSIBLE` for exactly as long: a mandatory STD command, permanently unanswerable. **Unlike DD95's
+request bits, `CONNECT` does not recover this.** DD99 already settled why: `CONNECT` must not touch
+`session_configuration_id`, because it reflects what non-volatile memory holds and a reconnect does
+not alter that — and abandoning the read on `CONNECT` would mean adopting `0x0000` in its place,
+which is precisely the fabricated answer this refusal exists to prevent. Nor does this design
+impose a poll-count bound: `Xcp_MainFunction` is cyclic (SWS_Xcp_00824) but the module may never
+depend on its period, the identical reasoning DD95 already gives for the request bits — "too many
+polls" cannot be converted into "too long" here either. A permanently unanswerable mandatory
+command is a worse-looking failure mode than DD95's — `GET_STATUS` is not one command among 42, it
+is the one command the specification's own error table names "repeat" for — but the alternative is
+reporting a session configuration id the module does not yet have, and fabricating that answer is
+the one lie DD97 through DD100 were written to avoid. The residual risk is therefore an integrator
+contract issue, not a protocol one: `Xcp_ReadStoredSessionConfigurationId`'s own declaration
+(`interface/Xcp.h`) carries the obligation in writing.
+
 ### DD102 — RESUME stays out of scope, and stays unadvertised
 
 This phase builds persistence. RESUME mode — `CONNECT`'s resume handshake,
@@ -255,6 +299,13 @@ reporting `RESUME_SUPPORTED` clear is the incoherence this decision exists to av
 - The live DAQ lists: nothing is restored into them.
 - `STORE_CAL_REQ`'s own store path, beyond DD96's one-condition alignment.
 - `Xcp_GetSegmentFreezeState` and the calibration accessors it belongs to.
+
+**Correction (F4), on the first bullet above.** "`SET_DAQ_LIST_MODE`'s RESUME refusal" is not a
+behaviour that exists to leave unchanged — `SET_DAQ_LIST_MODE` accepts the RESUME bit, and always
+has since commit `13f59c2`; see DD102's own correction. What this phase genuinely leaves unchanged
+is `RESUME_SUPPORTED` staying clear and the bit going unhonoured — `GET_DAQ_LIST_MODE` never
+reports it set. The bullet is left as originally written rather than silently rephrased, per the
+same annotation style DD102 and §1 use.
 
 ---
 
@@ -303,5 +354,13 @@ from the CFFI harness, so every assertion observes transmitted bytes or callback
 6. The four accessors report the live configuration under `DAQ_DYNAMIC` after the master has
    allocated and configured lists at runtime.
 7. `RESUME_SUPPORTED` is still clear and `SET_DAQ_LIST_MODE` still refuses the RESUME bit (DD102).
+
+   > **Correction (F4).** `SET_DAQ_LIST_MODE` does not refuse the RESUME bit and this branch does
+   > not make it start to — bit 7 is don't-care in the request layout and is accepted, not refused,
+   > since commit `13f59c2`, which predates this plan. What this branch actually delivers and
+   > verifies, per DD102's own correction: `RESUME_SUPPORTED` stays clear, and the bit is accepted
+   > without being *honoured* — `GET_DAQ_LIST_MODE` never reports it set regardless of what
+   > `SET_DAQ_LIST_MODE` was sent. `test/daq_nv_storage_test.py::test_resume_stays_unadvertised_
+   > and_unhonoured_after_this_task` asserts exactly that, not a refusal.
 8. Mutation verifications carried out and recorded, each naming the test that failed.
 9. `./test.sh` green in the CI container, both ctest targets, on a clean build tree.

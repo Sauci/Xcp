@@ -482,7 +482,10 @@ void Xcp_DaqFreeAll(void)
  * @brief see interface/Xcp.h.
  * @details Selection is XCP_DAQ_LIST_MODE_SELECTED in the list's runtime mode byte
  * (Xcp_DaqListRtType::mode, interface/Xcp_Types.h), set by START_STOP_DAQ_LIST's SELECT mode
- * (Xcp_DTOCmdDaqStartStopDaqList below) and left set until a START_STOP_SYNCH resets it.
+ * (Xcp_DTOCmdDaqStartStopDaqList below). A START_STOP_SYNCH resets it, and so does anything that
+ * resets the list itself: Xcp_DaqListReset (above) zeroes the whole mode byte, so CLEAR_DAQ_LIST,
+ * FREE_DAQ and Xcp_Init (via Xcp_DaqFreeAll) clear it too -- an integrator caching selection across
+ * any of those would be wrong.
  * @note Xcp_DaqListClearEntries above already lives in this section despite external linkage,
  * because Xcp_Init needs it. This function and the three that follow it are external for a
  * different reason: they are public accessors an integrator calls directly (design doc DD94,
@@ -1757,8 +1760,13 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE now follows the
      * configuration: a DAQ_DYNAMIC build lets the master allocate lists through 1.1/1.6.4.3.1,
      * where a DAQ_STATIC build serves the lists the generator declared. RESUME and BIT_STIM
-     * remain unimplemented and so remain reported unsupported, which is what lets
-     * SET_DAQ_LIST_MODE refuse the matching mode bits. */
+     * remain unimplemented and so remain reported unsupported here -- neither is a mode bit
+     * SET_DAQ_LIST_MODE refuses, though: XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (Xcp_Internal.h) is
+     * ALTERNATING alone, RESUME is bit 7 of the GET_DAQ_LIST_MODE response layout (design doc
+     * DD102, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md), not the request
+     * SET_DAQ_LIST_MODE reads, and BIT_STIM is a DAQ_PROPERTIES capability bit reported here, not
+     * a mode bit at all. RESUME is accepted and simply never honoured -- GET_DAQ_LIST_MODE never
+     * reports it set. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         properties |= XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE;

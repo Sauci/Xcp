@@ -441,10 +441,15 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment);
  * success, non-zero for failure.
  * @retval E_OK: the store is finished (no matter if it was successfully terminated or not)
  * @retval E_NOT_OK: the store is not finished
- * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
- * the SET_REQUEST handler to start the work and then once per Xcp_MainFunction until it reports
- * completion. An implementation whose work is instantaneous returns E_OK from the first call and the
- * request is answered without ever deferring.
+ * @details Polled, but never from the SET_REQUEST handler itself: Xcp_DTOCmdStdSetRequest
+ * (source/Xcp_Std.c) only sets the STORE_DAQ_REQ bit and stages the session configuration id, then
+ * finalizes a positive response right away -- SET_REQUEST has no deferral path at all, and this
+ * callback plays no part in answering it. Xcp_MainFunction is the only caller, once per cycle
+ * while the bit is set, until this reports completion -- even an implementation whose work is
+ * instantaneous is first called on the next Xcp_MainFunction cycle, not inline with the request,
+ * so an integrator must not assume this callback's first invocation shares the SET_REQUEST
+ * command's own calling context. Completion reaches the master separately, through EV_STORE_DAQ,
+ * decoupled from the SET_REQUEST response that has already gone out.
  * @note Design doc DD97 places two ordering obligations on this callback, neither of which this
  * module can enforce from outside the integrator's own non-volatile storage:
  * - XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3: "Upon saving, the slave first has to
@@ -453,6 +458,11 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment);
  * - The session configuration id above is committed LAST, strictly after the DAQ lists themselves.
  *   A store interrupted midway then leaves no id behind, so a later read of the stored configuration
  *   reports none rather than a half-written one a master would mistake for complete.
+ * @note Declared unconditionally, not behind an XCP_xxx_API compile switch: Xcp_MainFunction
+ * (source/Xcp.c) references this symbol regardless of storeDaqConfigurationApiEnable, which gates
+ * only a runtime if around the call, not whether the reference is compiled in. Every build must
+ * link an implementation, flag on or off -- the same requirement
+ * Xcp_StoreCalibrationDataToNonVolatileMemory already imposes unconditionally for STORE_CAL_REQ.
  */
 extern Std_ReturnType Xcp_StoreDaqConfiguration(uint16 sessionConfigurationId, uint8 *pStatusCode);
 
@@ -462,15 +472,23 @@ extern Std_ReturnType Xcp_StoreDaqConfiguration(uint16 sessionConfigurationId, u
  * success, non-zero for failure.
  * @retval E_OK: the clear is finished (no matter if it was successfully terminated or not)
  * @retval E_NOT_OK: the clear is not finished
- * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
- * the SET_REQUEST handler to start the work and then once per Xcp_MainFunction until it reports
- * completion. An implementation whose work is instantaneous returns E_OK from the first call and the
- * request is answered without ever deferring.
+ * @details Polled, but never from the SET_REQUEST handler itself: Xcp_DTOCmdStdSetRequest
+ * (source/Xcp_Std.c) only sets the CLEAR_DAQ_REQ bit, then finalizes a positive response right
+ * away -- SET_REQUEST has no deferral path at all, and this callback plays no part in answering
+ * it. Xcp_MainFunction is the only caller, once per cycle while the bit is set, until this reports
+ * completion -- even an implementation whose work is instantaneous is first called on the next
+ * Xcp_MainFunction cycle, not inline with the request, so an integrator must not assume this
+ * callback's first invocation shares the SET_REQUEST command's own calling context. Completion
+ * reaches the master separately, through EV_CLEAR_DAQ, decoupled from the SET_REQUEST response
+ * that has already gone out.
  * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3's postcondition -- every ODT entry
  * reset to address = 0, extension = 0, size = 0, bit_offset = 0xFF, and the session configuration id
  * reset to 0 -- is stated here as an observable outcome rather than as byte patterns in memory this
  * module never sees: after a successful clear, a subsequent read of the stored configuration reports
  * none, and id 0.
+ * @note The same unconditional-linkage requirement as @ref Xcp_StoreDaqConfiguration's own note:
+ * Xcp_MainFunction references this symbol regardless of clearDaqConfigurationApiEnable, so a build
+ * must supply an implementation even with the flag off.
  */
 extern Std_ReturnType Xcp_ClearDaqConfiguration(uint8 *pStatusCode);
 
@@ -544,9 +562,21 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
  * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE rather than a session configuration id this module does
  * not yet have -- reporting 0 in the meantime would be indistinguishable from a legitimate
  * "nothing stored" answer from pStatusCode above.
+ * @note An implementation that never returns E_OK costs GET_STATUS for the life of the ECU: design
+ * doc DD101 refuses it with ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE for as long as this read stays
+ * outstanding, and no CONNECT/DISCONNECT cycle clears that -- DD99 already forbids CONNECT from
+ * touching what non-volatile memory holds, and abandoning the read would mean adopting 0 in its
+ * place, the exact fabricated answer the refusal exists to prevent. Only a power cycle re-arms
+ * this poll, and a callback that can never complete -- a mis-scoped NvM block, one left out of
+ * NvM_ReadAll, an unfinished stub -- meets it again immediately, so the refusal recurs for the
+ * life of the ECU.
  * @note Design doc DD102: a successful read adopts the id alone. No DAQ list configuration is
  * restored, since RESUME -- the feature that would give a restored list somewhere to run -- is a
  * later phase and stays unadvertised (GET_DAQ_PROCESSOR_INFO's RESUME_SUPPORTED).
+ * @note The same unconditional-linkage requirement as @ref Xcp_StoreDaqConfiguration's own note:
+ * Xcp_MainFunction references this symbol regardless of
+ * readStoredSessionConfigurationIdApiEnable, so a build must supply an implementation even with
+ * the flag off.
  */
 extern Std_ReturnType Xcp_ReadStoredSessionConfigurationId(uint16 *pSessionConfigurationId, uint8 *pStatusCode);
 
