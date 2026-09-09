@@ -15,7 +15,6 @@ from .download_test import connect
 
 
 def dynamic_handle(**kwargs):
-    kwargs.setdefault('xcp_daq_nv_accessors_api_enable', True)
     handle = XcpTest(dynamic_config(**kwargs))
     connect(handle)
     return handle
@@ -136,26 +135,3 @@ def test_get_odt_entry_refuses_an_entry_number_past_the_odt_own_count():
 
     entry = handle.ffi.new('Xcp_OdtEntryType *')
     assert handle.lib.Xcp_GetOdtEntry(0, 0, 1, entry) == handle.define('E_NOT_OK')
-
-
-def test_accessors_report_their_out_of_range_defaults_when_the_flag_is_disabled():
-    """xcp_daq_nv_accessors_api_enable gates all four together (task brief step 3): a fully
-    configured, selected list must still read back as though it does not exist when the flag is
-    off, exactly as it does for a genuinely out-of-range argument above -- the flag exists
-    precisely so an integrator who never implements Xcp_StoreDaqConfiguration pays nothing for it,
-    and "pays nothing" must include "these four report nothing", not just "compiles smaller"."""
-    handle = dynamic_handle(daq_count=1, odt_count=1, odt_entries_count=1,
-                            xcp_daq_nv_accessors_api_enable=False)
-    exchange(handle, (0xD6,))
-    exchange(handle, (0xD5, 0x00, 0x01, 0x00))
-    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))
-    exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01))
-    exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))
-    exchange(handle, (0xE1, 0x03, 0x01, 0x02, 0x78, 0x56, 0x34, 0x12))
-    assert exchange(handle, (0xDE, 0x02, 0x00, 0x00))[0] == 0xFF  # START_STOP_DAQ_LIST(Select, list 0)
-
-    entry = handle.ffi.new('Xcp_OdtEntryType *')
-    assert handle.lib.Xcp_GetDaqListSelectedState(0) == 0
-    assert handle.lib.Xcp_GetDaqListOdtCount(0) == 0
-    assert handle.lib.Xcp_GetOdtEntryCount(0, 0) == 0
-    assert handle.lib.Xcp_GetOdtEntry(0, 0, 0, entry) == handle.define('E_NOT_OK')

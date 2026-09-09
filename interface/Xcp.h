@@ -480,8 +480,7 @@ extern Std_ReturnType Xcp_ClearDaqConfiguration(uint8 *pStatusCode);
  * with START_STOP_DAQ_LIST's SELECT mode. An integrator implementing @ref Xcp_StoreDaqConfiguration
  * queries it per list to decide what to store.
  * @param [in] daqListNumber DAQ list number
- * @return TRUE if the list is selected, FALSE otherwise, if daqListNumber is out of range, or if
- * this build's DAQ NV accessors are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable)
+ * @return TRUE if the list is selected, FALSE otherwise or if daqListNumber is out of range
  */
 boolean Xcp_GetDaqListSelectedState(uint16 daqListNumber);
 
@@ -491,8 +490,7 @@ boolean Xcp_GetDaqListSelectedState(uint16 daqListNumber);
  * it is what the master has allocated with ALLOC_ODT so far, which may be less than the pool's
  * ceiling.
  * @param [in] daqListNumber DAQ list number
- * @return the ODT count, or 0 if daqListNumber is out of range or this build's DAQ NV accessors
- * are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable)
+ * @return the ODT count, or 0 if daqListNumber is out of range
  */
 uint8 Xcp_GetDaqListOdtCount(uint16 daqListNumber);
 
@@ -500,8 +498,7 @@ uint8 Xcp_GetDaqListOdtCount(uint16 daqListNumber);
  * @brief reports how many entries one ODT of a DAQ list has been allocated.
  * @param [in] daqListNumber DAQ list number
  * @param [in] odtNumber ODT number, relative to daqListNumber
- * @return the entry count, or 0 if daqListNumber or odtNumber is out of range, or this build's DAQ
- * NV accessors are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable)
+ * @return the entry count, or 0 if daqListNumber or odtNumber is out of range
  */
 uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber);
 
@@ -515,8 +512,8 @@ uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber);
  * already supplied it as odtEntryNumber above, so a caller who allocates pEntry itself must not
  * read that field back expecting this call to have populated it.
  * @retval E_OK: pEntry was populated
- * @retval E_NOT_OK: daqListNumber, odtNumber or odtEntryNumber is out of range, or this build's DAQ
- * NV accessors are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable); pEntry is left untouched
+ * @retval E_NOT_OK: daqListNumber, odtNumber or odtEntryNumber is out of range; pEntry is left
+ * untouched
  */
 Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
                                Xcp_OdtEntryType *pEntry);

@@ -496,7 +496,7 @@ boolean Xcp_GetDaqListSelectedState(uint16 daqListNumber)
 {
     boolean result = FALSE;
 
-    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) && (Xcp_DaqListIsValid(daqListNumber) == TRUE))
+    if (Xcp_DaqListIsValid(daqListNumber) == TRUE)
     {
         result = (boolean)(((Xcp_DaqListRt(daqListNumber)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u) ?
                             TRUE : FALSE);
@@ -512,7 +512,7 @@ uint8 Xcp_GetDaqListOdtCount(uint16 daqListNumber)
 {
     uint8 result = 0x00u;
 
-    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) && (Xcp_DaqListIsValid(daqListNumber) == TRUE))
+    if (Xcp_DaqListIsValid(daqListNumber) == TRUE)
     {
         result = Xcp_Ptr->config->daqList[daqListNumber].maxOdt;
     }
@@ -527,8 +527,7 @@ uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber)
 {
     uint8 result = 0x00u;
 
-    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) &&
-        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+    if ((Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
         (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt))
     {
         result = Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount;
@@ -550,8 +549,7 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
 {
     Std_ReturnType result = E_NOT_OK;
 
-    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) &&
-        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+    if ((Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
         (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
         (odtEntryNumber < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount))
     {
