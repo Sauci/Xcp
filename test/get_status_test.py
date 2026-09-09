@@ -44,9 +44,12 @@ def test_get_status_reports_a_session_configuration_id_of_zero_rather_than_a_pla
 
     This replaces a skipped placeholder that had stood as defect D9's marker (and misnamed the
     offsets as bytes 6,7). The id is written by SET_REQUEST with STORE_DAQ_REQ and held in
-    non-volatile memory beside the stored DAQ lists; this module refuses STORE_DAQ_REQ and reports
-    RESUME unsupported, so nothing is ever stored and 0 -- what the specification itself resets the
-    id to on CLEAR_DAQ_REQ -- is the honest answer. It reported the fabricated constant 0xABCD
+    non-volatile memory beside the stored DAQ lists. DefaultConfig() (test/parameter.py) defaults
+    xcp_store_daq_configuration_api_enable off, so this build refuses STORE_DAQ_REQ and nothing is
+    ever stored -- making 0, what the specification itself resets the id to on CLEAR_DAQ_REQ, the
+    honest answer. The flags-enabled build does store one; design doc DD94-DD102
+    (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) covers that, and
+    test/daq_nv_storage_test.py asserts the id it then reports. It reported the fabricated constant 0xABCD
     until D9 was closed, which a master could not distinguish from a real stored id."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     connect(handle)
