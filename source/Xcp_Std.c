@@ -1124,8 +1124,10 @@ uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPdu
      *
      * Accepting a mode with nothing behind it is not merely inaccurate, it is a session-wide denial
      * of service. Nothing would clear a request bit that no code fulfils, and Xcp_CanIfRxIndication
-     * refuses every command carrying ERR_PGM_ACTIVE -- 45 of them -- for as long as one is set, so a
-     * single conformant SET_REQUEST would disable most of the command set until the next CONNECT.
+     * refuses every command carrying ERR_PGM_ACTIVE -- 42 of them in the default build, 38 with
+     * flash programming enabled (four Xcp_CTOErrorMatrix rows carry the bit only with that gate
+     * off) -- for as long as one is set, so a single conformant SET_REQUEST would disable most of
+     * the command set until the next CONNECT.
      * Design doc DD95 (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) is what makes
      * accepting them safe: both new callbacks copy STORE_CAL_REQ's own rule, applied below in
      * Xcp_MainFunction (Xcp.c) -- E_OK means finished, whatever the status code says, so the request
@@ -1646,7 +1648,10 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
      * and only when Xcp_StoreCalibrationDataToNonVolatileMemory returns E_OK. An integrator whose
      * NVM write never succeeds returns E_NOT_OK forever, the bit never clears, and the
      * ERR_PGM_ACTIVE gate (Xcp.c) then refuses every command whose Xcp_CTOErrorMatrix row carries
-     * XCP_INTERNAL_ERR_PGM_ACTIVE -- 45 rows, DISCONNECT (0xFE) among them. CONNECT itself is
+     * XCP_INTERNAL_ERR_PGM_ACTIVE -- 42 rows in the default build, 38 with flash programming
+     * enabled (four rows carry the bit only with that gate off; counted from the matrix's own
+     * initializer entries per preprocessor branch, not by grepping the macro name, which also
+     * matches the dispatch gate's own uses), DISCONNECT (0xFE) among them. CONNECT itself is
      * ungated (its row is 0x00u), so before this line a master could reconnect and recover
      * NOTHING: only Xcp_Init, i.e. a power cycle, cleared it.
      *

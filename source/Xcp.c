@@ -1560,8 +1560,10 @@ void Xcp_MainFunction(void)
      * (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md): E_OK means finished, whatever the status code says, so a completed-but-
      * failed store still clears the bit and reports the failure in the event payload; only E_NOT_OK holds the bit, because that means "still
      * working". Holding it forever is the denial-of-service hazard this task exists to avoid -- Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate
-     * refuses 45 commands, DISCONNECT among them, for as long as any request bit is set. sessionConfigurationId is a placeholder here: design
-     * doc DD99 threads the real value (SET_REQUEST's own bytes 2,3) through in a later task, which changes no signature here since
+     * refuses 42 commands in the default build (38 with flash programming enabled -- four Xcp_CTOErrorMatrix rows carry the bit only with that
+     * gate off; counted from the matrix's own initializer entries per preprocessor branch, not by grepping the macro name, which also matches
+     * the dispatch gate's own uses), DISCONNECT among them, for as long as any request bit is set. sessionConfigurationId is a placeholder here:
+     * design doc DD99 threads the real value (SET_REQUEST's own bytes 2,3) through in a later task, which changes no signature here since
      * Xcp_StoreDaqConfiguration's own parameter for it already exists (interface/Xcp.h). */
     if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) != 0x00u)
     {

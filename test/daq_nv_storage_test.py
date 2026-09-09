@@ -7,9 +7,12 @@ callbacks Xcp_StoreDaqConfiguration / Xcp_ClearDaqConfiguration (interface/Xcp.h
 Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD97).
 
 DD95 is the hazard this whole task exists around: the ERR_PGM_ACTIVE gate in Xcp_CanIfRxIndication
-refuses every command whose Xcp_CTOErrorMatrix row carries that bit -- 45 rows, DISCONNECT among
-them -- for as long as any of the three session-status request bits is set. A request bit that
-never clears is therefore a permanent, reconnect-only denial of service. The rule that avoids it,
+refuses every command whose Xcp_CTOErrorMatrix row carries that bit -- 42 rows in the default build,
+38 with flash programming enabled (four rows carry the bit only with that gate off; counted from the
+matrix's own initializer entries per preprocessor branch, not by grepping the macro name, which also
+matches the dispatch gate's own uses) -- DISCONNECT among them, for as long as any of the three
+session-status request bits is set. A request bit that never clears is therefore a permanent,
+reconnect-only denial of service. The rule that avoids it,
 copied from STORE_CAL_REQ's own pre-existing block in Xcp_MainFunction (source/Xcp.c): E_OK means
 finished, whatever the status code says, so only E_NOT_OK holds the bit.
 """
@@ -112,10 +115,11 @@ def test_a_completed_but_failed_store_daq_req_clears_the_bit_so_disconnect_is_no
     """DD95, the denial-of-service hazard this task exists to avoid, and the reason this test is
     the acceptance bar rather than a nicety: found live for STORE_CAL_REQ on an earlier branch
     (DD77/R1). The ERR_PGM_ACTIVE gate in Xcp_CanIfRxIndication refuses every command whose
-    Xcp_CTOErrorMatrix row carries that bit -- 45 rows, DISCONNECT among them -- while any of the
-    three request bits is set. E_OK means finished, whatever the status code says: a callback that
-    completes but reports failure must still clear its bit, or the module wedges until the next
-    CONNECT."""
+    Xcp_CTOErrorMatrix row carries that bit -- 42 rows in the default build, 38 with flash
+    programming enabled (four rows carry the bit only with that gate off) -- DISCONNECT among them,
+    while any of the three request bits is set. E_OK means finished, whatever the status code says:
+    a callback that completes but reports failure must still clear its bit, or the module wedges
+    until the next CONNECT."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
     connect(handle)
 

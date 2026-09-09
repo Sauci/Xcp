@@ -88,7 +88,10 @@ Accessors cost neither. They expose state the module already holds — selection
 
 **This is the hazard that dominates the design, and it is not hypothetical.** The `ERR_PGM_ACTIVE`
 gate in `Xcp_CanIfRxIndication` refuses every command whose `Xcp_CTOErrorMatrix` row carries that
-bit — 45 rows, `DISCONNECT` among them — while any of the three request bits is set. DD77/R1 found
+bit — 42 rows in the default build, 38 with flash programming enabled (four rows carry the bit only
+with that gate off — counted from the matrix's own initializer entries per preprocessor branch, not
+by grepping the macro name, which also matches the dispatch gate's own uses), `DISCONNECT` among
+them — while any of the three request bits is set. DD77/R1 found
 `STORE_CAL_REQ` able to wedge exactly that way: an integrator whose NVM write never *completes*
 returns `E_NOT_OK` forever and holds the bit. Adding two more such bits triples that exposure.
 
