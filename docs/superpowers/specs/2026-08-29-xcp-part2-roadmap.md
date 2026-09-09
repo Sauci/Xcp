@@ -162,8 +162,8 @@ All eleven commands — `PROGRAM_START` (0xD2) through `PROGRAM_VERIFY` (0xC8) �
 | Area | Section | Status |
 |:--|:--|:--|
 | Time-out values t1…t7 | §1.7.2 | **not a slave concern.** §1.7.2 assigns the timers entirely to the master, which reads t1…t6 from the A2L file. The slave implements nothing here |
-| `EV_CMD_PENDING` | §1.7.2.4.2 | absent. This is the slave's only obligation under §1.7.2 — the one way it can ask the master to restart time-out detection |
-| Interleaved communication model | §1.7.2.3 | absent. Requires the slave to accept request *k+1* before answering *k*; `cto_queue_size` and `interleaved_mode` exist in `xcp.json` but nothing reads them |
+| `EV_CMD_PENDING` | §1.7.2.4.2 | **done — shipped in SP4.** `Xcp_Pgm.c` pushes it while a deferred programming operation is still busy, and `Xcp_CanIfTxConfirmation` releases its rate bound (DD54), so the rate follows TxConfirmation rather than `Xcp_MainFunction`'s period. Gated by `XCP_FLASH_PROGRAMMING_ENABLED`, because programming holds the only pending window this module has: `SET_REQUEST` answers immediately and signals completion by event instead. This row read "absent" until SP5 checked it |
+| Interleaved communication model | §1.7.2.3 | **absent, and deliberately unadvertised.** §1.7.2.3 itself is master-side only; the slave's whole obligation is one sentence in 1.0/§1.6.1.1.3 — accept up to `QUEUE_SIZE` "consecutive command packets the master can send to the receipt queue of the slave". This module has no such queue: a second request arriving while a response is unconfirmed is refused `ERR_CMD_BUSY`. This row previously said `cto_queue_size` and `interleaved_mode` "exist in `xcp.json` but nothing reads them" — both *were* read, straight into `GET_COMM_MODE_INFO`'s `COMM_MODE_OPTIONAL` bit 1 and `QUEUE_SIZE`, and into `PROGRAM_START`'s `COMM_MODE_PGM`/`QUEUE_SIZE_PGM`, so a build setting the flag advertised a queue depth the slave would refuse at the second packet. Both fields are gone; the bit is hardcoded clear and both queue-size bytes report 0 |
 | RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | `XCP_CONNECTION_STATE_RESUME` is declared but never entered. The DAQ list infrastructure it needs has existed since SP2a, and SP5-NV built the persistence it needs — `STORE_DAQ_REQ`/`CLEAR_DAQ_REQ` and the session configuration id — deliberately stopping short of RESUME itself (DD102). `SET_DAQ_LIST_MODE` does not reject the RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV: 1.1 marks that bit don't-care, and the slave tolerates it without honouring it (the claim in this row was stale before SP5-NV existed, and is corrected here as part of it). Scheduled into SP5's residue, now depending on SP5-NV as well as SP2a |
 | Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x06), the latter added in SP2a and configurable through `overload_indication`. `EV_CLEAR_DAQ` (0x01) and `EV_STORE_DAQ` (0x02) added in SP5-NV. Absent: `EV_RESUME_MODE`, `EV_CMD_PENDING`, `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
@@ -508,9 +508,14 @@ cases on that one term, so it would not notice the other two being deleted.
 
 ### SP5 — Protocol completion
 
-The residue: the interleaved communication model (§1.7.2.3), `EV_CMD_PENDING` (§1.7.2.4.2),
-RESUME mode, `GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2), the remaining `EV_*` event
-codes and the `SERV_*` service request codes.
+The residue: the interleaved communication model (§1.7.2.3), RESUME mode, `GET_ID` identification
+types 1–4 and 128–255 (§1.6.1.2.2), the remaining `EV_*` event codes and the `SERV_*` service
+request codes.
+
+`EV_CMD_PENDING` was listed here and is **done** — SP4 shipped it for deferred programming
+operations; see §2.6. Interleaved mode remains unbuilt, but is no longer advertisable: the
+configuration that used to promise it has been removed rather than left as a flag an integrator
+could set against an unimplemented receipt queue.
 
 `SET_DAQ_ID` was listed here and has been **removed from the roadmap rather than deferred within
 it**. AUTOSAR SWS XCP R4.3.1 §4.1 puts it out of scope — "The SET_DAQ_ID command according to the

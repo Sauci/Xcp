@@ -140,7 +140,8 @@ def test_the_response_appears_on_the_main_function_where_the_callback_completes(
 
 def test_the_positive_response_reports_the_live_communication_parameters():
     """DD56, as narrowed by DD62. MAX_CTO_PGM, MIN_ST_PGM and QUEUE_SIZE_PGM are still the
-    module's ordinary, live values, because this module does not change them in programming mode.
+    module's ordinary, live values, because this module does not change them in programming mode --
+    QUEUE_SIZE_PGM being live at zero, since no receipt queue exists in either mode.
 
     MAX_BS_PGM (byte 4) is deliberately NOT asserted here any more: DD62 revises DD56 for that one
     field alone, and it is no longer "live" in the sense this test's name means -- it is covered by
@@ -157,7 +158,7 @@ def test_the_positive_response_reports_the_live_communication_parameters():
     without the reset_mock() before program_start, this test passed anyway by reading connect()'s
     own response back out of the mock -- CONNECT's byte 3 is also maxCto (Xcp_CTOCmdStdConnect,
     Xcp_Std.c), so frame[0] and frame[3] matched a response this exchange never sent."""
-    handle = pgm_handle(min_st=3, cto_queue_size=2)
+    handle = pgm_handle(min_st=3)
     busy_then(handle, 0x00, busy_calls=0)
     handle.can_if_transmit.reset_mock()
     program_start(handle)
@@ -168,7 +169,10 @@ def test_the_positive_response_reports_the_live_communication_parameters():
     assert frame[0] == 0xFF
     assert frame[3] == handle.lib.Xcp_Ptr.general.maxCto, 'MAX_CTO_PGM'
     assert frame[5] == 3, 'MIN_ST_PGM'
-    assert frame[6] == 2, 'QUEUE_SIZE_PGM'
+    # QUEUE_SIZE_PGM is zero for the same reason GET_COMM_MODE_INFO's QUEUE_SIZE is: 1.0/1.6.5.1.3
+    # gives it meaning only alongside an available interleaved mode, which this module does not
+    # implement.
+    assert frame[6] == 0, 'QUEUE_SIZE_PGM'
 
 
 def test_max_bs_pgm_reports_the_configured_block_size_not_the_live_max_bs():
@@ -235,31 +239,54 @@ def test_max_bs_pgm_reports_the_active_configurations_own_value_not_the_build_wi
         'maximum across every configuration (200)'
 
 
-@pytest.mark.parametrize('master_block_mode, interleaved_mode, slave_block_mode, expected', (
-    (True, False, False, 0x01),
-    (False, True, False, 0x02),
-    (False, False, True, 0x40),
-    (True, True, True, 0x43),
+@pytest.mark.parametrize('master_block_mode, slave_block_mode, expected', (
+    (True, False, 0x01),
+    (False, True, 0x40),
+    (True, True, 0x41),
 ))
-def test_the_positive_response_reports_comm_mode_pgm(master_block_mode, interleaved_mode,
-                                                      slave_block_mode, expected):
+def test_the_positive_response_reports_comm_mode_pgm(master_block_mode, slave_block_mode, expected):
     """DD56. COMM_MODE_PGM is built from the same three flags GET_COMM_MODE_INFO's
     COMM_MODE_OPTIONAL reads (Xcp_DTOCmdStdGetCommModeInfo, Xcp_Std.c), at this response's own bit
-    positions: masterBlockModeSupported (bit 0), interleavedModeSupported (bit 1) and
-    slaveBlockModeSupported (bit 6) -- the third of which COMM_MODE_OPTIONAL has no bit for at all.
+    positions: masterBlockModeSupported (bit 0) and slaveBlockModeSupported (bit 6) -- the second
+    of which COMM_MODE_OPTIONAL has no bit for at all. Bit 1, INTERLEAVED_MODE, is hardcoded clear
+    in both responses because this module implements no receipt queue, so every expected value
+    below has it clear; test_interleaved_mode_is_never_advertised_in_comm_mode_pgm below pins that
+    directly.
 
     Not asserted by test_the_positive_response_reports_the_live_communication_parameters, which
     pins MAX_CTO_PGM/MAX_BS_PGM/MIN_ST_PGM/QUEUE_SIZE_PGM but never reads byte 2. Swept one flag at
     a time, plus all three together, so each bit is pinned to its own flag rather than to a fixed
     configuration's coincidental combination."""
-    handle = pgm_handle(master_block_mode=master_block_mode, interleaved_mode=interleaved_mode,
-                        slave_block_mode=slave_block_mode)
+    handle = pgm_handle(master_block_mode=master_block_mode, slave_block_mode=slave_block_mode)
     busy_then(handle, 0x00, busy_calls=0)
     handle.can_if_transmit.reset_mock()
     program_start(handle)
     handle.lib.Xcp_MainFunction()
 
     assert transmitted(handle)[2] == expected, 'COMM_MODE_PGM'
+
+
+def test_interleaved_mode_is_never_advertised_in_comm_mode_pgm():
+    """1.0/1.6.5.1.3: "The INTERLEAVED_MODE flag indicates whether the Interleaved Mode is
+    available during Programming", and QUEUE_SIZE_PGM sizes the receipt queue it implies.
+
+    PROGRAM_START builds COMM_MODE_PGM from the same flags GET_COMM_MODE_INFO uses, so an
+    interleaved advertisement here would be the same broken promise in a second place -- a master
+    told it may send QUEUE_SIZE_PGM consecutive commands during programming, and refused
+    ERR_CMD_BUSY on the second. Bit 1 is hardcoded clear and QUEUE_SIZE_PGM reports 0.
+
+    Pinned separately from the sweep above, which varies only the flags this module implements and
+    so cannot express the absence of one it does not."""
+    handle = pgm_handle(master_block_mode=True, slave_block_mode=True)
+    busy_then(handle, 0x00, busy_calls=0)
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+
+    frame = transmitted(handle)
+
+    assert frame[2] & 0x02 == 0x00, 'COMM_MODE_PGM INTERLEAVED_MODE, bit 1'
+    assert frame[6] == 0x00, 'QUEUE_SIZE_PGM'
 
 
 def test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed():

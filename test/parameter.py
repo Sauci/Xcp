@@ -22,7 +22,6 @@ resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
              pytest.param(16, id='RESOURCE = PGM')]
 seeds = [pytest.param(v, id='seed length = {:03}d'.format(v)) for v in range(0x01, 0x100)]
 trailing_values = [pytest.param(v, id='trailing value = {:02X}h'.format(v)) for v in (0, 255)]
-cto_queue_sizes = [pytest.param(v, id='CTO_QUEUE_SIZE = {:02}d'.format(v)) for v in (0, 1, 255)]
 max_bss = [pytest.param(v, id='MAX_BS = {:02}d'.format(v)) for v in (0, 1, 255)]
 min_sts = [pytest.param(v, id='MIN_ST = {:02}d'.format(v)) for v in (0, 1, 255)]
 max_dtos = [pytest.param(v, id='MAX_DTO = {:03}d'.format(v)) for v in (8, 16, 64)]
@@ -379,10 +378,8 @@ class DefaultConfig(dict):
                  address_granularity='BYTE',
                  master_block_mode=True,
                  slave_block_mode=True,
-                 interleaved_mode=False,
                  max_bs=255,
                  min_st=255,
-                 cto_queue_size=16,
                  event_queue_size=16,
                  max_cto=8,
                  max_dto=8,
@@ -407,10 +404,8 @@ class DefaultConfig(dict):
             "address_granularity": address_granularity,
             "master_block_mode": master_block_mode,
             "slave_block_mode": slave_block_mode,
-            "interleaved_mode": interleaved_mode,
             "max_bs": max_bs,
             "min_st": min_st,
-            "cto_queue_size": cto_queue_size,
             "event_queue_size": event_queue_size,
             "max_cto": max_cto,
             "max_dto": max_dto,

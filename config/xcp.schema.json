@@ -508,11 +508,6 @@
                 "type": "boolean",
                 "default": true
               },
-              "interleaved_mode": {
-                "description": "INTERLEAVED_MODE flag indicates whether the interleaved mode is available. If interleaved mode is available, QUEUE_SIZE indicates the maximum number of consecutive command packets the master can send to the receipt queue of the slave.",
-                "type": "boolean",
-                "default": false
-              },
               "max_bs": {
                 "description": "MAX_BS indicates the maximum allowed block size as the number of consecutive command packets (DOWNLOAD_NEXT or PROGRAM_NEXT) in a block sequence.",
                 "type": "integer",
@@ -524,13 +519,6 @@
                 "description": "MIN_ST indicates the required minimum separation time between the packets of a block transfer from the master device to the slave device in units of 100 microseconds.",
                 "type": "integer",
                 "default": 255,
-                "minimum": 0,
-                "maximum": 255
-              },
-              "cto_queue_size": {
-                "description": "CTO_QUEUE_SIZE indicates the maximum number of consecutive command packets the master can send to the receipt queue of the slave.",
-                "type": "integer",
-                "default": 16,
                 "minimum": 0,
                 "maximum": 255
               },
@@ -653,10 +641,8 @@
               "address_granularity",
               "master_block_mode",
               "slave_block_mode",
-              "interleaved_mode",
               "max_bs",
               "min_st",
-              "cto_queue_size",
               "event_queue_size",
               "max_cto",
               "max_dto",

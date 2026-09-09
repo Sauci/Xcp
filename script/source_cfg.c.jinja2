@@ -1164,12 +1164,10 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {{configuration.protocol_layer.address_granularity}}, /* addressGranularity */
     {% if configuration.protocol_layer.master_block_mode %}TRUE{% else %}FALSE{% endif %}, /* masterBlockModeSupported */
     {% if configuration.protocol_layer.slave_block_mode %}TRUE{% else %}FALSE{% endif %}, /* slaveBlockTransferModeSupported */
-    {% if configuration.protocol_layer.interleaved_mode %}TRUE{% else %}FALSE{% endif %}, /* interleavedModeSupported */
     {{'0x%02Xu' % configuration.protocol_layer.max_bs}}, /* maxBS */
     {{'0x%02Xu' % configuration.protocol_layer.min_st}}, /* minST */
-    {{'0x%02Xu' % configuration.protocol_layer.cto_queue_size}}, /* ctoQueueSize */
 {#- Final review F4. PROGRAM_START reports this as MAX_BS_PGM (source/Xcp_Pgm.c) -- the PER-
-    CONFIGURATION value, matching maxBS/minST/ctoQueueSize immediately above, all of which are
+    CONFIGURATION value, matching maxBS/minST immediately above, both of which are
     already the live field this build is actually running rather than a build-wide bound. Unlike
     them, this one also has a compile-time twin, XCP_PGM_MAX_BLOCK_SIZE (script/header_cfg.h.jinja2),
     which sizes Xcp_Internal.pgm_block -- and MUST stay the build-wide largest across every
@@ -1180,7 +1178,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     advertise a block size the second's buffer allows but the first's own master was never told
     to expect.
 
-    Conditioned on programming.enabled -- unlike maxBS/minST/ctoQueueSize immediately above, which
+    Conditioned on programming.enabled -- unlike maxBS/minST immediately above, which
     are not PGM-specific and were never at risk of this -- for the identical reason the PROGRAM/
     PROGRAM_NEXT ctoInfo minimum nibbles are conditioned on it two Task reviews running (Task 3
     finding 4, Task 4's own fix round 1 finding 2, both now generalised into
@@ -1300,8 +1298,8 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     make one flag answer two different questions and reintroduce exactly the coupling DD93 rejects
     by name. A dedicated boolean, read directly by Xcp_DTOCmdPgmProgramClear
     (Xcp_Ptr->general->pgmClearFunctionalSupported), keeps the two capabilities free to vary
-    independently, mirroring masterBlockModeSupported/slaveBlockModeSupported/
-    interleavedModeSupported immediately above in this same struct rather than pgmProperties'
+    independently, mirroring masterBlockModeSupported/slaveBlockModeSupported immediately above in
+    this same struct rather than pgmProperties'
     own bit-packed style. Conjoined with programming.enabled, the same guard every per-command
     apis.xcp_program_*_api_enable flag in this file already carries, for the identical reason: a
     build that cannot program at all must not advertise a programming sub-capability either. #}
