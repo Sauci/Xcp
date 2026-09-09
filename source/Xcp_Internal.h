@@ -46,6 +46,8 @@ extern "C" {
 #define XCP_PID_ERROR (0xFEu)
 #define XCP_PID_EVENT (0xFDu)
 
+#define XCP_EVENT_CLEAR_DAQ (0x01u)
+#define XCP_EVENT_STORE_DAQ (0x02u)
 #define XCP_EVENT_STORE_CAL (0x03u)
 
 #define XCP_PID_CMD_WRITE_DAQ_MULTIPLE (0xC7u)

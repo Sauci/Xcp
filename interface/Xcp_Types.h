@@ -638,6 +638,8 @@ typedef struct
     const boolean pgmClearFunctionalSupported; /* not part of the specification... */
     const uint8 pagProperties; /* not part of the specification... */
     const boolean overloadEvent; /* not part of the specification... */
+    const boolean storeDaqConfigurationApiEnable; /* not part of the specification... */
+    const boolean clearDaqConfigurationApiEnable; /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

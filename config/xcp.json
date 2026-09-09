@@ -267,6 +267,14 @@
           "enabled": true,
           "protected": false
         },
+        "xcp_store_daq_configuration_api_enable": {
+          "enabled": false,
+          "protected": false
+        },
+        "xcp_clear_daq_configuration_api_enable": {
+          "enabled": false,
+          "protected": false
+        },
         "resource_protection": {
           "calibration_paging": false,
           "data_acquisition": false,

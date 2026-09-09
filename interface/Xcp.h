@@ -429,6 +429,54 @@ boolean Xcp_GetSegmentFreezeState(uint8 segment);
 
 #endif /* #if (XCP_PAGING_SUPPORTED == STD_ON) */
 
+#define Xcp_START_SEC_CODE_SLOW
+#include "Xcp_MemMap.h"
+
+/**
+ * @brief Saves the currently selected DAQ list configuration to non-volatile memory.
+ * @param [in] sessionConfigurationId The session configuration id to commit alongside the stored
+ * configuration -- SET_REQUEST's own bytes 2,3 (XCP part 2 - Protocol Layer Specification
+ * 1.0/1.6.1.2.3), passed through unexamined by this module.
+ * @param [out] pStatusCode Result of the store, read only when this function returns E_OK: zero for
+ * success, non-zero for failure.
+ * @retval E_OK: the store is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the store is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
+ * the SET_REQUEST handler to start the work and then once per Xcp_MainFunction until it reports
+ * completion. An implementation whose work is instantaneous returns E_OK from the first call and the
+ * request is answered without ever deferring.
+ * @note Design doc DD97 places two ordering obligations on this callback, neither of which this
+ * module can enforce from outside the integrator's own non-volatile storage:
+ * - XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3: "Upon saving, the slave first has to
+ *   clear any DAQ list configuration that might already be stored in non-volatile memory" -- any
+ *   existing stored configuration is cleared FIRST, before the new one is written.
+ * - The session configuration id above is committed LAST, strictly after the DAQ lists themselves.
+ *   A store interrupted midway then leaves no id behind, so a later read of the stored configuration
+ *   reports none rather than a half-written one a master would mistake for complete.
+ */
+extern Std_ReturnType Xcp_StoreDaqConfiguration(uint16 sessionConfigurationId, uint8 *pStatusCode);
+
+/**
+ * @brief Clears (erases) the DAQ list configuration held in non-volatile memory.
+ * @param [out] pStatusCode Result of the clear, read only when this function returns E_OK: zero for
+ * success, non-zero for failure.
+ * @retval E_OK: the clear is finished (no matter if it was successfully terminated or not)
+ * @retval E_NOT_OK: the clear is not finished
+ * @details Polled, exactly as @ref Xcp_StoreCalibrationDataToNonVolatileMemory is: called once from
+ * the SET_REQUEST handler to start the work and then once per Xcp_MainFunction until it reports
+ * completion. An implementation whose work is instantaneous returns E_OK from the first call and the
+ * request is answered without ever deferring.
+ * @note XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3's postcondition -- every ODT entry
+ * reset to address = 0, extension = 0, size = 0, bit_offset = 0xFF, and the session configuration id
+ * reset to 0 -- is stated here as an observable outcome rather than as byte patterns in memory this
+ * module never sees: after a successful clear, a subsequent read of the stored configuration reports
+ * none, and id 0.
+ */
+extern Std_ReturnType Xcp_ClearDaqConfiguration(uint8 *pStatusCode);
+
+#define Xcp_STOP_SEC_CODE_SLOW
+#include "Xcp_MemMap.h"
+
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
 
 /**

@@ -1461,6 +1461,8 @@ void Xcp_SetTransmissionMode(NetworkHandleType channel, Xcp_TransmissionModeType
 void Xcp_MainFunction(void)
 {
     uint8 store_calibration_status;
+    uint8 store_daq_configuration_status;
+    uint8 clear_daq_configuration_status;
 
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     /* Polled ahead of STORE_CAL_REQ below: a programming master is waiting on a response with a
@@ -1536,6 +1538,76 @@ void Xcp_MainFunction(void)
              * section. */
             SchM_Enter_Xcp_DtoQueue();
             push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, &store_calibration_status, 0x00000001u);
+            SchM_Exit_Xcp_DtoQueue();
+
+            if (push_result == E_OK)
+            {
+                Xcp_Internal.event.successful_transmission_pending = TRUE;
+            }
+            else
+            {
+                /* There is not much we can do here except reporting the error during the development process. If this error arises, the stack should
+                 * be recompiled with a bigger event queue size (defined by XCP_EVENT_QUEUE_SIZE), or the reason for receiving such a lot of events
+                 * should be identified. */
+                Xcp_ReportError(0x00u, XCP_MAIN_FUNCTION_API_ID, XCP_E_EVENT_QUEUE_FULL);
+            }
+        }
+    }
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
+     * The STORE_DAQ_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
+     * by transmitting an EV_STORE_DAQ event packet. Copies the STORE_CAL_REQ block above exactly -- design doc DD95/DD96
+     * (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md): E_OK means finished, whatever the status code says, so a completed-but-
+     * failed store still clears the bit and reports the failure in the event payload; only E_NOT_OK holds the bit, because that means "still
+     * working". Holding it forever is the denial-of-service hazard this task exists to avoid -- Xcp_CanIfRxIndication's ERR_PGM_ACTIVE gate
+     * refuses 45 commands, DISCONNECT among them, for as long as any request bit is set. sessionConfigurationId is a placeholder here: design
+     * doc DD99 threads the real value (SET_REQUEST's own bytes 2,3) through in a later task, which changes no signature here since
+     * Xcp_StoreDaqConfiguration's own parameter for it already exists (interface/Xcp.h). */
+    if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ) != 0x00u)
+    {
+        if (Xcp_StoreDaqConfiguration(0x0000u, &store_daq_configuration_status) == E_OK)
+        {
+            Std_ReturnType push_result;
+
+            Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ;
+
+            /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
+             * exclusive area, and this and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are two
+             * producers into the same event queue, reachable from different contexts. */
+            SchM_Enter_Xcp_DtoQueue();
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_DAQ, &store_daq_configuration_status, 0x00000001u);
+            SchM_Exit_Xcp_DtoQueue();
+
+            if (push_result == E_OK)
+            {
+                Xcp_Internal.event.successful_transmission_pending = TRUE;
+            }
+            else
+            {
+                /* There is not much we can do here except reporting the error during the development process. If this error arises, the stack should
+                 * be recompiled with a bigger event queue size (defined by XCP_EVENT_QUEUE_SIZE), or the reason for receiving such a lot of events
+                 * should be identified. */
+                Xcp_ReportError(0x00u, XCP_MAIN_FUNCTION_API_ID, XCP_E_EVENT_QUEUE_FULL);
+            }
+        }
+    }
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3
+     * The CLEAR_DAQ_REQ bit obtained by GET_STATUS will be reset by the slave, when the request is fulfilled. The slave device may indicate this
+     * by transmitting an EV_CLEAR_DAQ event packet. Copies the STORE_CAL_REQ/STORE_DAQ_REQ blocks' rule exactly -- see the comment above. */
+    if ((Xcp_Internal.session_status & XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ) != 0x00u)
+    {
+        if (Xcp_ClearDaqConfiguration(&clear_daq_configuration_status) == E_OK)
+        {
+            Std_ReturnType push_result;
+
+            Xcp_Internal.session_status &= ~XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ;
+
+            /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
+             * exclusive area, and this and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are two
+             * producers into the same event queue, reachable from different contexts. */
+            SchM_Enter_Xcp_DtoQueue();
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_CLEAR_DAQ, &clear_daq_configuration_status, 0x00000001u);
             SchM_Exit_Xcp_DtoQueue();
 
             if (push_result == E_OK)

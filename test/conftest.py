@@ -503,6 +503,18 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16 = MagicMock()
         self.xcp_write_slave_memory_u32 = MagicMock()
         self.xcp_store_calibration_data_to_non_volatile_memory = MagicMock()
+        # SP5-NV Task 1 (design doc DD94, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-
+        # design.md): Xcp_StoreDaqConfiguration and Xcp_ClearDaqConfiguration are declared
+        # unconditionally in interface/Xcp.h -- unlike xcp_program_clear and its neighbours below,
+        # neither sits behind a compile-time #if, so both reach self.code.mocked in EVERY
+        # configuration this harness builds, not only ones that enable
+        # xcp_store_daq_configuration_api_enable / xcp_clear_daq_configuration_api_enable (that pair
+        # gates SET_REQUEST's acceptance at runtime, through Xcp_GeneralType, not the declaration
+        # itself). Supplied unconditionally here for the same reason every mock on this and the
+        # following lines is: the loop below (getattr(self, convert(func))) fails the constructor
+        # with AttributeError, not the test that happens to ask for it, if the attribute is missing.
+        self.xcp_store_daq_configuration = MagicMock()
+        self.xcp_clear_daq_configuration = MagicMock()
         self.xcp_program_start = MagicMock()
         # Task 4 (PROGRAM_RESET): Xcp_ProgramReset copies Xcp_ProgramStart's own polled contract
         # (design Section 4) exactly, so this mock exists unconditionally here for the same reason
@@ -598,6 +610,8 @@ class XcpTest(object):
         self.xcp_write_slave_memory_u16.return_value = None
         self.xcp_write_slave_memory_u32.return_value = None
         self.xcp_store_calibration_data_to_non_volatile_memory.return_value = self.define('E_OK')
+        self.xcp_store_daq_configuration.return_value = self.define('E_OK')
+        self.xcp_clear_daq_configuration.return_value = self.define('E_OK')
         self.xcp_program_start.return_value = self.define('E_OK')
         self.xcp_program_reset.return_value = self.define('E_OK')
         self.xcp_program_prepare.return_value = self.define('E_OK')
