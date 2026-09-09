@@ -474,6 +474,53 @@ extern Std_ReturnType Xcp_StoreDaqConfiguration(uint16 sessionConfigurationId, u
  */
 extern Std_ReturnType Xcp_ClearDaqConfiguration(uint8 *pStatusCode);
 
+/**
+ * @brief reports whether a DAQ list has been selected for a pending operation.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the master sets this flag
+ * with START_STOP_DAQ_LIST's SELECT mode. An integrator implementing @ref Xcp_StoreDaqConfiguration
+ * queries it per list to decide what to store.
+ * @param [in] daqListNumber DAQ list number
+ * @return TRUE if the list is selected, FALSE otherwise, if daqListNumber is out of range, or if
+ * this build's DAQ NV accessors are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable)
+ */
+boolean Xcp_GetDaqListSelectedState(uint16 daqListNumber);
+
+/**
+ * @brief reports how many ODTs a DAQ list has been allocated.
+ * @details Under DAQ_STATIC this is the generated configuration's own ODT count; under DAQ_DYNAMIC
+ * it is what the master has allocated with ALLOC_ODT so far, which may be less than the pool's
+ * ceiling.
+ * @param [in] daqListNumber DAQ list number
+ * @return the ODT count, or 0 if daqListNumber is out of range or this build's DAQ NV accessors
+ * are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable)
+ */
+uint8 Xcp_GetDaqListOdtCount(uint16 daqListNumber);
+
+/**
+ * @brief reports how many entries one ODT of a DAQ list has been allocated.
+ * @param [in] daqListNumber DAQ list number
+ * @param [in] odtNumber ODT number, relative to daqListNumber
+ * @return the entry count, or 0 if daqListNumber or odtNumber is out of range, or this build's DAQ
+ * NV accessors are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable)
+ */
+uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber);
+
+/**
+ * @brief reports one ODT entry's configuration.
+ * @param [in] daqListNumber DAQ list number
+ * @param [in] odtNumber ODT number, relative to daqListNumber
+ * @param [in] odtEntryNumber ODT entry number, relative to odtNumber
+ * @param [out] pEntry where address, bitOffset, addressExtension and length are copied, read only
+ * when this function returns E_OK. Xcp_OdtEntryType::number is left untouched -- the caller
+ * already supplied it as odtEntryNumber above, so a caller who allocates pEntry itself must not
+ * read that field back expecting this call to have populated it.
+ * @retval E_OK: pEntry was populated
+ * @retval E_NOT_OK: daqListNumber, odtNumber or odtEntryNumber is out of range, or this build's DAQ
+ * NV accessors are disabled (Xcp_GeneralType::daqNvAccessorsApiEnable); pEntry is left untouched
+ */
+Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
+                               Xcp_OdtEntryType *pEntry);
+
 #define Xcp_STOP_SEC_CODE_SLOW
 #include "Xcp_MemMap.h"
 

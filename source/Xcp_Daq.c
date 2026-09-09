@@ -478,6 +478,97 @@ void Xcp_DaqFreeAll(void)
     Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
 }
 
+/**
+ * @brief see interface/Xcp.h.
+ * @details Selection is XCP_DAQ_LIST_MODE_SELECTED in the list's runtime mode byte
+ * (Xcp_DaqListRtType::mode, interface/Xcp_Types.h), set by START_STOP_DAQ_LIST's SELECT mode
+ * (Xcp_DTOCmdDaqStartStopDaqList below) and left set until a START_STOP_SYNCH resets it.
+ * @note Xcp_DaqListClearEntries above already lives in this section despite external linkage,
+ * because Xcp_Init needs it. This function and the three that follow it are external for a
+ * different reason: they are public accessors an integrator calls directly (design doc DD94,
+ * docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md), so they are declared in
+ * interface/Xcp.h rather than Xcp_Internal.h. All four still live here, beside this file's other
+ * DAQ helpers, because they read the exact runtime state those helpers already read --
+ * Xcp_DaqListRt and Xcp_Ptr->config->daqList -- reusing Xcp_DaqListIsValid/Xcp_DaqListRt for their
+ * own bounds checks rather than re-deriving them.
+ */
+boolean Xcp_GetDaqListSelectedState(uint16 daqListNumber)
+{
+    boolean result = FALSE;
+
+    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) && (Xcp_DaqListIsValid(daqListNumber) == TRUE))
+    {
+        result = (boolean)(((Xcp_DaqListRt(daqListNumber)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u) ?
+                            TRUE : FALSE);
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+uint8 Xcp_GetDaqListOdtCount(uint16 daqListNumber)
+{
+    uint8 result = 0x00u;
+
+    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) && (Xcp_DaqListIsValid(daqListNumber) == TRUE))
+    {
+        result = Xcp_Ptr->config->daqList[daqListNumber].maxOdt;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber)
+{
+    uint8 result = 0x00u;
+
+    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt))
+    {
+        result = Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Xcp_OdtEntryType::number (interface/Xcp_Types.h) is const, so this function copies the
+ * other four members individually rather than assigning through the struct -- `*pEntry = *p_entry`
+ * would make pEntry not a modifiable lvalue (C11 6.3.2.1p1) and the compiler would reject it.
+ * number is left as pEntry already held it: the caller supplied that same value as odtEntryNumber
+ * above, so nothing is lost by not writing it back.
+ */
+Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
+                               Xcp_OdtEntryType *pEntry)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Ptr->general->daqNvAccessorsApiEnable == TRUE) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
+        (odtEntryNumber < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount))
+    {
+        const Xcp_OdtEntryType *p_entry =
+                &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[odtEntryNumber];
+
+        pEntry->address = p_entry->address;
+        pEntry->bitOffset = p_entry->bitOffset;
+        pEntry->addressExtension = p_entry->addressExtension;
+        pEntry->length = p_entry->length;
+
+        result = E_OK;
+    }
+
+    return result;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/

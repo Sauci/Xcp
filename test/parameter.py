@@ -358,6 +358,11 @@ class DefaultConfig(dict):
                  # exercise STORE_DAQ_REQ/CLEAR_DAQ_REQ pass the matching flag True explicitly.
                  xcp_store_daq_configuration_api_enable=False,
                  xcp_clear_daq_configuration_api_enable=False,
+                 # SP5-NV Task 3 (design doc DD94): also defaults False, for the same reason as the
+                 # pair above -- an explicit opt-in makes every test that exercises the four
+                 # accessors (test/daq_nv_accessor_test.py) prove the flag is actually consulted,
+                 # rather than passing because the harness-wide default happened to be enabled.
+                 xcp_daq_nv_accessors_api_enable=False,
                  resource_protection_calibration_paging=False,
                  resource_protection_data_acquisition=False,
                  resource_protection_data_stimulation=False,
@@ -521,6 +526,8 @@ class DefaultConfig(dict):
                             "enabled": xcp_store_daq_configuration_api_enable, "protected": False},
                     "xcp_clear_daq_configuration_api_enable": {
                             "enabled": xcp_clear_daq_configuration_api_enable, "protected": False},
+                    "xcp_daq_nv_accessors_api_enable": {
+                            "enabled": xcp_daq_nv_accessors_api_enable, "protected": False},
                     "resource_protection": {
                         "calibration_paging": resource_protection_calibration_paging,
                         "data_acquisition": resource_protection_data_acquisition,

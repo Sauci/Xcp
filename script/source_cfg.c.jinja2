@@ -1320,6 +1320,17 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     DAQ storage has no parent "enabled" flag of its own the way programming.enabled is one. #}
     {% if configuration.apis.xcp_store_daq_configuration_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* storeDaqConfigurationApiEnable */
     {% if configuration.apis.xcp_clear_daq_configuration_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* clearDaqConfigurationApiEnable */
+{#- Task 3 (SP5-NV, design doc DD94, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md):
+    unlike storeDaqConfigurationApiEnable/clearDaqConfigurationApiEnable above, this flag gates no
+    SET_REQUEST mode bit -- it gates four plain accessor functions this module implements itself
+    (Xcp_GetDaqListSelectedState, Xcp_GetDaqListOdtCount, Xcp_GetOdtEntryCount, Xcp_GetOdtEntry,
+    interface/Xcp.h), which an integrator's own Xcp_StoreDaqConfiguration calls to learn what to
+    store. One flag for all four, not one each: they exist to serve that single caller, so
+    splitting them would only multiply the configurations to test for no benefit. Read directly by
+    each accessor (Xcp_Ptr->general->daqNvAccessorsApiEnable) rather than through ctoInfo, for the
+    same reason storeDaqConfigurationApiEnable is: none of the four is a command with a PID of its
+    own to carry an enable bit. #}
+    {% if configuration.apis.xcp_daq_nv_accessors_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* daqNvAccessorsApiEnable */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

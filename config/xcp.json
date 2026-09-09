@@ -275,6 +275,10 @@
           "enabled": false,
           "protected": false
         },
+        "xcp_daq_nv_accessors_api_enable": {
+          "enabled": false,
+          "protected": false
+        },
         "resource_protection": {
           "calibration_paging": false,
           "data_acquisition": false,
