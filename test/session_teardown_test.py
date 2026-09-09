@@ -597,9 +597,12 @@ def test_a_stuck_store_cal_request_does_not_survive_a_reconnect():
     STORE_CAL_REQ is cleared in exactly one place -- Xcp_MainFunction (source/Xcp.c) -- and only
     when Xcp_StoreCalibrationDataToNonVolatileMemory returns E_OK. An integrator whose NVM write
     never succeeds returns E_NOT_OK forever, so the bit never clears, and the ERR_PGM_ACTIVE gate
-    then refuses every command whose Xcp_CTOErrorMatrix row carries the bit -- 45 rows, DISCONNECT
-    among them. CONNECT is itself ungated (row 0x00u), so before the fix a master could reconnect
-    and recover nothing: only Xcp_Init, a power cycle, cleared it.
+    then refuses every command whose Xcp_CTOErrorMatrix row carries the bit -- 42 rows in the
+    default build, 38 with flash programming enabled (four rows carry the bit only with that gate
+    off; counted from the matrix's own initializer entries per preprocessor branch, not by grepping
+    the macro name, which also matches the dispatch gate's own uses), DISCONNECT among them.
+    CONNECT is itself ungated (row 0x00u), so before the fix a master could reconnect and recover
+    nothing: only Xcp_Init, a power cycle, cleared it.
 
     The two halves matter separately. The DISCONNECT refusal below is the PRECONDITION -- it
     proves the wedge is real and that this test is exercising it, not a slave that was fine all

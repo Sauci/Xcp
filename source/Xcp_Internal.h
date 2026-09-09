@@ -46,6 +46,8 @@ extern "C" {
 #define XCP_PID_ERROR (0xFEu)
 #define XCP_PID_EVENT (0xFDu)
 
+#define XCP_EVENT_CLEAR_DAQ (0x01u)
+#define XCP_EVENT_STORE_DAQ (0x02u)
 #define XCP_EVENT_STORE_CAL (0x03u)
 
 #define XCP_PID_CMD_WRITE_DAQ_MULTIPLE (0xC7u)
@@ -294,6 +296,17 @@ extern "C" {
 #define XCP_INTERNAL_ERR_GENERIC (0x00000001u << 0x11u)
 #define XCP_INTERNAL_ERR_VERIFY (0x00000001u << 0x12u)
 
+/* Task 4 (SP5-NV, design doc DD101, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-
+ * design.md): XCP part 2 - Protocol Layer Specification 1.1/1.7.3.2.1's own
+ * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE, declared here purely so Xcp_CTOErrorMatrix[0xFD] below
+ * has a bit to carry it -- exactly as XCP_INTERNAL_ERR_GENERIC was declared for UNLOCK's row
+ * (DD76). Declarative only: Xcp_CanIfRxIndication's dispatch gate (source/Xcp.c) tests only
+ * XCP_INTERNAL_ERR_CMD_BUSY, XCP_INTERNAL_ERR_CMD_SYNTAX and XCP_INTERNAL_ERR_PGM_ACTIVE against
+ * this table, so this bit has no effect there; Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) is what
+ * actually answers XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE, from its own read of
+ * Xcp_Internal.session_configuration_id_read_state, not from this table. */
+#define XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE (0x00000001u << 0x13u)
+
 /** @} */
 
 /*------------------------------------------------------------------------------------------------*/
@@ -334,6 +347,35 @@ typedef enum {
     XCP_DAQ_ALLOC_ODT_ENTRY
 } Xcp_DaqAllocStateType;
 
+/**
+ * @brief where design doc DD100's start-up read of the stored session configuration id has got
+ * to (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md).
+ * @details Xcp_Init (source/Xcp.c) arms this once, from
+ * Xcp_Ptr->general->readStoredSessionConfigurationIdApiEnable: NOT_REQUIRED when the build has no
+ * @ref Xcp_ReadStoredSessionConfigurationId to call, so Xcp_MainFunction never polls and DD101's
+ * GET_STATUS window can never open; OUTSTANDING otherwise. Two independent things move this from
+ * OUTSTANDING to COMPLETE, and Xcp_MainFunction's own poll site is only one of them: it polls
+ * while OUTSTANDING and moves this to COMPLETE the moment that callback reports E_OK. The
+ * STORE_DAQ_REQ/CLEAR_DAQ_REQ handling beside it does the same the moment either completes with a
+ * zero status, because a store or clear the module has already committed makes this read's answer
+ * stale by construction whenever it eventually arrives (DD99). Either way this happens once, and
+ * for the rest of the session: unlike Xcp_Internal.pgm_state, which CONNECT resets IDLE for a new
+ * session, DD99's own "CONNECT must not touch what non-volatile memory holds" applies here too --
+ * nothing but Xcp_Init (i.e. a power cycle) re-arms this field. Xcp_CTOCmdStdGetStatus (source/
+ * Xcp_Std.c) reads this field to decide DD101's own
+ * question: answer XCP_E_ASAM_RESOURCE_TEMPORARY_NOT_ACCESSIBLE while OUTSTANDING, the ordinary
+ * response for either other value.
+ * @note explicitly 0 for NOT_REQUIRED, the same defensive reason Xcp_ConnectionState and
+ * Xcp_DaqAllocStateType above are both explicitly zeroed at their own first member: a value read
+ * from a cleared memory section before Xcp_Init has run must not read as a permanently
+ * outstanding read nothing ever arms.
+ */
+typedef enum {
+    XCP_NV_READ_NOT_REQUIRED = 0x00u,
+    XCP_NV_READ_OUTSTANDING,
+    XCP_NV_READ_COMPLETE
+} Xcp_NvReadStateType;
+
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
 /**
  * @brief State of the non-volatile memory programming session: open, or not.
@@ -364,6 +406,41 @@ typedef struct {
     uint8 connect_mode;
     Xcp_ConnectionState connection_status;
     uint8 session_status;
+    /* GET_STATUS bytes 4,5 (XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3), transmitted
+     * verbatim in the configured byte order (Xcp_CTOCmdStdGetStatus, source/Xcp_Std.c). Design doc
+     * DD99 (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) is this field's own
+     * exhaustive table of writers -- adopted from requested_session_configuration_id below when
+     * STORE_DAQ_REQ completes with a zero status code, reset to 0x0000u when CLEAR_DAQ_REQ
+     * completes with a zero status code, and adopted from non-volatile storage once
+     * session_configuration_id_read_state's own poll (Xcp_MainFunction, source/Xcp.c) completes
+     * with a zero status code (DD100). A store or clear that completes but fails -- E_OK with a
+     * non-zero status -- leaves it untouched, and Xcp_Init's own reset to 0x0000u (below) already
+     * IS the "nothing stored" answer a non-zero-status read completion leaves standing, so that
+     * case needs no separate write either. CONNECT (Xcp_CTOCmdStdConnect, source/Xcp_Std.c) also
+     * leaves it untouched: unlike the session-status REQUEST
+     * bits beside it above, which CONNECT does clear (DD77/R1), this field reflects what
+     * non-volatile memory holds, which a reconnect does not alter. */
+    uint16 session_configuration_id;
+    /* SET_REQUEST's own bytes 2,3 (1.0/1.6.1.2.3), staged here by Xcp_DTOCmdStdSetRequest
+     * (source/Xcp_Std.c) on every accepted SET_REQUEST, regardless of which mode bit(s) it
+     * carried -- safe unconditionally because SET_REQUEST's own Xcp_CTOErrorMatrix row carries
+     * XCP_INTERNAL_ERR_PGM_ACTIVE, so a new one cannot be dispatched while STORE_DAQ_REQ is still
+     * pending on an earlier one to have its id overwritten out from under it. Xcp_MainFunction
+     * (source/Xcp.c) reads this field on every poll of a pending STORE_DAQ_REQ and passes it to
+     * Xcp_StoreDaqConfiguration, until that call reports completion. Not the reported field above:
+     * this is what the request CARRIED, session_configuration_id is what the module has ADOPTED,
+     * and the two differ for as long as a store is pending or after one that failed. */
+    uint16 requested_session_configuration_id;
+    /* Design doc DD100 (docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md): where the
+     * start-up read of session_configuration_id above has got to. See Xcp_NvReadStateType's own
+     * doc comment for the full state machine; in short, Xcp_Init arms this OUTSTANDING or
+     * NOT_REQUIRED depending on Xcp_Ptr->general->readStoredSessionConfigurationIdApiEnable,
+     * Xcp_MainFunction (source/Xcp.c) moves OUTSTANDING to COMPLETE the one time
+     * Xcp_ReadStoredSessionConfigurationId reports E_OK OR the moment a STORE_DAQ_REQ/
+     * CLEAR_DAQ_REQ in flight beside it completes with a zero status, whichever happens first, and
+     * Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) reads it to decide DD101's own question --
+     * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE while OUTSTANDING, the ordinary response otherwise. */
+    Xcp_NvReadStateType session_configuration_id_read_state;
     /* The Current Resource Protection Mask of XCP part 2 1.0/1.6.1.1.3: a set bit means the group
      * IS still protected. This is the value transmitted verbatim by GET_STATUS byte 2 and UNLOCK
      * response byte 1, so no reader inverts it and no reader can get the polarity wrong.

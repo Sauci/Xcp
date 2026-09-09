@@ -348,6 +348,29 @@ class DefaultConfig(dict):
                  xcp_set_segment_mode_api_enable=True,
                  xcp_get_segment_mode_api_enable=True,
                  xcp_copy_cal_page_api_enable=True,
+                 # SP5-NV Task 1 (design doc DD94/DD95, docs/superpowers/specs/2026-09-09-xcp-daq-
+                 # nv-storage-design.md): unlike most *_api_enable defaults above, these two default
+                 # False, not True, for the same reason xcp_program_clear_functional_api_enable
+                 # does -- defaulting either True would silently flip test/set_request_test.py's own
+                 # test_set_request_refuses_the_non_volatile_daq_modes_it_cannot_fulfil and
+                 # test/get_status_test.py's test_get_status_never_reports_a_request_no_code_can_
+                 # fulfil from refused to accepted, neither of which this task may touch. Tests that
+                 # exercise STORE_DAQ_REQ/CLEAR_DAQ_REQ pass the matching flag True explicitly.
+                 xcp_store_daq_configuration_api_enable=False,
+                 xcp_clear_daq_configuration_api_enable=False,
+                 # SP5-NV Task 4 (design doc DD100/DD101, docs/superpowers/specs/2026-09-09-xcp-
+                 # daq-nv-storage-design.md): False by default for the same reason the two flags
+                 # above are -- defaulting it True would silently arm Xcp_Init's start-up read for
+                 # every existing test in this suite. Every one of those completes the read on its
+                 # own first Xcp_MainFunction call (conftest.py's blanket mock default is E_OK, and
+                 # GET_STATUS is unreachable before CONNECT's own first poll, so DD101's window
+                 # would close before any of them could observe it) -- but E_OK with no side_effect
+                 # never writes the mock's two out-parameters, so Xcp_Internal.session_
+                 # configuration_id would adopt whatever uninitialised stack garbage
+                 # read_session_configuration_id (Xcp_MainFunction, source/Xcp.c) happened to hold.
+                 # Tests that exercise the read pass this flag True explicitly and configure the
+                 # mock themselves.
+                 xcp_read_stored_session_configuration_id_api_enable=False,
                  resource_protection_calibration_paging=False,
                  resource_protection_data_acquisition=False,
                  resource_protection_data_stimulation=False,
@@ -507,6 +530,12 @@ class DefaultConfig(dict):
                     "xcp_get_segment_mode_api_enable": {"enabled": xcp_get_segment_mode_api_enable,
                                                         "protected": False},
                     "xcp_copy_cal_page_api_enable": {"enabled": xcp_copy_cal_page_api_enable, "protected": False},
+                    "xcp_store_daq_configuration_api_enable": {
+                            "enabled": xcp_store_daq_configuration_api_enable, "protected": False},
+                    "xcp_clear_daq_configuration_api_enable": {
+                            "enabled": xcp_clear_daq_configuration_api_enable, "protected": False},
+                    "xcp_read_stored_session_configuration_id_api_enable": {
+                            "enabled": xcp_read_stored_session_configuration_id_api_enable, "protected": False},
                     "resource_protection": {
                         "calibration_paging": resource_protection_calibration_paging,
                         "data_acquisition": resource_protection_data_acquisition,

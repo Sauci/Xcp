@@ -1308,6 +1308,31 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {% if configuration.programming.enabled | default(false) and configuration.apis.xcp_program_clear_functional_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* pgmClearFunctionalSupported */
     {% if configuration.paging is defined and configuration.paging.freeze_supported %}0x01u{% else %}0x00u{% endif %}, /* pagProperties */
     {% if (configuration.protocol_layer.overload_indication | default('EVENT')) == 'EVENT' %}TRUE{% else %}FALSE{% endif %}, /* overload indication by event packet */
+{#- Task 1 (SP5-NV, design doc DD94/DD95, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md):
+    STORE_DAQ_REQ and CLEAR_DAQ_REQ are mode BITS of SET_REQUEST (0xF9), not commands of their own --
+    unlike every *_api_enable flag above, neither has a ctoInfo[pid] row of its own to carry an enable
+    bit (SET_REQUEST's own row, xcp_set_request_api_enable, already covers the command as a whole).
+    A dedicated boolean per flag, read directly by Xcp_DTOCmdStdSetRequest
+    (Xcp_Ptr->general->storeDaqConfigurationApiEnable / ...clearDaqConfigurationApiEnable), mirrors
+    pgmClearFunctionalSupported above: the same "is this capability configured" question, answered
+    outside ctoInfo's bit-packed storage because it has no slot for it. Unlike
+    pgmClearFunctionalSupported, no conjunction with a broader feature flag is needed -- non-volatile
+    DAQ storage has no parent "enabled" flag of its own the way programming.enabled is one. #}
+    {% if configuration.apis.xcp_store_daq_configuration_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* storeDaqConfigurationApiEnable */
+    {% if configuration.apis.xcp_clear_daq_configuration_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* clearDaqConfigurationApiEnable */
+{#- Task 4 (SP5-NV, design doc DD100/DD101, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-
+    design.md): Xcp_ReadStoredSessionConfigurationId is polled from Xcp_MainFunction the same way
+    Xcp_StoreDaqConfiguration/Xcp_ClearDaqConfiguration above are, but on no SET_REQUEST bit of its
+    own to gate on -- it runs at start-up, unconditionally, unless this flag says the build has
+    nowhere to read a stored configuration from. Xcp_Init (source/Xcp.c) reads this field to decide
+    whether to arm Xcp_Internal.session_configuration_id_read_state OUTSTANDING (polled every
+    Xcp_MainFunction until it completes) or NOT_REQUIRED (never polled at all) -- which is also
+    what decides whether DD101's GET_STATUS window can ever be observed: with the read never
+    armed, Xcp_CTOCmdStdGetStatus (source/Xcp_Std.c) never has a reason to answer
+    ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE. Mirrors storeDaqConfigurationApiEnable/
+    clearDaqConfigurationApiEnable immediately above: a dedicated boolean, not a ctoInfo bit, since
+    this is not a command PID a master ever sends. #}
+    {% if configuration.apis.xcp_read_stored_session_configuration_id_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* readStoredSessionConfigurationIdApiEnable */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

@@ -478,6 +478,98 @@ void Xcp_DaqFreeAll(void)
     Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
 }
 
+/**
+ * @brief see interface/Xcp.h.
+ * @details Selection is XCP_DAQ_LIST_MODE_SELECTED in the list's runtime mode byte
+ * (Xcp_DaqListRtType::mode, interface/Xcp_Types.h), set by START_STOP_DAQ_LIST's SELECT mode
+ * (Xcp_DTOCmdDaqStartStopDaqList below). A START_STOP_SYNCH resets it, and so does anything that
+ * resets the list itself: Xcp_DaqListReset (above) zeroes the whole mode byte, so CLEAR_DAQ_LIST,
+ * FREE_DAQ and Xcp_Init (via Xcp_DaqFreeAll) clear it too -- an integrator caching selection across
+ * any of those would be wrong.
+ * @note Xcp_DaqListClearEntries above already lives in this section despite external linkage,
+ * because Xcp_Init needs it. This function and the three that follow it are external for a
+ * different reason: they are public accessors an integrator calls directly (design doc DD94,
+ * docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md), so they are declared in
+ * interface/Xcp.h rather than Xcp_Internal.h. All four still live here, beside this file's other
+ * DAQ helpers, because they read the exact runtime state those helpers already read --
+ * Xcp_DaqListRt and Xcp_Ptr->config->daqList -- reusing Xcp_DaqListIsValid/Xcp_DaqListRt for their
+ * own bounds checks rather than re-deriving them.
+ */
+boolean Xcp_GetDaqListSelectedState(uint16 daqListNumber)
+{
+    boolean result = FALSE;
+
+    if (Xcp_DaqListIsValid(daqListNumber) == TRUE)
+    {
+        result = (boolean)(((Xcp_DaqListRt(daqListNumber)->mode & XCP_DAQ_LIST_MODE_SELECTED) != 0x00u) ?
+                            TRUE : FALSE);
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+uint8 Xcp_GetDaqListOdtCount(uint16 daqListNumber)
+{
+    uint8 result = 0x00u;
+
+    if (Xcp_DaqListIsValid(daqListNumber) == TRUE)
+    {
+        result = Xcp_Ptr->config->daqList[daqListNumber].maxOdt;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+uint8 Xcp_GetOdtEntryCount(uint16 daqListNumber, uint8 odtNumber)
+{
+    uint8 result = 0x00u;
+
+    if ((Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt))
+    {
+        result = Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Xcp_OdtEntryType::number (interface/Xcp_Types.h) is const, so this function copies the
+ * other four members individually rather than assigning through the struct -- `*pEntry = *p_entry`
+ * would make pEntry not a modifiable lvalue (C11 6.3.2.1p1) and the compiler would reject it.
+ * number is left as pEntry already held it: the caller supplied that same value as odtEntryNumber
+ * above, so nothing is lost by not writing it back.
+ */
+Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
+                               Xcp_OdtEntryType *pEntry)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
+        (odtEntryNumber < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount))
+    {
+        const Xcp_OdtEntryType *p_entry =
+                &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[odtEntryNumber];
+
+        pEntry->address = p_entry->address;
+        pEntry->bitOffset = p_entry->bitOffset;
+        pEntry->addressExtension = p_entry->addressExtension;
+        pEntry->length = p_entry->length;
+
+        result = E_OK;
+    }
+
+    return result;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/
@@ -1668,8 +1760,13 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE now follows the
      * configuration: a DAQ_DYNAMIC build lets the master allocate lists through 1.1/1.6.4.3.1,
      * where a DAQ_STATIC build serves the lists the generator declared. RESUME and BIT_STIM
-     * remain unimplemented and so remain reported unsupported, which is what lets
-     * SET_DAQ_LIST_MODE refuse the matching mode bits. */
+     * remain unimplemented and so remain reported unsupported here -- neither is a mode bit
+     * SET_DAQ_LIST_MODE refuses, though: XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (Xcp_Internal.h) is
+     * ALTERNATING alone, RESUME is bit 7 of the GET_DAQ_LIST_MODE response layout (design doc
+     * DD102, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md), not the request
+     * SET_DAQ_LIST_MODE reads, and BIT_STIM is a DAQ_PROPERTIES capability bit reported here, not
+     * a mode bit at all. RESUME is accepted and simply never honoured -- GET_DAQ_LIST_MODE never
+     * reports it set. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         properties |= XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE;

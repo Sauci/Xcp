@@ -210,7 +210,11 @@ reset."* The final review noticed that the quote names **session status** and **
 DD74 reset neither — five fields §2.3 does not mention, and not the two it does. DD77 closes that
 gap for the two fields where the module can act honestly:
 
-- `session_status`'s request bits (R1), which otherwise wedge 45 command rows permanently.
+- `session_status`'s request bits (R1), which otherwise wedge command rows permanently — 42 of them
+  in the default build, 38 with flash programming enabled (four rows carry
+  `XCP_INTERNAL_ERR_PGM_ACTIVE` only with that gate off; counted from `Xcp_CTOErrorMatrix`'s own
+  initializer entries per preprocessor branch, not by grepping the macro name, which also matches
+  the dispatch gate's own uses).
 - `daq_pointer.valid` (R2), which otherwise lets a new session write the old session's ODT entry.
 
 **A caveat that belongs on the record, because it is load-bearing and unverifiable here.** XCP
@@ -312,8 +316,10 @@ exactly one place — `Xcp_MainFunction` (`Xcp.c`) — and only when the integra
 `Xcp_StoreCalibrationDataToNonVolatileMemory` returns `E_OK`. An integrator whose NVM write fails,
 or which is stubbed out, returns `E_NOT_OK` forever and the bit never clears. From that moment the
 gate refuses **every command whose `Xcp_CTOErrorMatrix` row carries `XCP_INTERNAL_ERR_PGM_ACTIVE`
-— 45 rows, `DISCONNECT` (0xFE) among them**, along with `GET_SEED`, `UNLOCK`, and all of CAL and
-DAQ.
+— 42 rows in the default build, 38 with flash programming enabled (four rows carry the bit only
+with that gate off; counted from the matrix's own initializer entries per preprocessor branch, not
+by grepping the macro name, which also matches the dispatch gate's own uses), `DISCONNECT` (0xFE)
+among them**, along with `GET_SEED`, `UNLOCK`, and all of CAL and DAQ.
 
 `CONNECT` (0xFF) is itself ungated (its row is `0x00u`), so a master can still connect — and
 recovers nothing, because `CONNECT` does not clear the bit. **Only `Xcp_Init` — a power cycle —

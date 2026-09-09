@@ -141,9 +141,13 @@ def test_set_request_refuses_the_non_volatile_daq_modes_it_cannot_fulfil(mode, n
     support the requested mode, an ERR_OUT_OF_RANGE will be returned."
 
     STORE_DAQ_REQ saves the selected DAQ lists to non-volatile memory and CLEAR_DAQ_REQ clears
-    what is stored there. This module keeps no non-volatile DAQ configuration -- consistent with
-    GET_DAQ_PROCESSOR_INFO, which reports RESUME unsupported -- so both are refused rather than
-    accepted and quietly dropped. STORE_CAL_REQ is unaffected; it is implemented end to end."""
+    what is stored there. Both are gated behind their own xcp_store_daq_configuration_api_enable /
+    xcp_clear_daq_configuration_api_enable flag (design doc DD94-DD102,
+    docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md; test/daq_nv_storage_test.py
+    exercises them enabled), and DefaultConfig() as used here defaults both off -- an unconfigured
+    build has nowhere to store a DAQ configuration, so both are refused rather than accepted and
+    quietly dropped. STORE_CAL_REQ is unaffected; it is implemented end to end regardless of
+    either flag."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     connect(handle)
 
