@@ -196,16 +196,21 @@ def test_set_request_refuses_the_daq_modes_when_their_api_flags_are_disabled(mod
     assert exchange(handle, (0xF9, mode, 0x00, 0x00))[0:2] == (0xFE, 0x22)
 
 
-def test_set_request_passes_the_session_configuration_id_to_the_store_callback():
+@pytest.mark.parametrize('byte_order', byte_orders)
+def test_set_request_passes_the_session_configuration_id_to_the_store_callback(byte_order):
     """Task 2, brief test 1. XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3: SET_REQUEST's
     WORD session_configuration_id sits at bytes 2,3 and must reach Xcp_StoreDaqConfiguration's own
     first parameter -- asserted on the callback's actual argument, not merely that it was called,
-    which would also pass with Task 1's own 0x0000 placeholder."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    which would also pass with Task 1's own 0x0000 placeholder. Parametrized over byte order because
+    asserting the decoded value at a non-default byte order is what makes a hardcoded endianness
+    observable -- a round-trip through both Xcp_CopyToU16WithOrder and Xcp_CopyFromU16WithOrder
+    cannot distinguish it."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, byte_order=byte_order,
+                                    xcp_store_daq_configuration_api_enable=True))
     connect(handle)
     handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')
 
-    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, LITTLE_ENDIAN (DefaultConfig's own default)
+    exchange(handle, (0xF9, 0b00000100) + tuple(u16_to_array(0x1234, byte_order)))
 
     assert handle.xcp_store_daq_configuration.call_args[0][0] == 0x1234
 
@@ -215,10 +220,11 @@ def test_get_status_reports_the_session_configuration_id_after_a_successful_stor
     """Task 2, brief test 2. XCP part 2 - Protocol Layer Specification 1.0/1.6.1.1.3, bytes 4,5, in
     the configured byte order -- DD99's second row: STORE_DAQ_REQ completing with a zero status
     adopts the id SET_REQUEST carried into Xcp_Internal.session_configuration_id. Parametrized over
-    byte order (unlike test 1 above) because this is the one assertion that exercises both the read
-    side (SET_REQUEST, Xcp_CopyToU16WithOrder) and the write side (GET_STATUS,
-    Xcp_CopyFromU16WithOrder) together -- a byte-order defect in either would show up here even if
-    the other side were correct."""
+    byte order because this assertion exercises both the read side (SET_REQUEST,
+    Xcp_CopyToU16WithOrder) and the write side (GET_STATUS, Xcp_CopyFromU16WithOrder) together --
+    a byte-order defect on either side alone would show up here. The symmetric case, where the same
+    wrong order is hardcoded in both conversions, is caught by the read-side test above, which
+    asserts the decoded value at a non-default byte order."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, byte_order=byte_order,
                                     xcp_store_daq_configuration_api_enable=True))
     connect(handle)
