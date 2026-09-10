@@ -794,3 +794,49 @@ def test_a_failed_store_daq_req_leaves_the_selection_standing():
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert selected_bit_on_the_wire(handle, 0) == 0x01, 'a failed store consumed nothing'
+
+
+def test_a_successful_clear_daq_req_also_resets_the_selected_flag():
+    """The STORE_DAQ_REQ fix above was under-scoped. 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4) names
+    SET_REQUEST without qualifying the mode -- "as soon as the related START_STOP_SYNCH or
+    SET_REQUEST have been acknowledged" -- and the same section says the selection makes a list
+    "part of a configuration that afterwards will be CLEARED or stored into non-volatile memory".
+    Both modes consume the selection.
+
+    The first reading was that CLEAR_DAQ_REQ wipes every list in non-volatile memory regardless of
+    what is selected (1.0/1.6.1.1.3), so the selection is not an input to it and nothing is
+    consumed. That is true of the clear's own behaviour and beside the point: the requirement is
+    about what the slave keeps REPORTING once the master's request has been acknowledged, and a
+    master that selected lists and then cleared has finished with that selection either way."""
+    handle = selected_dynamic_handle(xcp_clear_daq_configuration_api_enable=True)
+
+    def clear_daq_configuration(p_status_code):
+        p_status_code[0] = 0x00  # zero status: a clean completion
+        return handle.define('E_OK')
+
+    handle.xcp_clear_daq_configuration.side_effect = clear_daq_configuration
+
+    assert selected_bit_on_the_wire(handle, 0) == 0x01, 'selected before the clear'
+
+    exchange(handle, (0xF9, 0b00001000, 0x00, 0x00))              # SET_REQUEST(CLEAR_DAQ_REQ)
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drain EV_CLEAR_DAQ
+
+    assert selected_bit_on_the_wire(handle, 0) == 0x00, 'reset once the clear completed'
+
+
+def test_a_failed_clear_daq_req_leaves_the_selection_standing():
+    """Same reading as the failed store above: the specification says "acknowledged" rather than
+    "succeeded", and a clear that reported a failure changed nothing in non-volatile memory, so the
+    master can retry the SET_REQUEST without walking the Select sequence again."""
+    handle = selected_dynamic_handle(xcp_clear_daq_configuration_api_enable=True)
+
+    def clear_daq_configuration(p_status_code):
+        p_status_code[0] = 0x01  # non-zero: finished, but failed
+        return handle.define('E_OK')
+
+    handle.xcp_clear_daq_configuration.side_effect = clear_daq_configuration
+
+    exchange(handle, (0xF9, 0b00001000, 0x00, 0x00))
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert selected_bit_on_the_wire(handle, 0) == 0x01, 'a failed clear consumed nothing'

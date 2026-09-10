@@ -1691,6 +1691,22 @@ void Xcp_MainFunction(void)
                 {
                     Xcp_Internal.session_configuration_id_read_state = XCP_NV_READ_COMPLETE;
                 }
+
+                /* XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4)
+                 * The same reset the STORE_DAQ_REQ block above performs, and for the same
+                 * sentence: the requirement names SET_REQUEST without qualifying the mode, and the
+                 * section describes a selection as making a list "part of a configuration that
+                 * afterwards will be cleared or stored into non-volatile memory". Both modes.
+                 *
+                 * That the clear itself wipes every list in non-volatile memory regardless of what
+                 * is selected (1.0/1.6.1.1.3) is true and beside the point: the requirement governs
+                 * what the slave keeps REPORTING once the master's request has been acknowledged,
+                 * not what the clear reads. A master that selected lists and then cleared has
+                 * finished with that selection either way.
+                 *
+                 * Zero-status branch, so a failed clear leaves the selection standing -- the same
+                 * reading, for the same reason, as the store above. */
+                Xcp_DaqClearAllSelections();
             }
 
             /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the
