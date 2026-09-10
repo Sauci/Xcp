@@ -137,6 +137,22 @@ def test_nothing_runs_until_resume_complete():
     assert not handle.can_if_transmit.called, 'no Xcp_ResumeComplete, so nothing is live'
 
 
+def test_the_setters_are_refused_once_a_master_has_connected():
+    """DD107. Restoration is a start-up activity. A live session configures DAQ through the
+    protocol, and a setter that still worked mid-session would be an unpoliced path into DAQ state
+    that no ERR_ code describes.
+
+    Refused after CONNECT specifically, not only after Xcp_ResumeComplete: an integrator that never
+    commits must not be left holding a working back door for the rest of the session."""
+    handle = restoring_handle()
+    assert handle.lib.Xcp_RestoreDaqListCount(1) == handle.define('E_OK'), 'accepted before CONNECT'
+
+    connect(handle)
+
+    assert handle.lib.Xcp_RestoreDaqListCount(1) == handle.define('E_NOT_OK')
+    assert handle.lib.Xcp_RestoreOdtCount(0, 1) == handle.define('E_NOT_OK')
+
+
 def test_resume_complete_refuses_a_list_the_front_door_would_refuse_to_start():
     """DD105's second half. START_STOP_DAQ_LIST answers ERR_DAQ_CONFIG for a list with no written
     ODT entry, so resuming must not create by the back door a state the front door rejects. The ODT
@@ -183,13 +199,15 @@ Add `Xcp_ResumeStateType resume_state;` to `Xcp_InternalType`, and reset it to `
 
 Declare all six in `interface/Xcp.h` with doc comments matching `Xcp_GetSegmentFreezeState`'s style (`interface/Xcp.h:416-425`), each stating what it returns for an out-of-range argument and that it answers `E_NOT_OK` once `Xcp_ResumeComplete` has run.
 
-Implement in `source/Xcp_Daq.c` beside the SP5-NV accessors, reusing `Xcp_DaqListIsValid` and `Xcp_DaqListRt`. `Xcp_RestoreDaqListCount` raises `Xcp_Internal.allocated_daq_count` under `DAQ_DYNAMIC` and validates equality against `Xcp_Ptr->general->daqCount` under `DAQ_STATIC`. Each setter sets `resume_state = XCP_RESUME_RESTORING` on its first success and refuses when `resume_state == XCP_RESUME_ACTIVE`.
+Implement in `source/Xcp_Daq.c` beside the SP5-NV accessors, reusing `Xcp_DaqListIsValid` and `Xcp_DaqListRt`. `Xcp_RestoreDaqListCount` raises `Xcp_Internal.allocated_daq_count` under `DAQ_DYNAMIC` and validates equality against `Xcp_Ptr->general->daqCount` under `DAQ_STATIC`. Each setter sets `resume_state = XCP_RESUME_RESTORING` on its first success, and refuses when
+`resume_state == XCP_RESUME_ACTIVE` **or** when `connection_status != XCP_CONNECTION_STATE_DISCONNECTED`
+— DD107's two halves. The second is why the test above connects rather than committing.
 
 `Xcp_ResumeComplete` validates every restored list the way `START_STOP_DAQ_LIST` does before starting one, and on success sets `Xcp_Internal.session_configuration_id`, `resume_state = XCP_RESUME_ACTIVE`, and marks each restored list `XCP_DAQ_LIST_MODE_RESUME | XCP_DAQ_LIST_MODE_RUNNING`. **Task 3 adds the connection state, session status and event**; this task stops at the list state.
 
 - [ ] **Step 5: Run the subset, then the full suite**
 
-Expected: 12932 + 4 = **12936 passed, 29 skipped**, both ctest targets.
+Expected: 12932 + 5 = **12937 passed, 29 skipped**, both ctest targets.
 
 - [ ] **Step 6: Mutation-verify**
 
@@ -258,7 +276,7 @@ Comment the call site with why the condition is inside the one door rather than 
 
 - [ ] **Step 4: Run the subset, then the full suite**
 
-Expected: **12937 passed, 29 skipped**.
+Expected: **12938 passed, 29 skipped**.
 
 - [ ] **Step 5: Mutation-verify**
 
@@ -370,11 +388,17 @@ def test_get_daq_list_mode_reports_resume_and_running_for_a_restored_list():
 
 Add `XCP_SESSION_STATUS_MASK_RESUME` and `XCP_EVENT_RESUME_MODE` to `source/Xcp_Internal.h`. In `Xcp_ResumeComplete`, set `Xcp_Internal.connection_status = XCP_CONNECTION_STATE_RESUME`, OR `XCP_SESSION_STATUS_MASK_RESUME` into `session_status`, and push `XCP_EVENT_RESUME_MODE` onto the event queue under `SchM_Enter_Xcp_DtoQueue`, copying the shape of `Xcp_MainFunction`'s `EV_STORE_DAQ` push (`source/Xcp.c:1611`).
 
+**`CONNECT`'s teardown must not clear the RESUME session-status bit.** `Xcp_CTOCmdStdConnect`
+(`source/Xcp_Std.c`) clears the three request bits with an explicit mask rather than zeroing
+`session_status`, precisely so `DAQ_RUNNING` survives a reconnect (DD77). `XCP_SESSION_STATUS_MASK_RESUME`
+must stay out of that mask for the same reason: a master reconnecting to a resumed slave is still
+talking to a resumed slave. Assert it — a `GET_STATUS` after a second `CONNECT` still reports bit 7.
+
 `DAQ_RUNNING` needs no new code — `Xcp_DaqSessionStatusUpdate` (`source/Xcp_Daq.c:338`) already derives it from list state; call it after marking the lists.
 
 - [ ] **Step 4: Run the subset, then the full suite**
 
-Expected: **12941 passed, 29 skipped**.
+Expected: **12942 passed, 29 skipped**.
 
 - [ ] **Step 5: Mutation-verify**
 
@@ -415,8 +439,7 @@ def test_the_armed_state_follows_the_store_mode_bit_that_asked_for_it():
     seen = []
 
     def store_daq_configuration(session_configuration_id, p_status_code):
-        seen.append(handle.lib.Xcp_GetResumeArmedState(0) if False else
-                    handle.lib.Xcp_GetResumeArmedState())
+        seen.append(handle.lib.Xcp_GetResumeArmedState())
         p_status_code[0] = 0x00
         return handle.define('E_OK')
 
@@ -462,7 +485,7 @@ Declare and implement `Xcp_GetResumeArmedState` in `interface/Xcp.h` and `source
 
 - [ ] **Step 5: Run the subset, then the full suite**
 
-Expected: **12943 passed, 29 skipped** (12941 + 2 new; the two rewritten tests keep their count).
+Expected: **12944 passed, 29 skipped** (12942 + 2 new; the two rewritten tests keep their count).
 
 - [ ] **Step 6: Mutation-verify**
 
@@ -481,6 +504,5 @@ git add -A && git commit -m "feat: accept STORE_DAQ_REQ_RESUME and advertise RES
 - [ ] Full `./test.sh` on a clean tree, both ctest targets green, `XCP_PYTEST_ARGS` cleared to `""`.
 - [ ] Every mutation recorded with the test it failed, including any honest negatives.
 - [ ] **A `CONNECT` during RESUME does not stop the lists** — assert it, since nothing in these four tasks touches `CONNECT` and a reviewer should see it was checked rather than assumed.
-- [ ] `Xcp_Restore*` refused after `CONNECT`, not only after `Xcp_ResumeComplete` (DD107).
 - [ ] Update `docs/superpowers/specs/2026-08-29-xcp-part2-roadmap.md`: RESUME complete in §2.6, and correct the SP5 entry, which still describes a `CONNECT` resume handshake that does not exist.
 - [ ] Section 5 of the design records an open assumption about Part 1 §2.3. If XCP Part 1 reaches `docs/external` during this phase, check it and either close the assumption or raise what it changes.
