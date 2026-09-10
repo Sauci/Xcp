@@ -595,6 +595,20 @@ typedef struct {
      * @brief how far a start-up restoration has got. See Xcp_ResumeStateType's own doc comment.
      */
     Xcp_ResumeStateType resume_state;
+
+    /**
+     * @brief DD104: whether the store SET_REQUEST last accepted was STORE_DAQ_REQ_RESUME rather
+     * than STORE_DAQ_REQ_NO_RESUME.
+     * @details The module keeps no non-volatile memory of its own, so this is the one fact
+     * Xcp_StoreDaqConfiguration cannot infer from what it is handed -- 1.0/1.6.1.2.3's own id
+     * argument is the same for both modes -- and needs from somewhere else to know whether to
+     * persist a resume alongside the DAQ lists. @ref Xcp_GetResumeArmedState is that somewhere
+     * else. Set in Xcp_DTOCmdStdSetRequest's translation block (source/Xcp_Std.c), one mode bit
+     * at a time exactly as XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ is, and for the identical
+     * 1.1-split reason: 1.0 had one STORE_DAQ_REQ bit, 1.1 splits it into two, so the two 1.1
+     * modes must write two independently-observable answers rather than one shared bit.
+     */
+    boolean resume_armed;
     uint8 internal_buffer[0x08u];
 
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)

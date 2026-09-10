@@ -4,13 +4,24 @@
 """SP5-RESUME (design doc DD103-DD107, docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md).
 
 The Xcp_Restore* setters are the mirror of SP5-NV's four accessors: the integrator pushes back what
-it stored, and Xcp_ResumeComplete is the only thing that makes any of it live (DD105)."""
+it stored, and Xcp_ResumeComplete is the only thing that makes any of it live (DD105).
+
+Task 4 extends this file: Xcp_GetResumeArmedState (DD104), the fifth accessor, queried during a
+live SET_REQUEST-driven store rather than during restoration, so its own tests connect a master
+instead of building a restoring_handle(); and the final-verification check that a CONNECT during
+RESUME does not stop the lists, folded into
+test_get_status_after_a_second_connect_still_reports_resume below rather than added as a separate
+test, since that test already connects twice for an unrelated reason and the two checks share one
+fixture. RESUME_SUPPORTED going from clear to set in GET_DAQ_PROCESSOR_INFO (1.1/1.6.4.1.2.4) is
+Task 4's other half; test/daq_nv_storage_test.py and test/get_daq_processor_info_test.py carry that
+side, not this file, since it is not a Xcp_Restore*/Xcp_ResumeComplete behaviour."""
 
 import pytest
 
 from .parameter import *
 from .conftest import XcpTest
 from .download_test import connect
+from .daq_nv_storage_test import exchange
 
 
 def restoring_handle(**kwargs):
@@ -399,7 +410,19 @@ def test_get_status_after_a_second_connect_still_reports_resume():
     session_status, precisely so DAQ_RUNNING survives a reconnect. XCP_SESSION_STATUS_MASK_RESUME
     stays out of that mask for the identical reason -- a master reconnecting to a resumed slave is
     still talking to a resumed slave -- and this is the test that would fail if a future edit
-    folded RESUME into the mask alongside the three request bits."""
+    folded RESUME into the mask alongside the three request bits.
+
+    Final verification (task-4-brief.md): "a CONNECT during RESUME does not stop the lists" --
+    asserted here, not assumed, because nothing in Tasks 1-4 touches CONNECT at all (design doc
+    Section 3, docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md: "CONNECT. It does not
+    touch DAQ state today and does not need to."). The session-status bit above proves the slave
+    still REPORTS resumed; it does not by itself prove the list is still RUNNING, since that report
+    and the list's own mode byte are different storage (source/Xcp_Daq.c's
+    Xcp_DaqSessionStatusUpdate recomputes DAQ_RUNNING from list state, but nothing recomputes
+    RESUME the same way). So the block below drives an actual transmission through two CONNECTs,
+    the same check test_a_resumed_slave_transmits_with_no_connect_ever_sent makes with zero
+    CONNECTs -- together the two prove CONNECT is simply irrelevant to whether a resumed list
+    transmits, rather than merely untested."""
     handle = resumed_handle()
     connect(handle)
 
@@ -411,6 +434,17 @@ def test_get_status_after_a_second_connect_still_reports_resume():
 
     assert response[0] == 0xFF
     assert response[1] & 0b10000000 != 0x00, 'session status RESUME must survive a second CONNECT'
+
+    # Confirm GET_STATUS's own response first: Xcp_CanIfTxConfirmation unconditionally chains
+    # Xcp_StartNextTransmission (test/set_request_test.py's own EV_STORE_CAL case documents this),
+    # so leaving it unconfirmed would hold the transmission slot and make the trigger below look
+    # like it did nothing -- for a reason that has nothing to do with CONNECT.
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_TriggerEventChannel(0)
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.called, 'the resumed list is still running, and transmits, after two CONNECTs'
 
 
 def test_get_daq_list_mode_reports_resume_and_running_for_a_restored_list():
@@ -427,3 +461,50 @@ def test_get_daq_list_mode_reports_resume_and_running_for_a_restored_list():
     assert response[0] == 0xFF, 'an error response would satisfy the bit tests below'
     assert response[1] & 0b10000000 != 0x00, 'RESUME, bit 7'
     assert response[1] & 0b01000000 != 0x00, 'RUNNING, bit 6'
+
+
+def test_the_armed_state_follows_the_store_mode_bit_that_asked_for_it():
+    """DD104. 1.1/1.6.1.2.3: STORE_DAQ_REQ_RESUME (mode bit 2) "implicitly sets the slave into
+    RESUME mode", STORE_DAQ_REQ_NO_RESUME (bit 1) "does not". The module keeps no non-volatile
+    memory, so the integrator queries this during Xcp_StoreDaqConfiguration and persists it.
+
+    Both bits are exercised in one test so the accessor cannot pass by returning a constant. This
+    is the one test in this file that connects a master and drives SET_REQUEST rather than calling
+    Xcp_Restore*/Xcp_ResumeComplete directly: the armed flag belongs to the STORE side DD94 already
+    built, not to the restore side this file otherwise covers (see this file's own module
+    docstring)."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                    xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+    seen = []
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        seen.append(handle.lib.Xcp_GetResumeArmedState())
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))   # NO_RESUME
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))   # RESUME
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert seen == [0, 1], 'FALSE for the NO_RESUME store, TRUE for the RESUME store'
+
+
+def test_resume_supported_is_advertised():
+    """1.1/1.6.4.1.2.4, DAQ_PROPERTIES bit 2: "1 = DAQ lists can be set to RESUME mode." Now true,
+    and this is the assertion that keeps the SET_REQUEST bit 2 acceptance
+    (test_the_armed_state_follows_the_store_mode_bit_that_asked_for_it above, and
+    Xcp_DTOCmdStdSetRequest's own accepted_request_mask, source/Xcp_Std.c) honest -- a master could
+    otherwise be told a store armed a mode GET_DAQ_PROCESSOR_INFO denies the slave offers."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xDA,)))
+    handle.lib.Xcp_MainFunction()
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2])
+
+    assert response[0] == 0xFF
+    assert response[1] & 0b00000100 != 0x00, 'DAQ_PROPERTIES RESUME_SUPPORTED, bit 2'

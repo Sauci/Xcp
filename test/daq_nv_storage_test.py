@@ -19,6 +19,18 @@ API flags are on together -- a configuration none of the sections above build.
 
 Design doc: docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md (DD94-DD102).
 
+Corrected 2026-09-10 by a separate, later sub-project, SP5-RESUME (design doc DD103-DD107,
+docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): "RESUME_SUPPORTED stays clear" two
+paragraphs up was this file's own SP5-NV Task 4 describing itself, correctly, at the time -- DD102
+deliberately stopped short of RESUME itself. SP5-RESUME's own Task 4 implements it, and three tests
+in this file that pinned the old premise as a deliberate tripwire are rewritten in place, each
+saying so in its own docstring: test_store_daq_req_resume_is_accepted_now_that_resume_is_advertised,
+test_resume_is_now_advertised_so_the_acceptance_above_stays_coherent, and
+test_resume_is_now_advertised_though_set_daq_list_modes_own_bit_stays_unhonoured (the Final
+verification section below). None deleted; the two "Task 4" labels in this docstring now refer to
+two different sub-projects' own fourth tasks -- SP5-NV's, and SP5-RESUME's, which is the one that
+made this correction.
+
 DD95 is the hazard this whole task exists around: the ERR_PGM_ACTIVE gate in Xcp_CanIfRxIndication
 refuses every command whose Xcp_CTOErrorMatrix row carries that bit -- 42 rows in the default build,
 38 with flash programming enabled (four rows carry the bit only with that gate off; counted from the
@@ -529,31 +541,35 @@ def test_with_the_api_flag_disabled_there_is_no_read_and_get_status_answers_norm
 # SET_DAQ_LIST_MODE at all.
 # ---------------------------------------------------------------------------------------------
 
-def test_resume_stays_unadvertised_and_unhonoured_after_this_task():
-    """Final verification, DD102. RESUME_SUPPORTED (DAQ_PROPERTIES bit 2, GET_DAQ_PROCESSOR_INFO,
-    1.1/1.6.4.1.2.4) is checked directly here, not only cross-referenced, so this task's own
-    verification shows it was looked at rather than assumed from test/get_daq_processor_info_
-    test.py's own (unrelated) coverage.
+def test_resume_is_now_advertised_though_set_daq_list_modes_own_bit_stays_unhonoured():
+    """Final verification, SP5-NV's DD102, corrected by SP5-RESUME's Task 4. This test used to be
+    named test_resume_stays_unadvertised_and_unhonoured_after_this_task and was SP5-NV's own
+    final-verification tripwire, deliberately pinning RESUME_SUPPORTED clear -- the same role
+    test_resume_is_now_advertised_so_the_acceptance_above_stays_coherent above and test/
+    get_daq_processor_info_test.py's test_daq_properties_report_what_this_phase_implements played
+    for their own files, all landing here in SP5-RESUME's Task 4
+    (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md) at the same time and for the same
+    reason. RESUME_SUPPORTED (DAQ_PROPERTIES bit 2, GET_DAQ_PROCESSOR_INFO, 1.1/1.6.4.1.2.4) is
+    checked directly here, not only cross-referenced, so this test's own verification shows it was
+    looked at rather than assumed.
 
-    SET_DAQ_LIST_MODE's own bit 7 is checked too, worded carefully. This plan's design doc and its
-    own Final Verification checklist both say SET_DAQ_LIST_MODE "still refuses the RESUME bit" --
-    that does not match current code, and predates this task: 1.1's own SET_DAQ_LIST_MODE mode-
-    byte table (source/Xcp_Internal.h) marks bits 2, 3, 6 and 7 don't-care ("a master may set them
-    to anything and the slave ignores them"), and test/set_daq_list_mode_test.py's own
+    SET_DAQ_LIST_MODE's own bit 7 is checked too, worded carefully, and THIS half is unchanged by
+    SP5-RESUME: 1.1's own SET_DAQ_LIST_MODE mode-byte table (source/Xcp_Internal.h) marks bits 2,
+    3, 6 and 7 don't-care ("a master may set them to anything and the slave ignores them"), and
+    test/set_daq_list_mode_test.py's own
     test_set_daq_list_mode_tolerates_the_bits_the_specification_marks_dont_care[0x80] already pins
-    exactly that -- bit 7 is ACCEPTED (0xFF), not refused with an error. Commit 13f59c2 deliberately
-    stopped refusing bits 6/7, as over-strict, before this plan existed; asserting a refusal here
-    would either fail honestly or force a mischaracterisation of passing, spec-correct behaviour,
-    neither of which this task should do quietly. What DD102 actually needs -- and what this
-    checks -- is the part that IS still true: the bit is not HONOURED. Xcp_DTOCmdDaqSetDaqListMode
-    never writes XCP_DAQ_LIST_MODE_RESUME into the list's own stored mode, so GET_DAQ_LIST_MODE
-    never reports it set, whatever SET_DAQ_LIST_MODE's request carried."""
+    exactly that -- bit 7 is ACCEPTED (0xFF), not refused with an error. SP5-RESUME did not touch
+    Xcp_DTOCmdDaqSetDaqListMode (source/Xcp_Daq.c) at all: it still never writes
+    XCP_DAQ_LIST_MODE_RESUME into the list's own stored mode from THAT request bit, so
+    GET_DAQ_LIST_MODE still never reports RESUME set as a result of a plain SET_DAQ_LIST_MODE
+    request, whatever it carried -- only Xcp_ResumeComplete (source/Xcp_Daq.c) ever sets it,
+    through the entirely separate restore mechanism DD103-DD107 build (test/daq_resume_test.py)."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     connect(handle)
 
     daq_processor_info = exchange(handle, (0xDA,))
     assert daq_processor_info[0] == 0xFF  # an error response would also satisfy the bit check below
-    assert daq_processor_info[1] & 0b00000100 == 0x00  # RESUME_SUPPORTED, bit 2
+    assert daq_processor_info[1] & 0b00000100 != 0x00  # RESUME_SUPPORTED, bit 2 -- SP5-RESUME Task 4
 
     # SET_DAQ_LIST_MODE(RESUME=1, daq_list=0, channel=0, prescaler=1, priority=0): accepted, not
     # refused -- see the docstring above for why "accepted" is the correct, current behaviour.
@@ -561,7 +577,7 @@ def test_resume_stays_unadvertised_and_unhonoured_after_this_task():
 
     daq_list_mode = exchange(handle, (0xDF, 0x00, 0x00, 0x00))
     assert daq_list_mode[0] == 0xFF  # an error response would also satisfy the bit check below
-    assert daq_list_mode[1] & 0b10000000 == 0x00  # RESUME, bit 7
+    assert daq_list_mode[1] & 0b10000000 == 0x00  # RESUME, bit 7 -- still not honoured via SET_DAQ_LIST_MODE
 
 
 def test_the_read_does_not_restore_any_daq_list():
@@ -896,34 +912,42 @@ def test_the_accepted_store_mode_bit_sets_the_session_status_bit_at_its_own_posi
     assert session_status & 0b00000010 == 0x00, 'mode bit 1 must not leak into session status bit 1'
 
 
-def test_store_daq_req_resume_is_refused_while_resume_is_unadvertised():
-    """1.1/1.6.1.2.3: "The STORE_DAQ_REQ_RESUME sets a request to save all selected DAQ lists to
-    memory, but at the same time implicitly sets the slave into RESUME mode." This module does not
-    implement RESUME and reports RESUME_SUPPORTED clear in GET_DAQ_PROCESSOR_INFO, so accepting bit
-    2 would be the accept-what-you-cannot-do defect: the master would be told the store succeeded,
-    arm nothing, and find no resumed configuration after the next power cycle.
+def test_store_daq_req_resume_is_accepted_now_that_resume_is_advertised():
+    """SP5-NV's deliberate tripwire, now updated. This test used to be named
+    test_store_daq_req_resume_is_refused_while_resume_is_unadvertised and pin bit 2 refused --
+    on purpose, so that whichever later phase implemented RESUME would land here and have to
+    update it (SP5-NV design doc, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md).
+    SP5-RESUME (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md, DD103-DD107) is that
+    phase: 1.1/1.6.1.2.3: "The STORE_DAQ_REQ_RESUME sets a request to save all selected DAQ lists
+    to memory, but at the same time implicitly sets the slave into RESUME mode." The module now
+    implements RESUME and reports RESUME_SUPPORTED set in GET_DAQ_PROCESSOR_INFO, so refusing bit 2
+    would now be the coherence defect the original test's own docstring warned against, the other
+    way round: a master told the slave offers RESUME and then refused the one mode that arms it.
 
-    ERR_OUT_OF_RANGE is this section's own answer -- "If the slave device does not support the
-    requested mode, an ERR_OUT_OF_RANGE will be returned" -- and falls out of the accepted mask
-    rather than needing a branch of its own.
-
-    Asserted with the store API ENABLED, so the refusal is attributable to the mode bit and not to
-    an unconfigured build refusing every store."""
+    Asserted with the store API ENABLED, so the acceptance is attributable to the mode bit and not
+    to some other, unrelated effect of a fully-configured build."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
     connect(handle)
+    handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')  # never finishes
 
-    assert exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))[0:2] == (0xFE, 0x22)
-    assert not handle.xcp_store_daq_configuration.called, 'a refused mode must not reach the callback'
+    assert exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))[0] == 0xFF
+    assert handle.xcp_store_daq_configuration.called, 'an accepted mode must reach the callback'
 
 
-def test_resume_stays_unadvertised_so_the_refusal_above_stays_coherent():
-    """Pins the premise the refusal rests on: GET_DAQ_PROCESSOR_INFO's DAQ_PROPERTIES bit 2,
-    RESUME_SUPPORTED (1.1/1.6.4.1.2.4), is clear. If a later phase implements RESUME and sets it,
-    this test fails and points at the refusal above as the thing to revisit -- which is the whole
-    reason it is here rather than left implicit."""
+def test_resume_is_now_advertised_so_the_acceptance_above_stays_coherent():
+    """SP5-NV's deliberate tripwire, now updated. This test used to be named
+    test_resume_stays_unadvertised_so_the_refusal_above_stays_coherent and pinned GET_DAQ_PROCESSOR_
+    INFO's DAQ_PROPERTIES bit 2, RESUME_SUPPORTED (1.1/1.6.4.1.2.4), clear -- on purpose, so that a
+    later phase implementing RESUME would fail here and be pointed at the refusal test above it as
+    the thing to revisit (SP5-NV design doc, docs/superpowers/specs/
+    2026-09-09-xcp-daq-nv-storage-design.md). SP5-RESUME (docs/superpowers/specs/
+    2026-09-10-xcp-daq-resume-design.md) is that phase, and this is the same coherence check from
+    the other side: the test above now asserts bit 2 is accepted, and RESUME_SUPPORTED must be set
+    or that acceptance would itself be the "tell a master its store armed a resume that will never
+    happen" defect the original pair of tests existed to prevent."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
     connect(handle)
 
     response = exchange(handle, (0xDA, 0x00, 0x00, 0x00))
     assert response[0] == 0xFF, 'GET_DAQ_PROCESSOR_INFO must answer positively'
-    assert response[1] & 0b00000100 == 0x00, 'DAQ_PROPERTIES RESUME_SUPPORTED, bit 2'
+    assert response[1] & 0b00000100 != 0x00, 'DAQ_PROPERTIES RESUME_SUPPORTED, bit 2'

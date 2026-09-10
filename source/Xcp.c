@@ -1270,6 +1270,13 @@ void Xcp_Init(const Xcp_Type *pConfig)
              * XCP_RESUME_ACTIVE, once reached, is meant to survive whatever the rest of the
              * session (including a CONNECT) does to it. */
             Xcp_Internal.resume_state = XCP_RESUME_IDLE;
+            /* Design doc DD104: resume_armed is queried only while a SET_REQUEST-driven store is
+             * live this session (Xcp_DTOCmdStdSetRequest, source/Xcp_Std.c, is its only writer),
+             * so a power cycle before any master has asked is the only reset it needs -- the same
+             * one-door reasoning resume_state's own comment just above gives. FALSE, not merely
+             * "whatever it last held": Xcp_InternalType carries no other guarantee of a zeroed
+             * start, the same reason every other member on this list is written explicitly. */
+            Xcp_Internal.resume_armed = FALSE;
             Xcp_Internal.session_status = 0x00u;
             /* Design doc DD99. A power cycle is the one door DD99's own "CONNECT must not touch
              * it" exception does not cover -- Xcp_Init is the module's own constructor, not a

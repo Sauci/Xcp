@@ -705,6 +705,18 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
 }
 
 /**
+ * @brief see interface/Xcp.h.
+ * @note Design doc DD104: unlike the four accessors above, this does not read Xcp_DaqListRt or
+ * Xcp_Ptr->config->daqList -- it reads Xcp_Internal.resume_armed directly, written a mode bit at
+ * a time by Xcp_DTOCmdStdSetRequest (source/Xcp_Std.c), so no bounds check applies and none is
+ * needed.
+ */
+boolean Xcp_GetResumeArmedState(void)
+{
+    return Xcp_Internal.resume_armed;
+}
+
+/**
  * @brief reassigns every DAQ list's FIRST_PID as a prefix sum over the ODT counts.
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the absolute ODT number of
  * relative ODT i in a list is FIRST_PID + i, so each list's block must be contiguous and no two
@@ -2225,14 +2237,23 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
 
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE now follows the
      * configuration: a DAQ_DYNAMIC build lets the master allocate lists through 1.1/1.6.4.3.1,
-     * where a DAQ_STATIC build serves the lists the generator declared. RESUME and BIT_STIM
-     * remain unimplemented and so remain reported unsupported here -- neither is a mode bit
-     * SET_DAQ_LIST_MODE refuses, though: XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (Xcp_Internal.h) is
-     * ALTERNATING alone, RESUME is bit 7 of the GET_DAQ_LIST_MODE response layout (design doc
-     * DD102, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md), not the request
-     * SET_DAQ_LIST_MODE reads, and BIT_STIM is a DAQ_PROPERTIES capability bit reported here, not
-     * a mode bit at all. RESUME is accepted and simply never honoured -- GET_DAQ_LIST_MODE never
-     * reports it set. */
+     * where a DAQ_STATIC build serves the lists the generator declared. BIT_STIM remains
+     * unimplemented and so remains reported unsupported here.
+     *
+     * RESUME is no longer in that sentence -- design doc DD103-DD107 (docs/superpowers/specs/
+     * 2026-09-10-xcp-daq-resume-design.md) implements it, and RESUME_SUPPORTED is set
+     * unconditionally below, the same way this bit's own acceptance mask entry in
+     * Xcp_DTOCmdStdSetRequest (source/Xcp_Std.c) is not gated behind
+     * storeDaqConfigurationApiEnable: Xcp_ResumeComplete and the Xcp_Restore* setters it commits
+     * are compiled into every build and reachable only through the integrator's own calls, not
+     * through any command this handler's own build flags gate. A separate RESUME bit is still not
+     * a mode bit SET_DAQ_LIST_MODE refuses: XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (Xcp_Internal.h) is
+     * ALTERNATING alone, and 1.1 marks SET_DAQ_LIST_MODE's own would-be RESUME request bit
+     * don't-care rather than defining it, so the slave tolerates it without a refusal and without
+     * an effect of its own: GET_DAQ_LIST_MODE's RESUME bit (7 of the response layout, design doc
+     * DD102, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) is set only by
+     * Xcp_ResumeComplete, never by that request bit. BIT_STIM is a DAQ_PROPERTIES capability bit
+     * reported here, not a mode bit at all. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         properties |= XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE;
@@ -2242,6 +2263,10 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     {
         properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;
     }
+
+    /* RESUME_SUPPORTED (bit 2): unconditional, per the comment above this function's first `if`.
+     * 1.1/1.6.4.1.2.4: "1 = DAQ lists can be set to RESUME mode." */
+    properties |= XCP_DAQ_PROPERTIES_RESUME_SUPPORTED;
 
     /* TIMESTAMP_SUPPORTED (bit 4): NO_TIME_STAMP means protocol_layer.timestamp was absent from
      * the configuration (Task 1), the same condition GET_DAQ_RESOLUTION_INFO's TIMESTAMP_MODE /

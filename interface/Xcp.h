@@ -548,6 +548,24 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
                                Xcp_OdtEntryType *pEntry);
 
 /**
+ * @brief reports whether the store last requested through SET_REQUEST also armed RESUME mode.
+ * @details Design doc DD104 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): a
+ * fifth accessor beside the four above, not a parameter added to @ref Xcp_StoreDaqConfiguration
+ * -- an integrator who never arms resume is unaffected either way, the same reasoning that kept
+ * SP4c's absolute-only integrators off functional access mode's own signature. XCP part 2 -
+ * Protocol Layer Specification 1.1/1.6.1.2.3: STORE_DAQ_REQ_RESUME (SET_REQUEST mode bit 2)
+ * "implicitly sets the slave into RESUME mode", STORE_DAQ_REQ_NO_RESUME (bit 1) "does not" --
+ * queried during @ref Xcp_StoreDaqConfiguration exactly as the four accessors above are, so an
+ * integrator that decides to persist learns here whether to also arm a start-up resume the next
+ * time this build runs its own Xcp_Restore* setters and @ref Xcp_ResumeComplete.
+ * @note Not inferred from a non-zero stored id: 1.1 has STORE_DAQ_REQ_NO_RESUME store an id
+ * precisely without arming resume, so a non-zero id proves nothing about this flag either way.
+ * @return TRUE if the most recently accepted store mode was STORE_DAQ_REQ_RESUME, FALSE if it was
+ * STORE_DAQ_REQ_NO_RESUME or if no store has been requested this session
+ */
+boolean Xcp_GetResumeArmedState(void);
+
+/**
  * @brief Reads the session configuration id held in non-volatile memory, if any.
  * @param [out] pSessionConfigurationId Where the stored id is copied, read only when this function
  * returns E_OK with a zero pStatusCode. Left untouched otherwise.
