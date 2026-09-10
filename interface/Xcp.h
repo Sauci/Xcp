@@ -161,6 +161,13 @@ extern "C" {
 #define XCP_TRIGGER_EVENT_CHANNEL_API_ID (0x06u)
 
 /**
+ * @brief @ref Xcp_ResumeComplete API ID, for development error reporting -- a full event queue at
+ * resume time reports XCP_E_EVENT_QUEUE_FULL through this ID, the same way Xcp_MainFunction's own
+ * EV_STORE_DAQ push reports through XCP_MAIN_FUNCTION_API_ID.
+ */
+#define XCP_RESUME_COMPLETE_API_ID (0x07u)
+
+/**
  * @brief @ref Xcp_CanIfTxConfirmation API ID.
  */
 #define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
@@ -680,9 +687,10 @@ Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 e
  * configuration being restored
  * @retval E_OK every restored list had at least one written ODT entry; sessionConfigurationId is
  * adopted, every restored list is marked RESUME and RUNNING (XCP part 2 - Protocol Layer
- * Specification 1.1/1.6.4.1.1.4), the slave reports session status bits 7 RESUME and 6 DAQ_RUNNING
- * (1.1/1.6.1.1.3) and admits commands with no CONNECT received, and EV_RESUME_MODE (1.1/1.8.1) is
- * queued
+ * Specification 1.1/1.6.4.1.1.4), the slave enters session status bit 7 RESUME and admits commands
+ * with no CONNECT received, session status bit 6 DAQ_RUNNING (1.1/1.6.1.1.3) is recomputed from the
+ * resulting list state rather than asserted set (so it reads 0 if daqListCount was never raised
+ * above 0), and EV_RESUME_MODE (1.1/1.8.1) is queued
  * @retval E_NOT_OK at least one restored list has no written ODT entry -- the same configuration
  * START_STOP_DAQ_LIST would answer ERR_DAQ_CONFIG for -- so resuming must not create by the back
  * door a state the front door would refuse to start; nothing is changed

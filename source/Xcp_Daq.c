@@ -1064,7 +1064,15 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
          * status byte: unlike EV_STORE_CAL/EV_STORE_DAQ/EV_CLEAR_DAQ, which report an asynchronous
          * integrator callback's own outcome, there is nothing to report here beyond the event
          * itself -- the same reasoning EV_CMD_PENDING (source/Xcp_Pgm.c) and EV_DAQ_OVERLOAD
-         * (source/Xcp_DaqRuntime.c) already give their own NULL_PTR/0 pushes. */
+         * (source/Xcp_DaqRuntime.c) already give their own NULL_PTR/0 pushes.
+         *
+         * A failed push is still reported, though, and that part does NOT follow EV_CMD_PENDING's
+         * lead -- EV_CMD_PENDING is the only push in this codebase that skips the diagnostic, and
+         * its own comment gives a reason specific to it: it retries on every later busy poll while
+         * pending_command.active stays TRUE, so a dropped push there loses nothing permanently.
+         * EV_RESUME_MODE has no such retry -- it is one-shot, exactly as EV_STORE_CAL/EV_STORE_DAQ/
+         * EV_CLEAR_DAQ and EV_DAQ_OVERLOAD all are, every one of which reports a failed push -- so
+         * this one takes their treatment instead, below. */
         SchM_Enter_Xcp_DtoQueue();
         push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_RESUME_MODE, NULL_PTR, 0x00000000u);
         SchM_Exit_Xcp_DtoQueue();
@@ -1072,6 +1080,15 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
         if (push_result == E_OK)
         {
             Xcp_Internal.event.successful_transmission_pending = TRUE;
+        }
+        else
+        {
+            /* There is not much we can do here except reporting the error during the development
+             * process. If this error arises, the stack should be recompiled with a bigger event
+             * queue size (defined by XCP_EVENT_QUEUE_SIZE), or the reason for receiving such a lot
+             * of events should be identified -- Xcp_MainFunction's own EV_STORE_DAQ push
+             * (source/Xcp.c) reports this identically, and for the identical reason. */
+            Xcp_ReportError(0x00u, XCP_RESUME_COMPLETE_API_ID, XCP_E_EVENT_QUEUE_FULL);
         }
     }
 

@@ -342,6 +342,39 @@ def test_resume_complete_raises_ev_resume_mode():
     assert len(frames) == 1, 'exactly one EV_RESUME_MODE'
 
 
+def test_resume_complete_reports_a_full_event_queue():
+    """The failure branch EV_RESUME_MODE's own push takes (Xcp_ResumeComplete, source/Xcp_Daq.c)
+    matches Xcp_MainFunction's own EV_STORE_DAQ push (source/Xcp.c), not EV_CMD_PENDING's
+    (source/Xcp_Pgm.c): EV_RESUME_MODE is one-shot, with no later retry to fall back on the way
+    EV_CMD_PENDING's own busy poll does, so a dropped push is worth a diagnostic rather than a
+    silent loss.
+
+    test/set_request_test.py::test_an_unconfirmed_event_still_occupies_its_slot_so_a_new_push_can_fail
+    spells out the mechanism this reuses: the ring keeps one slot empty to tell full from empty, so
+    an event_queue_size of 2 leaves exactly one usable slot, and a push that finds it already
+    occupied fails outright, with no need for any transmission or confirmation to be involved at
+    all -- occupancy is set the moment a push succeeds (Xcp_EventQueuePush's own write index moves)
+    and only released by Xcp_EventQueuePop in a confirmation, neither of which this test ever
+    triggers. Xcp_ResumeComplete carries no guard against being called twice -- nothing in this
+    task asks for one -- so the second call's own DAQ list re-validation succeeds identically to
+    the first (nothing about the restored list changed), and only its own EV_RESUME_MODE push finds
+    the queue full."""
+    handle = restoring_handle(event_queue_size=2)
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK'), \
+        'the DAQ list itself is still configured, so the second call succeeds too'
+
+    full_errors = [c for c in handle.det_report_error.call_args_list
+                   if c[0][3] == handle.define('XCP_E_EVENT_QUEUE_FULL')]
+    assert len(full_errors) == 1
+
+
 def test_get_status_reports_resume_and_the_restored_id():
     """1.1/1.6.1.1.3: session status bit 7 RESUME, "1 = Slave is in RESUME mode", and bit 6
     DAQ_RUNNING, which follows from the restored list actually running. The id comes from
