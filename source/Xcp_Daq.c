@@ -1204,13 +1204,6 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
              * after their own loops, below. */
             Xcp_DaqSessionStatusUpdate();
 
-            /* Design doc DD105 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): this
-             * is what lets a resumed slave admit commands with no CONNECT ever received -- both
-             * connection gates (source/Xcp.c) test != XCP_CONNECTION_STATE_DISCONNECTED rather
-             * than == XCP_CONNECTION_STATE_CONNECTED, so entering this third state does not lock
-             * the module out of receiving them. */
-            Xcp_Internal.connection_status = XCP_CONNECTION_STATE_RESUME;
-
             /* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.3, session status bit 7: "1 =
              * Slave is in RESUME mode". OR'd in, not assigned, for the same reason
              * Xcp_CTOCmdStdConnect's own request-bit clear (source/Xcp_Std.c) is a mask rather

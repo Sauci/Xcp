@@ -333,6 +333,33 @@ def test_a_resumed_slave_transmits_with_no_connect_ever_sent():
     assert handle.can_if_transmit.called, 'a resumed list transmits with no master session'
 
 
+def test_a_resumed_slave_refuses_commands_with_no_connect_ever_sent():
+    """DD105's correction (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md,
+    .superpowers/sdd/2026-09-10-xcp-daq-resume/task-6-brief.md): Xcp_ResumeComplete used to enter
+    XCP_CONNECTION_STATE_RESUME, and both connection gates (source/Xcp.c) test
+    != XCP_CONNECTION_STATE_DISCONNECTED rather than == XCP_CONNECTION_STATE_CONNECTED -- so that
+    one write alone admitted the entire command set, DOWNLOAD/SET_MTA/FREE_DAQ/the programming
+    commands included, to any node on the bus with no CONNECT ever received. The write is gone;
+    this pins the property it was hiding, not just the absence of the line -- a command must still
+    be refused after a resume with no CONNECT anywhere in the test.
+
+    GET_STATUS: harmless and unambiguous. Read-only, no side effect if wrongly accepted, and
+    test_get_status_reports_resume_and_the_restored_id above proves this exact fixture answers it
+    once CONNECT precedes it -- so a silent CanIf_Transmit here can only be the connection gate,
+    not the command being disabled or out of range. Asserted on CanIf_Transmit, not on
+    connection_status, which the CFFI harness cannot reach (test/conftest.py builds its cdef from
+    interface/Xcp.h alone): a refused command produces no response at all, so there is nothing
+    else to read the refusal off of."""
+    handle = resumed_handle()
+    handle.can_if_transmit.reset_mock()
+
+    # GET_STATUS. No CONNECT anywhere in this test.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+    handle.lib.Xcp_MainFunction()
+
+    assert not handle.can_if_transmit.called, 'no CONNECT was ever sent; GET_STATUS must be refused'
+
+
 def test_resume_complete_raises_ev_resume_mode():
     """1.1/1.8.1: "With EV_RESUME_MODE the slave indicates that it is starting in RESUME mode."
     Code 0x00 (Xcp_Internal.h, not reachable via handle.define -- the literal is used with this
