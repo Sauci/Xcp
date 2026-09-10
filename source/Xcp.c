@@ -1264,6 +1264,12 @@ void Xcp_Init(const Xcp_Type *pConfig)
         {
             Xcp_Internal.connect_mode = XCP_CONNECT_MODE_NORMAL;
             Xcp_Internal.connection_status = XCP_CONNECTION_STATE_DISCONNECTED;
+            /* Design doc DD105/DD107 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md):
+             * a power cycle is the one door that must re-arm a start-up restoration, the same
+             * defensive reset connection_status just above gets. Nothing else clears this --
+             * XCP_RESUME_ACTIVE, once reached, is meant to survive whatever the rest of the
+             * session (including a CONNECT) does to it. */
+            Xcp_Internal.resume_state = XCP_RESUME_IDLE;
             Xcp_Internal.session_status = 0x00u;
             /* Design doc DD99. A power cycle is the one door DD99's own "CONNECT must not touch
              * it" exception does not cover -- Xcp_Init is the module's own constructor, not a

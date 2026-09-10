@@ -594,6 +594,212 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
     return result;
 }
 
+/**
+ * @brief see interface/Xcp.h.
+ * @details Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): the
+ * restore-side mirror of the four accessors above, and of ALLOC_DAQ (XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.4.3.1.2). Like those accessors, this and the five functions that follow it
+ * live here for reusing Xcp_DaqListIsValid/Xcp_DaqListRt for their own bounds checks rather than
+ * re-deriving them.
+ * @note DD107's gate -- refused once Xcp_Internal.resume_state reaches XCP_RESUME_ACTIVE, or once
+ * a master has connected -- is common to every Xcp_Restore* function below; each repeats the test
+ * rather than each calling a shared checker, matching this file's existing style of inlining a
+ * command's own refusal precedence rather than factoring a one-line predicate out from under it.
+ */
+Std_ReturnType Xcp_RestoreDaqListCount(uint16 daqListCount)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED))
+    {
+        if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+        {
+            /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_DAQ itself follows
+             * (Xcp_DTOCmdDaqAllocDaq above), bounded by the same configured pool. */
+            if ((uint32)((uint32)Xcp_Internal.allocated_daq_count + (uint32)daqListCount) <=
+                (uint32)Xcp_Ptr->general->daqCount)
+            {
+                Xcp_Internal.allocated_daq_count =
+                        (uint16)(Xcp_Internal.allocated_daq_count + daqListCount);
+                Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+
+                result = E_OK;
+            }
+        }
+        /* DAQ_STATIC: allocated_daq_count already equals Xcp_Ptr->general->daqCount (Xcp_Init)
+         * and generation fixes it there permanently, so there is nothing to raise -- only to
+         * check, per DD103. */
+        else if (daqListCount == Xcp_Ptr->general->daqCount)
+        {
+            Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+
+            result = E_OK;
+        }
+        else
+        {
+            /* DAQ_STATIC and daqListCount disagrees with the generated build: refused. */
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+Std_ReturnType Xcp_RestoreOdtCount(uint16 daqListNumber, uint8 odtCount)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_ODT itself follows
+         * (Xcp_DTOCmdDaqAllocOdt above), bounded by the same per-list ceiling. Under DAQ_STATIC
+         * Xcp_Ptr->general->odtCount is 0 (script/source_cfg.c.jinja2), so a STATIC list's own
+         * generation-fixed maxOdt already exceeds it and this refuses unconditionally, exactly as
+         * ALLOC_ODT is unreachable there. */
+        ((uint16)((uint16)Xcp_Ptr->config->daqList[daqListNumber].maxOdt + (uint16)odtCount) <=
+         (uint16)Xcp_Ptr->general->odtCount))
+    {
+        Xcp_Ptr->config->daqList[daqListNumber].maxOdt =
+                (uint8)(Xcp_Ptr->config->daqList[daqListNumber].maxOdt + odtCount);
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+Std_ReturnType Xcp_RestoreOdtEntryCount(uint16 daqListNumber, uint8 odtNumber, uint8 entryCount)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
+        /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_ODT_ENTRY itself follows
+         * (Xcp_DTOCmdDaqAllocOdtEntry above), bounded by the same per-ODT ceiling. */
+        ((uint16)((uint16)Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount +
+                  (uint16)entryCount) <= (uint16)Xcp_Ptr->general->odtEntriesCount))
+    {
+        Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount =
+                (uint8)(Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount +
+                        entryCount);
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Xcp_OdtEntryType::number (interface/Xcp_Types.h) is const, so this function copies the
+ * other four members individually rather than assigning through the struct, the same constraint
+ * Xcp_GetOdtEntry's own note above explains -- here on the write side rather than the read side.
+ */
+Std_ReturnType Xcp_RestoreOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
+                                   const Xcp_OdtEntryType *pEntry)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
+        (odtEntryNumber < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount))
+    {
+        Xcp_OdtEntryType *p_entry =
+                &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[odtEntryNumber];
+
+        p_entry->address = pEntry->address;
+        p_entry->bitOffset = pEntry->bitOffset;
+        p_entry->addressExtension = pEntry->addressExtension;
+        p_entry->length = pEntry->length;
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 eventChannelNumber,
+                                      uint8 prescaler, uint8 priority)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE))
+    {
+        /* RUNNING and RESUME are never taken from the caller -- Xcp_ResumeComplete below is the
+         * only thing that may set either, so an integrator cannot half-start a list by calling
+         * this alone (DD103). */
+        Xcp_DaqListRt(daqListNumber)->mode =
+                (uint8)(mode & (uint8)(~(XCP_DAQ_LIST_MODE_RUNNING | XCP_DAQ_LIST_MODE_RESUME)));
+        Xcp_DaqListRt(daqListNumber)->eventChannelNumber = eventChannelNumber;
+        Xcp_DaqListRt(daqListNumber)->prescaler = prescaler;
+        Xcp_DaqListRt(daqListNumber)->prescalerCounter = 0x00u;
+        Xcp_DaqListRt(daqListNumber)->priority = priority;
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Task 3 (docs/superpowers/plans/2026-09-10-xcp-daq-resume.md) adds
+ * XCP_CONNECTION_STATE_RESUME, the session status RESUME bit and EV_RESUME_MODE to this function;
+ * this task stops at the list state -- session_configuration_id, resume_state, and each restored
+ * list's own mode.
+ */
+Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
+{
+    Std_ReturnType result = E_OK;
+    uint16 idx;
+
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the same configuration
+     * START_STOP_DAQ_LIST itself refuses to start (Xcp_DaqListIsConfigured, above) must not be
+     * started by this back door either (DD105) -- checked whole, over every restored list, before
+     * anything is written: a restore that stops halfway must leave a slave that resumed nothing,
+     * not one that resumed everything except the list that failed. */
+    for (idx = 0x0000u; idx < Xcp_Internal.allocated_daq_count; idx++)
+    {
+        if (Xcp_DaqListIsConfigured(idx) == FALSE)
+        {
+            result = E_NOT_OK;
+        }
+    }
+
+    if (result == E_OK)
+    {
+        Xcp_Internal.session_configuration_id = sessionConfigurationId;
+        Xcp_Internal.resume_state = XCP_RESUME_ACTIVE;
+
+        for (idx = 0x0000u; idx < Xcp_Internal.allocated_daq_count; idx++)
+        {
+            Xcp_DaqListRt(idx)->mode |= (XCP_DAQ_LIST_MODE_RESUME | XCP_DAQ_LIST_MODE_RUNNING);
+        }
+    }
+
+    return result;
+}
+
 /*------------------------------------------------------------------------------------------------*/
 /* command handler definitions.                                                                  */
 /*------------------------------------------------------------------------------------------------*/

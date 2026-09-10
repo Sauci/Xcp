@@ -351,6 +351,19 @@ typedef enum {
 } Xcp_ConnectionState;
 
 /**
+ * @brief how far a start-up restoration has got.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4. XCP_RESUME_RESTORING is
+ * entered by the first Xcp_Restore* call and left only by Xcp_ResumeComplete, which is what makes
+ * a restored configuration live (design doc DD105). Explicitly 0 for IDLE, the same defensive
+ * reason Xcp_ConnectionState is.
+ */
+typedef enum {
+    XCP_RESUME_IDLE = 0x00u,
+    XCP_RESUME_RESTORING,
+    XCP_RESUME_ACTIVE
+} Xcp_ResumeStateType;
+
+/**
  * @brief where a dynamic DAQ list configuration sequence has got to.
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1 enumerates six ERR_SEQUENCE
  * cases, which reduce to these four states and the transition table in Xcp_Daq.c. The initial
@@ -570,6 +583,11 @@ typedef struct {
      * zero by ALLOC_DAQ under a DYNAMIC one, so Xcp_DaqListIsValid serves both models unchanged.
      */
     uint16 allocated_daq_count;
+
+    /**
+     * @brief how far a start-up restoration has got. See Xcp_ResumeStateType's own doc comment.
+     */
+    Xcp_ResumeStateType resume_state;
     uint8 internal_buffer[0x08u];
 
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
