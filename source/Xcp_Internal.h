@@ -1064,6 +1064,17 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
  * to release, and clearing its generated DAQ entries on disconnect would be a behaviour change to
  * the static model that SP2d is required not to make (DD25).
  */
+/**
+ * @brief resets the SELECTED flag on every DAQ list.
+ * @details XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4) requires the
+ * SELECTED flag GET_DAQ_LIST_MODE reports to be reset "as soon as the related START_STOP_SYNCH or
+ * SET_REQUEST have been acknowledged". Xcp_MainFunction (source/Xcp.c) calls this once
+ * STORE_DAQ_REQ's callback reports a clean completion -- not when SET_REQUEST answers, because the
+ * integrator's own Xcp_StoreDaqConfiguration reads the selection through
+ * Xcp_GetDaqListSelectedState while it runs.
+ */
+void Xcp_DaqClearAllSelections(void);
+
 void Xcp_DaqFreeAll(void);
 
 /**

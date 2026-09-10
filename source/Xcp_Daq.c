@@ -364,6 +364,28 @@ static void Xcp_DaqSessionStatusUpdate(void)
  * the same unwind -- see this function's declaration in Xcp_Internal.h for why, and
  * Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) for the other call site.
  */
+void Xcp_DaqClearAllSelections(void)
+{
+    uint16 idx;
+
+    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4)
+     * "The slave has to reset the SELECTED flag in the mode at GET_DAQ_LIST_MODE as soon as the
+     * related START_STOP_SYNCH or SET_REQUEST have been acknowledged." Xcp_DTOCmdDaqStartStopSynch
+     * below covers the first; this covers the second, called from Xcp_MainFunction (source/Xcp.c)
+     * once STORE_DAQ_REQ's integrator callback reports a clean completion.
+     *
+     * It lives here rather than in the SET_REQUEST handler because the list mode byte is DAQ state
+     * and its other readers are in this file (DD63): a command group may not write shared state
+     * whose readers live outside its own file.
+     *
+     * Unconditional over every list, not only the selected ones: clearing a bit that is already
+     * clear costs the same as testing it first, and the loop then has no branch to get wrong. */
+    for (idx = 0x0000u; idx < Xcp_Ptr->general->daqCount; idx++)
+    {
+        Xcp_DaqListRt(idx)->mode &= (uint8)(~XCP_DAQ_LIST_MODE_SELECTED);
+    }
+}
+
 void Xcp_DaqFreeAll(void)
 {
     uint16 daq_idx;
@@ -482,10 +504,12 @@ void Xcp_DaqFreeAll(void)
  * @brief see interface/Xcp.h.
  * @details Selection is XCP_DAQ_LIST_MODE_SELECTED in the list's runtime mode byte
  * (Xcp_DaqListRtType::mode, interface/Xcp_Types.h), set by START_STOP_DAQ_LIST's SELECT mode
- * (Xcp_DTOCmdDaqStartStopDaqList below). A START_STOP_SYNCH resets it, and so does anything that
- * resets the list itself: Xcp_DaqListReset (above) zeroes the whole mode byte, so CLEAR_DAQ_LIST,
- * FREE_DAQ and Xcp_Init (via Xcp_DaqFreeAll) clear it too -- an integrator caching selection across
- * any of those would be wrong.
+ * (Xcp_DTOCmdDaqStartStopDaqList below). Three things reset it. 1.0/1.6.4.1.1.6 names two:
+ * START_STOP_SYNCH, and a completed STORE_DAQ_REQ (Xcp_DaqClearAllSelections above, called from
+ * Xcp_MainFunction, source/Xcp.c) -- both are an acknowledgement of the request the selection was
+ * made for. The third is anything that resets the list itself: Xcp_DaqListReset (above) zeroes the
+ * whole mode byte, so CLEAR_DAQ_LIST, FREE_DAQ and Xcp_Init (via Xcp_DaqFreeAll) clear it too.
+ * An integrator caching selection across any of them would be wrong.
  * @note Xcp_DaqListClearEntries above already lives in this section despite external linkage,
  * because Xcp_Init needs it. This function and the three that follow it are external for a
  * different reason: they are public accessors an integrator calls directly (design doc DD94,

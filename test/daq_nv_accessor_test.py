@@ -30,8 +30,9 @@ def exchange(handle, request, length=8):
 def test_daq_list_selected_state_follows_start_stop_daq_list_select():
     """Selection is XCP_DAQ_LIST_MODE_SELECTED in the list's runtime mode byte
     (source/Xcp_Internal.h), set by START_STOP_DAQ_LIST's SELECT sub-mode (0x02,
-    XCP_DAQ_START_STOP_MODE_SELECT) and left set until a START_STOP_SYNCH resets it, so it is
-    still readable straight after the exchange below with no SYNCH in between. Two lists are
+    XCP_DAQ_START_STOP_MODE_SELECT) and left set until a START_STOP_SYNCH or a completed
+    STORE_DAQ_REQ resets it (1.0/1.6.4.1.1.6), so it is still readable straight after the exchange
+    below, which does neither. Two lists are
     allocated; list 1 is never selected, so a handler that reports TRUE for any valid list
     regardless of its own selection would still be caught by the assertions on it."""
     handle = dynamic_handle(daq_count=2, odt_count=1, odt_entries_count=1)
