@@ -360,9 +360,11 @@ static void Xcp_DaqSessionStatusUpdate(void)
 
 /**
  * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
- * @details The body of FREE_DAQ (1.1/1.6.4.3.1.1), factored out because DISCONNECT needs exactly
- * the same unwind -- see this function's declaration in Xcp_Internal.h for why, and
- * Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) for the other call site.
+ * @details The body of FREE_DAQ (1.1/1.6.4.3.1.1), factored out because Xcp_Init needs exactly the
+ * same unwind at start-up -- see this function's declaration in Xcp_Internal.h for why. DISCONNECT
+ * no longer joins Xcp_Init as a second call site here: DD106 (docs/superpowers/specs/
+ * 2026-09-10-xcp-daq-resume-design.md) gives it its own resume-aware unwind,
+ * Xcp_DaqFreeSessionAllocated, below.
  */
 void Xcp_DaqClearAllSelections(void)
 {
@@ -496,6 +498,114 @@ void Xcp_DaqFreeAll(void)
     Xcp_DaqSessionStatusUpdate();
 
     /* The pointer names an ODT entry that no longer exists. */
+    Xcp_Internal.daq_pointer.valid = FALSE;
+    Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
+}
+
+/**
+ * @brief DD106 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): Xcp_DaqFreeAll's own
+ * unwind, with every list carrying XCP_DAQ_LIST_MODE_RESUME spared from it.
+ * @details Xcp_DisconnectSession (source/Xcp_Std.c) used to call Xcp_DaqFreeAll unconditionally
+ * under DAQ_DYNAMIC, which would let a master's mere DISCONNECT kill a measurement
+ * Xcp_ResumeComplete (above) restored from non-volatile memory before that master ever connected --
+ * a list that did not come from the session now ending is not this session's to free.
+ *
+ * Structurally this is Xcp_DaqFreeAll's own body -- see that function's comment for the DD30/DD14
+ * ordering it preserves unchanged -- with the list-scoped steps guarded on each list's own mode:
+ * Xcp_DaqListReset is skipped for a resumed list, and so are its maxOdt/firstPid/entryCount
+ * zeroings a few lines below, which would otherwise undo the skip just as surely as
+ * Xcp_DaqListReset itself would.
+ *
+ * Xcp_Internal.allocated_daq_count is trimmed rather than zeroed: Xcp_DaqListIsValid bounds every
+ * accessor by it, so a spared descriptor a master can no longer reach through that bound would be
+ * spared in name only. It is trimmed down to the highest surviving resumed list, not to 0, by
+ * walking down from the top while the top list is not RESUME-marked. That is exact, not merely
+ * convenient, because a restored configuration is always a prefix of the index range: every
+ * Xcp_Restore* call that can ever raise this count is refused once a master has connected (DD107),
+ * so a session's own lists -- which only ALLOC_DAQ can add, and only after CONNECT -- can exist
+ * only above every resumed one, never between them.
+ *
+ * The stimulation-slot loop below, unlike the two steps above, is NOT guarded: it stays exactly
+ * Xcp_DaqFreeAll's own loop, over the whole pool regardless of RESUME. A resumed STIM-capable
+ * list's slot is released along with everyone else's, same as test/stim_reception_test.py's own
+ * test_disconnect_clears_a_stored_stimulation_payload already requires for a session-owned one.
+ * Narrowing this loop to match the two above it would need a per-list slot range this function has
+ * no cheap way to derive -- stimSlotBase is a generation-time constant sized off the configured
+ * pool, not off any runtime count this function already tracks -- and nothing in DD106 asks for
+ * it; a resumed STIM list's latched payload not surviving a DISCONNECT is a narrower, undocumented
+ * gap left for a future task, not a silent regression of anything under test today.
+ *
+ * FREE_DAQ (Xcp_DTOCmdDaqFreeDaq below) is not a second caller of this function and keeps calling
+ * Xcp_DaqFreeAll unconditionally: a master that explicitly asks to free everything is owed exactly
+ * that, resumed lists included, or it would be left holding pool space it has no way to reclaim
+ * and no error telling it why.
+ */
+void Xcp_DaqFreeSessionAllocated(void)
+{
+    uint16 daq_idx;
+    uint16 slot_idx;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+    {
+        if ((Xcp_DaqListRt(daq_idx)->mode & XCP_DAQ_LIST_MODE_RESUME) == 0x00u)
+        {
+            Xcp_DaqListReset(daq_idx);
+        }
+    }
+
+    /* Unconditional -- see this function's own comment above for why the two guarded steps below
+     * do not extend here. Identical to Xcp_DaqFreeAll's own stimulation-slot loop; see that
+     * function's comment for the LATCHED/DD35 reasoning this preserves unchanged. */
+    for (slot_idx = 0x0000u; slot_idx < Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlotCount; slot_idx++)
+    {
+        SchM_Enter_Xcp_StimBuffer();
+
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].length = 0x00u;
+
+        SchM_Exit_Xcp_StimBuffer();
+    }
+
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+        {
+            if ((Xcp_DaqListRt(daq_idx)->mode & XCP_DAQ_LIST_MODE_RESUME) == 0x00u)
+            {
+                uint8_least odt_idx;
+
+                SchM_Enter_Xcp_DtoQueue();
+
+                for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+                {
+                    Xcp_Ptr->config->daqList[daq_idx].odt[odt_idx].entryCount = 0x00u;
+                }
+
+                Xcp_Ptr->config->daqList[daq_idx].maxOdt = 0x00u;
+                Xcp_Ptr->config->daqList[daq_idx].firstPid = 0x00u;
+
+                SchM_Exit_Xcp_DtoQueue();
+            }
+        }
+
+        /* See this function's own comment above for why trimming from the top down to the first
+         * RESUME-marked list is exact rather than approximate. */
+        while ((Xcp_Internal.allocated_daq_count > 0x0000u) &&
+               ((Xcp_DaqListRt((uint16)(Xcp_Internal.allocated_daq_count - 0x0001u))->mode &
+                 XCP_DAQ_LIST_MODE_RESUME) == 0x00u))
+        {
+            Xcp_Internal.allocated_daq_count--;
+        }
+    }
+
+    /* Unconditional for the same reason as Xcp_DaqFreeAll's own tail: DAQ_RUNNING is a property of
+     * every list together and a resumed list's own RUNNING bit, left untouched above, still needs
+     * to be counted. The DAQ pointer and the allocation state machine are this DISCONNECTing
+     * master's own session state, not any one list's, so neither is conditioned on RESUME either --
+     * unlike Xcp_DaqFreeAll's own comment on the pointer, the entry it names may still exist here,
+     * but a new master session starts SET_DAQ_PTR and the ALLOC_DAQ/ALLOC_ODT sequence fresh
+     * regardless of what the previous one left behind. */
+    Xcp_DaqSessionStatusUpdate();
+
     Xcp_Internal.daq_pointer.valid = FALSE;
     Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
 }

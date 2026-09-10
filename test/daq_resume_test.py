@@ -189,3 +189,45 @@ def test_resuming_two_lists_does_not_collide_their_absolute_odt_numbers():
         handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert pids[0] != pids[1], 'two lists, each with one ODT, must not share an absolute ODT number'
+
+
+def test_a_resumed_lists_odt_survives_a_disconnect():
+    """DD106 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): Xcp_DisconnectSession
+    frees every dynamic list under DAQ_DYNAMIC, which would let a master's mere DISCONNECT kill a
+    measurement Xcp_ResumeComplete restored from non-volatile memory before that master ever
+    connected.
+
+    This is the positive half only, deliberately. A fixture that also tries to prove the session's
+    own lists ARE freed -- list 0 resumed, list 1 ALLOC_DAQ'd by the connecting master -- cannot show
+    that through Xcp_GetDaqListOdtCount(1) unless something gives list 1 an ODT first: without one,
+    that count reads 0 before the disconnect as well as after, and the assertion cannot tell "freed"
+    from "never had one". Giving list 1 an ODT through the protocol runs into ALLOC_ODT's own
+    sequencing (it wants a FREE_DAQ before a second allocation round), and FREE_DAQ frees the
+    resumed list right along with it (Xcp_DTOCmdDaqFreeDaq, source/Xcp_Daq.c, frees unconditionally
+    by design -- see that function's own comment). So this test asserts survival alone, on a count
+    that is non-zero before the disconnect too, which is what gives the assertion something to lose.
+
+    The discriminating negative -- that DISCONNECT still frees a list belonging to the session that
+    is ending -- already exists in the suite:
+    test/free_daq_test.py::test_disconnect_frees_the_allocation_so_the_next_session_does_not_inherit_it
+    allocates real ODTs directly into the descriptor, with no resumed list anywhere in its fixture,
+    and asserts they are gone after DISCONNECT. An implementation that spared every list, resumed or
+    not, would pass this test and fail that one."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    assert handle.lib.Xcp_GetDaqListOdtCount(0) == 1, 'non-zero before the disconnect too'
+
+    connect(handle)
+
+    # DISCONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.lib.Xcp_GetDaqListOdtCount(0) == 1, 'the resumed list survives the disconnect'

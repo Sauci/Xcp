@@ -1083,23 +1083,21 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
 /**
  * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
  * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
- * (1.1/1.6.4.3.1.1), but declared here with external linkage because two other places need the
+ * (1.1/1.6.4.3.1.1), but declared here with external linkage because one other place needs the
  * same unwind -- the same arrangement, and for the same kind of reason, as Xcp_DaqListClearEntries
- * just above. The three callers are:
+ * just above. The two callers are:
  *
  * - Xcp_DTOCmdDaqFreeDaq (Xcp_Daq.c), for which this is the whole command;
  * - Xcp_Init (Xcp.c), which has to establish the same invariant at start-up, and whose
  *   open-coded loop used to leave the descriptor's maxOdt, firstPid and per-ODT entryCount
  *   standing -- so a re-initialised DYNAMIC module reported nothing allocated while the
- *   descriptor still described the previous session's lists;
- * - Xcp_CTOCmdStdDisconnect (Xcp_Std.c), under DYNAMIC only. The allocation state machine starts
- *   in XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no preceding FREE_DAQ (DD28), and repeats
- *   accumulate, so an allocation a master leaves standing at DISCONNECT is one the next master's
- *   ALLOC_DAQ adds to -- handing it more lists than it asked for, carrying the previous session's
- *   ODT entries.
- * @note the DISCONNECT caller is gated on DAQ_DYNAMIC. A STATIC configuration has no allocation
- * to release, and clearing its generated DAQ entries on disconnect would be a behaviour change to
- * the static model that SP2d is required not to make (DD25).
+ *   descriptor still described the previous session's lists.
+ *
+ * DD106 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md) moved the third caller,
+ * Xcp_CTOCmdStdDisconnect's shared Xcp_DisconnectSession (Xcp_Std.c), onto
+ * Xcp_DaqFreeSessionAllocated below instead: an implicit DISCONNECT must spare a list
+ * Xcp_ResumeComplete restored from non-volatile memory, which this function -- correctly, for its
+ * own two remaining callers -- does not.
  */
 /**
  * @brief resets the SELECTED flag on every DAQ list.
@@ -1113,6 +1111,20 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
 void Xcp_DaqClearAllSelections(void);
 
 void Xcp_DaqFreeAll(void);
+
+/**
+ * @brief DD106: like Xcp_DaqFreeAll, but spares every DAQ list carrying XCP_DAQ_LIST_MODE_RESUME.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DaqFreeAll, and declared here with external linkage
+ * for its one caller, Xcp_DisconnectSession (Xcp_Std.c), under DAQ_DYNAMIC only -- the same gate
+ * Xcp_DaqFreeAll's own DISCONNECT caller used to carry, moved here with it. A STATIC configuration
+ * has no allocation to release and reaches neither function from DISCONNECT (DD25).
+ * @note not a third caller layered on top of Xcp_DaqFreeAll's own unwind, and deliberately not
+ * expressed in terms of it: the two diverge on almost every list-scoped line -- which lists
+ * Xcp_DaqListReset reaches, which lists have their counts zeroed, what
+ * Xcp_Internal.allocated_daq_count is left at -- so writing one in terms of the other would need
+ * as many conditionals at the call site as writing the body out again does at the definition site.
+ */
+void Xcp_DaqFreeSessionAllocated(void);
 
 /**
  * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.

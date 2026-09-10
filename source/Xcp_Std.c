@@ -1417,10 +1417,21 @@ void Xcp_DisconnectSession(void)
      * Shared with PROGRAM_RESET (Xcp_Pgm.c, DD57): factored out of Xcp_CTOCmdStdDisconnect below
      * because a second door to XCP_CONNECTION_STATE_DISCONNECTED is a second place to forget this
      * unwind -- which is exactly what happened before this function existed, fix round 1 finding
-     * 2. Sharing it is what makes the two doors structurally incapable of diverging again. */
+     * 2. Sharing it is what makes the two doors structurally incapable of diverging again.
+     *
+     * DD106 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): the call below is
+     * Xcp_DaqFreeSessionAllocated, not Xcp_DaqFreeAll, so a list Xcp_ResumeComplete restored from
+     * non-volatile memory before this master ever connected survives an implicit DISCONNECT the
+     * way it already survives everything else this function does not touch. What a master asked
+     * for is what tells the two apart: DISCONNECT is this function's own unwind for a session that
+     * is simply ending, while FREE_DAQ (Xcp_DTOCmdDaqFreeDaq, Xcp_Daq.c, unchanged) is an explicit
+     * request to free everything, resumed lists included. That choice belongs inside this one door,
+     * as a condition on which lists the unwind reaches -- precisely for the reason the paragraph
+     * above gives for this function existing at all. A second, DD106-only door here would be the
+     * exact defect fix round 1 already closed, reopened for one more case. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
-        Xcp_DaqFreeAll();
+        Xcp_DaqFreeSessionAllocated();
     }
 }
 
