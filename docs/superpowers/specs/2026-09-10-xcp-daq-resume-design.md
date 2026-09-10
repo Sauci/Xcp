@@ -71,6 +71,22 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId);
 Each setter is the counterpart of the accessor that saved the same field, so an integrator writes one
 loop over its own format calling the inverse of whatever it queried.
 
+**Two things the signatures above leave ambiguous, made explicit here** — the first because getting
+exactly this wrong is what PR #25 fixed:
+
+- **`Xcp_RestoreDaqListMode`'s `mode` is the `GET_DAQ_LIST_MODE` *response* layout**
+  (`XCP_DAQ_LIST_MODE_*`: SELECTED 0, DIRECTION 1, TIMESTAMP 4, PID_OFF 5, RUNNING 6, RESUME 7), not
+  `SET_DAQ_LIST_MODE`'s *request* layout (`XCP_DAQ_LIST_MODE_REQ_*`: ALTERNATING 0, DIRECTION 1,
+  TIMESTAMP 4, PID_OFF 5). The module keeps two mode tables and they differ at bits 0, 6 and 7. The
+  response layout is right because this restores state the accessors reported, and
+  `Xcp_GetDaqListSelectedState` reads that byte. RUNNING and RESUME in the passed value are ignored:
+  `Xcp_ResumeComplete` sets both, so an integrator cannot half-start a list by hand.
+- **`Xcp_RestoreDaqListCount` is meaningful only under `DAQ_DYNAMIC`**, where it does what `ALLOC_DAQ`
+  does. Under `DAQ_STATIC` the lists are generated and the count is fixed, so it answers `E_OK` for a
+  count equal to the configured one and `E_NOT_OK` otherwise — an integrator restoring a
+  configuration stored by a differently-generated build finds out here rather than by writing entries
+  into lists that do not exist.
+
 **Rejected: the module pulls through polled callbacks.** One asynchronous call per ODT entry —
 roughly 3.5 KB of them for a default dynamic pool — which is the shape DD94 rejected for storing,
 for the same reason.
