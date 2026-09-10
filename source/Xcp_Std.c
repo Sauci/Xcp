@@ -1181,6 +1181,27 @@ uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPdu
         result = XCP_E_ASAM_OUT_OF_RANGE;
     }
 
+    /* 1.1/1.6.1.2.3 does not say what a slave receiving both DAQ store mode bits at once should
+     * do -- this refusal is this module's own deliberate choice where the specification is
+     * silent, not something the specification requires. STORE_DAQ_REQ_NO_RESUME and
+     * STORE_DAQ_REQ_RESUME are contradictory: one says do not arm resume, the other says arm it,
+     * and nothing here can know which the master actually meant. Letting one bit silently win
+     * (as an earlier version of this handler did, by evaluating STORE_DAQ_REQ_NO_RESUME before
+     * STORE_DAQ_REQ_RESUME) would commit the master to a power-cycle behaviour it never
+     * unambiguously asked for -- arming resume on a half-declined request is the worse of the two
+     * silent guesses, since the slave would then start transmitting on its own at the next
+     * power-up with no session behind it. Refused instead, reusing ERR_OUT_OF_RANGE rather than
+     * inventing a new outcome: this section's own "If the slave device does not support the
+     * requested mode, an ERR_OUT_OF_RANGE will be returned" already covers a mode this module will
+     * not act on, and a self-contradictory pair of modes is exactly that, even though 1.1 never
+     * names this specific combination. */
+    if ((pPduInfo->SduDataPtr[0x01u] &
+         (XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_NO_RESUME | XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_RESUME)) ==
+        (XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_NO_RESUME | XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_RESUME))
+    {
+        result = XCP_E_ASAM_OUT_OF_RANGE;
+    }
+
     if (result == E_OK)
     {
         /* The session configuration id in bytes 2,3 belongs to STORE_DAQ_REQ: 1.0/1.6.1.2.3 has the

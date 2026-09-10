@@ -934,6 +934,33 @@ def test_store_daq_req_resume_is_accepted_now_that_resume_is_advertised():
     assert handle.xcp_store_daq_configuration.called, 'an accepted mode must reach the callback'
 
 
+def test_set_request_refuses_both_daq_store_modes_requested_together():
+    """Coordinator ruling on Task 4's own Concern 3 (task-4-report.md): 1.1/1.6.1.2.3 does not say
+    what a slave should do when STORE_DAQ_REQ_NO_RESUME (bit 1) and STORE_DAQ_REQ_RESUME (bit 2)
+    are both set in the same request -- they are contradictory, one saying do not arm resume and
+    the other saying arm it, and nothing in this module can know which the master actually meant.
+    This test pins a deliberate choice this module makes where the specification is silent, not a
+    behaviour the specification requires: refuse the combination with ERR_OUT_OF_RANGE rather than
+    let one bit silently win, since a wrong silent guess in the arming direction would commit the
+    slave to autonomous transmission at the next power-up with no session ever having asked for it
+    unambiguously.
+
+    Asserted with the store API ENABLED, so the refusal is attributable to the combination itself
+    and not to an unconfigured build refusing every store (test_set_request_refuses_the_non_
+    volatile_daq_modes_it_cannot_fulfil, test/set_request_test.py, already covers that case). The
+    callback must not be reached either -- a refusal that still ran the store would be worse than
+    either silent guess it replaces. The mock's return value is set anyway, even though a correct
+    refusal never consults it: an unconfigured mock's default return is not a valid Std_ReturnType,
+    so a future regression that let the callback through would fail here on a confusing CFFI
+    conversion error instead of on the refusal assertion above, which is the one that should fail."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+    handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')  # never finishes
+
+    assert exchange(handle, (0xF9, 0b00000110, 0x00, 0x00))[0:2] == (0xFE, 0x22)
+    assert not handle.xcp_store_daq_configuration.called, 'a refused combination must not reach the callback'
+
+
 def test_resume_is_now_advertised_so_the_acceptance_above_stays_coherent():
     """SP5-NV's deliberate tripwire, now updated. This test used to be named
     test_resume_stays_unadvertised_so_the_refusal_above_stays_coherent and pinned GET_DAQ_PROCESSOR_
