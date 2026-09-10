@@ -595,6 +595,93 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
 }
 
 /**
+ * @brief reassigns every DAQ list's FIRST_PID as a prefix sum over the ODT counts.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the absolute ODT number of
+ * relative ODT i in a list is FIRST_PID + i, so each list's block must be contiguous and no two
+ * blocks may overlap. Assigning PIDs in ALLOC_ODT call order cannot hold that once a list may
+ * receive ODTs in more than one call, so the whole set is recomputed instead. This is the same
+ * rule script/source_cfg.c.jinja2 applies to a static configuration.
+ *
+ * Concretely, ALLOC_ODT(0, 2), ALLOC_ODT(1, 3), ALLOC_ODT(0, 1) is a legal sequence -- DD28 makes
+ * the third call accumulate -- and it leaves list 0 needing three contiguous numbers when a
+ * call-order scheme has already handed 2..4 to list 1. There is no way to repair that by
+ * appending; the assignment has to be a function of the counts alone, which is what a prefix sum
+ * over list index is. It is also order-independent, so the same set of requests in any order
+ * produces the same layout.
+ *
+ * Bounded by Xcp_Internal.allocated_daq_count rather than by the configured pool, and that is the
+ * narrower bound on purpose: a list the master has not allocated cannot have ODTs (ALLOC_ODT
+ * refuses it), so including it would add nothing to the running sum, while the numbers it would
+ * write past the allocated count are meaningless -- no command reports them and no DTO carries
+ * them. Xcp_DaqFreeAll zeroes firstPid across the whole pool, so nothing stale survives there
+ * either.
+ *
+ * @note `next` is a uint8, matching the field, and cannot wrap: both callers below refuse any
+ * request that would take the total past XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFC) or
+ * XCP_STIM_ABSOLUTE_ODT_COUNT_MAX before calling this, so the sum this accumulates is always
+ * within that ceiling and every value written is too. The check is what makes the arithmetic here
+ * safe, not the other way round.
+ *
+ * 0xFC, not 0xFB: the bound on a *usable* absolute ODT number is 0xFB, because 0xFC..0xFF are the
+ * slave-to-master SERV, EV, ERR and RES codes, but a firstPid of exactly 0xFC is reachable and is
+ * written. With the total at 252 and an allocated-but-empty list after the full one, that list's
+ * prefix sum is 0xFC -- the state test_alloc_odt_refuses_to_exhaust_the_pid_space creates. It is
+ * harmless because it is the address of a first ODT that does not exist: that list's maxOdt is 0,
+ * so Xcp_TriggerEventChannel's ODT loop never runs for it and no frame can carry the value. It is
+ * still observable, in the FIRST_PID byte START_STOP_DAQ_LIST mode STOP returns for that list,
+ * which correctly names where its first ODT *would* begin. A master that then allocated an ODT
+ * there would be refused by the same 0xFC ceiling before the number could ever reach the wire.
+ * @note Moved here from beside Xcp_DTOCmdDaqAllocOdt (below) when Xcp_RestoreOdtCount became this
+ * function's second caller (design doc DD103 gap, fixed before Task 1's review): a static
+ * function must be defined, not merely declared, before its first use in this file, which this
+ * file's own convention meets by ordering rather than by forward declaration -- there is no other
+ * one anywhere in it. Xcp_RestoreOdtCount sits earlier in the file than Xcp_DTOCmdDaqAllocOdt, so
+ * the definition had to move to stay before both, not just the one it originally served.
+ */
+static void Xcp_DaqRecomputeFirstPids(void)
+{
+    uint16 daq_idx;
+    uint8 next = 0x00u;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
+    {
+        Xcp_Ptr->config->daqList[daq_idx].firstPid = next;
+        next = (uint8)(next + Xcp_Ptr->config->daqList[daq_idx].maxOdt);
+    }
+}
+
+/**
+ * @brief total ODTs currently allocated across every DAQ list the master holds.
+ * @details The quantity XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX/XCP_STIM_ABSOLUTE_ODT_COUNT_MAX bounds,
+ * and the same sum Xcp_DaqRecomputeFirstPids ends on.
+ * @note uint16, not the uint8 the ODT counts themselves live in, so that neither this total nor
+ * the caller's total-plus-ODT_COUNT is ever narrowed back to eight bits. That narrowing is a
+ * reachable defect, not a theoretical one: a pool whose odtCount is 252 admits a second request
+ * for 252 on a list holding none, and 252 + 252 is 248 in a uint8 -- under the very ceiling it is
+ * being compared against, so the check would pass exactly the request it exists to refuse.
+ * test/alloc_odt_test.py::test_alloc_odt_ceiling_holds_where_a_uint8_total_would_wrap pins that.
+ *
+ * The type that matters is the one the sum is stored or cast to, not this return type on its own:
+ * C's integer promotions widen both operands of the caller's addition to int, so a uint8 return
+ * value alone would still compute 504 correctly there. Spelling both uint16 is what keeps the
+ * result from depending on that, and on nobody later adding a cast back.
+ * @note Moved here alongside Xcp_DaqRecomputeFirstPids above, for the identical reason -- see its
+ * own note.
+ */
+static uint16 Xcp_DaqAllocatedOdtCount(void)
+{
+    uint16 daq_idx;
+    uint16 total = 0x0000u;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
+    {
+        total = (uint16)(total + (uint16)Xcp_Ptr->config->daqList[daq_idx].maxOdt);
+    }
+
+    return total;
+}
+
+/**
  * @brief see interface/Xcp.h.
  * @details Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): the
  * restore-side mirror of the four accessors above, and of ALLOC_DAQ (XCP part 2 - Protocol Layer
@@ -616,7 +703,7 @@ Std_ReturnType Xcp_RestoreDaqListCount(uint16 daqListCount)
         if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
         {
             /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_DAQ itself follows
-             * (Xcp_DTOCmdDaqAllocDaq above), bounded by the same configured pool. */
+             * (Xcp_DTOCmdDaqAllocDaq below), bounded by the same configured pool. */
             if ((uint32)((uint32)Xcp_Internal.allocated_daq_count + (uint32)daqListCount) <=
                 (uint32)Xcp_Ptr->general->daqCount)
             {
@@ -647,6 +734,18 @@ Std_ReturnType Xcp_RestoreDaqListCount(uint16 daqListCount)
 
 /**
  * @brief see interface/Xcp.h.
+ * @note Fixed before Task 1's review, a gap the task's own brief did not name: this must
+ * recompute every restored list's firstPid after raising maxOdt, the same obligation ALLOC_ODT
+ * (Xcp_DTOCmdDaqAllocOdt below) has and for the identical reason -- under ABSOLUTE identification
+ * (1.1/1.1.2.1) firstPid is the prefix sum of every list's own maxOdt (Xcp_DaqRecomputeFirstPids'
+ * own doc comment above), so any path that changes one list's ODT count owes the whole pool a
+ * fresh sum, not only the list it changed. Left out, every restored list's firstPid stayed at the
+ * 0 Xcp_Init/Xcp_DaqFreeAll leaves it, so two lists that had each received an ODT would both
+ * transmit their own ODT 0 identified as absolute ODT number 0 -- a real collision on the wire
+ * under the default identification field type, not merely a stale reported value.
+ * test/daq_resume_test.py::test_resuming_two_lists_does_not_collide_their_absolute_odt_numbers
+ * pins this; every earlier test in that file restores exactly one list, which is why none of them
+ * caught it.
  */
 Std_ReturnType Xcp_RestoreOdtCount(uint16 daqListNumber, uint8 odtCount)
 {
@@ -656,15 +755,40 @@ Std_ReturnType Xcp_RestoreOdtCount(uint16 daqListNumber, uint8 odtCount)
         (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
         (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
         /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_ODT itself follows
-         * (Xcp_DTOCmdDaqAllocOdt above), bounded by the same per-list ceiling. Under DAQ_STATIC
+         * (Xcp_DTOCmdDaqAllocOdt below), bounded by the same per-list ceiling. Under DAQ_STATIC
          * Xcp_Ptr->general->odtCount is 0 (script/source_cfg.c.jinja2), so a STATIC list's own
          * generation-fixed maxOdt already exceeds it and this refuses unconditionally, exactly as
          * ALLOC_ODT is unreachable there. */
         ((uint16)((uint16)Xcp_Ptr->config->daqList[daqListNumber].maxOdt + (uint16)odtCount) <=
-         (uint16)Xcp_Ptr->general->odtCount))
+         (uint16)Xcp_Ptr->general->odtCount) &&
+        /* The second, independent ceiling ALLOC_ODT itself checks (Xcp_DTOCmdDaqAllocOdt below):
+         * absolute ODT numbers are drawn from one PID space shared by every list, not only this
+         * one's own slice -- and it is what keeps Xcp_DaqRecomputeFirstPids' own uint8 `next` from
+         * wrapping below, exactly as it does for ALLOC_ODT (see that function's own note). */
+        ((uint16)(Xcp_DaqAllocatedOdtCount() + (uint16)odtCount) <=
+         (uint16)((Xcp_Ptr->config->daqList[daqListNumber].type != DAQ) ?
+                  XCP_STIM_ABSOLUTE_ODT_COUNT_MAX : XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX)))
     {
+        /* Both writes under one exclusive area, mirroring ALLOC_ODT's own DD14 reasoning
+         * (Xcp_DTOCmdDaqAllocOdt below): raising maxOdt is what makes the standing firstPid
+         * values wrong, so a trigger must never land between the two writes and sample a list
+         * against a half-updated layout.
+         *
+         * Unlike ALLOC_ODT, no list can actually be RUNNING while this branch runs: DD107's own
+         * gate above refuses every Xcp_Restore* call once Xcp_ResumeComplete -- the only thing
+         * that ever sets RUNNING -- has run, and nothing sets RUNNING before it. So the hazard
+         * this area guards against is unreachable today, not merely unlikely. The area is taken
+         * anyway, for the same reason ALLOC_ODT's own comment gives for not narrowing its scope:
+         * this is what keeps the DD14 hazard class shut if the gate above it is ever loosened,
+         * rather than a second, silent place it could reopen. */
+        SchM_Enter_Xcp_DtoQueue();
+
         Xcp_Ptr->config->daqList[daqListNumber].maxOdt =
                 (uint8)(Xcp_Ptr->config->daqList[daqListNumber].maxOdt + odtCount);
+
+        Xcp_DaqRecomputeFirstPids();
+
+        SchM_Exit_Xcp_DtoQueue();
 
         Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
         result = E_OK;
@@ -685,7 +809,7 @@ Std_ReturnType Xcp_RestoreOdtEntryCount(uint16 daqListNumber, uint8 odtNumber, u
         (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
         (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
         /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_ODT_ENTRY itself follows
-         * (Xcp_DTOCmdDaqAllocOdtEntry above), bounded by the same per-ODT ceiling. */
+         * (Xcp_DTOCmdDaqAllocOdtEntry below), bounded by the same per-ODT ceiling. */
         ((uint16)((uint16)Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount +
                   (uint16)entryCount) <= (uint16)Xcp_Ptr->general->odtEntriesCount))
     {
@@ -1079,84 +1203,6 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
     }
 
     return E_OK;
-}
-
-/**
- * @brief reassigns every DAQ list's FIRST_PID as a prefix sum over the ODT counts.
- * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the absolute ODT number of
- * relative ODT i in a list is FIRST_PID + i, so each list's block must be contiguous and no two
- * blocks may overlap. Assigning PIDs in ALLOC_ODT call order cannot hold that once a list may
- * receive ODTs in more than one call, so the whole set is recomputed instead. This is the same
- * rule script/source_cfg.c.jinja2 applies to a static configuration.
- *
- * Concretely, ALLOC_ODT(0, 2), ALLOC_ODT(1, 3), ALLOC_ODT(0, 1) is a legal sequence -- DD28 makes
- * the third call accumulate -- and it leaves list 0 needing three contiguous numbers when a
- * call-order scheme has already handed 2..4 to list 1. There is no way to repair that by
- * appending; the assignment has to be a function of the counts alone, which is what a prefix sum
- * over list index is. It is also order-independent, so the same set of requests in any order
- * produces the same layout.
- *
- * Bounded by Xcp_Internal.allocated_daq_count rather than by the configured pool, and that is the
- * narrower bound on purpose: a list the master has not allocated cannot have ODTs (ALLOC_ODT
- * refuses it), so including it would add nothing to the running sum, while the numbers it would
- * write past the allocated count are meaningless -- no command reports them and no DTO carries
- * them. Xcp_DaqFreeAll zeroes firstPid across the whole pool, so nothing stale survives there
- * either.
- *
- * @note `next` is a uint8, matching the field, and cannot wrap: Xcp_DTOCmdDaqAllocOdt refuses any
- * request that would take the total past XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFC), so the sum this
- * accumulates is at most 0xFC and every value written is at most 0xFC. The check is what makes
- * the arithmetic here safe, not the other way round.
- *
- * 0xFC, not 0xFB: the bound on a *usable* absolute ODT number is 0xFB, because 0xFC..0xFF are the
- * slave-to-master SERV, EV, ERR and RES codes, but a firstPid of exactly 0xFC is reachable and is
- * written. With the total at 252 and an allocated-but-empty list after the full one, that list's
- * prefix sum is 0xFC -- the state test_alloc_odt_refuses_to_exhaust_the_pid_space creates. It is
- * harmless because it is the address of a first ODT that does not exist: that list's maxOdt is 0,
- * so Xcp_TriggerEventChannel's ODT loop never runs for it and no frame can carry the value. It is
- * still observable, in the FIRST_PID byte START_STOP_DAQ_LIST mode STOP returns for that list,
- * which correctly names where its first ODT *would* begin. A master that then allocated an ODT
- * there would be refused by the same 0xFC ceiling before the number could ever reach the wire.
- */
-static void Xcp_DaqRecomputeFirstPids(void)
-{
-    uint16 daq_idx;
-    uint8 next = 0x00u;
-
-    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
-    {
-        Xcp_Ptr->config->daqList[daq_idx].firstPid = next;
-        next = (uint8)(next + Xcp_Ptr->config->daqList[daq_idx].maxOdt);
-    }
-}
-
-/**
- * @brief total ODTs currently allocated across every DAQ list the master holds.
- * @details The quantity XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX bounds, and the same sum
- * Xcp_DaqRecomputeFirstPids ends on.
- * @note uint16, not the uint8 the ODT counts themselves live in, so that neither this total nor
- * the caller's total-plus-ODT_COUNT is ever narrowed back to eight bits. That narrowing is a
- * reachable defect, not a theoretical one: a pool whose odtCount is 252 admits a second request
- * for 252 on a list holding none, and 252 + 252 is 248 in a uint8 -- under the very ceiling it is
- * being compared against, so the check would pass exactly the request it exists to refuse.
- * test/alloc_odt_test.py::test_alloc_odt_ceiling_holds_where_a_uint8_total_would_wrap pins that.
- *
- * The type that matters is the one the sum is stored or cast to, not this return type on its own:
- * C's integer promotions widen both operands of the caller's addition to int, so a uint8 return
- * value alone would still compute 504 correctly there. Spelling both uint16 is what keeps the
- * result from depending on that, and on nobody later adding a cast back.
- */
-static uint16 Xcp_DaqAllocatedOdtCount(void)
-{
-    uint16 daq_idx;
-    uint16 total = 0x0000u;
-
-    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
-    {
-        total = (uint16)(total + (uint16)Xcp_Ptr->config->daqList[daq_idx].maxOdt);
-    }
-
-    return total;
 }
 
 /**

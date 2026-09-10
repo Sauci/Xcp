@@ -605,12 +605,16 @@ Std_ReturnType Xcp_RestoreDaqListCount(uint16 daqListCount);
  * @brief restores how many ODTs one DAQ list had been allocated.
  * @details Design doc DD103: the restore-side mirror of ALLOC_ODT (XCP part 2 - Protocol Layer
  * Specification 1.1/1.6.4.3.1.3) and of @ref Xcp_GetDaqListOdtCount, which is what an integrator
- * implementing @ref Xcp_StoreDaqConfiguration read to learn this value.
+ * implementing @ref Xcp_StoreDaqConfiguration read to learn this value. Also reassigns every
+ * restored list's FIRST_PID, the same obligation ALLOC_ODT itself has and for the identical
+ * reason: under ABSOLUTE identification (1.1/1.1.2.1) FIRST_PID is the prefix sum of every list's
+ * own ODT count, so a call that changes one list's count owes the whole pool a fresh sum.
  * @param [in] daqListNumber DAQ list number
  * @param [in] odtCount how many ODTs to make available for the calls below
  * @retval E_OK the count was accepted
- * @retval E_NOT_OK daqListNumber is out of range, odtCount exceeds the configured pool; also once
- * @ref Xcp_ResumeComplete has run or a master has connected (design doc DD107)
+ * @retval E_NOT_OK daqListNumber is out of range, odtCount exceeds the configured pool or the
+ * absolute ODT number space shared by every list; also once @ref Xcp_ResumeComplete has run or a
+ * master has connected (design doc DD107)
  */
 Std_ReturnType Xcp_RestoreOdtCount(uint16 daqListNumber, uint8 odtCount);
 

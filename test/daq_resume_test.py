@@ -121,3 +121,49 @@ def test_resume_complete_refuses_a_list_the_front_door_would_refuse_to_start():
     handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
 
     assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_NOT_OK')
+
+
+def test_resuming_two_lists_does_not_collide_their_absolute_odt_numbers():
+    """Task 1 review finding, fixed before this task's review: Xcp_RestoreOdtCount raised maxOdt
+    without recomputing FIRST_PID the way ALLOC_ODT does (Xcp_DaqRecomputeFirstPids, source/
+    Xcp_Daq.c). Under the default ABSOLUTE identification field type (1.1/1.1.2.1), FIRST_PID is
+    the prefix sum of every list's own ODT count, so restoring two lists that each get an ODT --
+    with nothing recomputing that sum -- leaves both lists' FIRST_PID at the 0 Xcp_Init/
+    Xcp_DaqFreeAll set it to, and both lists' ODT 0 transmit identified as absolute ODT number 0:
+    a real collision on the wire, not a stale reported value. Every earlier test in this file
+    restores exactly one list, which is why none of them caught it.
+
+    Asserted on the two transmitted frames' own identification byte -- where the collision would
+    actually show up -- rather than on firstPid directly, which Xcp_Internal and the generated DAQ
+    list array are not reachable from the CFFI harness (test/conftest.py builds its cdef from
+    interface/Xcp.h alone)."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(2)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtCount(1, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(1, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreOdtEntry(1, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    handle.lib.Xcp_RestoreDaqListMode(1, 0x00, 0, 1, 0)
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_TriggerEventChannel(0)
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.call_count == 1, 'the trigger starts the chain itself'
+
+    # Every DAQ transmission is handed the same static PduInfoType (Xcp_DaqTxPduInfo, source/
+    # Xcp_DaqRuntime.c's Xcp_DaqQueuePeek), so each frame's content has to be read out before the
+    # confirmation that arms the next one overwrites it -- the same pattern test/
+    # daq_transmission_test.py's own test_a_full_ring_drops_the_frame_and_reports_one_overload_
+    # event uses. The DAQ queue transmits one frame at a time (SWS_Xcp_00859); confirming one is
+    # what lets Xcp_StartNextTransmission (source/Xcp.c) pick up the next, unaided.
+    pids = []
+    for _ in range(2):
+        pids.append(tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:1]))
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert pids[0] != pids[1], 'two lists, each with one ODT, must not share an absolute ODT number'
