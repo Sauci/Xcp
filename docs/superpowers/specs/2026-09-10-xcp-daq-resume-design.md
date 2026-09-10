@@ -21,10 +21,10 @@ occurrence of RESUME in both revisions was read; none is in `CONNECT`'s section.
 | the master arms it | `SET_REQUEST` mode bit 2, `STORE_DAQ_REQ_RESUME` (1.1/§1.6.1.2.3) |
 | the slave advertises it | `GET_DAQ_PROCESSOR_INFO`, `DAQ_PROPERTIES` bit 2 `RESUME_SUPPORTED` (1.1/§1.6.4.1.2.4) |
 | the slave reports being in it | `GET_STATUS` session status bit 7 `RESUME` (1.1/§1.6.1.1.3) |
-| a list reports belonging to it | `GET_DAQ_LIST_MODE` mode bit 7 `RESUME` (1.1/§1.6.4.1.1.4) |
+| a list reports belonging to it | `GET_DAQ_LIST_MODE` mode bit 7 `RESUME` (1.1/§1.6.4.1.2.6) |
 | the slave announces it | `EV_RESUME_MODE`, code `0x00` (1.1/§1.8.1) |
 
-And the behaviour itself, from 1.1/§1.6.4.1.1.4's description of the RUNNING flag:
+And the behaviour itself, from 1.1/§1.6.4.1.2.6's description of the RUNNING flag:
 
 > the slave being in RESUME mode started the DAQ list automatically
 
@@ -70,6 +70,20 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId);
 
 Each setter is the counterpart of the accessor that saved the same field, so an integrator writes one
 loop over its own format calling the inverse of whatever it queried.
+
+**This mirror is incomplete for one setter, and the incompleteness is real.** `Xcp_RestoreDaqListMode`
+takes four fields -- mode's own DIRECTION/TIMESTAMP/PID_OFF bits, the event channel, the prescaler and
+the priority -- and none of them has a counterpart among DD94's four read accessors:
+`Xcp_GetDaqListSelectedState` reports only the transient SELECTED bit, not the rest of the mode byte,
+and nothing reports the event channel binding, prescaler or priority a live `SET_DAQ_LIST_MODE` last
+wrote. An integrator restoring these four values supplies them from its own configuration knowledge --
+typically the same static assignment its own tooling built the master's measurement setup from -- not
+from anything this module ever handed back. Under `DAQ_DYNAMIC`, where the master picks the event
+channel at runtime rather than a generator fixing it, that is a genuine limitation: the integrator
+cannot capture the one field that decides whether a resumed list transmits at all, only reconstruct it
+from what it independently knows the master last requested. Adding the missing accessors is a
+follow-up phase, not this one -- this document and `interface/Xcp.h` state the limitation rather than
+paper over it.
 
 **Two things the signatures above leave ambiguous, made explicit here** — the first because getting
 exactly this wrong is what PR #25 fixed:

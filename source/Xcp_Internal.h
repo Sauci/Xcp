@@ -359,7 +359,7 @@ typedef enum {
 
 /**
  * @brief how far a start-up restoration has got.
- * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4. XCP_RESUME_RESTORING is
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.6. XCP_RESUME_RESTORING is
  * entered by the first Xcp_Restore* call and left only by Xcp_ResumeComplete, which is what makes
  * a restored configuration live (design doc DD105). Explicitly 0 for IDLE, the same defensive
  * reason Xcp_ConnectionState is.
@@ -1102,6 +1102,17 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
+ * @brief resets the SELECTED flag on every DAQ list.
+ * @details XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4) requires the
+ * SELECTED flag GET_DAQ_LIST_MODE reports to be reset "as soon as the related START_STOP_SYNCH or
+ * SET_REQUEST have been acknowledged". Xcp_MainFunction (source/Xcp.c) calls this once
+ * STORE_DAQ_REQ's callback reports a clean completion -- not when SET_REQUEST answers, because the
+ * integrator's own Xcp_StoreDaqConfiguration reads the selection through
+ * Xcp_GetDaqListSelectedState while it runs.
+ */
+void Xcp_DaqClearAllSelections(void);
+
+/**
  * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
  * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
  * (1.1/1.6.4.3.1.1), but declared here with external linkage because one other place needs the
@@ -1120,17 +1131,6 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
  * Xcp_ResumeComplete restored from non-volatile memory, which this function -- correctly, for its
  * own two remaining callers -- does not.
  */
-/**
- * @brief resets the SELECTED flag on every DAQ list.
- * @details XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4) requires the
- * SELECTED flag GET_DAQ_LIST_MODE reports to be reset "as soon as the related START_STOP_SYNCH or
- * SET_REQUEST have been acknowledged". Xcp_MainFunction (source/Xcp.c) calls this once
- * STORE_DAQ_REQ's callback reports a clean completion -- not when SET_REQUEST answers, because the
- * integrator's own Xcp_StoreDaqConfiguration reads the selection through
- * Xcp_GetDaqListSelectedState while it runs.
- */
-void Xcp_DaqClearAllSelections(void);
-
 void Xcp_DaqFreeAll(void);
 
 /**

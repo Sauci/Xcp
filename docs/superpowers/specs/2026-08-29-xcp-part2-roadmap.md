@@ -584,7 +584,10 @@ already implemented but untested for `STORE_CAL_REQ`); the session configuration
 reported at `GET_STATUS` bytes 4–5, provably `CONNECT`-proof (DD99); four read-only accessors an
 integrator implementing the store queries to learn what to persist (DD94); and a polled start-up
 read that adopts the id alone — no DAQ list — answering `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE`
-from `GET_STATUS` while outstanding (DD100/DD101). `RESUME_SUPPORTED` stays clear, unchanged.
+from `GET_STATUS` while outstanding (DD100/DD101). `RESUME_SUPPORTED` stayed clear at the time this
+phase shipped -- no longer true once SP5-RESUME (§4 below) reverses it alongside the `SET_REQUEST`
+refusal in the same paragraph above, so read this sentence as this phase's own snapshot, not the
+module's current behaviour.
 
 **Intended shape** (agreed 2026-09-03, superseded by the design linked above): an integrator-
 provided callback pair for storing and reading the configuration, **asynchronous**, following the
@@ -629,7 +632,7 @@ independent and can be pulled forward if one of them blocks an integration.
 #### SP5-RESUME — starting DAQ from non-volatile memory — **complete**
 
 What SP5-NV deliberately stopped short of, above: the slave now starts DAQ lists autonomously from
-a non-volatile configuration with no master session at all, matching 1.1/1.6.4.1.1.4's own
+a non-volatile configuration with no master session at all, matching 1.1/1.6.4.1.2.6's own
 description of what RESUME mode means — "the slave being in RESUME mode started the DAQ list
 automatically."
 
