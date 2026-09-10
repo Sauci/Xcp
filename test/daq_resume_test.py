@@ -664,3 +664,141 @@ def test_restore_daq_list_mode_refuses_direction_on_a_daq_only_list():
     handle.lib.Xcp_RestoreDaqListCount(1)
 
     assert handle.lib.Xcp_RestoreDaqListMode(0, 0x02, 0, 1, 0) == handle.define('E_NOT_OK')
+
+
+# Task 5 (.superpowers/sdd/2026-09-10-xcp-daq-resume/task-5-brief.md), added after the final
+# whole-branch review: the read side DD103 promised and never delivered. Xcp_RestoreDaqListMode's
+# own doc comment (interface/Xcp.h) used to say so outright -- mode, event channel, prescaler and
+# priority had no accessor, so an integrator's Xcp_StoreDaqConfiguration could query a list's
+# selection, ODT count, entry counts and entries, but not the one field (the event channel) that
+# decides whether a restored list ever fires. Xcp_GetDaqListMode (source/Xcp_Daq.c) closes the gap;
+# the three tests below are its coverage, in the shape the brief itself lays out.
+
+def test_get_daq_list_mode_reports_what_set_daq_list_mode_wrote():
+    """Task 5, test 1: the round trip through the real command. The list is bound with
+    SET_DAQ_LIST_MODE, not by calling Xcp_RestoreDaqListMode -- seeding the state a broken
+    Xcp_GetDaqListMode reads back through the restore setter would let a broken accessor agree
+    with a broken setter. mode=2 (DIRECTION), channel=1, prescaler=5 and priority=0 are four
+    pairwise distinct numbers, and three of the four differ from their own power-up default
+    (0, 0, 1): the fourth, priority, cannot -- SET_DAQ_LIST_MODE refuses any nonzero priority by
+    specification (1.1/1.6.4.1.1.3), exactly as test/get_daq_list_mode_test.py's own
+    test_get_daq_list_mode_reports_priority notes for GET_DAQ_LIST_MODE itself, so a round trip
+    through the real command cannot exercise that byte either. DIRECTION needs a
+    stimulation-capable list, hence stim_config rather than dynamic_config; a second event channel
+    exists so channel 1 -- the field DD103's own gap was about -- is reachable at all."""
+    handle = XcpTest(stim_config(daq_count=1, odt_count=1, odt_entries_count=1,
+                                  events=(event(name='EVT1'), event(name='EVT2'))))
+    connect(handle)
+    exchange(handle, (0xD6,))                                   # FREE_DAQ
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))                  # ALLOC_DAQ(1)
+    # SET_DAQ_LIST_MODE(DIRECTION, list 0, channel 1, prescaler 5, priority 0).
+    assert exchange(handle, (0xE0, 0x02, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00))[0] == 0xFF
+
+    # Seeded with values SET_DAQ_LIST_MODE can never produce here (test/stim_decode_test.py's own
+    # idiom for an out parameter a broken callee might leave untouched), so a Xcp_GetDaqListMode
+    # that forgets to write one of these fails on the stale seed rather than coincidentally
+    # reading back a value that happens to already be correct.
+    p_mode = handle.ffi.new('uint8 *', 0xFF)
+    p_event_channel_number = handle.ffi.new('uint16 *', 0xFFFF)
+    p_prescaler = handle.ffi.new('uint8 *', 0xFF)
+    p_priority = handle.ffi.new('uint8 *', 0xFF)
+    assert handle.lib.Xcp_GetDaqListMode(0, p_mode, p_event_channel_number, p_prescaler,
+                                         p_priority) == handle.define('E_OK')
+
+    assert p_mode[0] == 0x02, 'DIRECTION, the bit the power-up default (0x00) lacks'
+    assert p_event_channel_number[0] == 1, 'the non-zero channel SET_DAQ_LIST_MODE bound'
+    assert p_prescaler[0] == 5, 'the prescaler above 1'
+    assert p_priority[0] == 0, 'the only priority SET_DAQ_LIST_MODE ever grants'
+
+
+def test_get_daq_list_mode_refuses_a_list_number_at_the_allocated_count():
+    """Task 5, test 2: the out-of-range refusal, mirroring Xcp_GetOdtEntry's own bound
+    (test/daq_nv_accessor_test.py::test_accessors_refuse_a_list_number_at_or_past_the_allocated_
+    count) through the same Xcp_DaqListIsValid, reused rather than re-derived. List 1 is the
+    boundary itself -- the allocated count -- not a value far past it, the sharpest case for a
+    >=-vs-> mistake."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+
+    p_mode = handle.ffi.new('uint8 *')
+    p_event_channel_number = handle.ffi.new('uint16 *')
+    p_prescaler = handle.ffi.new('uint8 *')
+    p_priority = handle.ffi.new('uint8 *')
+    assert handle.lib.Xcp_GetDaqListMode(1, p_mode, p_event_channel_number, p_prescaler,
+                                         p_priority) == handle.define('E_NOT_OK')
+
+
+def test_a_list_restored_purely_from_the_accessors_capture_fires_on_the_bound_channel_only():
+    """Task 5, test 3: the end-to-end proof, and the one that matters. A test that only triggered
+    the channel it originally bound would pass even if Xcp_GetDaqListMode returned a constant,
+    because the restore would then bind to the same wrong value the capture returned -- so no
+    literal value is asserted on the captured tuple anywhere below (that belongs to
+    test_get_daq_list_mode_reports_what_set_daq_list_mode_wrote above). This test instead triggers
+    BOTH event channels and lets actual transmission settle it: the non-default channel (1, what
+    SET_DAQ_LIST_MODE actually bound) must fire, and the default channel (0, what a
+    constant-returning accessor would produce instead) must stay silent.
+
+    The teardown in the middle is deliberate, not decorative: without it, the list the triggers
+    below find could coincidentally still be the very list SET_DAQ_LIST_MODE bound moments earlier,
+    and the assertions would hold no matter what Xcp_RestoreDaqListMode did with its arguments.
+    DISCONNECT frees this session's own dynamic list first (DD106, Xcp_DaqFreeSessionAllocated), so
+    the list the triggers later find exists only because Xcp_RestoreDaqListMode and
+    Xcp_ResumeComplete rebuilt it from the captured values alone."""
+    handle = XcpTest(dynamic_config(daq_count=1, odt_count=1, odt_entries_count=1,
+                                     events=(event(name='EVT1'), event(name='EVT2'))))
+    connect(handle)
+
+    # Bind list 0 to the NON-DEFAULT channel (1) through the real command -- not through
+    # Xcp_RestoreDaqListMode, which would let a broken accessor agree with a broken setter.
+    exchange(handle, (0xD6,))                                          # FREE_DAQ
+    exchange(handle, (0xD5, 0x00, 0x01, 0x00))                         # ALLOC_DAQ(1)
+    exchange(handle, (0xD4, 0x00, 0x00, 0x00, 0x01))                   # ALLOC_ODT(list 0, 1)
+    exchange(handle, (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01))             # ALLOC_ODT_ENTRY(list 0, odt 0, 1)
+    exchange(handle, (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00))             # SET_DAQ_PTR(list 0, odt 0, entry 0)
+    assert exchange(handle, (0xE1, 0xFF, 0x01, 0x00) +
+                    tuple(u32_to_array(0x1000, 'LITTLE_ENDIAN')))[0] == 0xFF  # WRITE_DAQ(1 byte)
+    # SET_DAQ_LIST_MODE(list 0, event channel 1, prescaler 1, priority 0).
+    assert exchange(handle, (0xE0, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00))[0] == 0xFF
+
+    p_mode = handle.ffi.new('uint8 *')
+    p_event_channel_number = handle.ffi.new('uint16 *')
+    p_prescaler = handle.ffi.new('uint8 *')
+    p_priority = handle.ffi.new('uint8 *')
+    assert handle.lib.Xcp_GetDaqListMode(0, p_mode, p_event_channel_number, p_prescaler,
+                                         p_priority) == handle.define('E_OK')
+    captured = (p_mode[0], p_event_channel_number[0], p_prescaler[0], p_priority[0])
+
+    # Tear the configuration down. DISCONNECT frees this session's own (non-RESUME) dynamic list
+    # (DD106, Xcp_DaqFreeSessionAllocated), so nothing survives below for the restore to coast on.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.lib.Xcp_GetDaqListOdtCount(0) == 0, 'the session list is gone, not merely stopped'
+
+    # Restore using ONLY the captured values -- nothing below spells out "channel 1" anywhere.
+    assert handle.lib.Xcp_RestoreDaqListCount(1) == handle.define('E_OK')
+    assert handle.lib.Xcp_RestoreOdtCount(0, 1) == handle.define('E_OK')
+    assert handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1) == handle.define('E_OK')
+    assert handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle)) == handle.define('E_OK')
+    assert handle.lib.Xcp_RestoreDaqListMode(0, *captured) == handle.define('E_OK')
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    # Drains the EV_RESUME_MODE the commit just queued, exactly as resumed_handle() above does and
+    # for the same reason: left queued, the next confirmation chains a transmission for it that
+    # neither trigger below confirms, and it would otherwise sit in can_if_transmit's history and
+    # confuse the two reset_mock()/called checks that follow.
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_TriggerEventChannel(1)
+    handle.lib.Xcp_MainFunction()
+    assert handle.can_if_transmit.called, \
+        'restored from the actual capture: channel 1, what SET_DAQ_LIST_MODE really bound, fires'
+
+    handle.can_if_transmit.reset_mock()
+    handle.lib.Xcp_TriggerEventChannel(0)
+    handle.lib.Xcp_MainFunction()
+    assert not handle.can_if_transmit.called, \
+        'channel 0 is what a constant-returning accessor would have produced instead, and must stay silent'

@@ -548,14 +548,46 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
                                Xcp_OdtEntryType *pEntry);
 
 /**
+ * @brief reports one DAQ list's mode, event channel, prescaler and priority.
+ * @details Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): the
+ * read-side mirror of @ref Xcp_RestoreDaqListMode's four value parameters, closing the one gap
+ * DD103's mirror claim used to carry (see that setter's own note). An integrator implementing
+ * @ref Xcp_StoreDaqConfiguration queries this per list, alongside @ref
+ * Xcp_GetDaqListSelectedState, @ref Xcp_GetDaqListOdtCount, @ref Xcp_GetOdtEntryCount and @ref
+ * Xcp_GetOdtEntry, to learn what @ref Xcp_RestoreDaqListMode must be called with to rebuild this
+ * list at start-up. The event channel is the field that matters most:
+ * Xcp_DaqListRtType::eventChannelNumber (interface/Xcp_Types.h) is assigned by SET_DAQ_LIST_MODE
+ * alone and has no generated counterpart in any configuration, static or dynamic, so without this
+ * accessor a restored list has nothing to tell it what to bind to.
+ * @note pMode reports the full stored byte, in the GET_DAQ_LIST_MODE response layout
+ * (1.1/1.6.4.1.2.6) -- the same layout Xcp_DaqListRtType::mode stores and
+ * @ref Xcp_RestoreDaqListMode accepts. That includes RUNNING and RESUME:
+ * @ref Xcp_RestoreDaqListMode masks those two bits off its own `mode` parameter on the way back
+ * in regardless of what is passed, so a value read here and passed there unmodified is still
+ * accepted -- a faithful round trip works, even though the two bits it reports are never ones the
+ * setter stores back verbatim.
+ * @param [in] daqListNumber DAQ list number
+ * @param [out] pMode where the mode byte is copied, read only when this function returns E_OK
+ * @param [out] pEventChannelNumber where the event channel is copied, read only when this
+ * function returns E_OK
+ * @param [out] pPrescaler where the prescaler is copied, read only when this function returns
+ * E_OK
+ * @param [out] pPriority where the priority is copied, read only when this function returns E_OK
+ * @retval E_OK: pMode, pEventChannelNumber, pPrescaler and pPriority were populated
+ * @retval E_NOT_OK: daqListNumber is out of range; every out parameter is left untouched
+ */
+Std_ReturnType Xcp_GetDaqListMode(uint16 daqListNumber, uint8 *pMode, uint16 *pEventChannelNumber,
+                                  uint8 *pPrescaler, uint8 *pPriority);
+
+/**
  * @brief reports whether the store last requested through SET_REQUEST also armed RESUME mode.
  * @details Design doc DD104 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): a
- * fifth accessor beside the four above, not a parameter added to @ref Xcp_StoreDaqConfiguration
+ * sixth accessor beside the five above, not a parameter added to @ref Xcp_StoreDaqConfiguration
  * -- an integrator who never arms resume is unaffected either way, the same reasoning that kept
  * SP4c's absolute-only integrators off functional access mode's own signature. XCP part 2 -
  * Protocol Layer Specification 1.1/1.6.1.2.3: STORE_DAQ_REQ_RESUME (SET_REQUEST mode bit 2)
  * "implicitly sets the slave into RESUME mode", STORE_DAQ_REQ_NO_RESUME (bit 1) "does not" --
- * queried during @ref Xcp_StoreDaqConfiguration exactly as the four accessors above are, so an
+ * queried during @ref Xcp_StoreDaqConfiguration exactly as the five accessors above are, so an
  * integrator that decides to persist learns here whether to also arm a start-up resume the next
  * time this build runs its own Xcp_Restore* setters and @ref Xcp_ResumeComplete.
  * @note Not inferred from a non-zero stored id: 1.1 has STORE_DAQ_REQ_NO_RESUME store an id
@@ -687,15 +719,14 @@ Std_ReturnType Xcp_RestoreOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 
  * Xcp_DaqListRtType::mode itself stores (interface/Xcp_Types.h), NOT SET_DAQ_LIST_MODE's request
  * layout. RUNNING and RESUME bits of mode are ignored: @ref Xcp_ResumeComplete is the only thing
  * that may set either, so an integrator cannot half-start a list by calling this alone.
- * @note DD103's mirror claim does not hold for the four parameters below: unlike the ODT entry
- * fields, none of DD94's read accessors reports a list's mode bits, event channel, prescaler or
- * priority back to the integrator (@ref Xcp_GetDaqListSelectedState reports only the transient
- * SELECTED bit). An integrator restoring these values supplies them from its own configuration
- * knowledge -- typically the same static assignment its master-side tooling was built from -- not
- * from anything this module ever handed back. Under DAQ_DYNAMIC, where the master picks the event
- * channel at runtime, that is a real limitation: the integrator cannot capture the one field that
- * decides whether a resumed list transmits at all. No accessor exists for these four fields; adding
- * one is a follow-up phase, not this one.
+ * @note DD103's mirror claim now holds for the four parameters below too, not only for the ODT
+ * entry fields: @ref Xcp_GetDaqListMode reports a list's mode bits, event channel, prescaler and
+ * priority back to the integrator (unlike @ref Xcp_GetDaqListSelectedState, which reports only
+ * the transient SELECTED bit). An integrator restoring these values now queries that accessor
+ * rather than supplying them from its own configuration knowledge, which closes what used to be a
+ * real limitation under DAQ_DYNAMIC: the master picks the event channel at runtime there, and
+ * before @ref Xcp_GetDaqListMode existed nothing let the integrator capture the one field that
+ * decides whether a resumed list transmits at all.
  * @param [in] daqListNumber DAQ list number
  * @param [in] mode SELECTED/DIRECTION/TIMESTAMP/PID_OFF bits, GET_DAQ_LIST_MODE response layout
  * @param [in] eventChannelNumber event channel to bind this list to

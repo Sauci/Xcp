@@ -706,7 +706,37 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
 
 /**
  * @brief see interface/Xcp.h.
- * @note Design doc DD104: unlike the four accessors above, this does not read Xcp_DaqListRt or
+ * @note Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md), Task 5:
+ * the read-side mirror of Xcp_RestoreDaqListMode below, closing the gap that setter's own doc
+ * comment (interface/Xcp.h) used to carry -- an integrator implementing Xcp_StoreDaqConfiguration
+ * could query a list's selection, ODT count, entry counts and entries, but had no way to learn its
+ * mode, event channel, prescaler or priority, so a restored list could be structurally perfect and
+ * never fire. Reported in the GET_DAQ_LIST_MODE response layout (1.1/1.6.4.1.2.6), the same layout
+ * Xcp_DaqListRtType::mode already stores and Xcp_RestoreDaqListMode already accepts -- RUNNING and
+ * RESUME included, even though Xcp_RestoreDaqListMode masks both off its own `mode` parameter on
+ * the way back in, so a value read here and handed there unmodified is still accepted.
+ */
+Std_ReturnType Xcp_GetDaqListMode(uint16 daqListNumber, uint8 *pMode, uint16 *pEventChannelNumber,
+                                  uint8 *pPrescaler, uint8 *pPriority)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if (Xcp_DaqListIsValid(daqListNumber) == TRUE)
+    {
+        *pMode = Xcp_DaqListRt(daqListNumber)->mode;
+        *pEventChannelNumber = Xcp_DaqListRt(daqListNumber)->eventChannelNumber;
+        *pPrescaler = Xcp_DaqListRt(daqListNumber)->prescaler;
+        *pPriority = Xcp_DaqListRt(daqListNumber)->priority;
+
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Design doc DD104: unlike the five accessors above, this does not read Xcp_DaqListRt or
  * Xcp_Ptr->config->daqList -- it reads Xcp_Internal.resume_armed directly, written a mode bit at
  * a time by Xcp_DTOCmdStdSetRequest (source/Xcp_Std.c), so no bounds check applies and none is
  * needed.
