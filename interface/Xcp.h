@@ -679,8 +679,10 @@ Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 e
  * @param [in] sessionConfigurationId the session configuration id stored alongside the
  * configuration being restored
  * @retval E_OK every restored list had at least one written ODT entry; sessionConfigurationId is
- * adopted and every restored list is marked RESUME and RUNNING (XCP part 2 - Protocol Layer
- * Specification 1.1/1.6.4.1.1.4)
+ * adopted, every restored list is marked RESUME and RUNNING (XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.4.1.1.4), the slave reports session status bits 7 RESUME and 6 DAQ_RUNNING
+ * (1.1/1.6.1.1.3) and admits commands with no CONNECT received, and EV_RESUME_MODE (1.1/1.8.1) is
+ * queued
  * @retval E_NOT_OK at least one restored list has no written ODT entry -- the same configuration
  * START_STOP_DAQ_LIST would answer ERR_DAQ_CONFIG for -- so resuming must not create by the back
  * door a state the front door would refuse to start; nothing is changed

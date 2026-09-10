@@ -997,10 +997,11 @@ Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 e
 
 /**
  * @brief see interface/Xcp.h.
- * @note Task 3 (docs/superpowers/plans/2026-09-10-xcp-daq-resume.md) adds
- * XCP_CONNECTION_STATE_RESUME, the session status RESUME bit and EV_RESUME_MODE to this function;
- * this task stops at the list state -- session_configuration_id, resume_state, and each restored
- * list's own mode.
+ * @note Task 1 (docs/superpowers/plans/2026-09-10-xcp-daq-resume.md) stopped at the list state --
+ * session_configuration_id, resume_state, and each restored list's own mode. Task 3 adds the rest
+ * of DD105's postcondition: XCP_CONNECTION_STATE_RESUME, the session status RESUME bit,
+ * DAQ_RUNNING (recomputed from the lists just marked, not written directly here -- see
+ * Xcp_DaqSessionStatusUpdate below), and EV_RESUME_MODE.
  */
 Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
 {
@@ -1022,12 +1023,55 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
 
     if (result == E_OK)
     {
+        Std_ReturnType push_result;
+
         Xcp_Internal.session_configuration_id = sessionConfigurationId;
         Xcp_Internal.resume_state = XCP_RESUME_ACTIVE;
 
         for (idx = 0x0000u; idx < Xcp_Internal.allocated_daq_count; idx++)
         {
             Xcp_DaqListRt(idx)->mode |= (XCP_DAQ_LIST_MODE_RESUME | XCP_DAQ_LIST_MODE_RUNNING);
+        }
+
+        /* The loop above may have just started every restored list running, so DAQ_RUNNING
+         * (1.1/1.6.1.1.3) needs recomputing across every list -- the same call, for the same
+         * reason, Xcp_DTOCmdDaqStartStopDaqList and Xcp_DTOCmdDaqClearDaqList already make after
+         * their own loops, below. */
+        Xcp_DaqSessionStatusUpdate();
+
+        /* Design doc DD105 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): this is
+         * what lets a resumed slave admit commands with no CONNECT ever received -- both
+         * connection gates (source/Xcp.c) test != XCP_CONNECTION_STATE_DISCONNECTED rather than
+         * == XCP_CONNECTION_STATE_CONNECTED, so entering this third state does not lock the
+         * module out of receiving them. */
+        Xcp_Internal.connection_status = XCP_CONNECTION_STATE_RESUME;
+
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.3, session status bit 7: "1 =
+         * Slave is in RESUME mode". OR'd in, not assigned, for the same reason
+         * Xcp_CTOCmdStdConnect's own request-bit clear (source/Xcp_Std.c) is a mask rather than a
+         * zeroing assignment: session_status already carries whatever Xcp_DaqSessionStatusUpdate
+         * above just left DAQ_RUNNING at, and a plain assignment here would erase it.
+         * Xcp_DTOCmdDaqFreeDaq (below) is this bit's other writer, clearing it once an explicit
+         * FREE_DAQ takes the resumed pool this bit describes. */
+        Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_RESUME;
+
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.8.1: "With EV_RESUME_MODE the slave
+         * indicates that it is starting in RESUME mode." Only the push itself goes inside the
+         * exclusive area -- the same shape as Xcp_MainFunction's EV_STORE_DAQ push (source/
+         * Xcp.c): this function is one more producer into the shared event queue, reachable from
+         * whatever context the integrator calls it from, while Xcp_TransmitOneFrame reads
+         * read/write under this same area to pick what to send next. NULL_PTR/0x00u rather than a
+         * status byte: unlike EV_STORE_CAL/EV_STORE_DAQ/EV_CLEAR_DAQ, which report an asynchronous
+         * integrator callback's own outcome, there is nothing to report here beyond the event
+         * itself -- the same reasoning EV_CMD_PENDING (source/Xcp_Pgm.c) and EV_DAQ_OVERLOAD
+         * (source/Xcp_DaqRuntime.c) already give their own NULL_PTR/0 pushes. */
+        SchM_Enter_Xcp_DtoQueue();
+        push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_RESUME_MODE, NULL_PTR, 0x00000000u);
+        SchM_Exit_Xcp_DtoQueue();
+
+        if (push_result == E_OK)
+        {
+            Xcp_Internal.event.successful_transmission_pending = TRUE;
         }
     }
 
@@ -1587,10 +1631,17 @@ uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInf
      *
      * The resumed pool being gone means resume_state must follow it back to XCP_RESUME_IDLE: left
      * at XCP_RESUME_ACTIVE, DD107's own gate would go on refusing every Xcp_Restore* setter for a
-     * configuration this call just freed. A later task reports resume_state through the session
-     * status and must clear that bit here too (not this task's concern); this one stops at the
-     * state the setters themselves read. */
+     * configuration this call just freed. */
     Xcp_Internal.resume_state = XCP_RESUME_IDLE;
+
+    /* The session status RESUME bit (XCP_SESSION_STATUS_MASK_RESUME, source/Xcp_Internal.h) is
+     * the same fact as resume_state above, reported on the wire, and must follow it back for the
+     * identical reason: left set, GET_STATUS would go on reporting bit 7 -- "Slave is in RESUME
+     * mode" -- for a resumed pool this call just freed. This clearing is written as a second
+     * statement rather than folded into the one above only because XCP_SESSION_STATUS_MASK_RESUME
+     * did not exist yet when that line was written; the comment above once called this out as a
+     * later task's concern, which by the time this bit existed to clear, was this one. */
+    Xcp_Internal.session_status &= (uint8)(~XCP_SESSION_STATUS_MASK_RESUME);
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 

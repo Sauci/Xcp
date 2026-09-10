@@ -1736,10 +1736,17 @@ uint8 Xcp_CTOCmdStdConnect(boolean *responseExpected, const PduInfoType *pPduInf
      * DISCONNECT.
      *
      * Masked rather than assigned, because session_status is not only request bits: DAQ_RUNNING
-     * (bit 6) is maintained by Xcp_DaqStartStop (Xcp_Daq.c) from whether DAQ lists are actually
-     * running. Zeroing the byte here would make GET_STATUS report a stopped DAQ while it runs --
-     * this module does not stop DAQ on CONNECT, that being the parked DD25/SP2d question, so the
-     * bit must keep tracking the truth rather than be reset to a state nothing enforces. */
+     * (bit 6) is maintained by Xcp_DaqSessionStatusUpdate (Xcp_Daq.c) from whether DAQ lists are
+     * actually running. Zeroing the byte here would make GET_STATUS report a stopped DAQ while it
+     * runs -- this module does not stop DAQ on CONNECT, that being the parked DD25/SP2d question,
+     * so the bit must keep tracking the truth rather than be reset to a state nothing enforces.
+     *
+     * RESUME (bit 7, XCP_SESSION_STATUS_MASK_RESUME) is left out of the mask for the identical
+     * reason: it is set only by Xcp_ResumeComplete (Xcp_Daq.c, DD105) and describes the same kind
+     * of truth DAQ_RUNNING does -- a master reconnecting to a resumed slave is still talking to a
+     * resumed slave, and CONNECT no more undoes that than it stops the DAQ lists RESUME describes.
+     * test/daq_resume_test.py::test_get_status_after_a_second_connect_still_reports_resume pins
+     * it. */
     Xcp_Internal.session_status &= (uint8)(~(XCP_SESSION_STATUS_MASK_STORE_CAL_REQ |
                                              XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ |
                                              XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ));

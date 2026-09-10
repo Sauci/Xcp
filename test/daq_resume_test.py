@@ -28,6 +28,33 @@ def entry(handle, address=0x1000, length=1, extension=0, bit_offset=0xFF):
     return p
 
 
+def resumed_handle():
+    """One list restored, committed, and running -- the state every test below starts from."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    # Xcp_ResumeComplete queues EV_RESUME_MODE (source/Xcp_Daq.c) but drives no transmission of
+    # its own -- ongoing_transmit_type is still NONE here, exactly as it is after Xcp_MainFunction's
+    # own EV_STORE_DAQ push, whose shape it copies. Left queued, a later connect()'s single
+    # confirmation would chain Xcp_StartNextTransmission onto it (the D16 pattern test/
+    # set_request_test.py's own EV_STORE_CAL case documents and explicitly drains), transmitting it
+    # unconfirmed and leaving every CTO response after it stuck behind it -- not lost, since
+    # Xcp_CanIfRxIndication still fills cto_response.pdu_info, but never handed to CanIf_Transmit,
+    # so a test reading can_if_transmit.call_args would see this stale event's own buffer, or
+    # coincidentally alias into whatever later overwrote it. Draining it once, here, is what "the
+    # state every test below starts from" (this function's own docstring) has to mean: no test
+    # below is about this event, or expects it still in flight when a CONNECT arrives.
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    return handle
+
+
 def test_the_setters_rebuild_a_list_the_accessors_then_report():
     """Round trip through the two halves of DD94/DD103: what Xcp_Restore* writes is what the SP5-NV
     accessors read back. Asserted through the accessors rather than internal state, which the CFFI
@@ -257,6 +284,15 @@ def test_free_daq_clears_resume_state_so_a_setter_is_accepted_again():
     handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
     assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
 
+    # Drains the EV_RESUME_MODE that commit just queued, exactly as resumed_handle() above does
+    # and for the same reason: left queued, connect()'s own confirmation chains a transmission for
+    # it that nothing here would confirm, and FREE_DAQ's response ends up the one stuck unconfirmed
+    # behind it -- which busy-gates DISCONNECT below (DD29: 0xD6 carries CMD_BUSY) before its
+    # handler ever runs, so connection_status never reaches DISCONNECTED and the setter at the
+    # bottom fails on that guard instead of the one this test is about.
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
     connect(handle)
 
     # FREE_DAQ
@@ -271,3 +307,90 @@ def test_free_daq_clears_resume_state_so_a_setter_is_accepted_again():
 
     assert handle.lib.Xcp_RestoreDaqListCount(1) == handle.define('E_OK'), \
         'resume_state must not still be XCP_RESUME_ACTIVE here'
+
+
+def test_a_resumed_slave_transmits_with_no_connect_ever_sent():
+    """The acceptance bar. 1.1/1.6.4.1.1.4: "the slave being in RESUME mode started the DAQ list
+    automatically". Autonomous transmission IS the feature; no other test in this repository
+    transmits without a session, so this one cannot pass by inheriting a fixture's habits."""
+    handle = resumed_handle()
+    handle.can_if_transmit.reset_mock()
+
+    handle.lib.Xcp_TriggerEventChannel(0)
+    handle.lib.Xcp_MainFunction()
+
+    assert handle.can_if_transmit.called, 'a resumed list transmits with no master session'
+
+
+def test_resume_complete_raises_ev_resume_mode():
+    """1.1/1.8.1: "With EV_RESUME_MODE the slave indicates that it is starting in RESUME mode."
+    Code 0x00 (Xcp_Internal.h, not reachable via handle.define -- the literal is used with this
+    comment, as test/set_request_test.py does for its own event codes)."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    handle.can_if_transmit.reset_mock()
+
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+    handle.lib.Xcp_MainFunction()
+
+    frames = [c for c in handle.can_if_transmit.call_args_list
+              if tuple(c[0][1].SduDataPtr[0:2]) == (0xFD, 0x00)]  # XCP_PID_EVENT, EV_RESUME_MODE
+    assert len(frames) == 1, 'exactly one EV_RESUME_MODE'
+
+
+def test_get_status_reports_resume_and_the_restored_id():
+    """1.1/1.6.1.1.3: session status bit 7 RESUME, "1 = Slave is in RESUME mode", and bit 6
+    DAQ_RUNNING, which follows from the restored list actually running. The id comes from
+    Xcp_ResumeComplete, so 0x1234 rather than the 0x0000 Xcp_Init leaves -- a value that cannot
+    coincide with the default."""
+    handle = resumed_handle()
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+    handle.lib.Xcp_MainFunction()
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:6])
+
+    assert response[0] == 0xFF
+    assert response[1] & 0b10000000 != 0x00, 'session status RESUME, bit 7'
+    assert response[1] & 0b01000000 != 0x00, 'session status DAQ_RUNNING, bit 6'
+    assert response[4:6] == (0x34, 0x12), 'the restored session configuration id'
+
+
+def test_get_status_after_a_second_connect_still_reports_resume():
+    """DD77's own reasoning, extended to bit 7: Xcp_CTOCmdStdConnect (source/Xcp_Std.c) clears
+    STORE_CAL_REQ/STORE_DAQ_REQ/CLEAR_DAQ_REQ with an explicit mask rather than zeroing
+    session_status, precisely so DAQ_RUNNING survives a reconnect. XCP_SESSION_STATUS_MASK_RESUME
+    stays out of that mask for the identical reason -- a master reconnecting to a resumed slave is
+    still talking to a resumed slave -- and this is the test that would fail if a future edit
+    folded RESUME into the mask alongside the three request bits."""
+    handle = resumed_handle()
+    connect(handle)
+
+    connect(handle)  # a second CONNECT; nothing about DD77's mask is specific to the first one.
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD,)))
+    handle.lib.Xcp_MainFunction()
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2])
+
+    assert response[0] == 0xFF
+    assert response[1] & 0b10000000 != 0x00, 'session status RESUME must survive a second CONNECT'
+
+
+def test_get_daq_list_mode_reports_resume_and_running_for_a_restored_list():
+    """1.1/1.6.4.1.1.4: mode bit 7 RESUME, "this DAQ list is part of a configuration used in RESUME
+    mode", and bit 6 RUNNING. Both in the GET_DAQ_LIST_MODE response layout, which is the layout
+    Xcp_DaqListRtType::mode already stores."""
+    handle = resumed_handle()
+    connect(handle)
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xDF, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2])
+
+    assert response[0] == 0xFF, 'an error response would satisfy the bit tests below'
+    assert response[1] & 0b10000000 != 0x00, 'RESUME, bit 7'
+    assert response[1] & 0b01000000 != 0x00, 'RUNNING, bit 6'

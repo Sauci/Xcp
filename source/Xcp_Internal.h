@@ -46,6 +46,9 @@ extern "C" {
 #define XCP_PID_ERROR (0xFEu)
 #define XCP_PID_EVENT (0xFDu)
 
+/* XCP part 2 - Protocol Layer Specification 1.1/1.8.1: "With EV_RESUME_MODE the slave indicates
+ * that it is starting in RESUME mode." */
+#define XCP_EVENT_RESUME_MODE (0x00u)
 #define XCP_EVENT_CLEAR_DAQ (0x01u)
 #define XCP_EVENT_STORE_DAQ (0x02u)
 #define XCP_EVENT_STORE_CAL (0x03u)
@@ -146,6 +149,10 @@ extern "C" {
 #define XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ (0x01u << 0x02u)
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)
 #define XCP_SESSION_STATUS_MASK_DAQ_RUNNING (0x01u << 0x06u)
+/* 1.1/1.6.1.1.3, bit 7: "1 = Slave is in RESUME mode". Written only by Xcp_ResumeComplete (set)
+ * and Xcp_DTOCmdDaqFreeDaq (cleared, once an explicit FREE_DAQ takes the resumed pool this bit
+ * describes) -- both source/Xcp_Daq.c. */
+#define XCP_SESSION_STATUS_MASK_RESUME (0x01u << 0x07u)
 
 /**
  * @brief how many absolute ODT numbers exist, across every DAQ list together.
