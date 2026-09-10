@@ -167,7 +167,7 @@ def test_a_refused_store_daq_request_leaves_the_rest_of_the_command_set_usable()
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, daqs=(daq(name='DAQ1'),)))
     connect(handle)
 
-    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00), tx_pdu_ref=0x0002)
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00), tx_pdu_ref=0x0002)
 
     # GET_DAQ_LIST_MODE (0xDF) carries ERR_PGM_ACTIVE in Xcp_CTOErrorMatrix.
     assert exchange(handle, (0xDF, 0x00, 0x00, 0x00), tx_pdu_ref=0x0002)[0] == 0xFF

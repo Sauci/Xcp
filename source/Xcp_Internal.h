@@ -123,6 +123,25 @@ extern "C" {
 #define XCP_RESOURCE_PROTECTION_STATUS_MASK_STIM (0x01u << 0x03u)
 #define XCP_RESOURCE_PROTECTION_STATUS_MASK_PGM (0x01u << 0x04u)
 
+/* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.3, SET_REQUEST's mode byte.
+ *
+ *   bit   1.0                1.1
+ *   0     STORE_CAL_REQ      STORE_CAL_REQ
+ *   1     x                  STORE_DAQ_REQ_NO_RESUME
+ *   2     STORE_DAQ_REQ      STORE_DAQ_REQ_RESUME
+ *   3     CLEAR_DAQ_REQ      CLEAR_DAQ_REQ
+ *
+ * These are DELIBERATELY separate from the XCP_SESSION_STATUS_MASK_* values below, which describe
+ * GET_STATUS's session status byte (1.1/1.6.1.1.3) -- a different table that keeps ONE store bit,
+ * at position 2. In 1.0 the two coincided, and Xcp_DTOCmdStdSetRequest exploited that by OR-ing the
+ * received mode byte straight into session_status. Under 1.1 they do not: a store requested at mode
+ * bit 1 is reported at session status bit 2, so the handler translates rather than copies.
+ */
+#define XCP_SET_REQUEST_MODE_STORE_CAL_REQ (0x01u << 0x00u)
+#define XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_NO_RESUME (0x01u << 0x01u)
+#define XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_RESUME (0x01u << 0x02u)
+#define XCP_SET_REQUEST_MODE_CLEAR_DAQ_REQ (0x01u << 0x03u)
+
 #define XCP_SESSION_STATUS_MASK_STORE_CAL_REQ (0x01u)
 #define XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ (0x01u << 0x02u)
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)

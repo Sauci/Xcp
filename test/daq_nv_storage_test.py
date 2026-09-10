@@ -50,7 +50,7 @@ def test_set_request_accepts_store_daq_req_and_polls_the_store_callback():
     # and_raises_the_matching_event_carrying_the_status_byte below owns.
     handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')
 
-    assert exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))[0] == 0xFF
+    assert exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))[0] == 0xFF
 
     assert handle.xcp_store_daq_configuration.called
 
@@ -65,14 +65,21 @@ def test_set_request_accepts_clear_daq_req_and_polls_the_clear_callback():
     assert handle.xcp_clear_daq_configuration.called
 
 
-@pytest.mark.parametrize('mode, mock_attr, api_enable_kwarg', (
-        (0b00000100, 'xcp_store_daq_configuration', 'xcp_store_daq_configuration_api_enable'),
-        (0b00001000, 'xcp_clear_daq_configuration', 'xcp_clear_daq_configuration_api_enable'),
+@pytest.mark.parametrize('mode, status_bit, mock_attr, api_enable_kwarg', (
+        (0b00000010, 0b00000100, 'xcp_store_daq_configuration', 'xcp_store_daq_configuration_api_enable'),
+        (0b00001000, 0b00001000, 'xcp_clear_daq_configuration', 'xcp_clear_daq_configuration_api_enable'),
 ))
-def test_the_request_bit_stays_set_while_the_callback_has_not_finished(mode, mock_attr, api_enable_kwarg):
+def test_the_request_bit_stays_set_while_the_callback_has_not_finished(mode, status_bit, mock_attr,
+                                                                       api_enable_kwarg):
     """A callback returning E_NOT_OK is polled again on the next Xcp_MainFunction and the request
     bit stays set. Xcp_Internal is not reachable from the CFFI harness (global constraint 4), so
-    this is observed through GET_STATUS byte 1 rather than the field itself."""
+    this is observed through GET_STATUS byte 1 rather than the field itself.
+
+    `mode` and `status_bit` are separate columns because 1.1 gives them separate tables: the store
+    is requested at SET_REQUEST mode bit 1 and reported at session status bit 2, while the clear
+    happens to use bit 3 in both. This test asserted `session_status & mode == mode` until the 1.1
+    split made the store row fail as (4 & 2) == 2 -- the conflation showing up in the test that
+    relied on it."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, **{api_enable_kwarg: True}))
     connect(handle)
 
@@ -84,11 +91,11 @@ def test_the_request_bit_stays_set_while_the_callback_has_not_finished(mode, moc
 
     assert mock.call_count == 2
 
-    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[1] & mode == mode
+    assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[1] & status_bit == status_bit
 
 
 @pytest.mark.parametrize('mode, mock_attr, event_pid', (
-        (0b00000100, 'xcp_store_daq_configuration', 0x02),  # EV_STORE_DAQ
+        (0b00000010, 'xcp_store_daq_configuration', 0x02),  # EV_STORE_DAQ
         (0b00001000, 'xcp_clear_daq_configuration', 0x01),  # EV_CLEAR_DAQ
 ))
 def test_completion_clears_the_bit_and_raises_the_matching_event_carrying_the_status_byte(mode, mock_attr, event_pid):
@@ -142,7 +149,7 @@ def test_a_completed_but_failed_store_daq_req_clears_the_bit_so_disconnect_is_no
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
-    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))
     # Drains the queued EV_STORE_DAQ (see the comment in the completion test above) so DISCONNECT
     # below is not racing a still-unconfirmed frame.
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
@@ -189,7 +196,7 @@ def test_a_completed_but_failed_store_cal_req_clears_the_bit_so_disconnect_is_no
     assert exchange(handle, (0xFE,))[0] == 0xFF
 
 
-@pytest.mark.parametrize('mode, name', ((0b00000100, 'STORE_DAQ_REQ'),
+@pytest.mark.parametrize('mode, name', ((0b00000010, 'STORE_DAQ_REQ_NO_RESUME'),
                                         (0b00001000, 'CLEAR_DAQ_REQ')))
 def test_set_request_refuses_the_daq_modes_when_their_api_flags_are_disabled(mode, name):
     """Widening SET_REQUEST's accepted mask (source/Xcp_Std.c) is conditional on the matching
@@ -207,7 +214,7 @@ def test_set_request_refuses_the_daq_modes_when_their_api_flags_are_disabled(mod
 
 
 @pytest.mark.parametrize('mode, mock_attr, api_enable_kwarg', (
-        (0b00000100, 'xcp_store_daq_configuration', 'xcp_store_daq_configuration_api_enable'),
+        (0b00000010, 'xcp_store_daq_configuration', 'xcp_store_daq_configuration_api_enable'),
         (0b00001000, 'xcp_clear_daq_configuration', 'xcp_clear_daq_configuration_api_enable'),
 ))
 def test_an_unconfirmed_event_still_occupies_its_slot_so_a_new_push_can_fail(mode, mock_attr, api_enable_kwarg):
@@ -260,7 +267,7 @@ def test_set_request_passes_the_session_configuration_id_to_the_store_callback(b
     connect(handle)
     handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')
 
-    exchange(handle, (0xF9, 0b00000100) + tuple(u16_to_array(0x1234, byte_order)))
+    exchange(handle, (0xF9, 0b00000010) + tuple(u16_to_array(0x1234, byte_order)))
 
     assert handle.xcp_store_daq_configuration.call_args[0][0] == 0x1234
 
@@ -285,7 +292,7 @@ def test_get_status_reports_the_session_configuration_id_after_a_successful_stor
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
-    exchange(handle, (0xF9, 0b00000100) + tuple(u16_to_array(0x1234, byte_order)))
+    exchange(handle, (0xF9, 0b00000010) + tuple(u16_to_array(0x1234, byte_order)))
     # Drains the queued EV_STORE_DAQ (see test_completion_clears_the_bit_and_raises_the_matching_
     # event_carrying_the_status_byte above) so GET_STATUS below is not racing a still-unconfirmed
     # frame.
@@ -308,7 +315,7 @@ def test_a_failed_store_leaves_the_previously_reported_id_unchanged():
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration_ok
 
-    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, completes successfully
+    exchange(handle, (0xF9, 0b00000010, 0x34, 0x12))  # id = 0x1234, completes successfully
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
 
     def store_daq_configuration_failed(session_configuration_id, p_status_code):
@@ -317,7 +324,7 @@ def test_a_failed_store_leaves_the_previously_reported_id_unchanged():
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration_failed
 
-    exchange(handle, (0xF9, 0b00000100, 0x78, 0x56))  # id = 0x5678, but this store fails
+    exchange(handle, (0xF9, 0b00000010, 0x78, 0x56))  # id = 0x5678, but this store fails
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
 
     assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x34, 0x12)
@@ -338,7 +345,7 @@ def test_a_successful_clear_resets_the_reported_id_to_zero():
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
-    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, completes successfully
+    exchange(handle, (0xF9, 0b00000010, 0x34, 0x12))  # id = 0x1234, completes successfully
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
 
     def clear_daq_configuration(p_status_code):
@@ -369,7 +376,7 @@ def test_connect_does_not_reset_the_session_configuration_id():
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
-    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234, completes successfully
+    exchange(handle, (0xF9, 0b00000010, 0x34, 0x12))  # id = 0x1234, completes successfully
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
 
     connect(handle)  # reconnect: must clear the request bits, must not touch the id
@@ -621,7 +628,7 @@ def test_a_completed_store_retires_a_still_outstanding_start_up_read():
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
     # poll #2 (exchange's own Xcp_MainFunction call): STORE_DAQ_REQ completes and adopts 0x1234.
-    exchange(handle, (0xF9, 0b00000100, 0x34, 0x12))  # id = 0x1234
+    exchange(handle, (0xF9, 0b00000010, 0x34, 0x12))  # id = 0x1234
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drains EV_STORE_DAQ
 
     def read_stored_session_configuration_id(p_session_configuration_id, p_status_code):
@@ -744,7 +751,7 @@ def test_a_successful_store_daq_req_resets_the_selected_flag():
 
     assert selected_bit_on_the_wire(handle, 0) == 0x01, 'selected before the store'
 
-    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))              # SET_REQUEST(STORE_DAQ_REQ)
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))              # SET_REQUEST(STORE_DAQ_REQ_NO_RESUME)
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drain EV_STORE_DAQ
 
     assert selected_bit_on_the_wire(handle, 0) == 0x00, 'reset once the store completed'
@@ -768,7 +775,7 @@ def test_the_store_callback_still_sees_the_selection_it_is_being_asked_to_persis
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
-    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))
 
     assert seen == [1], 'the callback must see list 0 still selected while it stores it'
 
@@ -790,7 +797,7 @@ def test_a_failed_store_daq_req_leaves_the_selection_standing():
 
     handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
 
-    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert selected_bit_on_the_wire(handle, 0) == 0x01, 'a failed store consumed nothing'
@@ -840,3 +847,83 @@ def test_a_failed_clear_daq_req_leaves_the_selection_standing():
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert selected_bit_on_the_wire(handle, 0) == 0x01, 'a failed clear consumed nothing'
+
+
+# ---------------------------------------------------------------------------------------------
+# Found while exploring RESUME. Revision 1.1 -- the module's declared reference -- splits 1.0's
+# single STORE_DAQ_REQ mode bit in two, and SP5-NV was designed against the 1.0 text:
+#
+#   bit   1.0                1.1
+#   0     STORE_CAL_REQ      STORE_CAL_REQ
+#   1     x                  STORE_DAQ_REQ_NO_RESUME
+#   2     STORE_DAQ_REQ      STORE_DAQ_REQ_RESUME   ("implicitly sets the slave into RESUME mode")
+#   3     CLEAR_DAQ_REQ      CLEAR_DAQ_REQ
+#
+# 1.1/1.6.1.2.3. GET_STATUS's session status keeps ONE store bit at position 2 (1.1/1.6.1.1.3), so
+# the two tables no longer coincide and the mode byte can no longer be OR'd into session_status.
+# ---------------------------------------------------------------------------------------------
+
+def test_store_daq_req_no_resume_is_the_accepted_store_mode():
+    """1.1/1.6.1.2.3. Bit 1 is how a 1.1 master asks a slave that does not support RESUME to store:
+    "The STORE_DAQ_REQ_NO_RESUME does not set the slave into RESUME mode." Before this fix bit 1
+    was outside accepted_request_mask and answered ERR_OUT_OF_RANGE, so a conforming 1.1 master had
+    no way to store at all."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+    handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')
+
+    assert exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))[0] == 0xFF
+    assert handle.xcp_store_daq_configuration.called, 'the store callback must be polled'
+
+
+def test_the_accepted_store_mode_bit_sets_the_session_status_bit_at_its_own_position():
+    """The mode byte and the session status byte are different tables in 1.1, and this is the test
+    that would have caught the conflation. SET_REQUEST's store request is mode bit 1; the pending
+    flag GET_STATUS reports is session status bit 2 (1.1/1.6.1.1.3, still a single STORE_DAQ_REQ).
+
+    The handler used to do `session_status |= SduDataPtr[1]`, which was correct only while the two
+    tables coincided -- as they did in 1.0. Under 1.1 that would latch session status bit 1, which
+    is not a defined flag, and leave the bit GET_STATUS reads clear. Asserting the two DIFFERENT
+    positions is what makes this fail on a straight OR."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+    handle.xcp_store_daq_configuration.return_value = handle.define('E_NOT_OK')  # never finishes
+
+    exchange(handle, (0xF9, 0b00000010, 0x00, 0x00))  # mode bit 1
+
+    session_status = exchange(handle, (0xFD, 0x00, 0x00, 0x00))[1]
+    assert session_status & 0b00000100 != 0x00, 'session status STORE_DAQ_REQ, bit 2'
+    assert session_status & 0b00000010 == 0x00, 'mode bit 1 must not leak into session status bit 1'
+
+
+def test_store_daq_req_resume_is_refused_while_resume_is_unadvertised():
+    """1.1/1.6.1.2.3: "The STORE_DAQ_REQ_RESUME sets a request to save all selected DAQ lists to
+    memory, but at the same time implicitly sets the slave into RESUME mode." This module does not
+    implement RESUME and reports RESUME_SUPPORTED clear in GET_DAQ_PROCESSOR_INFO, so accepting bit
+    2 would be the accept-what-you-cannot-do defect: the master would be told the store succeeded,
+    arm nothing, and find no resumed configuration after the next power cycle.
+
+    ERR_OUT_OF_RANGE is this section's own answer -- "If the slave device does not support the
+    requested mode, an ERR_OUT_OF_RANGE will be returned" -- and falls out of the accepted mask
+    rather than needing a branch of its own.
+
+    Asserted with the store API ENABLED, so the refusal is attributable to the mode bit and not to
+    an unconfigured build refusing every store."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, xcp_store_daq_configuration_api_enable=True))
+    connect(handle)
+
+    assert exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))[0:2] == (0xFE, 0x22)
+    assert not handle.xcp_store_daq_configuration.called, 'a refused mode must not reach the callback'
+
+
+def test_resume_stays_unadvertised_so_the_refusal_above_stays_coherent():
+    """Pins the premise the refusal rests on: GET_DAQ_PROCESSOR_INFO's DAQ_PROPERTIES bit 2,
+    RESUME_SUPPORTED (1.1/1.6.4.1.2.4), is clear. If a later phase implements RESUME and sets it,
+    this test fails and points at the refusal above as the thing to revisit -- which is the whole
+    reason it is here rather than left implicit."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    connect(handle)
+
+    response = exchange(handle, (0xDA, 0x00, 0x00, 0x00))
+    assert response[0] == 0xFF, 'GET_DAQ_PROCESSOR_INFO must answer positively'
+    assert response[1] & 0b00000100 == 0x00, 'DAQ_PROPERTIES RESUME_SUPPORTED, bit 2'

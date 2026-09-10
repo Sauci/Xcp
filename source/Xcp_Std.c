@@ -1101,14 +1101,25 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
 uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     Std_ReturnType result = E_OK;
-    uint8 accepted_request_mask = XCP_SESSION_STATUS_MASK_STORE_CAL_REQ;
+    uint8 accepted_request_mask = XCP_SET_REQUEST_MODE_STORE_CAL_REQ;
 
     *responseExpected = TRUE;
 
-    /* XCP part 2 - Protocol Layer Specification 1.0/1.6.1.2.3, mode byte:
+    /* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.3, mode byte:
      *
-     *   bit    7   6   5   4   3              2              1   0
-     *          x   x   x   x   CLEAR_DAQ_REQ  STORE_DAQ_REQ  x   STORE_CAL_REQ
+     *   bit    7   6   5   4   3              2                       1                        0
+     *          x   x   x   x   CLEAR_DAQ_REQ  STORE_DAQ_REQ_RESUME    STORE_DAQ_REQ_NO_RESUME  STORE_CAL_REQ
+     *
+     * 1.0 had a single STORE_DAQ_REQ at bit 2 and left bit 1 don't-care; 1.1 splits it, and the
+     * roadmap names 1.1 as this module's reference. Bit 1 is the plain store -- "The
+     * STORE_DAQ_REQ_NO_RESUME does not set the slave into RESUME mode" -- and bit 2 "implicitly
+     * sets the slave into RESUME mode".
+     *
+     * Bit 2 is therefore NOT in the accepted mask: this module implements no RESUME mode and
+     * reports RESUME_SUPPORTED clear in GET_DAQ_PROCESSOR_INFO (1.1/1.6.4.1.2.4), so accepting it
+     * would tell a master its store had armed a resume that will never happen. It falls to this
+     * section's own "If the slave device does not support the requested mode, an ERR_OUT_OF_RANGE
+     * will be returned" through the mask test below, with no branch of its own.
      *
      * STORE_CAL_REQ is unconditional: Xcp_MainFunction fulfils it through the integrator's
      * store-calibration callback, then clears the bit and raises EV_STORE_CAL. STORE_DAQ_REQ and
@@ -1133,16 +1144,19 @@ uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPdu
      * Xcp_MainFunction (Xcp.c) -- E_OK means finished, whatever the status code says, so the request
      * bit clears on every exit and only a callback that never finishes can wedge it.
      *
-     * These bit positions coincide with the GET_STATUS session status bits of 1.0/1.6.1.1.3,
-     * which is what makes the assignment below sound; both bit tables were read to confirm it. */
+     * The two bit tables do NOT coincide under 1.1: SET_REQUEST's store request is mode bit 1,
+     * while the pending flag GET_STATUS reports is session status bit 2 (1.1/1.6.1.1.3, which keeps
+     * a single STORE_DAQ_REQ). The assignment below therefore translates mode bits into session
+     * status bits one at a time instead of OR-ing the received byte, which is what it used to do
+     * and what only worked while 1.0's tables lined up. */
     if (Xcp_Ptr->general->storeDaqConfigurationApiEnable == TRUE)
     {
-        accepted_request_mask |= XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ;
+        accepted_request_mask |= XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_NO_RESUME;
     }
 
     if (Xcp_Ptr->general->clearDaqConfigurationApiEnable == TRUE)
     {
-        accepted_request_mask |= XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ;
+        accepted_request_mask |= XCP_SET_REQUEST_MODE_CLEAR_DAQ_REQ;
     }
 
     if ((pPduInfo->SduDataPtr[0x01u] & (uint8)(~accepted_request_mask)) != 0x00u)
@@ -1169,7 +1183,20 @@ uint8 Xcp_DTOCmdStdSetRequest(boolean *responseExpected, const PduInfoType *pPdu
          * values, so nothing here validates it either. */
         Xcp_CopyToU16WithOrder(&pPduInfo->SduDataPtr[0x02u], &Xcp_Internal.requested_session_configuration_id, Xcp_Ptr->general->byteOrder);
 
-        Xcp_Internal.session_status |= pPduInfo->SduDataPtr[0x01u];
+        if ((pPduInfo->SduDataPtr[0x01u] & XCP_SET_REQUEST_MODE_STORE_CAL_REQ) != 0x00u)
+        {
+            Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_STORE_CAL_REQ;
+        }
+
+        if ((pPduInfo->SduDataPtr[0x01u] & XCP_SET_REQUEST_MODE_STORE_DAQ_REQ_NO_RESUME) != 0x00u)
+        {
+            Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ;
+        }
+
+        if ((pPduInfo->SduDataPtr[0x01u] & XCP_SET_REQUEST_MODE_CLEAR_DAQ_REQ) != 0x00u)
+        {
+            Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ;
+        }
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 

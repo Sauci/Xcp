@@ -60,7 +60,7 @@ def test_get_status_reports_a_session_configuration_id_of_zero_rather_than_a_pla
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0x04:0x06]) == (0x00, 0x00)
 
 
-@pytest.mark.parametrize('mode, name', ((0b00000100, 'STORE_DAQ_REQ'),
+@pytest.mark.parametrize('mode, name', ((0b00000010, 'STORE_DAQ_REQ_NO_RESUME'),
                                         (0b00001000, 'CLEAR_DAQ_REQ')))
 def test_get_status_never_reports_a_request_no_code_can_fulfil(mode, name):
     """A request bit is cleared by the slave once the request is fulfilled (1.0/1.6.1.1.3).
