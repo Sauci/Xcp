@@ -98,7 +98,7 @@ positive response without doing anything, which was defect D2, fixed in SP1.
 | 0xFC | SYNCH | done |
 | 0xFB | GET_COMM_MODE_INFO | done |
 | 0xFA | GET_ID | partial — identification type 0 (ASCII) only; §1.6.1.2.2 defines 0–4 plus 128–255 user-defined, all implementation-specific |
-| 0xF9 | SET_REQUEST | yes | STORE_CAL_REQ implemented; STORE_DAQ_REQ and CLEAR_DAQ_REQ refused with ERR_OUT_OF_RANGE as unsupported modes; see defect D9 |
+| 0xF9 | SET_REQUEST | yes | STORE_CAL_REQ implemented. STORE_DAQ_REQ (`STORE_DAQ_REQ_NO_RESUME`/`STORE_DAQ_REQ_RESUME`) and CLEAR_DAQ_REQ are each accepted once their own non-volatile storage callback is configured in, refused with `ERR_OUT_OF_RANGE` otherwise — this row's "refused ... as unsupported modes" was true before SP5-NV and is stale since (DD94-DD102); requesting both DAQ store modes together is refused too, a deliberate choice where 1.1 is silent rather than something it requires (SP5-RESUME). See §2.6's RESUME mode row and defect D9 |
 | 0xF8 | GET_SEED | done |
 | 0xF7 | UNLOCK | done |
 | 0xF6 | SET_MTA | done |
