@@ -1580,6 +1580,18 @@ uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInf
      * DD28 gives FREE_DAQ "any" as its accepted-from state, so there is no ERR_SEQUENCE either. */
     Xcp_DaqFreeAll();
 
+    /* Unlike Xcp_DisconnectSession's DD106 exemption (source/Xcp_Std.c), this frees a resumed list
+     * along with every other one -- Xcp_DaqFreeAll above makes no exception for
+     * XCP_DAQ_LIST_MODE_RESUME, and must not: a master that explicitly asks to free everything is
+     * owed exactly that, not a pool it cannot reclaim with no error telling it why.
+     *
+     * The resumed pool being gone means resume_state must follow it back to XCP_RESUME_IDLE: left
+     * at XCP_RESUME_ACTIVE, DD107's own gate would go on refusing every Xcp_Restore* setter for a
+     * configuration this call just freed. A later task reports resume_state through the session
+     * status and must clear that bit here too (not this task's concern); this one stops at the
+     * state the setters themselves read. */
+    Xcp_Internal.resume_state = XCP_RESUME_IDLE;
+
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
     Xcp_FinalizeResPacket(0x01u, &Xcp_Internal.cto_response.pdu_info);

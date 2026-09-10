@@ -231,3 +231,43 @@ def test_a_resumed_lists_odt_survives_a_disconnect():
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert handle.lib.Xcp_GetDaqListOdtCount(0) == 1, 'the resumed list survives the disconnect'
+
+
+def test_free_daq_clears_resume_state_so_a_setter_is_accepted_again():
+    """FREE_DAQ's own counterpart to DD106
+    (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md), which is about DISCONNECT alone.
+    Xcp_DTOCmdDaqFreeDaq (source/Xcp_Daq.c) keeps calling Xcp_DaqFreeAll unconditionally -- an
+    explicit FREE_DAQ frees a resumed list along with every other one, unlike DISCONNECT's implicit,
+    resume-sparing teardown above, and correctly so: a master that explicitly asks to free
+    everything is owed exactly that.
+
+    But that leaves Xcp_Internal.resume_state at XCP_RESUME_ACTIVE with no resumed configuration
+    left for it to describe, and DD107 refuses every Xcp_Restore* setter for as long as it stays
+    there -- a slave that just freed its resumed pool would go on refusing to have a new one
+    restored into it. resume_state is not reachable from the CFFI harness (source/Xcp_Internal.h is
+    outside interface/Xcp.h's cdef, test/conftest.py), so this is observed the only way DD107 itself
+    is observable: through a setter, refused while resume_state == XCP_RESUME_ACTIVE and accepted
+    again once it is not. The DISCONNECT after FREE_DAQ clears the setters' other, independent guard
+    -- connection_status == DISCONNECTED -- so a refusal here cannot be attributed to that one."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    connect(handle)
+
+    # FREE_DAQ
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xD6,)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # DISCONNECT, so only the resume_state guard stands between the setter and E_OK.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.lib.Xcp_RestoreDaqListCount(1) == handle.define('E_OK'), \
+        'resume_state must not still be XCP_RESUME_ACTIVE here'
