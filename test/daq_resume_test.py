@@ -110,6 +110,28 @@ def test_the_setters_are_refused_once_a_master_has_connected():
     assert handle.lib.Xcp_RestoreOdtCount(0, 1) == handle.define('E_NOT_OK')
 
 
+def test_the_setters_are_refused_once_resume_complete_has_run():
+    """DD107's other half. Every setter carries two independent guards --
+    `resume_state != XCP_RESUME_ACTIVE` and `connection_status == DISCONNECTED` --
+    and test_the_setters_are_refused_once_a_master_has_connected above pins the second by calling
+    CONNECT. No CONNECT appears anywhere in this test: connection_status stays DISCONNECTED
+    throughout, so a refusal here cannot come from that guard and can only come from resume_state,
+    which Xcp_ResumeComplete alone ever advances to XCP_RESUME_ACTIVE. Without this test, deleting
+    the resume_state clause from every setter would leave the whole suite green, since every other
+    refusal test reaches XCP_RESUME_ACTIVE only via a path that also satisfies the connection
+    guard or never reaches it at all."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
+
+    assert handle.lib.Xcp_RestoreDaqListCount(1) == handle.define('E_NOT_OK')
+    assert handle.lib.Xcp_RestoreOdtCount(0, 1) == handle.define('E_NOT_OK')
+
+
 def test_resume_complete_refuses_a_list_the_front_door_would_refuse_to_start():
     """DD105's second half. START_STOP_DAQ_LIST answers ERR_DAQ_CONFIG for a list with no written
     ODT entry, so resuming must not create by the back door a state the front door rejects. The ODT
