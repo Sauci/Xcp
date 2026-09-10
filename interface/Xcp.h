@@ -669,8 +669,13 @@ Std_ReturnType Xcp_RestoreOdtEntryCount(uint16 daqListNumber, uint8 odtNumber, u
  * Xcp_OdtEntryType::number is not read -- the entry's number follows odtEntryNumber above, the
  * same asymmetry @ref Xcp_GetOdtEntry leaves on its own out parameter.
  * @retval E_OK pEntry was applied
- * @retval E_NOT_OK daqListNumber, odtNumber or odtEntryNumber is out of range; also once
- * @ref Xcp_ResumeComplete has run or a master has connected (design doc DD107)
+ * @retval E_NOT_OK daqListNumber, odtNumber or odtEntryNumber is out of range; length is non-zero
+ * and violates one of WRITE_DAQ's own rules for it (XCP part 2 - Protocol Layer Specification
+ * 1.1/1.6.4.1.1.2) -- zero, exceeding the configured ODT entry size, not a multiple of the address
+ * granularity, a bitOffset naming a bit while length disagrees with the granularity, or this ODT's
+ * total exceeding its budget once this entry is added; also once @ref Xcp_ResumeComplete has run or
+ * a master has connected (design doc DD107). length == 0 is always legal regardless of the other
+ * fields, matching what @ref Xcp_GetOdtEntry reports for an entry never written
  */
 Std_ReturnType Xcp_RestoreOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
                                    const Xcp_OdtEntryType *pEntry);
@@ -682,14 +687,28 @@ Std_ReturnType Xcp_RestoreOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 
  * Xcp_DaqListRtType::mode itself stores (interface/Xcp_Types.h), NOT SET_DAQ_LIST_MODE's request
  * layout. RUNNING and RESUME bits of mode are ignored: @ref Xcp_ResumeComplete is the only thing
  * that may set either, so an integrator cannot half-start a list by calling this alone.
+ * @note DD103's mirror claim does not hold for the four parameters below: unlike the ODT entry
+ * fields, none of DD94's read accessors reports a list's mode bits, event channel, prescaler or
+ * priority back to the integrator (@ref Xcp_GetDaqListSelectedState reports only the transient
+ * SELECTED bit). An integrator restoring these values supplies them from its own configuration
+ * knowledge -- typically the same static assignment its master-side tooling was built from -- not
+ * from anything this module ever handed back. Under DAQ_DYNAMIC, where the master picks the event
+ * channel at runtime, that is a real limitation: the integrator cannot capture the one field that
+ * decides whether a resumed list transmits at all. No accessor exists for these four fields; adding
+ * one is a follow-up phase, not this one.
  * @param [in] daqListNumber DAQ list number
  * @param [in] mode SELECTED/DIRECTION/TIMESTAMP/PID_OFF bits, GET_DAQ_LIST_MODE response layout
  * @param [in] eventChannelNumber event channel to bind this list to
  * @param [in] prescaler transmission rate prescaler; 1 means no reduction
  * @param [in] priority DAQ list priority
  * @retval E_OK the mode was accepted
- * @retval E_NOT_OK daqListNumber is out of range; also once @ref Xcp_ResumeComplete has run or a
- * master has connected (design doc DD107)
+ * @retval E_NOT_OK daqListNumber is out of range; DIRECTION is set on a list that is not STIM or
+ * DAQ_STIM; TIMESTAMP is set with no clock configured; eventChannelNumber is out of range;
+ * prescaler is 0, or greater than 1 on a build without prescaler support; priority is non-zero;
+ * PID_OFF is set without ABSOLUTE identification, a single ODT and an exclusive TX PDU -- the same
+ * rules Xcp_DTOCmdDaqSetDaqListMode enforces on the equivalent request bits (XCP part 2 - Protocol
+ * Layer Specification 1.1/1.6.4.1.1.3), so this back door cannot grant a mode the front door would
+ * refuse; also once @ref Xcp_ResumeComplete has run or a master has connected (design doc DD107)
  */
 Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 eventChannelNumber,
                                       uint8 prescaler, uint8 priority);
@@ -701,17 +720,29 @@ Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 e
  * takes effect before this call. An integrator whose non-volatile read fails halfway simply never
  * calls this, and the slave resumes nothing rather than transmitting a half-built configuration at
  * a real event channel.
+ * @note Design doc DD107: refused, and nothing changed, once this has already run once
+ * (Xcp_Internal.resume_state reaching XCP_RESUME_ACTIVE) or a master has connected -- restoration,
+ * committing included, is a start-up activity, the same gate every Xcp_Restore* setter above
+ * carries.
  * @param [in] sessionConfigurationId the session configuration id stored alongside the
  * configuration being restored
- * @retval E_OK every restored list had at least one written ODT entry; sessionConfigurationId is
- * adopted, every restored list is marked RESUME and RUNNING (XCP part 2 - Protocol Layer
- * Specification 1.1/1.6.4.1.1.4), the slave enters session status bit 7 RESUME and admits commands
- * with no CONNECT received, session status bit 6 DAQ_RUNNING (1.1/1.6.1.1.3) is recomputed from the
- * resulting list state rather than asserted set (so it reads 0 if daqListCount was never raised
- * above 0), and EV_RESUME_MODE (1.1/1.8.1) is queued
- * @retval E_NOT_OK at least one restored list has no written ODT entry -- the same configuration
- * START_STOP_DAQ_LIST would answer ERR_DAQ_CONFIG for -- so resuming must not create by the back
- * door a state the front door would refuse to start; nothing is changed
+ * @retval E_OK at least one DAQ list was restored, every restored list had at least one written ODT
+ * entry, and no restored ODT's entries exceed the budget its list's final mode leaves it (the same
+ * per-ODT budget WRITE_DAQ enforces, re-derived here because @ref Xcp_RestoreDaqListMode enabling
+ * TIMESTAMP can shrink ODT 0's budget after entries were restored against a larger one);
+ * sessionConfigurationId is adopted, every restored list is marked RESUME and RUNNING (XCP part 2 -
+ * Protocol Layer Specification 1.1/1.6.4.1.2.6), the slave enters session status bit 7 RESUME and
+ * admits commands with no CONNECT received, session status bit 6 DAQ_RUNNING (1.1/1.6.1.1.3) is
+ * recomputed from the resulting list state rather than asserted set, and EV_RESUME_MODE (1.1/1.8.1)
+ * is queued
+ * @retval E_NOT_OK called with no DAQ list restored (@ref Xcp_RestoreDaqListCount never raised the
+ * count above 0) -- an empty commit would still enter RESUME mode and admit commands with no
+ * CONNECT for a slave transmitting nothing, which START_STOP_SYNCH already refuses for starting an
+ * empty selection (ERR_DAQ_CONFIG); or at least one restored list has no written ODT entry, or a
+ * restored ODT's entries exceed its budget -- the same configuration START_STOP_DAQ_LIST or
+ * WRITE_DAQ would refuse -- so resuming must not create by the back door a state the front door
+ * would refuse to start; also once this has already run once or a master has connected (design doc
+ * DD107); nothing is changed
  */
 Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId);
 

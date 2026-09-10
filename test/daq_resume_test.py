@@ -321,7 +321,7 @@ def test_free_daq_clears_resume_state_so_a_setter_is_accepted_again():
 
 
 def test_a_resumed_slave_transmits_with_no_connect_ever_sent():
-    """The acceptance bar. 1.1/1.6.4.1.1.4: "the slave being in RESUME mode started the DAQ list
+    """The acceptance bar. 1.1/1.6.4.1.2.6: "the slave being in RESUME mode started the DAQ list
     automatically". Autonomous transmission IS the feature; no other test in this repository
     transmits without a session, so this one cannot pass by inheriting a fixture's habits."""
     handle = resumed_handle()
@@ -360,26 +360,26 @@ def test_resume_complete_reports_a_full_event_queue():
     EV_CMD_PENDING's own busy poll does, so a dropped push is worth a diagnostic rather than a
     silent loss.
 
-    test/set_request_test.py::test_an_unconfirmed_event_still_occupies_its_slot_so_a_new_push_can_fail
-    spells out the mechanism this reuses: the ring keeps one slot empty to tell full from empty, so
-    an event_queue_size of 2 leaves exactly one usable slot, and a push that finds it already
-    occupied fails outright, with no need for any transmission or confirmation to be involved at
-    all -- occupancy is set the moment a push succeeds (Xcp_EventQueuePush's own write index moves)
-    and only released by Xcp_EventQueuePop in a confirmation, neither of which this test ever
-    triggers. Xcp_ResumeComplete carries no guard against being called twice -- nothing in this
-    task asks for one -- so the second call's own DAQ list re-validation succeeds identically to
-    the first (nothing about the restored list changed), and only its own EV_RESUME_MODE push finds
-    the queue full."""
-    handle = restoring_handle(event_queue_size=2)
+    Final review F2 finding: this test used to reach a full queue by calling Xcp_ResumeComplete
+    TWICE with event_queue_size=2, relying on the docstring's own now-false premise that "nothing
+    in this task asks for" a guard against a second call -- F2 added exactly that guard (DD107's
+    two-clause gate, the same one every Xcp_Restore* setter already carried), so a second call is
+    now refused outright before it would ever reach its own push, on a state this test cannot
+    manufacture without one (only a successful Xcp_ResumeComplete ever reaches
+    XCP_RESUME_ACTIVE). event_queue_size=1 reaches the same push failure on the FIRST and ONLY
+    call instead: Xcp_EventQueuePush's ring keeps one slot empty to tell full from empty
+    (test/set_request_test.py::test_an_unconfirmed_event_still_occupies_its_slot_so_a_new_push_can_
+    fail spells out the same rule against a queue with something already in flight), so a size of 1
+    leaves zero usable slots and even a completely fresh queue's first push fails outright."""
+    handle = restoring_handle(event_queue_size=1)
     handle.lib.Xcp_RestoreDaqListCount(1)
     handle.lib.Xcp_RestoreOdtCount(0, 1)
     handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
     handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
     handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
-    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK')
 
     assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_OK'), \
-        'the DAQ list itself is still configured, so the second call succeeds too'
+        'the DAQ commit itself is unaffected by a queue that cannot also hold the event'
 
     full_errors = [c for c in handle.det_report_error.call_args_list
                    if c[0][3] == handle.define('XCP_E_EVENT_QUEUE_FULL')]
@@ -448,7 +448,7 @@ def test_get_status_after_a_second_connect_still_reports_resume():
 
 
 def test_get_daq_list_mode_reports_resume_and_running_for_a_restored_list():
-    """1.1/1.6.4.1.1.4: mode bit 7 RESUME, "this DAQ list is part of a configuration used in RESUME
+    """1.1/1.6.4.1.2.6: mode bit 7 RESUME, "this DAQ list is part of a configuration used in RESUME
     mode", and bit 6 RUNNING. Both in the GET_DAQ_LIST_MODE response layout, which is the layout
     Xcp_DaqListRtType::mode already stores."""
     handle = resumed_handle()
@@ -508,3 +508,159 @@ def test_resume_supported_is_advertised():
 
     assert response[0] == 0xFF
     assert response[1] & 0b00000100 != 0x00, 'DAQ_PROPERTIES RESUME_SUPPORTED, bit 2'
+
+
+# Final whole-branch review, F1 (Critical): Xcp_RestoreOdtEntry copied address/bitOffset/
+# addressExtension/length verbatim, applying none of the four rules WRITE_DAQ enforces through
+# Xcp_DaqApplyOdtEntry (source/Xcp_Daq.c) -- size != 0, size <= odtEntrySizeDaq, size a multiple of
+# the address granularity, and the per-ODT budget. Xcp_DaqSampleOdt (source/Xcp_DaqRuntime.c)
+# trusts that invariant absolutely: it writes pFrame->data[offset] with no bound of its own, and
+# pFrame is an 8-byte (default MAX_DTO) stack local in a function documented callable from an
+# interrupt. The two tests below pin the fix at both sites the review asked for -- the setter's own
+# per-call check, and Xcp_ResumeComplete's whole-of-restoration re-check -- because the second is
+# the one the setter alone cannot catch.
+
+def test_restore_odt_entry_refuses_what_write_daq_would_refuse():
+    """F1, the setter's own site. MAX_ODT_ENTRY_SIZE_DAQ is MAX_DTO - 1 = 7 for the default
+    ABSOLUTE/MAX_DTO=8 build write_daq_test.py's own test_write_daq_rejects_a_size_outside_the_odt_
+    entry_limits pins for WRITE_DAQ. The boundary is checked both sides, the sharpest case for a
+    </<= mistake: 7 must stay accepted (a fix that refused it would make an honest configuration
+    unrestorable) and 8 -- the length the review's own failure scenario names, extended to a value
+    that still fits inside a uint8 -- must not."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+
+    assert handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle, length=7)) == handle.define('E_OK'), \
+        'MAX_ODT_ENTRY_SIZE_DAQ itself must stay legal'
+    assert handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle, length=8)) == handle.define('E_NOT_OK'), \
+        'one byte past MAX_ODT_ENTRY_SIZE_DAQ -- WRITE_DAQ answers ERR_OUT_OF_RANGE for this size'
+
+
+def test_restore_odt_entry_accepts_length_zero_as_the_unwritten_marker():
+    """F1's own carve-out. Xcp_GetOdtEntry reports an unwritten entry with length 0 (and bitOffset
+    XCP_ODT_ENTRY_BIT_OFFSET_NONE, the entry() helper's own default), and the restore-side mirror
+    must accept exactly what the accessor gave it -- folding length into the same size != 0 rule
+    WRITE_DAQ applies to a master's own request would make a faithful round trip of an unwritten
+    entry impossible."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+
+    assert handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle, length=0)) == handle.define('E_OK')
+
+
+def test_resume_complete_refuses_an_odts_total_exceeding_its_budget():
+    """F1, the site the setter alone cannot catch, and the single most important test in this
+    wave. Both entries below are individually legal against ODT 0's FULL budget (7 bytes) at the
+    moment Xcp_RestoreOdtEntry accepts them -- TIMESTAMP is not yet on the list, so
+    Xcp_DaqOdtEntryBudget has not shrunk it. Only once Xcp_RestoreDaqListMode restores TIMESTAMP
+    afterwards does the budget fall to 3 (7 minus the DWORD timestamp's 4 bytes, XCP part 2 -
+    Protocol Layer Specification 1.1/1.1.2.2 Diagram 10), leaving the ODT's already-restored total
+    of 4 bytes over it. Xcp_RestoreOdtEntry cannot revisit a decision it already made;
+    Xcp_ResumeComplete is the one place that re-derives the budget from the list's FINAL mode,
+    order-independently, immediately before anything becomes live (DD105)."""
+    handle = restoring_handle(timestamp=timestamp(size='DWORD'))
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 2)
+    assert handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle, length=2)) == handle.define('E_OK')
+    assert handle.lib.Xcp_RestoreOdtEntry(0, 0, 1, entry(handle, length=2)) == handle.define('E_OK')
+    # XCP_DAQ_LIST_MODE_TIMESTAMP, GET_DAQ_LIST_MODE layout (1.1/1.6.4.1.2.6), bit 4 -- accepted on
+    # its own terms (F4's clock check below asks only that a clock be configured, which it is).
+    assert handle.lib.Xcp_RestoreDaqListMode(0, 0x10, 0, 1, 0) == handle.define('E_OK')
+
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_NOT_OK')
+
+
+# Final whole-branch review, F2 (Important): Xcp_ResumeComplete carried neither of DD107's two
+# guards, though every Xcp_Restore* setter above carries both (test_the_setters_are_refused_once_a_
+# master_has_connected and test_the_setters_are_refused_once_resume_complete_has_run pin them for
+# the setters). Tested separately here for the identical reason those two tests are separate: one
+# guard can mask the other.
+
+def test_resume_complete_refuses_once_a_master_has_connected():
+    """F2, the connection_status half. resume_state is still XCP_RESUME_RESTORING here, not
+    XCP_RESUME_ACTIVE -- only a prior SUCCESSFUL Xcp_ResumeComplete ever advances it, and this is
+    the first call -- so a refusal below can only come from connection_status, isolating this
+    clause from its sibling."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+    handle.lib.Xcp_RestoreOdtCount(0, 1)
+    handle.lib.Xcp_RestoreOdtEntryCount(0, 0, 1)
+    handle.lib.Xcp_RestoreOdtEntry(0, 0, 0, entry(handle))
+    handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0)
+
+    connect(handle)
+
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_NOT_OK')
+
+
+def test_resume_complete_refuses_once_it_has_already_run():
+    """F2's other half. DISCONNECT genuinely returns connection_status to DISCONNECTED, while
+    resume_state stays XCP_RESUME_ACTIVE throughout -- Xcp_DaqFreeSessionAllocated spares a
+    RESUME-marked list from the teardown itself (DD106,
+    test_a_resumed_lists_odt_survives_a_disconnect above), and only Xcp_DTOCmdDaqFreeDaq ever
+    clears resume_state, which this test never sends. So a second Xcp_ResumeComplete call below is
+    refused for connection_status being genuinely DISCONNECTED again -- a refusal here can only
+    come from resume_state, isolating it from its sibling the same way test_the_setters_are_
+    refused_once_resume_complete_has_run does for the setters."""
+    handle = resumed_handle()
+    connect(handle)
+
+    # DISCONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFE,)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.lib.Xcp_ResumeComplete(0x5678) == handle.define('E_NOT_OK')
+
+
+def test_resume_complete_refuses_an_empty_commit():
+    """F3 (Important). With allocated_daq_count == 0 the validation loop never runs, so this used
+    to return E_OK unconditionally -- entering RESUME mode, refusing every future Xcp_Restore*
+    (DD107, once resume_state reaches XCP_RESUME_ACTIVE), and opening the CTO dispatch with no
+    CONNECT ever received, all for a slave transmitting nothing. DD105 already answers this the
+    way START_STOP_SYNCH answers ERR_DAQ_CONFIG for starting an empty selection: refuse it. No
+    Xcp_Restore* call of any kind precedes this call -- allocated_daq_count is 0 from Xcp_Init
+    alone."""
+    handle = restoring_handle()
+
+    assert handle.lib.Xcp_ResumeComplete(0x1234) == handle.define('E_NOT_OK')
+
+
+# Final whole-branch review, F4 (Important): Xcp_RestoreDaqListMode applied none of SET_DAQ_LIST_
+# MODE's own validation (Xcp_DTOCmdDaqSetDaqListMode, source/Xcp_Daq.c), so the back door could
+# grant a mode the front door never would -- DD105's principle applied to the mode rather than the
+# entries. Two of the three silent consequences the review named are pinned below; a list restored
+# with the third (PID_OFF shared between two lists on one RX PDU) needs a stim-capable pool this
+# file's DAQ-only restoring_handle() does not build, so it is left to this fix's code review rather
+# than a dedicated test here.
+
+def test_restore_daq_list_mode_refuses_an_out_of_range_event_channel():
+    """F4. Xcp_DTOCmdDaqSetDaqListMode answers ERR_OUT_OF_RANGE for eventChannelNumber >=
+    maxEventChannel (1.1/1.6.4.1.1.3); granted here instead, the list would be bound to a channel
+    that can never elapse, reported RUNNING|RESUME by Xcp_ResumeComplete while transmitting
+    nothing, forever. dynamic_config's single default event (EVT1) leaves maxEventChannel at 1, so
+    channel 1 is the first invalid one and channel 0 the boundary a fix must not also refuse."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+
+    assert handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 1, 1, 0) == handle.define('E_NOT_OK')
+    assert handle.lib.Xcp_RestoreDaqListMode(0, 0x00, 0, 1, 0) == handle.define('E_OK'), \
+        'channel 0 is the boundary this refusal must not also catch'
+
+
+def test_restore_daq_list_mode_refuses_direction_on_a_daq_only_list():
+    """F4's most concrete named consequence. Xcp_DTOCmdDaqSetDaqListMode refuses DIRECTION
+    (stimulation) on a list whose configured type cannot receive (1.1/1.6.4.1.1.3); granted here
+    instead, both of Xcp_TriggerEventChannel's passes skip the list on its type test
+    (source/Xcp_DaqRuntime.c), so it would report RUNNING|RESUME and transmit nothing, forever.
+    restoring_handle's pool is type DAQ throughout (dynamic_config's own default), so DIRECTION
+    (bit 1, GET_DAQ_LIST_MODE layout) is never grantable here."""
+    handle = restoring_handle()
+    handle.lib.Xcp_RestoreDaqListCount(1)
+
+    assert handle.lib.Xcp_RestoreDaqListMode(0, 0x02, 0, 1, 0) == handle.define('E_NOT_OK')
