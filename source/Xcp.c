@@ -1622,6 +1622,27 @@ void Xcp_MainFunction(void)
                 {
                     Xcp_Internal.session_configuration_id_read_state = XCP_NV_READ_COMPLETE;
                 }
+
+                /* XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4)
+                 * "The slave has to reset the SELECTED flag in the mode at GET_DAQ_LIST_MODE as
+                 * soon as the related START_STOP_SYNCH or SET_REQUEST have been acknowledged."
+                 * Select is how the master marks the lists a store is to persist -- the same
+                 * section calls it "preparing the slave for RESUME mode (ref. SET_REQUEST)" -- so
+                 * a completed store has consumed the selection and must stop reporting it.
+                 *
+                 * Here rather than in Xcp_DTOCmdStdSetRequest (source/Xcp_Std.c), which is where
+                 * "acknowledged" would put it: the integrator's own Xcp_StoreDaqConfiguration
+                 * reads the selection back through Xcp_GetDaqListSelectedState to learn which
+                 * lists to persist (DD94), and it is still running until the call above returns
+                 * E_OK. Clearing at acknowledgement time would hand it a slave with nothing
+                 * selected, and it would faithfully store an empty configuration.
+                 *
+                 * Inside the zero-status branch, so a store that reported a failure leaves the
+                 * selection standing: it persisted nothing, so the master can retry the
+                 * SET_REQUEST without walking the whole Select sequence again. The specification
+                 * says "acknowledged" rather than "succeeded", so this is a reading, and it is the
+                 * same one session_configuration_id above takes for the same reason. */
+                Xcp_DaqClearAllSelections();
             }
 
             /* Same reasoning as the STORE_CAL_REQ push above: only the push itself goes inside the

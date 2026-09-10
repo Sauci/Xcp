@@ -686,3 +686,111 @@ def test_a_completed_clear_retires_a_still_outstanding_start_up_read():
 
     assert exchange(handle, (0xFD, 0x00, 0x00, 0x00))[4:6] == (0x00, 0x00)  # poll #4
     assert handle.xcp_read_stored_session_configuration_id.call_count == 1
+
+
+# ---------------------------------------------------------------------------------------------
+# Found while exploring RESUME, after SP5-NV merged. 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4),
+# "Start /stop/select DAQ list": "The slave has to reset the SELECTED flag in the mode at
+# GET_DAQ_LIST_MODE as soon as the related START_STOP_SYNCH or SET_REQUEST have been
+# acknowledged." START_STOP_SYNCH does this (Xcp_DTOCmdDaqStartStopSynch, source/Xcp_Daq.c);
+# SET_REQUEST did not. The requirement was vacuous while STORE_DAQ_REQ was refused outright --
+# there was no related SET_REQUEST to acknowledge -- and SP5-NV activated it by making the mode
+# acceptable without implementing the reset.
+# ---------------------------------------------------------------------------------------------
+
+def selected_dynamic_handle(**kwargs):
+    """A dynamic pool with list 0 configured and SELECTED, list 1 allocated and never selected.
+
+    Mirrors test/daq_nv_accessor_test.py's own allocation sequence. List 1 exists so an
+    implementation that cleared every list's mode byte wholesale -- rather than the SELECTED bit
+    of the lists that carried it -- is not indistinguishable from a correct one here."""
+    handle = XcpTest(dynamic_config(daq_count=2, odt_count=1, odt_entries_count=1, **kwargs))
+    connect(handle)
+    for request in ((0xD6,),                                      # FREE_DAQ
+                    (0xD5, 0x00, 0x02, 0x00),                     # ALLOC_DAQ(2)
+                    (0xD4, 0x00, 0x00, 0x00, 0x01),               # ALLOC_ODT(list 0, 1)
+                    (0xD3, 0x00, 0x00, 0x00, 0x00, 0x01),         # ALLOC_ODT_ENTRY(list 0, odt 0, 1)
+                    (0xE2, 0x00, 0x00, 0x00, 0x00, 0x00),         # SET_DAQ_PTR(list 0, odt 0, entry 0)
+                    # list 0 must hold a written entry, or Select answers ERR_DAQ_CONFIG.
+                    (0xE1, 0xFF, 0x01, 0x00, 0x00, 0x10, 0x00, 0x00)):  # WRITE_DAQ
+        assert exchange(handle, request)[0] == 0xFF, request
+
+    assert exchange(handle, (0xDE, 0x02, 0x00, 0x00))[0] == 0xFF  # START_STOP_DAQ_LIST(Select, 0)
+    assert handle.lib.Xcp_GetDaqListSelectedState(0) == 1, 'setup: list 0 must be selected'
+    return handle
+
+
+def selected_bit_on_the_wire(handle, daq_list_number):
+    """GET_DAQ_LIST_MODE's SELECTED, read where the specification puts the obligation -- byte 1
+    bit 0 of the response, not the internal mode byte. The positive-response guard matters: every
+    XCP error code is < 0x80 and ERR_OUT_OF_RANGE (0x22) has bit 0 clear, so an error response
+    would satisfy the bit test on its own."""
+    response = exchange(handle, (0xDF, 0x00, daq_list_number, 0x00))
+    assert response[0] == 0xFF, 'GET_DAQ_LIST_MODE must answer positively'
+    return response[1] & 0b00000001
+
+
+def test_a_successful_store_daq_req_resets_the_selected_flag():
+    """1.0/1.6.4.1.1.6. The store is what the selection was FOR -- 1.0/1.6.4.1.1.6 calls Select
+    "preparing the slave for RESUME mode (ref. SET_REQUEST)" -- so once it has been persisted the
+    selection has been consumed and must stop being reported."""
+    handle = selected_dynamic_handle(xcp_store_daq_configuration_api_enable=True)
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x00  # zero status: a clean completion
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    assert selected_bit_on_the_wire(handle, 0) == 0x01, 'selected before the store'
+
+    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))              # SET_REQUEST(STORE_DAQ_REQ)
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))  # drain EV_STORE_DAQ
+
+    assert selected_bit_on_the_wire(handle, 0) == 0x00, 'reset once the store completed'
+
+
+def test_the_store_callback_still_sees_the_selection_it_is_being_asked_to_persist():
+    """This is what forces the reset to happen on COMPLETION rather than on the acknowledgement.
+
+    SET_REQUEST answers 0xFF immediately and the store completes later, from Xcp_MainFunction, so
+    "acknowledged" could be read either way. It cannot be the response: the integrator's own
+    Xcp_StoreDaqConfiguration calls Xcp_GetDaqListSelectedState to learn WHICH lists to persist
+    (DD94). Clearing at acknowledgement time would hand it a slave with nothing selected, and it
+    would faithfully store an empty configuration."""
+    handle = selected_dynamic_handle(xcp_store_daq_configuration_api_enable=True)
+    seen = []
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        seen.append(handle.lib.Xcp_GetDaqListSelectedState(0))
+        p_status_code[0] = 0x00
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))
+
+    assert seen == [1], 'the callback must see list 0 still selected while it stores it'
+
+
+def test_a_failed_store_daq_req_leaves_the_selection_standing():
+    """The specification says "acknowledged", not "succeeded", but a store that reported a failure
+    persisted nothing, so the selection has not been consumed. Leaving it lets the master retry the
+    SET_REQUEST without walking the whole Select sequence again; clearing it would silently discard
+    a configuration the master still believes it is holding.
+
+    Mirrors how session_configuration_id is adopted (DD99): a non-zero status leaves the previous
+    value standing. The request bit itself still clears on this path -- that is DD95, and it is not
+    what this test is about."""
+    handle = selected_dynamic_handle(xcp_store_daq_configuration_api_enable=True)
+
+    def store_daq_configuration(session_configuration_id, p_status_code):
+        p_status_code[0] = 0x01  # non-zero: finished, but failed
+        return handle.define('E_OK')
+
+    handle.xcp_store_daq_configuration.side_effect = store_daq_configuration
+
+    exchange(handle, (0xF9, 0b00000100, 0x00, 0x00))
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert selected_bit_on_the_wire(handle, 0) == 0x01, 'a failed store consumed nothing'

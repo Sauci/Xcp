@@ -497,6 +497,10 @@ extern Std_ReturnType Xcp_ClearDaqConfiguration(uint8 *pStatusCode);
  * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the master sets this flag
  * with START_STOP_DAQ_LIST's SELECT mode. An integrator implementing @ref Xcp_StoreDaqConfiguration
  * queries it per list to decide what to store.
+ * @note The selection is reset once the store it was made for completes (XCP part 2 - Protocol
+ * Layer Specification 1.0/1.6.4.1.1.6), so this reports TRUE throughout the call to
+ * @ref Xcp_StoreDaqConfiguration that persists it, and FALSE afterwards. A store reporting a
+ * non-zero status leaves the selection standing, since it persisted nothing.
  * @param [in] daqListNumber DAQ list number
  * @return TRUE if the list is selected, FALSE otherwise or if daqListNumber is out of range
  */
