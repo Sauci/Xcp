@@ -6,6 +6,33 @@
 Version 1.0 is kept alongside it: the two renumber §1.6.4 wholesale, so a citation is only
 unambiguous once it names its version.
 
+### The revision rule, and what it cost to learn twice
+
+**Before implementing a command, read its section in BOTH revisions — not only to resolve the
+section number, but to compare what the sections say.** 1.1 is the reference; 1.0 is readable via
+`pdftotext -layout`, while 1.1's text layer is enciphered (glyph substitution), which is why
+`XCP -Part 2- Protocol Layer Specification -1.1.ocr.txt` exists. The OCR carries the prose reliably
+and **misaligns table columns**, so a *bit position* read from it is not evidence. The cipher is
+recoverable from known word pairs when a table has to be read exactly.
+
+The rule started narrower — check both revisions for renumbering, and for error codes 1.1 adds to a
+command's row — and it kept being right about the wrong things. What it missed:
+
+| Divergence | Cost |
+|---|---|
+| 1.1 renumbers `§1.6.4.1.2.x` | caught in time; `GET_DAQ_PROCESSOR_INFO` is correct *only* because its citation says `1.1/` |
+| 1.1 adds `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` (`0x33`) to STD rows | caught late in SP5-NV, and only because the user challenged a claim that nothing was reportable |
+| 1.1 **adds a mode bit and re-points an existing one** | missed. SP5-NV cited `1.0/§1.6.1.2.3` for `SET_REQUEST`, and three defects followed from that one choice |
+| 1.1 attaches an obligation to a command a phase newly enables | missed. `SET_REQUEST` acknowledging a store must reset `SELECTED` (§1.6.4.1.1.6) — vacuous while the mode was refused, live the moment it was accepted |
+
+The last two shipped and were fixed in PRs #23, #24 and #25. Two per-task reviews and a whole-branch
+review passed the middle one, because nothing in the diff looked wrong — the defect was in what the
+diff *enabled elsewhere*. So the rule has a second half:
+
+**When a phase makes a previously-refused command or mode acceptable, re-read every section that
+mentions it.** A requirement that was vacuous because nothing could reach it becomes live at that
+moment, and it will not appear in the diff.
+
 This document is a map, not an implementation spec. It records where the module stands
 against the ASAM specification, what remains, and how the remaining work decomposes into
 sub-projects. Each sub-project gets its own design document and implementation plan.
