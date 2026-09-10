@@ -836,7 +836,7 @@ static uint16 Xcp_DaqAllocatedOdtCount(void)
 /**
  * @brief see interface/Xcp.h.
  * @details Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): the
- * restore-side mirror of the four accessors above, and of ALLOC_DAQ (XCP part 2 - Protocol Layer
+ * restore-side mirror of the five accessors above, and of ALLOC_DAQ (XCP part 2 - Protocol Layer
  * Specification 1.1/1.6.4.3.1.2). Like those accessors, this and the five functions that follow it
  * live here for reusing Xcp_DaqListIsValid/Xcp_DaqListRt for their own bounds checks rather than
  * re-deriving them.

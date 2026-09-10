@@ -157,6 +157,29 @@ calling this.
 written ODT entry is answered `ERR_DAQ_CONFIG` by `START_STOP_DAQ_LIST` today, and resuming must not
 create by the back door a state the front door rejects.
 
+**Correction (Task 6, `.superpowers/sdd/2026-09-10-xcp-daq-resume/task-6-brief.md`):
+`Xcp_ResumeComplete` no longer enters `XCP_CONNECTION_STATE_RESUME`.** This design was approved with
+that entry in the paragraph above, and the entry stays rather than being edited out from under a
+reader — this is the reversal, recorded, not a silent rewrite.
+
+Both connection gates in `source/Xcp.c` — the CTO dispatch (§1) and STIM reception (§1) — test
+`!= XCP_CONNECTION_STATE_DISCONNECTED` rather than `== XCP_CONNECTION_STATE_CONNECTED`. Entering a
+third, non-disconnected state at commit therefore did not only make the slave report RESUME: it
+passed both gates outright, admitting the entire command set — `DOWNLOAD`, `SET_MTA`, `FREE_DAQ`, the
+programming commands included — to any node on the bus with no `CONNECT` ever received, restrained
+only by the resource-protection mask, which is optional and often unconfigured.
+
+Nothing in this feature needs that write. §1 above already established that `Xcp_TriggerEventChannel`
+checks only `XCP_INITIALIZED`, the event-channel bound, and each list's own RUNNING flag — autonomous
+transmission worked before this write existed and is unchanged by its removal. `GET_STATUS` reports
+RESUME through session status bit 7 (1.1/1.6.1.1.3), a different byte entirely, also unaffected. And
+Part 2 never asked for the command set to open: it requires a resumed slave to REPORT RESUME and to
+TRANSMIT, nothing more.
+
+`Xcp_ResumeComplete` now leaves `connection_status` untouched, so a resumed, unconnected slave reads
+`XCP_CONNECTION_STATE_DISCONNECTED` exactly as it did before this feature existed, and both gates
+refuse it everything but `CONNECT`, the same as any other disconnected slave.
+
 ### DD106 — resumed lists survive a DISCONNECT
 
 `Xcp_DisconnectSession` (`source/Xcp_Std.c:1390`) calls `Xcp_DaqFreeAll()` under `DAQ_DYNAMIC`.
@@ -226,3 +249,15 @@ DISCONNECTED state there's no XCP communication" and "DAQ list transfer is inact
 Everything in this design is consistent with either reading. If Part 1 turns out to constrain what a
 slave may transmit while unconnected, **this is the decision that moves**, and DD105's commit point is
 where a different answer would attach. Recorded as an assumption, not as a finding.
+
+**Narrowed by Task 6** (DD105's correction, above): `Xcp_ResumeComplete` no longer enters
+`XCP_CONNECTION_STATE_RESUME`, so a resumed, unconnected slave's `connection_status` now reads
+`XCP_CONNECTION_STATE_DISCONNECTED` throughout — the code is, in effect, the second reading this
+section named, RESUME as an exception inside DISCONNECTED, not the first. Command admission is no
+longer part of what this assumption covers: both gates refuse a resumed-but-unconnected slave's
+commands exactly as they refuse any other disconnected slave's, regardless of what Part 1 §2.3 turns
+out to say. What stays exposed to that unread document is transmission alone — DTOs sent while
+`connection_status` reads `XCP_CONNECTION_STATE_DISCONNECTED` — which is also the one half of the
+feature Part 2 explicitly requires and DD105 never touched. If Part 1 does turn out to constrain it,
+DD105's commit point is still where a different answer would attach; there is simply one fewer thing
+for that answer to have to explain.

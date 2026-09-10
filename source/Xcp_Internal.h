@@ -354,6 +354,20 @@ typedef enum {
      */
     XCP_CONNECTION_STATE_DISCONNECTED = 0x00u,
     XCP_CONNECTION_STATE_CONNECTED,
+
+    /**
+     * @brief Declared, but deliberately never entered.
+     *
+     * @note Design doc DD105 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md):
+     * Xcp_ResumeComplete (source/Xcp_Daq.c) used to enter this state on every committed resume.
+     * Both connection gates in source/Xcp.c -- the CTO dispatch and STIM reception -- test
+     * != XCP_CONNECTION_STATE_DISCONNECTED rather than == XCP_CONNECTION_STATE_CONNECTED, so that
+     * write alone admitted the entire command set -- DOWNLOAD, SET_MTA, FREE_DAQ, the programming
+     * commands included -- to any node on the bus with no CONNECT ever received. RESUME mode needs
+     * none of it: DTO transmission was never session-gated, and GET_STATUS reports RESUME through
+     * session status bit 7, a different byte entirely. Do not reinstate the write to "complete"
+     * this value; that is the hole this correction closes.
+     */
     XCP_CONNECTION_STATE_RESUME
 } Xcp_ConnectionState;
 
