@@ -1399,7 +1399,9 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
         Xcp_Internal.memory_transfer.extension = extension;
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-        /* Mode (1.1/1.6.1.2.2): TRANSFER_MODE and COMPRESSED_ENCRYPTED both clear. DD111. */
+        /* Mode (1.1/1.6.1.2.2): XCP_GET_ID_MODE_TRANSFER_MODE and
+         * XCP_GET_ID_MODE_COMPRESSED_ENCRYPTED (source/Xcp_Internal.h) both clear -- the slave
+         * points the MTA and compresses nothing. DD111. */
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;

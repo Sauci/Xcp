@@ -180,6 +180,17 @@ byte is built. The decipherment in §0 was expensive; committing its result to t
 never redone, and it makes the hardcoded `0x00` legible as two cleared flags rather than a magic
 number.
 
+**Correction, made in the final review's fix wave**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): "cited where the response
+byte is built" was not true as shipped. Neither `XCP_GET_ID_MODE_TRANSFER_MODE` nor
+`XCP_GET_ID_MODE_COMPRESSED_ENCRYPTED` was referenced anywhere; the comment at the build site in
+`Xcp_DTOCmdStdGetId` named the two bits only in prose. That comment now names both macro
+identifiers. In code the constants remain unreferenced: a deliberate deviation from MISRA C:2012
+Rule 2.5 (advisory), which asks that a project contain no unused macro declarations, kept because
+the two are the source-level record of the bit positions §0 recovered from the PDF. The byte itself
+stays the literal `0x00u`, not an expression contrived to evaluate to zero while mentioning both
+names.
+
 ### DD112 — `Length mod AG = 0` is enforced where each half of it is knowable
 
 1.1 adds the rule; 1.0 has no equivalent. It protects the UPLOAD that follows, whose element count

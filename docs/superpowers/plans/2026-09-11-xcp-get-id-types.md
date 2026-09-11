@@ -142,6 +142,17 @@ In `source/Xcp_Std.c`, replace the bare `Xcp_Internal.cto_response.pdu_info.SduD
 
 Do not write the value as an expression over the two masks. `0x00u` is what goes on the wire and the comment is what explains it; an expression contrived to evaluate to zero while mentioning both names is harder to read than either. The masks earn their place by being referenced from the tests and from the header's own documentation, not by appearing here.
 
+**Correction, made in the final review's fix wave**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): the last sentence above
+describes something impossible. The tests cannot reference the masks at all: they live in
+`source/Xcp_Internal.h`, and the harness builds its cdef, and every `handle.define(...)` lookup,
+from `interface/Xcp.h` and the generated configuration headers, none of which includes
+`source/Xcp_Internal.h` — `interface/Xcp.h`'s own note on internal declarations says the same of
+functions declared only there. As shipped, the masks were referenced nowhere: not from the tests,
+and not at the build site either, whose comment named the two bits only in prose. That comment now
+names both macro identifiers. In code the masks remain unreferenced, a deliberate MISRA C:2012
+Rule 2.5 (advisory) deviation recorded in the design doc's DD111 correction.
+
 - [ ] **Step 5: Run the full suite**
 
 ```bash
@@ -1139,6 +1150,14 @@ covered. Corrected here rather than left standing, matching the same correction 
 1's own title above.
 
 Then check whether any *other* roadmap row is made stale by this phase before committing — §2.6 cross-cutting and the §3 defect list both mention `GET_ID`. Correct what you find; do not silently rewrite a claim that turns out to have been wrong, record the correction, as DD102 and DD105 do.
+
+**Correction, made in the final review's fix wave**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): the premise of the step above
+is false. Neither §2.6 nor the §3 defect list mentions `GET_ID` — not at this plan's baseline
+(`38eb3ff`), and not after this phase's own roadmap edits. At the baseline the roadmap named
+`GET_ID` only in §2.1's command table and in §4's SP5 residue text, and neither section mentions
+the identification either. The instruction to check other rows still stands; the two sections it
+pointed at simply had nothing for it to find.
 
 - [ ] **Step 4: Commit, push, open the PR**
 
