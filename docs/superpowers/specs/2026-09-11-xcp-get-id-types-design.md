@@ -63,8 +63,18 @@ phase does not disturb it.
 mode_is_0` (`test/get_id_test.py`) asserts `raw_data[1] == mode`, where `mode` is the *request's*
 Requested Identification Type and `raw_data[1]` is the *response's* Mode bit mask. These are two
 different fields that happen to coincide at zero, and the response byte is a hardcoded `0x00`. The
-assertion passes under any implementation. This is recurring defect class 1 from the roadmap
-(expected value coinciding with a default).
+assertion pins the right value only because this test's parametrize list has a single row at mode
+0, and it demands the wrong thing — that the response echo the request — the moment a second
+identification type is covered. This is recurring defect class 1 from the roadmap (expected value
+coinciding with a default).
+
+**Correction, made after Task 1's implementer disproved the original wording empirically**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): this paragraph previously
+claimed "The assertion passes under any implementation," which does not hold — with `mode` pinned
+at 0, mutating the response byte away from 0 breaks the old assertion too, for the unrelated
+reason that the two sides then stop reading the same number by coincidence. The assertion's real
+weakness is the one now stated above: it cannot tell a correct implementation from an incorrect
+echo at mode 0, not that it is immune to a wrong byte on the wire.
 
 **Wrong thing 2 — a latent 1.1 violation already shipping.** The default `identification` is
 `/path/to/database.a2l`, 21 bytes. 21 mod 2 = 1 and 21 mod 4 = 1, so under `address_granularity` of

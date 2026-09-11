@@ -75,8 +75,10 @@ Replace the two assertions on `raw_data[1]` in `test_get_id_returns_identificati
     # makes this byte a bit mask -- TRANSFER_MODE at bit 0, COMPRESSED_ENCRYPTED at bit 1, bits 2-7
     # don't-care. 1.0/1.6.1.2.2 has the same byte and leaves it unnamed, which is why this was
     # previously read as an echo of the request's Requested Identification Type. It is not one:
-    # request byte 1 and response byte 1 are different fields that both happen to be 0 here, so the
-    # old `assert raw_data[1] == mode` passed under every possible implementation.
+    # request byte 1 and response byte 1 are different fields that both happen to be 0 here. The
+    # old `assert raw_data[1] == mode` pinned the right value only because this test's parametrize
+    # list has one row at zero; it would demand a wrong thing -- that the response echo the
+    # request -- as soon as a second identification type is covered.
     # Both bits clear: the slave transfers through the MTA and does not compress (DD111).
     assert raw_data[1] & 0x01 == 0x00, 'TRANSFER_MODE must be clear: this slave points the MTA'
     assert raw_data[1] & 0x02 == 0x00, 'COMPRESSED_ENCRYPTED must be clear: nothing is compressed'
@@ -89,7 +91,9 @@ Replace the two assertions on `raw_data[1]` in `test_get_id_returns_identificati
 docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --ulimit nofile=65536:524288 --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:sp4b ./test.sh
 ```
 
-The new assertions pass against today's hardcoded `0x00`. That is expected — this step is not what proves them. **Mutation-verify now:** change `source/Xcp_Std.c` line 1323 from `SduDataPtr[0x01u] = 0x00u;` to `= 0x01u;` and re-run only this test. It must fail on the `TRANSFER_MODE` assertion. Then set `= 0x02u` and confirm it fails on `COMPRESSED_ENCRYPTED`. Revert both. Record in the commit message that the old assertion survived both mutations and the new one does not.
+The new assertions pass against today's hardcoded `0x00`. That is expected — this step is not what proves them. **Mutation-verify now:** change `source/Xcp_Std.c` line 1323 from `SduDataPtr[0x01u] = 0x00u;` to `= 0x01u;` and re-run only this test. It must fail on the `TRANSFER_MODE` assertion. Then set `= 0x02u` and confirm it fails on `COMPRESSED_ENCRYPTED`. Revert both.
+
+**Correction, made after Task 1's implementer disproved it empirically** (`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): this step originally ended "Record in the commit message that the old assertion survived both mutations and the new one does not." It does not survive either mutation — this test's `mode` is pinned at 0, so a mutated response byte breaks `raw_data[1] == mode` too, for the same coincidental reason it used to pass. Commit `1a6144c` carries that since-disproven wording verbatim, because it was written before the mutation-verify step above was actually run against it; the fix landed in a follow-up commit rather than rewriting the pushed one. See the design doc's DD-adjacent correction in `2026-09-11-xcp-get-id-types-design.md` §1 for the accurate characterisation.
 
 - [ ] **Step 3: Add the named masks**
 
@@ -156,6 +160,17 @@ No behaviour change; the byte is still 0x00.
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 git push
 ```
+
+**Correction, made after Task 1's implementer disproved it empirically**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): the commit message above, as
+actually committed at `1a6144c`, claims twice that the old assertion "passed under every possible
+implementation" and "still passed" under both mutations. Neither holds — with this test's `mode`
+pinned at 0, mutating the response byte away from 0 breaks the old assertion exactly as it breaks a
+correct one, for the unrelated reason that the two sides then read different numbers. The old
+assertion's real weakness is that it cannot tell a correct bit-mask implementation from an incorrect
+echo of the request at mode 0, not that it survives a corrupted byte on the wire. `1a6144c` is not
+rewritten — this correction landed in a follow-up commit instead, per this repository's convention
+(DD102, DD105) of recording a correction rather than silently editing history.
 
 ---
 
@@ -1078,7 +1093,7 @@ Design: `docs/superpowers/specs/2026-09-11-xcp-get-id-types-design.md` (DD108-DD
 
 ## Two defects found while reading the specification
 
-- `test_get_id_returns_identification_through_mta_when_mode_is_0` asserted `raw_data[1] == mode`, comparing the response's Mode bit mask against the request's Requested Identification Type -- two different fields coinciding at zero against a hardcoded `0x00`. The assertion passed under every possible implementation. Fixed first, as its own commit.
+- `test_get_id_returns_identification_through_mta_when_mode_is_0` asserted `raw_data[1] == mode`, comparing the response's Mode bit mask against the request's Requested Identification Type -- two different fields coinciding at zero against a hardcoded `0x00`, pinned only by this test's single-row parametrize list at mode 0. Fixed first, as its own commit.
 - The default identification is 21 bytes, so the module already reported a `Length` violating 1.1's `Length mod AG = 0` under WORD or DWORD granularity. The default changes to a 16-byte string.
 
 ## Deliberately not built

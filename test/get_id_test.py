@@ -44,8 +44,10 @@ def test_get_id_returns_identification_through_mta_when_mode_is_0(byte_order,
     # makes this byte a bit mask -- TRANSFER_MODE at bit 0, COMPRESSED_ENCRYPTED at bit 1, bits 2-7
     # don't-care. 1.0/1.6.1.2.2 has the same byte and leaves it unnamed, which is why this was
     # previously read as an echo of the request's Requested Identification Type. It is not one:
-    # request byte 1 and response byte 1 are different fields that both happen to be 0 here, so the
-    # old `assert raw_data[1] == mode` passed under every possible implementation.
+    # request byte 1 and response byte 1 are different fields that both happen to be 0 here. The
+    # old `assert raw_data[1] == mode` pinned the right value only because this test's parametrize
+    # list has one row at zero; it would demand a wrong thing -- that the response echo the
+    # request -- as soon as a second identification type is covered.
     # Both bits clear: the slave transfers through the MTA and does not compress (DD111).
     assert raw_data[1] & 0x01 == 0x00, 'TRANSFER_MODE must be clear: this slave points the MTA'
     assert raw_data[1] & 0x02 == 0x00, 'COMPRESSED_ENCRYPTED must be clear: nothing is compressed'
