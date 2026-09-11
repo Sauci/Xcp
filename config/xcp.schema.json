@@ -622,7 +622,7 @@
                 "default": 0
               },
               "identification": {
-                "description": "Identification type 0 (ASCII) returned by GET_ID, and the fallback for type 0 when no get_id_function is configured. XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 requires Length mod AG = 0, so its length must be a multiple of address_granularity; generation refuses a configuration where it is not. The default is 16 bytes, which conforms under BYTE, WORD and DWORD alike.",
+                "description": "Identification type 0 (ASCII) returned by GET_ID. XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 requires Length mod AG = 0, so its length must be a multiple of address_granularity; generation refuses a configuration where it is not. The default is 16 bytes, which conforms under BYTE, WORD and DWORD alike.",
                 "type": "string",
                 "default": "/path/to/xcp.a2l"
               },
