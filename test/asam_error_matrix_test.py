@@ -202,8 +202,15 @@ class TestGetIdErrorHandling:
         handle.lib.Xcp_MainFunction()
         assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x21)
 
-    @pytest.mark.parametrize('requested_identification_type', range(0x01, 0xFF))
+    @pytest.mark.parametrize('requested_identification_type', range(0x05, 0x80))
     def test_returns_err_out_of_range(self, requested_identification_type):
+        """1.1/1.6.1.2.2 defines identification types 0-4 and 128-255. Only 5-127 are out of range;
+        a defined type this slave does not serve answers a positive response with Length = 0 instead
+        (test/get_id_test.py::test_get_id_reports_length_zero_for_a_defined_type_it_does_not_serve),
+        which is what 1.1/1.6.1.2.2 defines Length = 0 to mean. DD110.
+
+        This previously ranged over range(0x01, 0xFF) -- every type but 0, and stopping short of 255.
+        """
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
         handle.lib.Xcp_MainFunction()

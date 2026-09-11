@@ -123,6 +123,15 @@ extern "C" {
  */
 #define XCP_GET_ID_MODE_TRANSFER_MODE (0x01u << 0x00u)
 #define XCP_GET_ID_MODE_COMPRESSED_ENCRYPTED (0x01u << 0x01u)
+/**
+ * @brief GET_ID Requested Identification Type values.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 (1.0/1.6.1.2.2, identical list):
+ * 0 ASCII text, 1 ASAM-MC2 filename without path and extension, 2 with path and extension, 3 URL,
+ * 4 ASAM-MC2 file to upload, 128..255 user defined. 5..127 are not identification types.
+ */
+#define XCP_GET_ID_TYPE_ASCII (0x00u)
+#define XCP_GET_ID_TYPE_LAST_DEFINED (0x04u)
+#define XCP_GET_ID_TYPE_FIRST_USER_DEFINED (0x80u)
 #define XCP_PID_CMD_GET_COMM_MOD_INFO (0xFBu)
 #define XCP_PID_CMD_SYNCH (0xFCu)
 #define XCP_PID_CMD_GET_STATUS (0xFDu)
