@@ -748,6 +748,40 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- if odt_entry_size_daq < 1 %}
 {{ raise('MAX_DTO {} leaves no room for data after a {}-byte {} identification field'.format(configuration.protocol_layer.max_dto, identification_field_size[identification_field_type], identification_field_type)) }}
 {%- endif %}
+{%- for character in configuration.protocol_layer.identification if character < ' ' or character > '~' %}
+    {#- Printable ASCII only, 0x20-0x7E. XCP part 2 1.1/1.6.1.2.2 defines the identification as
+        "a byte stream of plain ASCII text", and the Length mod AG = 0 guard below counts
+        characters, which are one byte each only in this range: U+00E9 is one character and two
+        UTF-8 bytes, so '/path/to/xcp.a2' followed by it passes that guard at 16 and compiles to
+        17. Control characters are refused as a class: a raw line feed would split the C literal
+        in the initialiser further down, and a NUL would end the string Xcp_DTOCmdStdGetId
+        (source/Xcp_Std.c) measures by scanning for one. Checked ahead of the length guard, whose
+        message calls the count bytes -- true once this has passed. config/xcp.schema.json refuses
+        the same characters with a pattern, but a configuration reaches this template through
+        BSWCodeGen's Python API without passing that schema at all, so this is the check every
+        configuration meets. #}
+{{ raise('identification {!r} contains {!r}, which is not printable ASCII (0x20-0x7E); XCP part 2 1.1/1.6.1.2.2 defines the identification as a byte stream of plain ASCII text, and the Length mod AG = 0 check below counts one byte per character'.format(configuration.protocol_layer.identification, character)) }}
+{%- endfor %}
+{%- set ag_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[configuration.protocol_layer.address_granularity] %}
+{%- if (configuration.protocol_layer.identification | length) % ag_size != 0 %}
+    {#- XCP part 2 1.1/1.6.1.2.2 adds a rule 1.0/1.6.1.2.2 does not have: "The following rule
+        applies: Length mod AG = 0". GET_ID reports the identification's length in bytes, and
+        1.1 defines the initial UPLOAD's element count as (Length GET_ID [BYTE]) / AG -- an
+        inexact division leaves the master unable to ask for the right number of elements.
+        Refused here rather than at run time because for the configured string it is knowable
+        now, and an integrator should learn at build time rather than on the wire. Scope: only
+        this configured string -- the generator can see only what is configured, so it can
+        validate only that. A value arriving some other way, at run time rather than through
+        this configuration, is invisible to the generator and cannot be validated here: a
+        callback-supplied length is validated in Xcp_DTOCmdStdGetId (source/Xcp_Std.c) instead,
+        which raises XCP_E_IDENTIFICATION_NOT_GRANULAR and answers Length = 0 rather than emit
+        it. DD112.
+
+        This measures the configured string itself, not the escaped spelling the initialiser
+        further down emits. There, each backslash and double quote is written as a two-character
+        escape that compiles to one byte, and the compiled string is what GET_ID reports. #}
+{{ raise('identification {!r} is {} bytes, which is not a multiple of the {}-byte {} address granularity; XCP part 2 1.1/1.6.1.2.2 requires Length mod AG = 0 because the initial UPLOAD element count is Length / AG'.format(configuration.protocol_layer.identification, configuration.protocol_layer.identification | length, ag_size, configuration.protocol_layer.address_granularity)) }}
+{%- endif %}
 {%- set ts = configuration.protocol_layer.timestamp %}
 {%- if ts is defined and ts %}
     {#- The timestamp (XCP part 2 1.1/1.1.2.2, Diagram 10) shares ODT 0 with the identification
@@ -1230,7 +1264,13 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {% if configuration.protocol_layer.user_defined_checksum_function %}&{{configuration.protocol_layer.user_defined_checksum_function}}{% else %}NULL_PTR{% endif %}, /* userDefinedChecksumFunction */
     {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %}, /* userCmdFunction */
     {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
-    "{{configuration.protocol_layer.identification}}", /* identification */
+{#- Escaped for the C literal: backslashes first, so that the backslash each escaped quote gains is
+    not itself doubled, then double quotes. Backslashes are escaped rather than refused -- XCP
+    part 2 1.1/1.6.1.2.2's own second example identification is c:\database\test.a2l. Pasted raw,
+    C would read \t, \n and the like as single escape characters: D:\temp\new1.a2l is 16
+    characters but a 14-byte C string, a Length the Length mod AG = 0 guard never saw. Each escape
+    written here compiles to exactly one byte. #}
+    "{{configuration.protocol_layer.identification | replace('\\', '\\\\') | replace('"', '\\"')}}", /* identification */
     {{'0x%02Xu' % (configuration.segments | default([]))|length}}, /* maxSegment */
 {#- MAX_SECTOR (SP4c Task 2, DD87): the sectors array's own length, so GET_PGM_PROCESSOR_INFO and
     GET_SECTOR_INFO cannot disagree about how many sectors exist. Final review F5 adds the
@@ -1331,6 +1371,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     clearDaqConfigurationApiEnable immediately above: a dedicated boolean, not a ctoInfo bit, since
     this is not a command PID a master ever sends. #}
     {% if configuration.apis.xcp_read_stored_session_configuration_id_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* readStoredSessionConfigurationIdApiEnable */
+    {% if configuration.protocol_layer.get_id_function %}&{{configuration.protocol_layer.get_id_function}}{% else %}NULL_PTR{% endif %}, /* getIdentificationFunction */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

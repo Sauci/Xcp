@@ -97,7 +97,7 @@ positive response without doing anything, which was defect D2, fixed in SP1.
 | 0xFD | GET_STATUS | yes | reports the session configuration id held in `Xcp_Internal.session_configuration_id` — 0 until a master's `SET_REQUEST` stores one, thereafter what was stored, and reloaded from non-volatile memory at start-up (SP5-NV, DD99–DD101); answers `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` instead while that start-up read is outstanding (`Xcp_CTOCmdStdGetStatus`, `source/Xcp_Std.c`). This row previously read a hardcoded 0, accurate only before SP5-NV shipped; corrected here. See defect D9 |
 | 0xFC | SYNCH | done |
 | 0xFB | GET_COMM_MODE_INFO | done |
-| 0xFA | GET_ID | partial — identification type 0 (ASCII) only; §1.6.1.2.2 defines 0–4 plus 128–255 user-defined, all implementation-specific |
+| 0xFA | GET_ID | complete — types 0–4 and 128–255 served through `getIdentificationFunction`, type 0 falling back to the configured string; a defined type the slave does not serve answers `Length = 0` per 1.1/§1.6.1.2.2, 5–127 answer `ERR_OUT_OF_RANGE`. `TRANSFER_MODE` deliberately stays 0 (DD111) |
 | 0xF9 | SET_REQUEST | yes | STORE_CAL_REQ implemented. STORE_DAQ_REQ (`STORE_DAQ_REQ_NO_RESUME`/`STORE_DAQ_REQ_RESUME`) and CLEAR_DAQ_REQ are each accepted once their own non-volatile storage callback is configured in, refused with `ERR_OUT_OF_RANGE` otherwise — this row's "refused ... as unsupported modes" was true before SP5-NV and is stale since (DD94-DD102); requesting both DAQ store modes together is refused too, a deliberate choice where 1.1 is silent rather than something it requires (SP5-RESUME). See §2.6's RESUME mode row and defect D9 |
 | 0xF8 | GET_SEED | done |
 | 0xF7 | UNLOCK | done |
@@ -367,11 +367,12 @@ Ordered. Each sub-project is independently shippable and leaves the suite green.
 complete (#6), with a hygiene pass in #7. SP2d is complete (#12). SP3 is complete. SP4a is complete
 (#16), SP4b is complete (#17), and SP4c is complete — **so SP4, and with it the whole PGM command
 group, is complete: all eleven PGM commands are implemented.** **SP2c remains deferred — see its
-own entry below for why, which is unchanged.** **SP5-NV is complete and SP5-RESUME is complete —
-see their own entries below. This paragraph previously ended "so SP5 is next" as though SP5 had
-not started, which stopped being true once those two sub-projects shipped; corrected here. What
-is left of SP5 is its residue: the interleaved communication model, `GET_ID` identification types
-1–4/128–255, and the remaining `SERV_*` codes.**
+own entry below for why, which is unchanged.** **SP5-NV is complete, SP5-RESUME is complete and
+SP5-GETID is complete — see their own entries below. This paragraph previously ended "so SP5 is
+next" as though SP5 had not started, which stopped being true once those sub-projects shipped;
+corrected here. What is left of SP5 is its residue: the interleaved communication model and the
+remaining `SERV_*` codes — `GET_ID` identification types 1–4/128–255 were the third residue item
+until SP5-GETID shipped them.**
 
 ### SP1 — Calibration and page switching (CAL + PAG) — **complete**
 
@@ -557,8 +558,12 @@ cases on that one term, so it would not notice the other two being deleted.
 
 ### SP5 — Protocol completion
 
-The residue: the interleaved communication model (§1.7.2.3), `GET_ID` identification types 1–4 and
-128–255 (§1.6.1.2.2), the remaining `EV_*` event codes and the `SERV_*` service request codes.
+The residue: the interleaved communication model (§1.7.2.3), the remaining `EV_*` event codes and
+the `SERV_*` service request codes.
+
+`GET_ID` identification types 1–4 and 128–255 (§1.6.1.2.2) were listed here too and are now
+**done** — SP5-GETID (below) shipped them, served through an integrator callback; see §2.1's
+`GET_ID` row.
 
 `EV_CMD_PENDING` was listed here and is **done** — SP4 shipped it for deferred programming
 operations; see §2.6. Interleaved mode remains unbuilt, but is no longer advertisable: the
@@ -648,8 +653,16 @@ Three things this had to get right, all of them discovered by D9:
 depending on SP2 alone. With SP5-NV complete and RESUME still not built, that symmetry no longer
 holds: RESUME now depends on SP5-NV as well, not only on SP2 — the persistence and the session
 configuration id this phase built are exactly what RESUME needs something to resume *from*. Only
-the interleaved model, `EV_CMD_PENDING`, `GET_ID` types and the `SERV_*` codes are genuinely
-independent and can be pulled forward if one of them blocks an integration.
+the interleaved model and the `SERV_*` codes are genuinely independent and can be pulled forward if
+one of them blocks an integration.
+
+**Corrected a second time.** "RESUME still not built," two sentences above, was true only at the
+moment this paragraph was first written — SP5-RESUME is complete now (below), so RESUME's
+dependency on SP5-NV is history rather than a live blocker. The residue list at the end of that
+same paragraph was wrong independent of tense, in two more ways, and has been edited above rather
+than left standing: `EV_CMD_PENDING` was never genuinely independent of anything — it is **done**,
+shipped in SP4 (§2.6) — and `GET_ID` types are **done** too, now that SP5-GETID (below) has shipped
+them.
 
 #### SP5-RESUME — starting DAQ from non-volatile memory — **complete**
 
@@ -689,6 +702,37 @@ DAQ list infrastructure. Four tasks, each building on the last: the setters and 
 wire reporting (`GET_STATUS`, `GET_DAQ_LIST_MODE`, `EV_RESUME_MODE`); and finally arming it from
 `SET_REQUEST` and advertising `RESUME_SUPPORTED` — deliberately last, so no commit on the branch
 ever advertised or accepted a capability the code behind it did not yet have.
+
+#### SP5-GETID — GET_ID identification types — **complete**
+
+**What it built.** Every identification type 1.1/§1.6.1.2.2 defines — 0 through 4, and the
+128–255 user-defined range — served through an optional `getIdentificationFunction` callback,
+with the configured `identification` string as type 0's fallback when no callback is configured
+or the callback declines. A defined type the slave does not serve answers `Length = 0`, which is
+1.1/§1.6.1.2.2's own way of declining; 5–127 name no identification type at all and answer
+`ERR_OUT_OF_RANGE`. See §2.1's `GET_ID` row.
+
+Design: `2026-09-11-xcp-get-id-types-design.md` (DD108–DD113).
+
+**What 1.1 changed and 1.0 did not have.** The response Mode byte becomes a named bit mask —
+`TRANSFER_MODE` at bit 0, `COMPRESSED_ENCRYPTED` at bit 1 — and 1.1 adds `Length mod AG = 0` plus
+the initial UPLOAD's element count, `Length / AG`. This is the second time the 1.0-vs-1.1
+mode-byte pattern has appeared, after `SET_REQUEST` (see the table in the introduction above). The
+bit positions come from the 1.1 PDF's own text layer, not its OCR sidecar, which misaligns table
+columns — see §0 of the design doc for the decipherment method.
+
+**Two pre-existing defects it fixed.** The Mode-byte assertion,
+`test_get_id_returns_identification_through_mta_when_mode_is_0`, asserted `raw_data[1] == mode`,
+comparing the response's Mode bit mask against the request's Requested Identification Type — two
+different fields. It pinned the correct value only by the coincidence that its parametrize list
+held a single row at mode 0; it would have demanded the wrong thing, that the response echo the
+request, the moment a second identification type was covered. And the default `identification`
+was 21 bytes, so the module already reported a `Length` violating 1.1's `Length mod AG = 0` under
+WORD and DWORD granularity — the default is now a 16-byte string.
+
+**What it deliberately did not build.** Inline transfer (`TRANSFER_MODE = 1`, DD111) and
+compression (`COMPRESSED_ENCRYPTED`, DD111 — its algorithm interface lives in XCP Part 4, which is
+not in `docs/external/`). Both are reversible, and both are now documented rather than forgotten.
 
 ---
 

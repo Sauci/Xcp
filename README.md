@@ -445,7 +445,7 @@ refused `ERR_PGM_ACTIVE` while the session is open.
   would also require `CanIf_SetDynamicTxId` (SWS_CANIF_00189) and an integrator guarantee that every DAQ transmit
   PDU is configured as a *dynamic* L-PDU, neither of which this module can verify. `GET_DAQ_ID` (`0xFE`)
   consequently reports the identifier as fixed, which is the truthful answer for a slave that cannot change it.
-- The `GET_ID` command only supports the request identification type 0 (*ASCII text*).
+- The `GET_ID` command always transfers identification through the MTA — `TRANSFER_MODE` stays 0 for every type, because the request packet is two bytes and gives the master no field to ask for inline transfer. `COMPRESSED_ENCRYPTED` is not implemented; 1.1/1.6.1.2.2 puts its algorithm interface in XCP Part 4, a specification this module does not have access to. Identification types 0-4 and 128-255 are served through the optional `get_id_function` callback, with the configured `identification` string as type 0's fallback.
 - `SHORT_DOWNLOAD` can transfer no data at all when `MAX_CTO` is 8, as it is for XCP on CAN, because the command's
   own header fills the whole frame. The specification notes this. The stack still accepts the command, and rejects any
   element count above `(MAX_CTO - 8) / AG` with `ERR_OUT_OF_RANGE`.

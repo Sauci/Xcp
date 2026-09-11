@@ -105,6 +105,33 @@ extern "C" {
 #define XCP_PID_CMD_GET_SEED (0xF8u)
 #define XCP_PID_CMD_SET_REQUEST (0xF9u)
 #define XCP_PID_CMD_GET_ID (0xFAu)
+/**
+ * @brief GET_ID positive response Mode bit mask.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2. 1.0/1.6.1.2.2 carries the same
+ * byte but leaves it an unnamed "Mode"; 1.1 makes it a bit mask and adds COMPRESSED_ENCRYPTED.
+ * @details Bit positions are asserted from the 1.1 PDF's own text layer, not from its OCR sidecar,
+ * which misaligns table columns. The glyph substitution was recovered from known-plaintext pairs
+ * and the prose decode agrees independently with the table's column geometry; the method is
+ * recorded in docs/superpowers/specs/2026-09-11-xcp-get-id-types-design.md section 0.
+ *
+ * Both bits are always clear in this module (DD111). TRANSFER_MODE stays 0 because the request
+ * packet is two bytes -- command code and Requested Identification Type -- so the master has no
+ * field in which to ask for inline transfer; the slave chooses and merely reports which mode it
+ * used, and 1.1/1.6.1.2.2 describes mode 0 as a complete answer. COMPRESSED_ENCRYPTED stays 0
+ * because its algorithm interface lives in XCP Part 4, which is not in docs/external/ -- and
+ * because the cleared state is always legal.
+ */
+#define XCP_GET_ID_MODE_TRANSFER_MODE (0x01u << 0x00u)
+#define XCP_GET_ID_MODE_COMPRESSED_ENCRYPTED (0x01u << 0x01u)
+/**
+ * @brief GET_ID Requested Identification Type values.
+ * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 (1.0/1.6.1.2.2, identical list):
+ * 0 ASCII text, 1 ASAM-MC2 filename without path and extension, 2 with path and extension, 3 URL,
+ * 4 ASAM-MC2 file to upload, 128..255 user defined. 5..127 are not identification types.
+ */
+#define XCP_GET_ID_TYPE_ASCII (0x00u)
+#define XCP_GET_ID_TYPE_LAST_DEFINED (0x04u)
+#define XCP_GET_ID_TYPE_FIRST_USER_DEFINED (0x80u)
 #define XCP_PID_CMD_GET_COMM_MOD_INFO (0xFBu)
 #define XCP_PID_CMD_SYNCH (0xFCu)
 #define XCP_PID_CMD_GET_STATUS (0xFDu)

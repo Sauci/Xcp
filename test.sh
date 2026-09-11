@@ -11,11 +11,20 @@
 # Measured, 600 template compilations per run, this tree, this host:
 #   alpine image, 8 MB stack   -- failed 2 of 3 runs
 #   alpine image, 64 MB stack  -- 7 of 7 clean
+#   alpine image, 256 MB stack -- failed 1 of 2 runs
 #   debian/glibc, 8 MB stack   -- 4 of 4 clean
 #
 # glibc survives the same depth at the same limit, which is why this only ever bit locally and in
 # this image. The hard limit here is unlimited, so an unprivileged user can raise the soft limit;
 # doing it here rather than at the `docker run` keeps every caller -- CI and local -- on one rule.
+#
+# The 256 MB run that failed hit the identical class of symptom listed above, this time "...unknown
+# to the frame ('loop')" in jinja2/idtracking.py while compiling source_cfg.c.jinja2. A 4x increase
+# over the 64 MB setting measured clean not shifting the failure mode is evidence against stack
+# headroom being the binding constraint at this scale, whatever was true at 8 MB. The limit stays
+# at 65536; re-run remains the workaround, not a larger ulimit. Prompted by one branch that grew
+# source_cfg.c.jinja2 measuring 1 clean run in 9 attempts of the standard command, against a
+# clean-first-try control on the unmodified parent commit.
 ulimit -s 65536
 
 result=0

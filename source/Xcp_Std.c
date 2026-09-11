@@ -1265,68 +1265,151 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     Std_ReturnType result = E_OK;
 
-    uint32 identification_length;
-
     *responseExpected = TRUE;
 
     const uint8 identification_type = pPduInfo->SduDataPtr[0x01u];
-    const char *identification = Xcp_Ptr->general->identification;
 
-    for (identification_length = 0x00000000u; identification_length < 0xFFFFFFFFu; identification_length++)
+    if ((identification_type > XCP_GET_ID_TYPE_LAST_DEFINED) &&
+        (identification_type < XCP_GET_ID_TYPE_FIRST_USER_DEFINED))
     {
-        if (identification[identification_length] == 0x00u)
-        {
-            break;
-        }
-    }
-
-    if (identification_type == 0x00u)
-    {
-        /* DD75 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). XCP part 2
-         * - Protocol Layer Specification 1.1/1.6.1.2.2 (1.0/1.6.1.2.2, identical wording): with
-         * mode 0, "the slave device sets the Memory Transfer Address (MTA) to the location from
-         * which the master device may upload the requested identification". 1.1/1.6.1.2.6
-         * (1.0/1.6.1.2.6, same wording) defines the MTA itself as one complete pointer -- "32Bit
-         * address + 8Bit extension" -- not an address alone, so setting it means setting both
-         * members. Only .address used to be assigned here, leaving .extension holding whatever an
-         * earlier, unrelated SET_MTA last left there for the UPLOAD that follows this command to
-         * read the identification through -- source/Xcp.c and the checksum helpers in this file
-         * both read the pair, never .address alone.
-         *
-         * GET_ID's own text never states which extension value to use here -- the specification
-         * does not settle it, the same kind of gap already found for the MTA's pre-SET_MTA value
-         * (this file, Xcp_CTOCmdStdConnect). What the specification does define is what a
-         * non-zero extension is FOR: 1.1/1.6.3.1.4 (1.0/1.6.3.2.2, identical wording,
-         * GET_SEGMENT_INFO) reads "ADDRESS_EXTENSION is used in SET_MTA, SHORT_UPLOAD and
-         * SHORT_DOWNLOAD when accessing a PAGE within this SEGMENT" -- a non-zero extension
-         * selects a PAGE within a configured CAL/PAG SEGMENT. Xcp_Ptr->general->identification is
-         * not part of any segments[] entry; it is plain, slave-owned descriptive data that lives
-         * entirely outside the page-switching model, so there is no SEGMENT for a non-zero
-         * extension to name here.
-         * 0x00u is also the specification's own vocabulary for "nothing meaningful on this pair":
-         * 1.1/1.6.1.2.3 (1.0/1.6.1.2.3, SET_REQUEST) reads "All ODT entries reset to address = 0,
-         * extension = 0" for the identical kind of pointer with nothing of its own to report. And
-         * it is what this module already uses whenever it hands the MTA a plain descriptive
-         * pointer of its own rather than an address the master supplied: Xcp_Init and
-         * Xcp_CTOCmdStdConnect both pair NULL_PTR with extension = 0x00u, and
-         * Xcp_DTOCmdDaqGetDaqEventInfo (source/Xcp_Daq.c) sets this exact pair when it points the
-         * MTA at an event channel's name for a following UPLOAD -- checked to actually apply here,
-         * not copied on sight: that pointer and this one are the same category of thing for the
-         * same structural reason above, neither living in a CAL/PAG segment. */
-        Xcp_Internal.memory_transfer.address = (void *)Xcp_Ptr->general->identification;
-        Xcp_Internal.memory_transfer.extension = 0x00u;
-
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
-        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
-        Xcp_CopyFromU32WithOrder(identification_length, &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u], Xcp_Ptr->general->byteOrder);
-
-        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
+        /* 5..127 name no identification type at all: 1.1/1.6.1.2.2 lists 0..4 and 128..255 as the
+         * types that "may be requested". This is the only value range that can reach GET_ID's own
+         * ERR_OUT_OF_RANGE row in 1.1/1.7.3.2.1, the identification type being its only parameter.
+         * A defined type this slave simply does not serve is NOT an error -- it answers Length = 0
+         * below, which is what 1.1/1.6.1.2.2 defines that value to mean. DD110. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {
-        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        const void *identification = NULL_PTR;
+        uint8 extension = 0x00u;
+        uint32 identification_length = 0x00000000u;
+        boolean served = FALSE;
+
+        if (Xcp_Ptr->general->getIdentificationFunction != NULL_PTR)
+        {
+            /* Consulted for every defined type including 0, so an integrator who needs a
+             * runtime-varying type 0 can override the configured string. Declining it falls back
+             * to that string below, which is what makes a NULL_PTR callback and a callback that
+             * returns E_NOT_OK for type 0 behave identically. DD110. */
+            if (Xcp_Ptr->general->getIdentificationFunction(identification_type,
+                                                            &identification,
+                                                            &extension,
+                                                            &identification_length) == E_OK)
+            {
+                served = TRUE;
+            }
+            else
+            {
+                /* E_NOT_OK promises nothing about the out-parameters, and a callback may have
+                 * written them before declining. Discarding its length is what sends a type with
+                 * no static fallback to Length = 0 below, and through Length = 0 the MTA to
+                 * (NULL_PTR, 0x00u), DD113. Type 0's fallback overwrites all three. */
+                identification_length = 0x00000000u;
+            }
+        }
+
+        if ((served == FALSE) && (identification_type == XCP_GET_ID_TYPE_ASCII))
+        {
+            identification = (const void *)Xcp_Ptr->general->identification;
+            /* DD75 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). XCP part 2
+             * - Protocol Layer Specification 1.1/1.6.1.2.2 (1.0/1.6.1.2.2, identical wording): with
+             * mode 0, "the slave device sets the Memory Transfer Address (MTA) to the location from
+             * which the master device may upload the requested identification". 1.1/1.6.1.2.6
+             * (1.0/1.6.1.2.6, same wording) defines the MTA itself as one complete pointer -- "32Bit
+             * address + 8Bit extension" -- not an address alone, so setting it means setting both
+             * members. Only .address used to be assigned here, leaving .extension holding whatever an
+             * earlier, unrelated SET_MTA last left there for the UPLOAD that follows this command to
+             * read the identification through -- source/Xcp.c and the checksum helpers in this file
+             * both read the pair, never .address alone.
+             *
+             * GET_ID's own text never states which extension value to use here -- the specification
+             * does not settle it, the same kind of gap already found for the MTA's pre-SET_MTA value
+             * (this file, Xcp_CTOCmdStdConnect). What the specification does define is what a
+             * non-zero extension is FOR: 1.1/1.6.3.1.4 (1.0/1.6.3.2.2, identical wording,
+             * GET_SEGMENT_INFO) reads "ADDRESS_EXTENSION is used in SET_MTA, SHORT_UPLOAD and
+             * SHORT_DOWNLOAD when accessing a PAGE within this SEGMENT" -- a non-zero extension
+             * selects a PAGE within a configured CAL/PAG SEGMENT. Xcp_Ptr->general->identification is
+             * not part of any segments[] entry; it is plain, slave-owned descriptive data that lives
+             * entirely outside the page-switching model, so there is no SEGMENT for a non-zero
+             * extension to name here.
+             * 0x00u is also the specification's own vocabulary for "nothing meaningful on this pair":
+             * 1.1/1.6.1.2.3 (1.0/1.6.1.2.3, SET_REQUEST) reads "All ODT entries reset to address = 0,
+             * extension = 0" for the identical kind of pointer with nothing of its own to report. And
+             * it is what this module already uses whenever it hands the MTA a plain descriptive
+             * pointer of its own rather than an address the master supplied: Xcp_Init and
+             * Xcp_CTOCmdStdConnect both pair NULL_PTR with extension = 0x00u, and
+             * Xcp_DTOCmdDaqGetDaqEventInfo (source/Xcp_Daq.c) sets this exact pair when it points the
+             * MTA at an event channel's name for a following UPLOAD -- checked to actually apply here,
+             * not copied on sight: that pointer and this one are the same category of thing for the
+             * same structural reason above, neither living in a CAL/PAG segment. */
+            extension = 0x00u;
+
+            for (identification_length = 0x00000000u;
+                 identification_length < 0xFFFFFFFFu;
+                 identification_length++)
+            {
+                if (Xcp_Ptr->general->identification[identification_length] == 0x00u)
+                {
+                    break;
+                }
+            }
+        }
+
+        /* Only a callback's length is checked here; the configured string's is checked at
+         * generation time (script/source_cfg.c.jinja2). A type-0 callback that answered E_OK has
+         * claimed the type, so a length refused here is answered Length = 0 and is never replaced
+         * by the configured string -- substituting different data would hide the defect Det is
+         * about to report. DD112. */
+        if (served == TRUE)
+        {
+            const uint8 element_size =
+                Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+
+            if ((identification_length % (uint32)element_size) != 0x00000000u)
+            {
+                /* 1.1/1.6.1.2.2: "Length mod AG = 0". The module cannot emit a non-conforming
+                 * Length, so the type is reported unavailable -- Length = 0, which also nulls the
+                 * MTA below, DD113 -- and the integrator hears about it through Det; the master
+                 * has no channel for this distinction. DD112. */
+                Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID,
+                                XCP_E_IDENTIFICATION_NOT_GRANULAR);
+                identification_length = 0x00000000u;
+            }
+        }
+
+        if (identification_length == 0x00000000u)
+        {
+            /* DD113: a response whose Length is 0 points the MTA at (NULL_PTR, 0x00u). Decided here,
+             * on the Length alone, so that no route to Length = 0 can skip it: a callback answering
+             * E_OK with a length of 0 and an empty configured string for type 0 both arrive with a
+             * live address, and the declined and refused callback routes above reset only the
+             * length, keeping whatever the callback wrote. A master that ignores Length = 0 and
+             * uploads anyway then reads through a pointer the slave deliberately nulled.
+             * (NULL_PTR, 0x00u) is this module's own vocabulary for "nothing meaningful on this
+             * pair" -- Xcp_Init and Xcp_CTOCmdStdConnect both pair exactly that. */
+            identification = NULL_PTR;
+            extension = 0x00u;
+        }
+
+        /* Points the MTA for the UPLOAD that follows this response: a served type's own address
+         * and extension -- the callback's, DD109 included, or the static string's with extension
+         * 0 -- or (NULL_PTR, 0x00u) whenever the Length is 0, as set just above. */
+        Xcp_Internal.memory_transfer.address = (void *)identification;
+        Xcp_Internal.memory_transfer.extension = extension;
+
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+        /* Mode (1.1/1.6.1.2.2): XCP_GET_ID_MODE_TRANSFER_MODE and
+         * XCP_GET_ID_MODE_COMPRESSED_ENCRYPTED (source/Xcp_Internal.h) both clear -- the slave
+         * points the MTA and compresses nothing. DD111. */
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
+        Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
+        Xcp_CopyFromU32WithOrder(identification_length,
+                                 &Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x04u],
+                                 Xcp_Ptr->general->byteOrder);
+
+        Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
     }
 
     return result;

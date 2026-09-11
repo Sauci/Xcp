@@ -615,6 +615,21 @@
                 ],
                 "default": null
               },
+              "get_id_function": {
+                "description": "Optional integrator callback supplying GET_ID identification data for any type. XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 leaves which types a slave supports implementation specific; this is how it decides. Returning E_NOT_OK means the type is not served, which answers Length = 0 -- except for type 0, which falls back to the configured identification string. null means only type 0 is served, from that string alone.",
+                "OneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "Xcp_GetIdentificationFunction"
+                    ]
+                  }
+                ],
+                "default": null
+              },
               "trailing_value": {
                 "type": "integer",
                 "minimum": 0,
@@ -622,8 +637,11 @@
                 "default": 0
               },
               "identification": {
+                "description": "Identification type 0 (ASCII) returned by GET_ID. Printable ASCII only, 0x20-0x7E: XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 calls the identification \"a byte stream of plain ASCII text\", and at one byte per character its length in characters is its length in bytes. '\"' and '\\' are permitted -- 1.1/1.6.1.2.2's own second example is c:\\database\\test.a2l -- because script/source_cfg.c.jinja2 escapes both into the generated C string literal. 1.1/1.6.1.2.2 requires Length mod AG = 0, so its length must be a multiple of address_granularity; generation refuses a configuration where it is not. The default is 16 bytes, which conforms under BYTE, WORD and DWORD alike.",
+                "$comment": "The pattern ends in the lookahead (?![\\s\\S]) rather than in $: jsonschema evaluates patterns with Python's re, whose $ also matches just before a final line feed, so ^[\\x20-\\x7E]*$ would accept an identification ending in one. The lookahead asserts that no character at all follows, which is the end of the string under Python's re and ECMA-262 alike. * rather than +: an empty identification answers Length = 0 for type 0, which 1.1/1.6.1.2.2 defines as not available, and the generator accepts it.",
                 "type": "string",
-                "default": "/path/to/database.a2l"
+                "pattern": "^[\\x20-\\x7E]*(?![\\s\\S])",
+                "default": "/path/to/xcp.a2l"
               },
               "timestamp": {
                 "description": "Data acquisition clock reported to the master through GET_DAQ_RESOLUTION_INFO, and transmitted in the first ODT of each cycle of a DAQ list the master has put into timestamped mode. Absent means the slave does not support timestamps: TIMESTAMP_SUPPORTED is reported clear and TIMESTAMP_MODE/TIMESTAMP_TICKS are invalid, which XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 permits explicitly. The module holds no clock; these values describe the counter the integrator supplies through Xcp_GetDaqTimestamp.",
@@ -649,6 +667,7 @@
               "checksum_type",
               "user_defined_checksum_function",
               "user_cmd_function",
+              "get_id_function",
               "trailing_value",
               "identification"
             ]

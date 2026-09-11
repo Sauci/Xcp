@@ -965,3 +965,80 @@ def test_odt_entry_size_stim_is_reported_for_a_stim_capable_build():
     assert handle.config.lib.Xcp[0].general.odtEntrySizeStim == \
         handle.config.lib.Xcp[0].general.odtEntrySizeDaq
     assert handle.config.lib.Xcp[0].general.odtEntrySizeStim != 0
+
+
+@pytest.mark.parametrize('address_granularity, identification', (
+    ('WORD', '/path/to/database.a2l'),    # 21 bytes: 21 mod 2 == 1
+    ('DWORD', '/path/to/database.a2l'),   # 21 bytes: 21 mod 4 == 1
+    ('DWORD', '/path/to/xcp.a2ll'),       # 17 bytes: 17 mod 4 == 1
+    ('DWORD', '/path/to/xcp12.a2l'),      # 18 bytes: 18 mod 4 == 2, yet 18 mod 2 == 0 -- see below
+))
+def test_generation_refuses_an_identification_that_is_not_a_multiple_of_the_granularity(
+        address_granularity, identification):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 adds a rule 1.0/1.6.1.2.2 does not
+    have: "The following rule applies: Length mod AG = 0". It protects the UPLOAD that follows,
+    whose element count 1.1 defines as (Length GET_ID [BYTE]) / AG -- an inexact division leaves
+    the master unable to ask for the right number of elements. DD112.
+
+    The guard message is documentation, not output: raise() is not a registered Jinja global in
+    bsw_code_gen, so referencing it aborts rendering with UndefinedError and the string never
+    reaches the caller. This asserts that generation fails, never that a message matches.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(address_granularity=address_granularity,
+                              identification=identification))
+
+
+@pytest.mark.parametrize('address_granularity', ('BYTE', 'WORD', 'DWORD'))
+def test_generation_accepts_the_default_identification_under_every_granularity(
+        address_granularity):
+    """The boundary above from the accepting side, and the reason the shipped default changed from
+    /path/to/database.a2l (21 bytes) to /path/to/xcp.a2l (16): without it the guard would reject
+    the module's own default configuration under WORD and DWORD.
+
+    Asserts on the generated identification string rather than on addressGranularity itself:
+    Xcp_AddressGranularityType's enumerators (interface/Xcp_Types.h) are the bare names BYTE,
+    WORD, DWORD with no XCP_ADDRESS_GRANULARITY_ prefix, and that prefixed spelling is not a
+    preprocessor #define anywhere in the generated header either, so handle.define(...) would
+    raise KeyError before the comparison ever ran. The point of this test is only that generation
+    succeeds at all under every granularity, which the identification round-trip already shows.
+    """
+    handle = XcpTest(DefaultConfig(address_granularity=address_granularity))
+
+    assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
+        b'/path/to/xcp.a2l'
+
+
+def test_generation_accepts_an_18_byte_identification_under_word():
+    """The row that tells WORD from DWORD. '/path/to/xcp12.a2l' is 18 bytes: 18 mod 2 == 0, so WORD
+    accepts it, and 18 mod 4 == 2, so DWORD refuses it (the last refusal row above). Every other
+    row on either side is a length the two granularities agree on -- 21 and 17 are odd, 16 is a
+    multiple of 4 -- so exchanging their element sizes in the guard's own table would pass them
+    all. This test and that DWORD row each fail under the exchange."""
+    handle = XcpTest(DefaultConfig(address_granularity='WORD', identification='/path/to/xcp12.a2l'))
+
+    assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
+        b'/path/to/xcp12.a2l'
+
+
+@pytest.mark.parametrize('identification', (
+    pytest.param('/path/to/xcp.a2\u00e9', id='non-ASCII'),   # 16 characters, 17 UTF-8 bytes
+    pytest.param('/path/to\txcp.a2l', id='control character'),    # 16 characters, one a real tab
+))
+def test_generation_refuses_an_identification_that_is_not_printable_ascii(identification):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 defines the identification as "a byte
+    stream of plain ASCII text", and the generator's Length mod AG = 0 guard counts characters --
+    one byte each only for printable ASCII, 0x20-0x7E. U+00E9 is one character and two UTF-8 bytes,
+    so the first row passes a count of 16 and would compile to 17. Control characters are refused
+    as a class: a raw line feed would split the generated C literal, and a NUL would end the string
+    Xcp_DTOCmdStdGetId measures by scanning for one. The tab stands for the class.
+
+    BYTE granularity, so the length guard cannot be what refuses either row: every length is a
+    multiple of 1. Both rows are 16 characters, a multiple of 4 as well, so neither would trip that
+    guard under any granularity. config/xcp.schema.json refuses the same characters
+    (test/configuration_schema_test.py), but the harness drives BSWCodeGen without the schema, so
+    this is the check every configuration meets. Asserts only that generation fails, for the reason
+    given above test_generation_fails_when_a_configured_pid_contradicts_the_derived_first_pid.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(address_granularity='BYTE', identification=identification))

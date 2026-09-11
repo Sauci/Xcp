@@ -76,7 +76,41 @@ def test_every_address_granularity_is_valid(schema, address_granularity):
 
 @pytest.mark.parametrize('identification_field_type', identification_field_types)
 def test_every_identification_field_type_is_valid(schema, identification_field_type):
-    validate(DefaultConfig(identification=identification_field_type), schema)
+    validate(DefaultConfig(identification_field_type=identification_field_type), schema)
+
+
+@pytest.mark.parametrize('identification', (
+    pytest.param('/path/to/xcp.a2\u00e9', id='non-ASCII'),
+    pytest.param('/path/to\txcp.a2l', id='control character'),
+    pytest.param('/path/to/xcp.a2l\n', id='trailing line feed'),
+))
+def test_an_identification_that_is_not_printable_ascii_is_rejected(schema, identification):
+    """The identification's pattern, shown to run rather than assumed to: jsonschema silently
+    ignores a keyword it does not recognise, a misspelt one included, so a constraint written into
+    this schema is not by itself evidence that anything enforces it. XCP part 2 - Protocol Layer
+    Specification 1.1/1.6.1.2.2 calls the identification "a byte stream of plain ASCII text", and
+    script/source_cfg.c.jinja2 refuses the same characters as the backstop for configurations that
+    never pass through this schema.
+
+    The trailing line feed is the row a pattern ending in $ would let through: jsonschema matches
+    patterns with Python's re, whose $ also matches just before a final line feed."""
+    with pytest.raises(jsonschema.ValidationError):
+        validate(DefaultConfig(identification=identification), schema)
+
+
+@pytest.mark.parametrize('identification', (
+    pytest.param('c:\\database\\test.a2l', id='backslash'),
+    pytest.param('/path/to/"x".a2l', id='double quote'),
+    pytest.param('', id='empty'),
+))
+def test_an_identification_with_a_backslash_a_quote_or_nothing_at_all_is_valid(schema,
+                                                                               identification):
+    """The pattern's other edge. Backslash and double quote are printable ASCII and stay allowed:
+    c:\\database\\test.a2l is 1.1/1.6.1.2.2's own second example, and the generator escapes both
+    characters into the C literal rather than refusing them. The empty string stays allowed, as it
+    was before the pattern existed: it answers Length = 0 for type 0, which 1.1/1.6.1.2.2 defines
+    as not available, and the generator accepts it."""
+    validate(DefaultConfig(identification=identification), schema)
 
 
 def test_the_repository_configuration_is_valid(schema):
