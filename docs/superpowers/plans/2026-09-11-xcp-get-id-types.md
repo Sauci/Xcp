@@ -244,45 +244,78 @@ def test_get_id_rejects_a_type_the_specification_does_not_define(identification_
     assert raw_data[0:2] == (0xFE, 0x22), 'expected ERR_OUT_OF_RANGE'
 
 
-def test_get_id_nulls_the_mta_when_it_reports_length_zero():
-    """DD113. A declined GET_ID must not leave an earlier SET_MTA's pointer standing: a master that
-    ignores Length = 0 and uploads anyway would then read through a pointer the slave never set for
-    this purpose -- the defect DD75 fixed for the extension half of the same pair, the other way
-    round. (NULL_PTR, 0) is this module's own vocabulary for "nothing meaningful on this pair":
-    Xcp_Init and Xcp_CTOCmdStdConnect both pair exactly that.
-
-    Observed through UPLOAD's own argument, because Xcp_Internal is not reachable from the harness.
-    """
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
-    _connect(handle)
-
-    # Point the MTA somewhere recognisable first, so a pass cannot come from it never having moved.
-    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF6, 0x00, 0x00, 0x07,
-                                                                 0xDE, 0xAD, 0xBE, 0xEF)))
+def _set_mta(handle, address_bytes, extension=0x00):
+    """SET_MTA. Copy the exact framing from test/session_teardown_test.py, which already issues a
+    SET_MTA(0xDEADBEEF) for the neighbouring DD75 case -- do not reconstruct the byte order here."""
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(
+        (0xF6, 0x00, 0x00, extension) + address_bytes))
     handle.lib.Xcp_MainFunction()
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
-    _get_id(handle, 0x03)
 
+def _upload_addresses(handle, element_count):
+    """Issue UPLOAD and return the raw pointers Xcp_ReadSlaveMemory was asked to read.
+
+    Returns cdata pointers, not integers: the harness idiom for "is this pointer null" is a direct
+    comparison against handle.ffi.NULL (test/clear_daq_list_test.py:40), which needs no cast to an
+    integer type the cdef may not carry.
+    """
     addresses = []
-    handle.xcp_read_slave_memory_u8.side_effect = lambda p_address, extension, _p_buffer: \
-        addresses.append((int(handle.ffi.cast('uintptr_t', p_address)), extension))
-
-    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, 0x01)))
+    handle.xcp_read_slave_memory_u8.side_effect = \
+        lambda p_address, _extension, _p_buffer: addresses.append(p_address)
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, element_count)))
     handle.lib.Xcp_MainFunction()
+    return addresses
 
-    assert addresses, 'UPLOAD did not read any memory'
-    assert addresses[0] == (0, 0), \
-        'a Length = 0 GET_ID left the MTA at {} instead of nulling it'.format(addresses[0])
+
+def test_a_length_zero_get_id_does_not_leave_an_earlier_set_mta_standing():
+    """DD113. A declined GET_ID must not leave an earlier SET_MTA's pointer in place: a master that
+    ignores Length = 0 and uploads anyway would then read through a pointer the slave never set for
+    this purpose -- the defect DD75 fixed for the extension half of the same pair, arriving the
+    other way round.
+
+    Paired with its own positive control below. "This address was never read" is vacuous alone: such
+    a test passes just as happily if UPLOAD read nothing at all, or if SET_MTA never worked. The
+    control shows the same SET_MTA address IS reached when no GET_ID intervenes, so the difference
+    here is caused by GET_ID and by nothing else. test/session_teardown_test.py uses the same
+    pairing for the neighbouring DD75 case.
+    """
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    _connect(handle)
+    _set_mta(handle, (0xDE, 0xAD, 0xBE, 0xEF))
+
+    _get_id(handle, 0x03)   # a type 1.1/1.6.1.2.2 defines but this slave does not serve
+
+    addresses = _upload_addresses(handle, 0x01)
+
+    assert addresses, 'UPLOAD read no memory at all -- see the note below before changing this'
+    assert addresses[0] == handle.ffi.NULL, \
+        'a Length = 0 GET_ID left the earlier SET_MTA standing for the following UPLOAD'
+
+
+def test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address():
+    """The positive control for the test above: same SET_MTA, same UPLOAD, no GET_ID between them.
+    If this ever fails, the absence the test above asserts proves nothing."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+    _connect(handle)
+    _set_mta(handle, (0xDE, 0xAD, 0xBE, 0xEF))
+
+    addresses = _upload_addresses(handle, 0x01)
+
+    assert addresses, 'setup: UPLOAD must read memory'
+    assert addresses[0] != handle.ffi.NULL, \
+        'setup: UPLOAD must reach the address SET_MTA just set, or the paired test is vacuous'
 ```
 
+
+**If UPLOAD turns out not to call `Xcp_ReadSlaveMemory` at all when the MTA is null**, that also satisfies DD113 — the stale pointer was not used — but it is different behaviour from what these tests assert. Do not weaken the assertion to accept both. Find out which it is, assert the one that is true, say so in your report, and keep the positive control either way.
 
 - [ ] **Step 2: Run and verify they fail**
 
 ```bash
 docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --ulimit nofile=65536:524288 --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:sp4b ./test.sh
 ```
-Expected: `test_get_id_reports_length_zero_for_a_defined_type_it_does_not_serve` fails — today every non-zero type answers `(0xFE, 0x22)`, so `raw_data[0]` is `0xFE` not `0xFF`. `test_get_id_nulls_the_mta_when_it_reports_length_zero` fails for the same reason. `test_get_id_rejects_a_type_the_specification_does_not_define` **passes already** — it is a regression guard on behaviour Task 2 must preserve, not a driver.
+Expected: `test_get_id_reports_length_zero_for_a_defined_type_it_does_not_serve` fails — today every non-zero type answers `(0xFE, 0x22)`, so `raw_data[0]` is `0xFE` not `0xFF`. `test_a_length_zero_get_id_does_not_leave_an_earlier_set_mta_standing` fails for the same reason. Two of the new tests **pass already** and are regression guards on behaviour Task 2 must preserve, not drivers: `test_get_id_rejects_a_type_the_specification_does_not_define`, and the positive control `test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address`.
 
 - [ ] **Step 3: Add the type bounds**
 
@@ -395,7 +428,8 @@ Expected: all green. Test count changes — `test_returns_err_out_of_range` drop
 Three mutations, each reverted after confirming the named test fails:
 1. Change `identification_type < XCP_GET_ID_TYPE_FIRST_USER_DEFINED` to `<= 0xFFu` → `test_get_id_reports_length_zero_for_a_defined_type_it_does_not_serve[0x80]` and `[0xFF]` must fail.
 2. Change `identification_type > XCP_GET_ID_TYPE_LAST_DEFINED` to `> 0x00u` → `test_get_id_reports_length_zero_for_a_defined_type_it_does_not_serve` must fail for types 1–4.
-3. Delete the `Xcp_Internal.memory_transfer.address = ...` assignment → `test_get_id_nulls_the_mta_when_it_reports_length_zero` must fail.
+3. Delete the `Xcp_Internal.memory_transfer.address = ...` assignment → `test_a_length_zero_get_id_does_not_leave_an_earlier_set_mta_standing` must fail.
+4. Mutate the positive control's own premise: with the code unmodified, change `_set_mta` in the control test to set address 0 → `test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address` must fail. This is what proves the control is load-bearing rather than decorative, and therefore that mutation 3's absence assertion means something. Revert.
 
 - [ ] **Step 8: Commit and push**
 
