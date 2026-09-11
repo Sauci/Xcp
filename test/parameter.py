@@ -392,7 +392,7 @@ class DefaultConfig(dict):
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
                  trailing_value=0,
-                 identification='/path/to/database.a2l',
+                 identification='/path/to/xcp.a2l',
                  timestamp=None):
         self._channel_rx_pdu = channel_rx_pdu_ref
         self._channel_tx_pdu = channel_tx_pdu_ref

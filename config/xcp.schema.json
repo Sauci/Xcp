@@ -622,8 +622,9 @@
                 "default": 0
               },
               "identification": {
+                "description": "Identification type 0 (ASCII) returned by GET_ID, and the fallback for type 0 when no get_id_function is configured. XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 requires Length mod AG = 0, so its length must be a multiple of address_granularity; generation refuses a configuration where it is not. The default is 16 bytes, which conforms under BYTE, WORD and DWORD alike.",
                 "type": "string",
-                "default": "/path/to/database.a2l"
+                "default": "/path/to/xcp.a2l"
               },
               "timestamp": {
                 "description": "Data acquisition clock reported to the master through GET_DAQ_RESOLUTION_INFO, and transmitted in the first ODT of each cycle of a DAQ list the master has put into timestamped mode. Absent means the slave does not support timestamps: TIMESTAMP_SUPPORTED is reported clear and TIMESTAMP_MODE/TIMESTAMP_TICKS are invalid, which XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.5 permits explicitly. The module holds no clock; these values describe the counter the integrator supplies through Xcp_GetDaqTimestamp.",

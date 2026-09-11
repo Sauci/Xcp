@@ -305,7 +305,7 @@
         "user_defined_checksum_function": null,
         "user_cmd_function": null,
         "trailing_value": 0,
-        "identification": "/path/to/database.a2l"
+        "identification": "/path/to/xcp.a2l"
       }
     }
   ]

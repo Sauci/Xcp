@@ -965,3 +965,44 @@ def test_odt_entry_size_stim_is_reported_for_a_stim_capable_build():
     assert handle.config.lib.Xcp[0].general.odtEntrySizeStim == \
         handle.config.lib.Xcp[0].general.odtEntrySizeDaq
     assert handle.config.lib.Xcp[0].general.odtEntrySizeStim != 0
+
+
+@pytest.mark.parametrize('address_granularity, identification', (
+    ('WORD', '/path/to/database.a2l'),    # 21 bytes: 21 mod 2 == 1
+    ('DWORD', '/path/to/database.a2l'),   # 21 bytes: 21 mod 4 == 1
+    ('DWORD', '/path/to/xcp.a2ll'),       # 17 bytes: 17 mod 4 == 1
+))
+def test_generation_refuses_an_identification_that_is_not_a_multiple_of_the_granularity(
+        address_granularity, identification):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 adds a rule 1.0/1.6.1.2.2 does not
+    have: "The following rule applies: Length mod AG = 0". It protects the UPLOAD that follows,
+    whose element count 1.1 defines as (Length GET_ID [BYTE]) / AG -- an inexact division leaves
+    the master unable to ask for the right number of elements. DD112.
+
+    The guard message is documentation, not output: raise() is not a registered Jinja global in
+    bsw_code_gen, so referencing it aborts rendering with UndefinedError and the string never
+    reaches the caller. This asserts that generation fails, never that a message matches.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(address_granularity=address_granularity,
+                              identification=identification))
+
+
+@pytest.mark.parametrize('address_granularity', ('BYTE', 'WORD', 'DWORD'))
+def test_generation_accepts_the_default_identification_under_every_granularity(
+        address_granularity):
+    """The boundary above from the accepting side, and the reason the shipped default changed from
+    /path/to/database.a2l (21 bytes) to /path/to/xcp.a2l (16): without it the guard would reject
+    the module's own default configuration under WORD and DWORD.
+
+    Asserts on the generated identification string rather than on addressGranularity itself:
+    Xcp_AddressGranularityType's enumerators (interface/Xcp_Types.h) are the bare names BYTE,
+    WORD, DWORD with no XCP_ADDRESS_GRANULARITY_ prefix, and that prefixed spelling is not a
+    preprocessor #define anywhere in the generated header either, so handle.define(...) would
+    raise KeyError before the comparison ever ran. The point of this test is only that generation
+    succeeds at all under every granularity, which the identification round-trip already shows.
+    """
+    handle = XcpTest(DefaultConfig(address_granularity=address_granularity))
+
+    assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
+        b'/path/to/xcp.a2l'
