@@ -76,7 +76,7 @@ def test_every_address_granularity_is_valid(schema, address_granularity):
 
 @pytest.mark.parametrize('identification_field_type', identification_field_types)
 def test_every_identification_field_type_is_valid(schema, identification_field_type):
-    validate(DefaultConfig(identification=identification_field_type), schema)
+    validate(DefaultConfig(identification_field_type=identification_field_type), schema)
 
 
 @pytest.mark.parametrize('identification', (
