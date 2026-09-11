@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import math
+from unittest.mock import ANY
 
 from .parameter import *
 from .conftest import XcpTest
@@ -313,3 +314,80 @@ def test_get_id_does_not_consult_the_callback_for_an_undefined_type(identificati
 
     assert raw_data[0:2] == (0xFE, 0x22)
     handle.xcp_get_identification_function.assert_not_called()
+
+
+@pytest.mark.parametrize('address_granularity, length', (('WORD', 3), ('DWORD', 5), ('DWORD', 7)))
+def test_get_id_refuses_a_callback_length_that_is_not_a_multiple_of_the_granularity(
+        address_granularity, length):
+    """DD112's runtime half. XCP part 2 1.1/1.6.1.2.2's "Length mod AG = 0" protects the UPLOAD that
+    follows, whose element count 1.1 defines as (Length GET_ID [BYTE]) / AG. The configured string
+    is checked at generation time; a callback's length is not knowable then.
+
+    The module cannot emit a non-conforming Length, and reporting the type unavailable is the honest
+    alternative to truncating the data or padding it with the NULs 1.1 explicitly says the string
+    does not carry. The integrator hears about it through DET, which is the only channel available:
+    the master is simply told the type is not there.
+    """
+    handle = XcpTest(DefaultConfig(address_granularity=address_granularity, **_CALLBACK_CONFIG))
+    _connect(handle)
+    _serve(handle, b'x' * length)
+    # Everything asserted below is about GET_ID alone. Without this, a DET raised by CONNECT or by
+    # construction would be the call assert_called_once_with inspects, and the test would report on
+    # the wrong one -- passing or failing for a reason that has nothing to do with GET_ID.
+    handle.det_report_error.reset_mock()
+
+    raw_data = _get_id(handle, 0x01)
+
+    assert raw_data[0] == 0xFF, 'still a positive response'
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0, \
+        'a non-conforming length must be reported as unavailable, not emitted'
+    handle.det_report_error.assert_called_once_with(
+        ANY, ANY,
+        handle.define('XCP_MAIN_FUNCTION_API_ID'),
+        handle.define('XCP_E_IDENTIFICATION_NOT_GRANULAR'))
+
+
+@pytest.mark.parametrize('address_granularity, length', (('BYTE', 3), ('WORD', 4), ('DWORD', 8)))
+def test_get_id_accepts_a_callback_length_that_is_a_multiple_of_the_granularity(
+        address_granularity, length):
+    """The boundary above from the accepting side, including BYTE, where the rule is vacuous:
+    every length is a multiple of 1, so no conforming configuration is ever refused by it."""
+    handle = XcpTest(DefaultConfig(address_granularity=address_granularity, **_CALLBACK_CONFIG))
+    _connect(handle)
+    _serve(handle, b'x' * length)
+    handle.det_report_error.reset_mock()   # same reason as the test above
+
+    raw_data = _get_id(handle, 0x01)
+
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == length
+    handle.det_report_error.assert_not_called()
+
+
+def test_get_id_does_not_fall_back_to_the_static_identification_when_type_zeros_callback_length_is_not_granular():
+    """The ordering hazard the runtime check above must not fall into. `served` starts TRUE for a
+    type-0 callback that answers E_OK, and the granularity check sets it back to FALSE on a
+    non-conforming length. If that check ran BEFORE the static-fallback block instead of after it,
+    the now-FALSE `served` together with identification_type == XCP_GET_ID_TYPE_ASCII is exactly
+    the condition that triggers the fallback -- so the response would silently carry the configured
+    string (a conforming, non-zero length) instead of the Length = 0 DET just reported. A callback
+    that answered E_OK has claimed type 0, and substituting different data for a length it got
+    wrong would hide the very defect DET is reporting.
+
+    The default configured string ('/path/to/xcp.a2l', 16 bytes) is itself WORD/DWORD-conforming,
+    so if this test ever starts observing that length instead of 0, the cause is the fallback firing,
+    not a coincidental failure of the static string's own generation-time check. DD112.
+    """
+    handle = XcpTest(DefaultConfig(address_granularity='WORD', **_CALLBACK_CONFIG))
+    _connect(handle)
+    _serve(handle, b'x' * 3)   # 3 is not a multiple of WORD's 2-byte element size
+    handle.det_report_error.reset_mock()
+
+    raw_data = _get_id(handle, 0x00)   # XCP_GET_ID_TYPE_ASCII -- the only type with a static fallback
+
+    assert raw_data[0] == 0xFF
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0, \
+        'a callback that claimed type 0 with a bad length must not fall back to the configured string'
+    handle.det_report_error.assert_called_once_with(
+        ANY, ANY,
+        handle.define('XCP_MAIN_FUNCTION_API_ID'),
+        handle.define('XCP_E_IDENTIFICATION_NOT_GRANULAR'))

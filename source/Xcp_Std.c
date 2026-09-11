@@ -1354,6 +1354,32 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
             }
         }
 
+        /* Deliberately after the static-fallback block above, not immediately after the callback
+         * block: served is set back to FALSE below on a non-conforming length, and served == FALSE
+         * together with identification_type == XCP_GET_ID_TYPE_ASCII is exactly what triggers that
+         * fallback. Checking here instead keeps a type-0 callback that answered E_OK from having
+         * its rejected length silently replaced by the configured string -- a callback that
+         * answered E_OK has claimed the type, and substituting different data would hide the
+         * defect Det is about to report. DD112. */
+        if (served == TRUE)
+        {
+            const uint8 element_size =
+                Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+
+            if ((identification_length % (uint32)element_size) != 0x00000000u)
+            {
+                /* 1.1/1.6.1.2.2: "Length mod AG = 0". The module cannot emit a non-conforming
+                 * Length, so the type is reported unavailable and the integrator hears about it
+                 * through Det -- the master has no channel for this distinction. DD112. */
+                Xcp_ReportError(0x00u, XCP_MAIN_FUNCTION_API_ID,
+                                XCP_E_IDENTIFICATION_NOT_GRANULAR);
+                identification = NULL_PTR;
+                extension = 0x00u;
+                identification_length = 0x00000000u;
+                served = FALSE;
+            }
+        }
+
         /* Points the MTA at whatever identification/extension now hold, for the UPLOAD that
          * follows this response: a served type's own address and extension (the callback's, DD109
          * included, or the static string's with extension 0), or -- DD113 -- (NULL_PTR, 0) when

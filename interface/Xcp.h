@@ -287,6 +287,20 @@ extern "C" {
  */
 #define XCP_E_DAQ_LIST_NOT_IDENTIFIABLE (0x08u)
 
+/**
+ * @brief A GET_ID callback returned a length that is not a multiple of the address granularity.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 requires "Length mod AG = 0",
+ * protecting the UPLOAD that follows: 1.1 defines its element count as
+ * (Length GET_ID [BYTE]) / AG, and an inexact division leaves the master unable to ask for the
+ * right number of elements. The configured identification string is checked at generation time
+ * instead (script/source_cfg.c.jinja2); this covers what getIdentificationFunction returns, which
+ * is not knowable then.
+ * @note This error is not part of the specification, and Det is the only channel it has: the master
+ * is told the type is unavailable (Length = 0), which is indistinguishable on the wire from a slave
+ * that simply does not serve it. DD112.
+ */
+#define XCP_E_IDENTIFICATION_NOT_GRANULAR (0x09u)
+
 /** @} */
 
 /**
