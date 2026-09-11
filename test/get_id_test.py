@@ -225,7 +225,7 @@ def test_a_length_zero_get_id_does_not_leave_an_earlier_set_mta_standing(config,
     then declines; (iii) the callback's length is refused as not a multiple of the granularity;
     (iv) the callback answers E_OK with a length of 0; (v) the configured string is empty. Routes
     (ii) to (v) all reach Length = 0 holding a live address -- the callback's own, or the empty
-    string's -- which is what (i), the only route this test used to take, could never show.
+    string's -- which route (i), holding none, cannot show on its own.
 
     SET_MTA sets extension 7 first, and the callback writes extension 5, so a pair that leaks names
     its source. Paired with a positive control per route below: "UPLOAD read (NULL, 0)" is vacuous
