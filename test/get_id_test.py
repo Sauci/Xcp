@@ -136,8 +136,11 @@ def test_get_id_rejects_a_type_the_specification_does_not_define(identification_
 
 
 def _set_mta(handle, address_bytes, extension=0x00):
-    """SET_MTA. Copy the exact framing from test/session_teardown_test.py, which already issues a
-    SET_MTA(0xDEADBEEF) for the neighbouring DD75 case -- do not reconstruct the byte order here."""
+    """Issue SET_MTA (0xF6), process it, and confirm the response frame's transmission. The frame
+    is two reserved bytes, the address extension, then the four address bytes exactly as given --
+    already in the configured byte order, so (0xEF, 0xBE, 0xAD, 0xDE) is 0xDEADBEEF under
+    DefaultConfig's LITTLE_ENDIAN default. The same framing as set_mta_with_extension in
+    test/session_teardown_test.py."""
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info(
         (0xF6, 0x00, 0x00, extension) + address_bytes))
     handle.lib.Xcp_MainFunction()
@@ -256,7 +259,8 @@ def test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address(co
     and the same UPLOAD, with no GET_ID between them. If a row here fails, the (NULL, 0) its route
     asserts above proves nothing. Per route rather than once, because the configurations differ
     where it matters: route (iii)'s WORD granularity reads through a different
-    Xcp_ReadSlaveMemory* function than the others."""
+    Xcp_ReadSlaveMemory* function than the others. Exact, not merely non-NULL: the pair UPLOAD
+    reads must be the one SET_MTA just set, address and extension alike."""
     handle = XcpTest(DefaultConfig(**config))
     _connect(handle)
     _set_mta(handle, (0xEF, 0xBE, 0xAD, 0xDE), extension=0x07)
@@ -264,8 +268,9 @@ def test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address(co
     reads = _upload_addresses(handle, 0x01)
 
     assert reads, 'setup: UPLOAD must read memory'
-    assert reads[0][0] != 0, \
-        'setup: UPLOAD must reach the address SET_MTA just set, or the paired test is vacuous'
+    assert reads[0] == (0xDEADBEEF, 0x07), \
+        'setup: UPLOAD read through (0x{:X}, {}), not the (0xDEADBEEF, 7) SET_MTA just set -- ' \
+        'without that pair the paired test is vacuous'.format(*reads[0])
 
 
 def _serve(handle, payload, extension=0x00, result='E_OK'):
@@ -419,7 +424,12 @@ def test_get_id_does_not_consult_the_callback_for_an_undefined_type(identificati
     handle.xcp_get_identification_function.assert_not_called()
 
 
-@pytest.mark.parametrize('address_granularity, length', (('WORD', 3), ('DWORD', 5), ('DWORD', 7)))
+@pytest.mark.parametrize('address_granularity, length', (
+    ('WORD', 3),
+    ('DWORD', 5),
+    ('DWORD', 6),   # even, yet not a multiple of 4: WORD accepts this same length, below
+    ('DWORD', 7),
+))
 def test_get_id_refuses_a_callback_length_that_is_not_a_multiple_of_the_granularity(
         address_granularity, length):
     """DD112's runtime half. XCP part 2 1.1/1.6.1.2.2's "Length mod AG = 0" protects the UPLOAD that
@@ -462,7 +472,12 @@ def test_get_id_refuses_a_callback_length_that_is_not_a_multiple_of_the_granular
         'a non-conforming length must be reported as unavailable, not emitted'
 
 
-@pytest.mark.parametrize('address_granularity, length', (('BYTE', 3), ('WORD', 4), ('DWORD', 8)))
+@pytest.mark.parametrize('address_granularity, length', (
+    ('BYTE', 3),
+    ('WORD', 4),
+    ('WORD', 6),    # the WORD/DWORD boundary: DWORD refuses this same length, above
+    ('DWORD', 8),
+))
 def test_get_id_accepts_a_callback_length_that_is_a_multiple_of_the_granularity(
         address_granularity, length):
     """The boundary above from the accepting side, including BYTE, where the rule is vacuous:

@@ -971,6 +971,7 @@ def test_odt_entry_size_stim_is_reported_for_a_stim_capable_build():
     ('WORD', '/path/to/database.a2l'),    # 21 bytes: 21 mod 2 == 1
     ('DWORD', '/path/to/database.a2l'),   # 21 bytes: 21 mod 4 == 1
     ('DWORD', '/path/to/xcp.a2ll'),       # 17 bytes: 17 mod 4 == 1
+    ('DWORD', '/path/to/xcp12.a2l'),      # 18 bytes: 18 mod 4 == 2, yet 18 mod 2 == 0 -- see below
 ))
 def test_generation_refuses_an_identification_that_is_not_a_multiple_of_the_granularity(
         address_granularity, identification):
@@ -1006,6 +1007,18 @@ def test_generation_accepts_the_default_identification_under_every_granularity(
 
     assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
         b'/path/to/xcp.a2l'
+
+
+def test_generation_accepts_an_18_byte_identification_under_word():
+    """The row that tells WORD from DWORD. '/path/to/xcp12.a2l' is 18 bytes: 18 mod 2 == 0, so WORD
+    accepts it, and 18 mod 4 == 2, so DWORD refuses it (the last refusal row above). Every other
+    row on either side is a length the two granularities agree on -- 21 and 17 are odd, 16 is a
+    multiple of 4 -- so exchanging their element sizes in the guard's own table would pass them
+    all. This test and that DWORD row each fail under the exchange."""
+    handle = XcpTest(DefaultConfig(address_granularity='WORD', identification='/path/to/xcp12.a2l'))
+
+    assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
+        b'/path/to/xcp12.a2l'
 
 
 @pytest.mark.parametrize('identification', (
