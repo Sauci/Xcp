@@ -191,6 +191,22 @@ The shipped default `identification` changes from `/path/to/database.a2l` (21 by
 `/path/to/xcp.a2l` (16), which conforms under BYTE, WORD and DWORD alike. Without that change the
 new generator check would reject the module's own default configuration under non-BYTE AG.
 
+### DD113 — a `Length = 0` answer still points the MTA at `(NULL_PTR, 0)`
+
+Writing the plan surfaced a case §2 left open: what the MTA holds when the answer is "type not
+available".
+
+It is not left untouched. A `GET_ID` that returns without assigning the MTA leaves whatever an
+earlier, unrelated `SET_MTA` put there, and a master that ignores `Length = 0` and issues `UPLOAD`
+anyway then reads through a stale pointer it never set for this purpose — the same defect DD75
+fixed for the extension half of the identical pair, arriving the other way round.
+
+So a `Length = 0` response assigns `(NULL_PTR, 0x00u)`, which is already this module's vocabulary
+for "nothing meaningful on this pair": `Xcp_Init` and `Xcp_CTOCmdStdConnect` both pair exactly that,
+and DD75 cites 1.1/§1.6.1.2.3's "All ODT entries reset to address = 0, extension = 0" for the same
+idiom. The master is told the type is unavailable; if it uploads regardless it reads from a pointer
+the slave deliberately nulled rather than one it forgot to update.
+
 ---
 
 ## 3. What this does not change
