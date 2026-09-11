@@ -40,8 +40,16 @@ def test_get_id_returns_identification_through_mta_when_mode_is_0(byte_order,
     # check packet ID.
     assert raw_data[0] == 0xFF
 
-    # check Mode.
-    assert raw_data[1] == mode
+    # check the response Mode bit mask. XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2
+    # makes this byte a bit mask -- TRANSFER_MODE at bit 0, COMPRESSED_ENCRYPTED at bit 1, bits 2-7
+    # don't-care. 1.0/1.6.1.2.2 has the same byte and leaves it unnamed, which is why this was
+    # previously read as an echo of the request's Requested Identification Type. It is not one:
+    # request byte 1 and response byte 1 are different fields that both happen to be 0 here, so the
+    # old `assert raw_data[1] == mode` passed under every possible implementation.
+    # Both bits clear: the slave transfers through the MTA and does not compress (DD111).
+    assert raw_data[1] & 0x01 == 0x00, 'TRANSFER_MODE must be clear: this slave points the MTA'
+    assert raw_data[1] & 0x02 == 0x00, 'COMPRESSED_ENCRYPTED must be clear: nothing is compressed'
+    assert raw_data[1] == 0x00, 'no reserved bit of the Mode mask may be set'
 
     # check reserved bytes.
     assert raw_data[2] == 0x00

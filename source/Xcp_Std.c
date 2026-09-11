@@ -1317,6 +1317,9 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
         Xcp_Internal.memory_transfer.extension = 0x00u;
 
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
+
+        /* Mode (1.1/1.6.1.2.2): TRANSFER_MODE and COMPRESSED_ENCRYPTED both clear. See DD111 and
+         * the masks' own note in source/Xcp_Internal.h for why neither is ever set here. */
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x01u] = 0x00u;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x02u] = 0x00u;
         Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = 0x00u;
