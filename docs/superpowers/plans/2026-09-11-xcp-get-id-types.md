@@ -53,7 +53,17 @@
 
 ---
 
-### Task 1: Name the Mode bits and repair the assertion that cannot fail
+### Task 1: Name the Mode bits and repair the assertion that pinned an echo, not a bit mask
+
+**Correction, made after Task 1's implementer disproved it empirically**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): this title originally read
+"repair the assertion that cannot fail." The old assertion could fail — with this test's `mode`
+pinned at 0, mutating the response byte away from 0 broke the old assertion exactly as it broke the
+new one, for the unrelated reason that the two sides then read different numbers. Its real weakness
+was that it could not tell a correct bit-mask implementation from an incorrect echo of the request
+at mode 0, not that it was immune to a wrong byte on the wire. Retitled here rather than left
+standing; see the two corrections below for how the same overstatement reached this task's own step
+text and commit message.
 
 Lands first and changes no behaviour. The existing test asserts `raw_data[1] == mode`, comparing the response's Mode bit mask against the request's Requested Identification Type — two different fields coinciding at zero against a hardcoded `0x00`. Until that is fixed, nothing later in this plan is pinned by it.
 

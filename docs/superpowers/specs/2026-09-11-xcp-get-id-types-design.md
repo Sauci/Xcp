@@ -59,7 +59,7 @@ MTA *extension* for that pointer — 0, because the identification is not part o
 and so there is no page for a non-zero extension to select. That reasoning is intact and this
 phase does not disturb it.
 
-**Wrong thing 1 — a test that cannot fail.** `test_get_id_returns_identification_through_mta_when_
+**Wrong thing 1 — a test that pinned an echo, not a bit mask.** `test_get_id_returns_identification_through_mta_when_
 mode_is_0` (`test/get_id_test.py`) asserts `raw_data[1] == mode`, where `mode` is the *request's*
 Requested Identification Type and `raw_data[1]` is the *response's* Mode bit mask. These are two
 different fields that happen to coincide at zero, and the response byte is a hardcoded `0x00`. The
