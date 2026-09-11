@@ -94,7 +94,7 @@ positive response without doing anything, which was defect D2, fixed in SP1.
 |:--|:--|:--|
 | 0xFF | CONNECT | done |
 | 0xFE | DISCONNECT | done |
-| 0xFD | GET_STATUS | yes | reports session configuration id 0, which is truthful while no DAQ configuration is stored; see defect D9 |
+| 0xFD | GET_STATUS | yes | reports the session configuration id held in `Xcp_Internal.session_configuration_id` — 0 until a master's `SET_REQUEST` stores one, thereafter what was stored, and reloaded from non-volatile memory at start-up (SP5-NV, DD99–DD101); answers `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` instead while that start-up read is outstanding (`Xcp_CTOCmdStdGetStatus`, `source/Xcp_Std.c`). This row previously read a hardcoded 0, accurate only before SP5-NV shipped; corrected here. See defect D9 |
 | 0xFC | SYNCH | done |
 | 0xFB | GET_COMM_MODE_INFO | done |
 | 0xFA | GET_ID | partial — identification type 0 (ASCII) only; §1.6.1.2.2 defines 0–4 plus 128–255 user-defined, all implementation-specific |
@@ -155,14 +155,17 @@ declares a segment; the PIDs then dispatch to `Xcp_CmdNotImplemented`.
 | 0xD9 | GET_DAQ_RESOLUTION_INFO | yes | done |
 | 0xD8 | GET_DAQ_LIST_INFO | yes | done |
 | 0xD7 | GET_DAQ_EVENT_INFO | yes | done — publishes the event channel name via the MTA |
-| 0xD6 | FREE_DAQ | yes | absent — SP2c |
-| 0xD5 | ALLOC_DAQ | yes | absent — SP2c |
-| 0xD4 | ALLOC_ODT | yes | absent — SP2c |
-| 0xD3 | ALLOC_ODT_ENTRY | yes | absent — SP2c |
+| 0xD6 | FREE_DAQ | yes | done — SP2d |
+| 0xD5 | ALLOC_DAQ | yes | done — SP2d |
+| 0xD4 | ALLOC_ODT | yes | done — SP2d |
+| 0xD3 | ALLOC_ODT_ENTRY | yes | done — SP2d |
 | 0xC7 | WRITE_DAQ_MULTIPLE | yes | done — ships **disabled**, since it requires `MAX_CTO >= 10`, which is neither a classic CAN frame size nor a CAN FD payload length |
 
-Fourteen of the eighteen are implemented; the four that remain are the dynamic-configuration
-commands of SP2d. The DAQ *runtime* exists: `Xcp_DaqRuntime.c` samples
+Eighteen of the eighteen are implemented; the four dynamic-configuration commands landed in SP2d
+(`Xcp_DTOCmdDaqAllocDaq` and siblings, `source/Xcp_Daq.c`, exercised by PID in
+`test/alloc_daq_test.py`, `alloc_odt_test.py`, `alloc_odt_entry_test.py` and `free_daq_test.py`).
+The four rows above previously read "absent — SP2c", which was wrong on both counts — they are
+implemented, and it was SP2d, not SP2c, that did it — corrected here. The DAQ *runtime* exists: `Xcp_DaqRuntime.c` samples
 every running list bound to an event channel, builds the identification field, and queues
 complete frames on a ring drained by the transmission chain. All four identification field
 types of §1.1.2.1 are supported.
@@ -176,13 +179,22 @@ function period, so a module-driven raster could not have been built on anything
 configuration is allowed to know.
 
 The timestamp field (§1.1.2.2) and `PID_OFF` landed in SP2b; STIM reception in
-`Xcp_CanIfRxIndication` landed in SP3. Still absent from the runtime: `ALTERNATING`, DAQ list
-prioritisation and more than one outstanding DTO frame — all SP2c — and, from SP3, `BIT_STIM` and
-`EV_STIM_TIMEOUT`.
+`Xcp_CanIfRxIndication` landed in SP3. `ALTERNATING` is refused outright at bit 0 of
+`SET_DAQ_LIST_MODE` (`XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED`, `source/Xcp_Internal.h`) and needs no
+further work — see the SP2c entry in §4. Still absent from the runtime: DAQ list prioritisation
+and more than one outstanding DTO frame — both SP2c — and, from SP3, `BIT_STIM` and
+`EV_STIM_TIMEOUT`. This paragraph previously grouped `ALTERNATING` in with those two as still-
+absent SP2c work, which stopped being accurate on 2026-09-02 when §4's own SP2c entry dropped it;
+corrected here.
 
 ### 2.5 Non-volatile memory programming (§1.4.5, §1.6.5)
 
-All eleven commands — `PROGRAM_START` (0xD2) through `PROGRAM_VERIFY` (0xC8) — **absent**.
+All eleven commands — `PROGRAM_START` (0xD2) through `PROGRAM_VERIFY` (0xC8) — **done**,
+implemented in `source/Xcp_Pgm.c` and shipped across SP4a/SP4b/SP4c (§4, all complete), with
+eleven dedicated test modules (`test/pgm_*_test.py`). Gated by `XCP_FLASH_PROGRAMMING_ENABLED`
+(templated from `programming.enabled` in `config/xcp.json`), **off by default**, so a default
+build's eleven PGM PIDs still dispatch to `Xcp_CmdNotImplemented` (`Xcp_PIDTable`, `source/Xcp.c`).
+This section previously read "absent" outright, stale since SP4 shipped; corrected here.
 
 ### 2.6 Cross-cutting
 
@@ -191,10 +203,10 @@ All eleven commands — `PROGRAM_START` (0xD2) through `PROGRAM_VERIFY` (0xC8) �
 | Time-out values t1…t7 | §1.7.2 | **not a slave concern.** §1.7.2 assigns the timers entirely to the master, which reads t1…t6 from the A2L file. The slave implements nothing here |
 | `EV_CMD_PENDING` | §1.7.2.4.2 | **done — shipped in SP4.** `Xcp_Pgm.c` pushes it while a deferred programming operation is still busy, and `Xcp_CanIfTxConfirmation` releases its rate bound (DD54), so the rate follows TxConfirmation rather than `Xcp_MainFunction`'s period. Gated by `XCP_FLASH_PROGRAMMING_ENABLED`, because programming holds the only pending window this module has: `SET_REQUEST` answers immediately and signals completion by event instead. This row read "absent" until SP5 checked it |
 | Interleaved communication model | §1.7.2.3 | **absent, and deliberately unadvertised.** §1.7.2.3 itself is master-side only; the slave's whole obligation is one sentence in 1.0/§1.6.1.1.3 — accept up to `QUEUE_SIZE` "consecutive command packets the master can send to the receipt queue of the slave". This module has no such queue: a second request arriving while a response is unconfirmed is refused `ERR_CMD_BUSY`. This row previously said `cto_queue_size` and `interleaved_mode` "exist in `xcp.json` but nothing reads them" — both *were* read, straight into `GET_COMM_MODE_INFO`'s `COMM_MODE_OPTIONAL` bit 1 and `QUEUE_SIZE`, and into `PROGRAM_START`'s `COMM_MODE_PGM`/`QUEUE_SIZE_PGM`, so a build setting the flag advertised a queue depth the slave would refuse at the second packet. Both fields are gone; the bit is hardcoded clear and both queue-size bytes report 0 |
-| RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | **Complete, SP5-RESUME** (`2026-09-10-xcp-daq-resume-design.md`, DD103–DD107; see that sub-project's own entry in §4). `XCP_CONNECTION_STATE_RESUME` was declared but never entered; it now is, by `Xcp_ResumeComplete`, called by the integrator once its own `Xcp_Restore*` sequence has repopulated a DAQ list from non-volatile memory this module never reads itself (DD103, the mirror of SP5-NV's own four accessors). `SET_REQUEST`'s `STORE_DAQ_REQ_RESUME` (mode bit 2) is accepted and `GET_DAQ_PROCESSOR_INFO` reports `RESUME_SUPPORTED` set — both were previously refused/clear specifically so the two facts stayed coherent (D9), and SP5-RESUME reverses both together for the identical reason. `SET_DAQ_LIST_MODE` is unaffected: it still does not reject its own RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV — 1.1 marks that bit don't-care, and the slave tolerates it without honouring it; only `Xcp_ResumeComplete` ever sets a list's own RESUME/RUNNING mode bits |
+| RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | **Complete, SP5-RESUME** (`2026-09-10-xcp-daq-resume-design.md`, DD103–DD107; see that sub-project's own entry in §4). `XCP_CONNECTION_STATE_RESUME` is declared but deliberately never entered. `Xcp_ResumeComplete` briefly wrote it on every committed resume; a security fix on 2026-09-10 (DD105's own recorded correction) removed that write after finding both connection gates in `source/Xcp.c` test `!= XCP_CONNECTION_STATE_DISCONNECTED` rather than `== XCP_CONNECTION_STATE_CONNECTED`, so the write alone admitted the entire command set — `DOWNLOAD`, `SET_MTA`, `FREE_DAQ`, the programming commands included — to any node on the bus with no `CONNECT` ever received. RESUME mode needs none of it: DTO transmission was never session-gated, and `GET_STATUS` reports RESUME through session status bit 7 instead. `Xcp_ResumeComplete` still does the rest — called by the integrator once its own `Xcp_Restore*` sequence has repopulated a DAQ list from non-volatile memory this module never reads itself (DD103, the mirror of SP5-NV's own four accessors) — just not that one write. This row previously said the state is now entered, true only until the fix above; corrected here. `SET_REQUEST`'s `STORE_DAQ_REQ_RESUME` (mode bit 2) is accepted and `GET_DAQ_PROCESSOR_INFO` reports `RESUME_SUPPORTED` set — both were previously refused/clear specifically so the two facts stayed coherent (D9), and SP5-RESUME reverses both together for the identical reason. `SET_DAQ_LIST_MODE` is unaffected: it still does not reject its own RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV — 1.1 marks that bit don't-care, and the slave tolerates it without honouring it; only `Xcp_ResumeComplete` ever sets a list's own RESUME/RUNNING mode bits |
 | Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x06), the latter added in SP2a and configurable through `overload_indication`. `EV_CLEAR_DAQ` (0x01) and `EV_STORE_DAQ` (0x02) added in SP5-NV. `EV_RESUME_MODE` (0x00) added in SP5-RESUME, queued by `Xcp_ResumeComplete`. `EV_CMD_PENDING` was also listed absent here, which was already stale independent of this row's own RESUME correction — this row's own §2.6 neighbour above has read `done — shipped in SP4` since before SP5-RESUME existed. Absent: `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
-| Extended error payloads | §1.1.3.3 | absent — see defect D6 |
+| Extended error payloads | §1.1.3.3 | **partial.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism, and it is in use: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` both attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`). `BUILD_CHECKSUM`'s own extended payload is what remains missing — see defect D6. This row previously read a blanket "absent", which overstated the gap; corrected here |
 
 One structural observation for later work: the AML in §2.1 declares checksum configuration
 **per segment** — a `CHECKSUM` block carrying type, `MAX_BLOCK_SIZE` and
@@ -266,7 +278,7 @@ duplicate of `Xcp_BlockTransferIsActive`.
 **D5 — `source/Xcp.c` is a single 3876-line translation unit.** Full Part 2 conformance
 would plausibly triple that in one file.
 
-> **Fixed in SP1.** Six translation units; see the table in §1.
+> **Fixed in SP1.** Six translation units at the time; SP4 later added a seventh, `Xcp_Pgm.c`, for the PGM command group — seven carry the module today (`source/*.c`). See the table in §1.
 
 **D6 — `BUILD_CHECKSUM` omits its extended error payload.** §1.6.1.2.9 defines a specific
 negative-response layout — byte 0 `0xFE`, byte 1 the error code, bytes 2,3 reserved, bytes
@@ -322,13 +334,19 @@ offsets. Because persistence is defined in terms of DAQ list storage, this belon
 > error never reached the master, and the check only read as validation.
 >
 > §1.6.1.2.3's own escape hatch — *"If the slave device does not support the requested mode, an
-> ERR_OUT_OF_RANGE will be returned"* — makes refusing both modes fully conformant, and it agrees
-> with what the module already advertises, since `GET_DAQ_PROCESSOR_INFO` reports RESUME
-> unsupported and non-volatile DAQ storage exists to serve RESUME. `GET_STATUS` now reports
-> session configuration id 0, the value the specification itself resets it to.
+> ERR_OUT_OF_RANGE will be returned"* — makes refusing both modes fully conformant, and it agreed
+> with what the module advertised at the time, since `GET_DAQ_PROCESSOR_INFO` reported RESUME
+> unsupported and non-volatile DAQ storage did not yet exist to serve RESUME. `GET_STATUS` then
+> reported session configuration id 0, the value the specification itself resets it to.
 >
 > **This closes the misreporting, not the feature.** Accepting the two modes needs non-volatile
 > storage, tracked as SP5-NV below.
+>
+> **Neither of the two advertised facts above survives as the module's current behaviour, now
+> that SP5-NV and SP5-RESUME have shipped.** SP5-NV gave the session configuration id a real,
+> possibly-nonzero value instead of the hardcoded 0 (§2.1's `GET_STATUS` row), and SP5-RESUME set
+> `RESUME_SUPPORTED` unconditionally (§2.6's RESUME mode row). Read the paragraph above as D9's
+> own 2026-09-03 snapshot, not as a description of what the module does today.
 
 **D7 — `Xcp_PIDTable` misroutes the entire command space above 0xE3.** §1.1.5.1 fixes the
 master-to-slave identifier space at `0xC0..0xFF` for commands and `0x00..0xBF` for STIM ODT
@@ -349,7 +367,11 @@ Ordered. Each sub-project is independently shippable and leaves the suite green.
 complete (#6), with a hygiene pass in #7. SP2d is complete (#12). SP3 is complete. SP4a is complete
 (#16), SP4b is complete (#17), and SP4c is complete — **so SP4, and with it the whole PGM command
 group, is complete: all eleven PGM commands are implemented.** **SP2c remains deferred — see its
-own entry below for why, which is unchanged — so SP5 is next.**
+own entry below for why, which is unchanged.** **SP5-NV is complete and SP5-RESUME is complete —
+see their own entries below. This paragraph previously ended "so SP5 is next" as though SP5 had
+not started, which stopped being true once those two sub-projects shipped; corrected here. What
+is left of SP5 is its residue: the interleaved communication model, `GET_ID` identification types
+1–4/128–255, and the remaining `SERV_*` codes.**
 
 ### SP1 — Calibration and page switching (CAL + PAG) — **complete**
 
