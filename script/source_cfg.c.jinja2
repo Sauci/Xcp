@@ -756,11 +756,12 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
         inexact division leaves the master unable to ask for the right number of elements.
         Refused here rather than at run time because for the configured string it is knowable
         now, and an integrator should learn at build time rather than on the wire. Scope: only
-        this configured string, the sole identification source that exists at this commit. A
-        value arriving some other way, at run time rather than through this configuration, is
-        invisible to the generator and cannot be validated here: a callback-supplied length is
-        validated in Xcp_DTOCmdStdGetId (source/Xcp_Std.c) instead, which raises
-        XCP_E_IDENTIFICATION_NOT_GRANULAR and answers Length = 0 rather than emit it. DD112. #}
+        this configured string -- the generator can see only what is configured, so it can
+        validate only that. A value arriving some other way, at run time rather than through
+        this configuration, is invisible to the generator and cannot be validated here: a
+        callback-supplied length is validated in Xcp_DTOCmdStdGetId (source/Xcp_Std.c) instead,
+        which raises XCP_E_IDENTIFICATION_NOT_GRANULAR and answers Length = 0 rather than emit
+        it. DD112. #}
 {{ raise('identification {!r} is {} bytes, which is not a multiple of the {}-byte {} address granularity; XCP part 2 1.1/1.6.1.2.2 requires Length mod AG = 0 because the initial UPLOAD element count is Length / AG'.format(configuration.protocol_layer.identification, configuration.protocol_layer.identification | length, ag_size, configuration.protocol_layer.address_granularity)) }}
 {%- endif %}
 {%- set ts = configuration.protocol_layer.timestamp %}

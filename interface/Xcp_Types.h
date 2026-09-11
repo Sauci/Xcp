@@ -653,7 +653,9 @@ typedef struct
      * granularity, so that the initial UPLOAD's element count (Length / AG) divides exactly
      * (DD112) -- this callback must uphold that itself. Unlike the configured static string,
      * whose length script/source_cfg.c.jinja2 checks at generation time, a length this callback
-     * returns is not validated by the module at this commit.
+     * returns is checked by the module at run time: Xcp_DTOCmdStdGetId (source/Xcp_Std.c) raises
+     * XCP_E_IDENTIFICATION_NOT_GRANULAR and reports the type unavailable, Length = 0, when the
+     * length is not a multiple of AG.
      * @return E_OK with all three out-parameters set, or E_NOT_OK meaning this slave does not serve
      * that type. E_NOT_OK is not an error: it answers Length = 0, which 1.1/1.6.1.2.2 defines as
      * "the requested identification type is not available". For type 0 it falls back to the
