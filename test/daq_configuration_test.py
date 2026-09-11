@@ -1006,3 +1006,26 @@ def test_generation_accepts_the_default_identification_under_every_granularity(
 
     assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
         b'/path/to/xcp.a2l'
+
+
+@pytest.mark.parametrize('identification', (
+    pytest.param('/path/to/xcp.a2\u00e9', id='non-ASCII'),   # 16 characters, 17 UTF-8 bytes
+    pytest.param('/path/to\txcp.a2l', id='control character'),    # 16 characters, one a real tab
+))
+def test_generation_refuses_an_identification_that_is_not_printable_ascii(identification):
+    """XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 defines the identification as "a byte
+    stream of plain ASCII text", and the generator's Length mod AG = 0 guard counts characters --
+    one byte each only for printable ASCII, 0x20-0x7E. U+00E9 is one character and two UTF-8 bytes,
+    so the first row passes a count of 16 and would compile to 17. Control characters are refused
+    as a class: a raw line feed would split the generated C literal, and a NUL would end the string
+    Xcp_DTOCmdStdGetId measures by scanning for one. The tab stands for the class.
+
+    BYTE granularity, so the length guard cannot be what refuses either row: every length is a
+    multiple of 1. Both rows are 16 characters, a multiple of 4 as well, so neither would trip that
+    guard under any granularity. config/xcp.schema.json refuses the same characters
+    (test/configuration_schema_test.py), but the harness drives BSWCodeGen without the schema, so
+    this is the check every configuration meets. Asserts only that generation fails, for the reason
+    given above test_generation_fails_when_a_configured_pid_contradicts_the_derived_first_pid.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(address_granularity='BYTE', identification=identification))

@@ -412,3 +412,37 @@ def test_get_id_does_not_fall_back_to_the_static_identification_when_type_zeros_
     assert raw_data[0] == 0xFF
     assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0, \
         'a callback that claimed type 0 with a bad length must not fall back to the configured string'
+
+
+@pytest.mark.parametrize('identification', (
+    pytest.param('D:\\temp\\new1.a2l', id='backslashes C reads as escapes'),   # 16 characters
+    pytest.param('c:\\database\\test.a2l', id='1.1 example 2'),               # 20 characters
+    pytest.param('/path/to/"x".a2l', id='double quotes'),                      # 16 characters
+))
+def test_get_id_reports_a_configured_identification_needing_c_escapes_at_its_own_length(
+        identification):
+    """DD112's generation half counts the configured string's characters; GET_ID reports the
+    compiled C string's bytes. This is where the two are shown to agree. The generator pastes the
+    identification into a C string literal, so a backslash or double quote in it must be escaped
+    there. Unescaped, C reads D:\\temp\\new1.a2l's \\t and \\n as a tab and a line feed and
+    compiles its 16 characters to 14 bytes -- a Length that violates the Length mod AG = 0 the
+    generator had just accepted, with no DET, because the run-time check covers only callback
+    lengths. c:\\database\\test.a2l is XCP part 2 1.1/1.6.1.2.2's own second example.
+
+    DWORD, the strictest granularity: every row is a multiple of 4 characters, so the generator
+    accepts each one, and the Length on the wire must be that same number. The generated string's
+    content is checked as well, so an escape that doubled a character instead of preserving it
+    fails here too.
+    """
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   address_granularity='DWORD',
+                                   identification=identification))
+    _connect(handle)
+
+    raw_data = _get_id(handle, 0x00)
+
+    assert raw_data[0] == 0xFF
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == len(identification), \
+        'GET_ID must report the configured identification at the length the generator checked'
+    assert handle.ffi.string(handle.config.lib.Xcp[0].general.identification) == \
+        identification.encode('ascii'), 'the generated C literal must compile to the configured string'
