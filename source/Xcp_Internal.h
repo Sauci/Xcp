@@ -46,6 +46,9 @@ extern "C" {
 #define XCP_PID_ERROR (0xFEu)
 #define XCP_PID_EVENT (0xFDu)
 
+/* XCP part 2 - Protocol Layer Specification 1.1/1.8.1: "With EV_RESUME_MODE the slave indicates
+ * that it is starting in RESUME mode." */
+#define XCP_EVENT_RESUME_MODE (0x00u)
 #define XCP_EVENT_CLEAR_DAQ (0x01u)
 #define XCP_EVENT_STORE_DAQ (0x02u)
 #define XCP_EVENT_STORE_CAL (0x03u)
@@ -146,6 +149,10 @@ extern "C" {
 #define XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ (0x01u << 0x02u)
 #define XCP_SESSION_STATUS_MASK_CLEAR_DAQ_REQ (0x01u << 0x03u)
 #define XCP_SESSION_STATUS_MASK_DAQ_RUNNING (0x01u << 0x06u)
+/* 1.1/1.6.1.1.3, bit 7: "1 = Slave is in RESUME mode". Written only by Xcp_ResumeComplete (set)
+ * and Xcp_DTOCmdDaqFreeDaq (cleared, once an explicit FREE_DAQ takes the resumed pool this bit
+ * describes) -- both source/Xcp_Daq.c. */
+#define XCP_SESSION_STATUS_MASK_RESUME (0x01u << 0x07u)
 
 /**
  * @brief how many absolute ODT numbers exist, across every DAQ list together.
@@ -347,8 +354,35 @@ typedef enum {
      */
     XCP_CONNECTION_STATE_DISCONNECTED = 0x00u,
     XCP_CONNECTION_STATE_CONNECTED,
+
+    /**
+     * @brief Declared, but deliberately never entered.
+     *
+     * @note Design doc DD105 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md):
+     * Xcp_ResumeComplete (source/Xcp_Daq.c) used to enter this state on every committed resume.
+     * Both connection gates in source/Xcp.c -- the CTO dispatch and STIM reception -- test
+     * != XCP_CONNECTION_STATE_DISCONNECTED rather than == XCP_CONNECTION_STATE_CONNECTED, so that
+     * write alone admitted the entire command set -- DOWNLOAD, SET_MTA, FREE_DAQ, the programming
+     * commands included -- to any node on the bus with no CONNECT ever received. RESUME mode needs
+     * none of it: DTO transmission was never session-gated, and GET_STATUS reports RESUME through
+     * session status bit 7, a different byte entirely. Do not reinstate the write to "complete"
+     * this value; that is the hole this correction closes.
+     */
     XCP_CONNECTION_STATE_RESUME
 } Xcp_ConnectionState;
+
+/**
+ * @brief how far a start-up restoration has got.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.6. XCP_RESUME_RESTORING is
+ * entered by the first Xcp_Restore* call and left only by Xcp_ResumeComplete, which is what makes
+ * a restored configuration live (design doc DD105). Explicitly 0 for IDLE, the same defensive
+ * reason Xcp_ConnectionState is.
+ */
+typedef enum {
+    XCP_RESUME_IDLE = 0x00u,
+    XCP_RESUME_RESTORING,
+    XCP_RESUME_ACTIVE
+} Xcp_ResumeStateType;
 
 /**
  * @brief where a dynamic DAQ list configuration sequence has got to.
@@ -570,6 +604,25 @@ typedef struct {
      * zero by ALLOC_DAQ under a DYNAMIC one, so Xcp_DaqListIsValid serves both models unchanged.
      */
     uint16 allocated_daq_count;
+
+    /**
+     * @brief how far a start-up restoration has got. See Xcp_ResumeStateType's own doc comment.
+     */
+    Xcp_ResumeStateType resume_state;
+
+    /**
+     * @brief DD104: whether the store SET_REQUEST last accepted was STORE_DAQ_REQ_RESUME rather
+     * than STORE_DAQ_REQ_NO_RESUME.
+     * @details The module keeps no non-volatile memory of its own, so this is the one fact
+     * Xcp_StoreDaqConfiguration cannot infer from what it is handed -- 1.0/1.6.1.2.3's own id
+     * argument is the same for both modes -- and needs from somewhere else to know whether to
+     * persist a resume alongside the DAQ lists. @ref Xcp_GetResumeArmedState is that somewhere
+     * else. Set in Xcp_DTOCmdStdSetRequest's translation block (source/Xcp_Std.c), one mode bit
+     * at a time exactly as XCP_SESSION_STATUS_MASK_STORE_DAQ_REQ is, and for the identical
+     * 1.1-split reason: 1.0 had one STORE_DAQ_REQ bit, 1.1 splits it into two, so the two 1.1
+     * modes must write two independently-observable answers rather than one shared bit.
+     */
+    boolean resume_armed;
     uint8 internal_buffer[0x08u];
 
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
@@ -1063,27 +1116,6 @@ void Xcp_DaqListClearEntries(uint16 daqListNumber);
 uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pPduInfo);
 
 /**
- * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
- * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
- * (1.1/1.6.4.3.1.1), but declared here with external linkage because two other places need the
- * same unwind -- the same arrangement, and for the same kind of reason, as Xcp_DaqListClearEntries
- * just above. The three callers are:
- *
- * - Xcp_DTOCmdDaqFreeDaq (Xcp_Daq.c), for which this is the whole command;
- * - Xcp_Init (Xcp.c), which has to establish the same invariant at start-up, and whose
- *   open-coded loop used to leave the descriptor's maxOdt, firstPid and per-ODT entryCount
- *   standing -- so a re-initialised DYNAMIC module reported nothing allocated while the
- *   descriptor still described the previous session's lists;
- * - Xcp_CTOCmdStdDisconnect (Xcp_Std.c), under DYNAMIC only. The allocation state machine starts
- *   in XCP_DAQ_ALLOC_FREE and accepts ALLOC_DAQ with no preceding FREE_DAQ (DD28), and repeats
- *   accumulate, so an allocation a master leaves standing at DISCONNECT is one the next master's
- *   ALLOC_DAQ adds to -- handing it more lists than it asked for, carrying the previous session's
- *   ODT entries.
- * @note the DISCONNECT caller is gated on DAQ_DYNAMIC. A STATIC configuration has no allocation
- * to release, and clearing its generated DAQ entries on disconnect would be a behaviour change to
- * the static model that SP2d is required not to make (DD25).
- */
-/**
  * @brief resets the SELECTED flag on every DAQ list.
  * @details XCP part 2 - Protocol Layer Specification 1.0/1.6.4.1.1.6 (1.1/1.6.4.1.1.4) requires the
  * SELECTED flag GET_DAQ_LIST_MODE reports to be reset "as soon as the related START_STOP_SYNCH or
@@ -1094,7 +1126,40 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
  */
 void Xcp_DaqClearAllSelections(void);
 
+/**
+ * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DTOCmdDaqFreeDaq, whose entire body it is
+ * (1.1/1.6.4.3.1.1), but declared here with external linkage because one other place needs the
+ * same unwind -- the same arrangement, and for the same kind of reason, as Xcp_DaqListClearEntries
+ * just above. The two callers are:
+ *
+ * - Xcp_DTOCmdDaqFreeDaq (Xcp_Daq.c), for which this is the whole command;
+ * - Xcp_Init (Xcp.c), which has to establish the same invariant at start-up, and whose
+ *   open-coded loop used to leave the descriptor's maxOdt, firstPid and per-ODT entryCount
+ *   standing -- so a re-initialised DYNAMIC module reported nothing allocated while the
+ *   descriptor still described the previous session's lists.
+ *
+ * DD106 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md) moved the third caller,
+ * Xcp_CTOCmdStdDisconnect's shared Xcp_DisconnectSession (Xcp_Std.c), onto
+ * Xcp_DaqFreeSessionAllocated below instead: an implicit DISCONNECT must spare a list
+ * Xcp_ResumeComplete restored from non-volatile memory, which this function -- correctly, for its
+ * own two remaining callers -- does not.
+ */
 void Xcp_DaqFreeAll(void);
+
+/**
+ * @brief DD106: like Xcp_DaqFreeAll, but spares every DAQ list carrying XCP_DAQ_LIST_MODE_RESUME.
+ * @details Defined in Xcp_Daq.c, beside Xcp_DaqFreeAll, and declared here with external linkage
+ * for its one caller, Xcp_DisconnectSession (Xcp_Std.c), under DAQ_DYNAMIC only -- the same gate
+ * Xcp_DaqFreeAll's own DISCONNECT caller used to carry, moved here with it. A STATIC configuration
+ * has no allocation to release and reaches neither function from DISCONNECT (DD25).
+ * @note not a third caller layered on top of Xcp_DaqFreeAll's own unwind, and deliberately not
+ * expressed in terms of it: the two diverge on almost every list-scoped line -- which lists
+ * Xcp_DaqListReset reaches, which lists have their counts zeroed, what
+ * Xcp_Internal.allocated_daq_count is left at -- so writing one in terms of the other would need
+ * as many conditionals at the call site as writing the body out again does at the definition site.
+ */
+void Xcp_DaqFreeSessionAllocated(void);
 
 /**
  * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.

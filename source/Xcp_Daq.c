@@ -358,12 +358,6 @@ static void Xcp_DaqSessionStatusUpdate(void)
     }
 }
 
-/**
- * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
- * @details The body of FREE_DAQ (1.1/1.6.4.3.1.1), factored out because DISCONNECT needs exactly
- * the same unwind -- see this function's declaration in Xcp_Internal.h for why, and
- * Xcp_CTOCmdStdDisconnect (source/Xcp_Std.c) for the other call site.
- */
 void Xcp_DaqClearAllSelections(void)
 {
     uint16 idx;
@@ -386,6 +380,14 @@ void Xcp_DaqClearAllSelections(void)
     }
 }
 
+/**
+ * @brief returns every DAQ list, and the dynamic allocation state with it, to power-up values.
+ * @details The body of FREE_DAQ (1.1/1.6.4.3.1.1), factored out because Xcp_Init needs exactly the
+ * same unwind at start-up -- see this function's declaration in Xcp_Internal.h for why. DISCONNECT
+ * no longer joins Xcp_Init as a second call site here: DD106 (docs/superpowers/specs/
+ * 2026-09-10-xcp-daq-resume-design.md) gives it its own resume-aware unwind,
+ * Xcp_DaqFreeSessionAllocated, below.
+ */
 void Xcp_DaqFreeAll(void)
 {
     uint16 daq_idx;
@@ -501,6 +503,114 @@ void Xcp_DaqFreeAll(void)
 }
 
 /**
+ * @brief DD106 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): Xcp_DaqFreeAll's own
+ * unwind, with every list carrying XCP_DAQ_LIST_MODE_RESUME spared from it.
+ * @details Xcp_DisconnectSession (source/Xcp_Std.c) used to call Xcp_DaqFreeAll unconditionally
+ * under DAQ_DYNAMIC, which would let a master's mere DISCONNECT kill a measurement
+ * Xcp_ResumeComplete (above) restored from non-volatile memory before that master ever connected --
+ * a list that did not come from the session now ending is not this session's to free.
+ *
+ * Structurally this is Xcp_DaqFreeAll's own body -- see that function's comment for the DD30/DD14
+ * ordering it preserves unchanged -- with the list-scoped steps guarded on each list's own mode:
+ * Xcp_DaqListReset is skipped for a resumed list, and so are its maxOdt/firstPid/entryCount
+ * zeroings a few lines below, which would otherwise undo the skip just as surely as
+ * Xcp_DaqListReset itself would.
+ *
+ * Xcp_Internal.allocated_daq_count is trimmed rather than zeroed: Xcp_DaqListIsValid bounds every
+ * accessor by it, so a spared descriptor a master can no longer reach through that bound would be
+ * spared in name only. It is trimmed down to the highest surviving resumed list, not to 0, by
+ * walking down from the top while the top list is not RESUME-marked. That is exact, not merely
+ * convenient, because a restored configuration is always a prefix of the index range: every
+ * Xcp_Restore* call that can ever raise this count is refused once a master has connected (DD107),
+ * so a session's own lists -- which only ALLOC_DAQ can add, and only after CONNECT -- can exist
+ * only above every resumed one, never between them.
+ *
+ * The stimulation-slot loop below, unlike the two steps above, is NOT guarded: it stays exactly
+ * Xcp_DaqFreeAll's own loop, over the whole pool regardless of RESUME. A resumed STIM-capable
+ * list's slot is released along with everyone else's, same as test/stim_reception_test.py's own
+ * test_disconnect_clears_a_stored_stimulation_payload already requires for a session-owned one.
+ * Narrowing this loop to match the two above it would need a per-list slot range this function has
+ * no cheap way to derive -- stimSlotBase is a generation-time constant sized off the configured
+ * pool, not off any runtime count this function already tracks -- and nothing in DD106 asks for
+ * it; a resumed STIM list's latched payload not surviving a DISCONNECT is a narrower, undocumented
+ * gap left for a future task, not a silent regression of anything under test today.
+ *
+ * FREE_DAQ (Xcp_DTOCmdDaqFreeDaq below) is not a second caller of this function and keeps calling
+ * Xcp_DaqFreeAll unconditionally: a master that explicitly asks to free everything is owed exactly
+ * that, resumed lists included, or it would be left holding pool space it has no way to reclaim
+ * and no error telling it why.
+ */
+void Xcp_DaqFreeSessionAllocated(void)
+{
+    uint16 daq_idx;
+    uint16 slot_idx;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+    {
+        if ((Xcp_DaqListRt(daq_idx)->mode & XCP_DAQ_LIST_MODE_RESUME) == 0x00u)
+        {
+            Xcp_DaqListReset(daq_idx);
+        }
+    }
+
+    /* Unconditional -- see this function's own comment above for why the two guarded steps below
+     * do not extend here. Identical to Xcp_DaqFreeAll's own stimulation-slot loop; see that
+     * function's comment for the LATCHED/DD35 reasoning this preserves unchanged. */
+    for (slot_idx = 0x0000u; slot_idx < Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlotCount; slot_idx++)
+    {
+        SchM_Enter_Xcp_StimBuffer();
+
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].length = 0x00u;
+
+        SchM_Exit_Xcp_StimBuffer();
+    }
+
+    if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+    {
+        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+        {
+            if ((Xcp_DaqListRt(daq_idx)->mode & XCP_DAQ_LIST_MODE_RESUME) == 0x00u)
+            {
+                uint8_least odt_idx;
+
+                SchM_Enter_Xcp_DtoQueue();
+
+                for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[daq_idx].maxOdt; odt_idx++)
+                {
+                    Xcp_Ptr->config->daqList[daq_idx].odt[odt_idx].entryCount = 0x00u;
+                }
+
+                Xcp_Ptr->config->daqList[daq_idx].maxOdt = 0x00u;
+                Xcp_Ptr->config->daqList[daq_idx].firstPid = 0x00u;
+
+                SchM_Exit_Xcp_DtoQueue();
+            }
+        }
+
+        /* See this function's own comment above for why trimming from the top down to the first
+         * RESUME-marked list is exact rather than approximate. */
+        while ((Xcp_Internal.allocated_daq_count > 0x0000u) &&
+               ((Xcp_DaqListRt((uint16)(Xcp_Internal.allocated_daq_count - 0x0001u))->mode &
+                 XCP_DAQ_LIST_MODE_RESUME) == 0x00u))
+        {
+            Xcp_Internal.allocated_daq_count--;
+        }
+    }
+
+    /* Unconditional for the same reason as Xcp_DaqFreeAll's own tail: DAQ_RUNNING is a property of
+     * every list together and a resumed list's own RUNNING bit, left untouched above, still needs
+     * to be counted. The DAQ pointer and the allocation state machine are this DISCONNECTing
+     * master's own session state, not any one list's, so neither is conditioned on RESUME either --
+     * unlike Xcp_DaqFreeAll's own comment on the pointer, the entry it names may still exist here,
+     * but a new master session starts SET_DAQ_PTR and the ALLOC_DAQ/ALLOC_ODT sequence fresh
+     * regardless of what the previous one left behind. */
+    Xcp_DaqSessionStatusUpdate();
+
+    Xcp_Internal.daq_pointer.valid = FALSE;
+    Xcp_Internal.daq_alloc_state = XCP_DAQ_ALLOC_FREE;
+}
+
+/**
  * @brief see interface/Xcp.h.
  * @details Selection is XCP_DAQ_LIST_MODE_SELECTED in the list's runtime mode byte
  * (Xcp_DaqListRtType::mode, interface/Xcp_Types.h), set by START_STOP_DAQ_LIST's SELECT mode
@@ -589,6 +699,558 @@ Std_ReturnType Xcp_GetOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtE
         pEntry->length = p_entry->length;
 
         result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md), Task 5:
+ * the read-side mirror of Xcp_RestoreDaqListMode below, closing the gap that setter's own doc
+ * comment (interface/Xcp.h) used to carry -- an integrator implementing Xcp_StoreDaqConfiguration
+ * could query a list's selection, ODT count, entry counts and entries, but had no way to learn its
+ * mode, event channel, prescaler or priority, so a restored list could be structurally perfect and
+ * never fire. Reported in the GET_DAQ_LIST_MODE response layout (1.1/1.6.4.1.2.6), the same layout
+ * Xcp_DaqListRtType::mode already stores and Xcp_RestoreDaqListMode already accepts -- RUNNING and
+ * RESUME included, even though Xcp_RestoreDaqListMode masks both off its own `mode` parameter on
+ * the way back in, so a value read here and handed there unmodified is still accepted.
+ */
+Std_ReturnType Xcp_GetDaqListMode(uint16 daqListNumber, uint8 *pMode, uint16 *pEventChannelNumber,
+                                  uint8 *pPrescaler, uint8 *pPriority)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if (Xcp_DaqListIsValid(daqListNumber) == TRUE)
+    {
+        *pMode = Xcp_DaqListRt(daqListNumber)->mode;
+        *pEventChannelNumber = Xcp_DaqListRt(daqListNumber)->eventChannelNumber;
+        *pPrescaler = Xcp_DaqListRt(daqListNumber)->prescaler;
+        *pPriority = Xcp_DaqListRt(daqListNumber)->priority;
+
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Design doc DD104: unlike the five accessors above, this does not read Xcp_DaqListRt or
+ * Xcp_Ptr->config->daqList -- it reads Xcp_Internal.resume_armed directly, written a mode bit at
+ * a time by Xcp_DTOCmdStdSetRequest (source/Xcp_Std.c), so no bounds check applies and none is
+ * needed.
+ */
+boolean Xcp_GetResumeArmedState(void)
+{
+    return Xcp_Internal.resume_armed;
+}
+
+/**
+ * @brief reassigns every DAQ list's FIRST_PID as a prefix sum over the ODT counts.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the absolute ODT number of
+ * relative ODT i in a list is FIRST_PID + i, so each list's block must be contiguous and no two
+ * blocks may overlap. Assigning PIDs in ALLOC_ODT call order cannot hold that once a list may
+ * receive ODTs in more than one call, so the whole set is recomputed instead. This is the same
+ * rule script/source_cfg.c.jinja2 applies to a static configuration.
+ *
+ * Concretely, ALLOC_ODT(0, 2), ALLOC_ODT(1, 3), ALLOC_ODT(0, 1) is a legal sequence -- DD28 makes
+ * the third call accumulate -- and it leaves list 0 needing three contiguous numbers when a
+ * call-order scheme has already handed 2..4 to list 1. There is no way to repair that by
+ * appending; the assignment has to be a function of the counts alone, which is what a prefix sum
+ * over list index is. It is also order-independent, so the same set of requests in any order
+ * produces the same layout.
+ *
+ * Bounded by Xcp_Internal.allocated_daq_count rather than by the configured pool, and that is the
+ * narrower bound on purpose: a list the master has not allocated cannot have ODTs (ALLOC_ODT
+ * refuses it), so including it would add nothing to the running sum, while the numbers it would
+ * write past the allocated count are meaningless -- no command reports them and no DTO carries
+ * them. Xcp_DaqFreeAll zeroes firstPid across the whole pool, so nothing stale survives there
+ * either.
+ *
+ * @note `next` is a uint8, matching the field, and cannot wrap: both callers below refuse any
+ * request that would take the total past XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFC) or
+ * XCP_STIM_ABSOLUTE_ODT_COUNT_MAX before calling this, so the sum this accumulates is always
+ * within that ceiling and every value written is too. The check is what makes the arithmetic here
+ * safe, not the other way round.
+ *
+ * 0xFC, not 0xFB: the bound on a *usable* absolute ODT number is 0xFB, because 0xFC..0xFF are the
+ * slave-to-master SERV, EV, ERR and RES codes, but a firstPid of exactly 0xFC is reachable and is
+ * written. With the total at 252 and an allocated-but-empty list after the full one, that list's
+ * prefix sum is 0xFC -- the state test_alloc_odt_refuses_to_exhaust_the_pid_space creates. It is
+ * harmless because it is the address of a first ODT that does not exist: that list's maxOdt is 0,
+ * so Xcp_TriggerEventChannel's ODT loop never runs for it and no frame can carry the value. It is
+ * still observable, in the FIRST_PID byte START_STOP_DAQ_LIST mode STOP returns for that list,
+ * which correctly names where its first ODT *would* begin. A master that then allocated an ODT
+ * there would be refused by the same 0xFC ceiling before the number could ever reach the wire.
+ * @note Moved here from beside Xcp_DTOCmdDaqAllocOdt (below) when Xcp_RestoreOdtCount became this
+ * function's second caller (design doc DD103 gap, fixed before Task 1's review): a static
+ * function must be defined, not merely declared, before its first use in this file, which this
+ * file's own convention meets by ordering rather than by forward declaration -- there is no other
+ * one anywhere in it. Xcp_RestoreOdtCount sits earlier in the file than Xcp_DTOCmdDaqAllocOdt, so
+ * the definition had to move to stay before both, not just the one it originally served.
+ */
+static void Xcp_DaqRecomputeFirstPids(void)
+{
+    uint16 daq_idx;
+    uint8 next = 0x00u;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
+    {
+        Xcp_Ptr->config->daqList[daq_idx].firstPid = next;
+        next = (uint8)(next + Xcp_Ptr->config->daqList[daq_idx].maxOdt);
+    }
+}
+
+/**
+ * @brief total ODTs currently allocated across every DAQ list the master holds.
+ * @details The quantity XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX/XCP_STIM_ABSOLUTE_ODT_COUNT_MAX bounds,
+ * and the same sum Xcp_DaqRecomputeFirstPids ends on.
+ * @note uint16, not the uint8 the ODT counts themselves live in, so that neither this total nor
+ * the caller's total-plus-ODT_COUNT is ever narrowed back to eight bits. That narrowing is a
+ * reachable defect, not a theoretical one: a pool whose odtCount is 252 admits a second request
+ * for 252 on a list holding none, and 252 + 252 is 248 in a uint8 -- under the very ceiling it is
+ * being compared against, so the check would pass exactly the request it exists to refuse.
+ * test/alloc_odt_test.py::test_alloc_odt_ceiling_holds_where_a_uint8_total_would_wrap pins that.
+ *
+ * The type that matters is the one the sum is stored or cast to, not this return type on its own:
+ * C's integer promotions widen both operands of the caller's addition to int, so a uint8 return
+ * value alone would still compute 504 correctly there. Spelling both uint16 is what keeps the
+ * result from depending on that, and on nobody later adding a cast back.
+ * @note Moved here alongside Xcp_DaqRecomputeFirstPids above, for the identical reason -- see its
+ * own note.
+ */
+static uint16 Xcp_DaqAllocatedOdtCount(void)
+{
+    uint16 daq_idx;
+    uint16 total = 0x0000u;
+
+    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
+    {
+        total = (uint16)(total + (uint16)Xcp_Ptr->config->daqList[daq_idx].maxOdt);
+    }
+
+    return total;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @details Design doc DD103 (docs/superpowers/specs/2026-09-10-xcp-daq-resume-design.md): the
+ * restore-side mirror of the five accessors above, and of ALLOC_DAQ (XCP part 2 - Protocol Layer
+ * Specification 1.1/1.6.4.3.1.2). Like those accessors, this and the five functions that follow it
+ * live here for reusing Xcp_DaqListIsValid/Xcp_DaqListRt for their own bounds checks rather than
+ * re-deriving them.
+ * @note DD107's gate -- refused once Xcp_Internal.resume_state reaches XCP_RESUME_ACTIVE, or once
+ * a master has connected -- is common to every Xcp_Restore* function below; each repeats the test
+ * rather than each calling a shared checker, matching this file's existing style of inlining a
+ * command's own refusal precedence rather than factoring a one-line predicate out from under it.
+ */
+Std_ReturnType Xcp_RestoreDaqListCount(uint16 daqListCount)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED))
+    {
+        if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
+        {
+            /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_DAQ itself follows
+             * (Xcp_DTOCmdDaqAllocDaq below), bounded by the same configured pool. */
+            if ((uint32)((uint32)Xcp_Internal.allocated_daq_count + (uint32)daqListCount) <=
+                (uint32)Xcp_Ptr->general->daqCount)
+            {
+                Xcp_Internal.allocated_daq_count =
+                        (uint16)(Xcp_Internal.allocated_daq_count + daqListCount);
+                Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+
+                result = E_OK;
+            }
+        }
+        /* DAQ_STATIC: allocated_daq_count already equals Xcp_Ptr->general->daqCount (Xcp_Init)
+         * and generation fixes it there permanently, so there is nothing to raise -- only to
+         * check, per DD103. */
+        else if (daqListCount == Xcp_Ptr->general->daqCount)
+        {
+            Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+
+            result = E_OK;
+        }
+        else
+        {
+            /* DAQ_STATIC and daqListCount disagrees with the generated build: refused. */
+        }
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Fixed before Task 1's review, a gap the task's own brief did not name: this must
+ * recompute every restored list's firstPid after raising maxOdt, the same obligation ALLOC_ODT
+ * (Xcp_DTOCmdDaqAllocOdt below) has and for the identical reason -- under ABSOLUTE identification
+ * (1.1/1.1.2.1) firstPid is the prefix sum of every list's own maxOdt (Xcp_DaqRecomputeFirstPids'
+ * own doc comment above), so any path that changes one list's ODT count owes the whole pool a
+ * fresh sum, not only the list it changed. Left out, every restored list's firstPid stayed at the
+ * 0 Xcp_Init/Xcp_DaqFreeAll leaves it, so two lists that had each received an ODT would both
+ * transmit their own ODT 0 identified as absolute ODT number 0 -- a real collision on the wire
+ * under the default identification field type, not merely a stale reported value.
+ * test/daq_resume_test.py::test_resuming_two_lists_does_not_collide_their_absolute_odt_numbers
+ * pins this; every earlier test in that file restores exactly one list, which is why none of them
+ * caught it.
+ */
+Std_ReturnType Xcp_RestoreOdtCount(uint16 daqListNumber, uint8 odtCount)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_ODT itself follows
+         * (Xcp_DTOCmdDaqAllocOdt below), bounded by the same per-list ceiling. Under DAQ_STATIC
+         * Xcp_Ptr->general->odtCount is 0 (script/source_cfg.c.jinja2), so a STATIC list's own
+         * generation-fixed maxOdt already exceeds it and this refuses unconditionally, exactly as
+         * ALLOC_ODT is unreachable there. */
+        ((uint16)((uint16)Xcp_Ptr->config->daqList[daqListNumber].maxOdt + (uint16)odtCount) <=
+         (uint16)Xcp_Ptr->general->odtCount) &&
+        /* The second, independent ceiling ALLOC_ODT itself checks (Xcp_DTOCmdDaqAllocOdt below):
+         * absolute ODT numbers are drawn from one PID space shared by every list, not only this
+         * one's own slice -- and it is what keeps Xcp_DaqRecomputeFirstPids' own uint8 `next` from
+         * wrapping below, exactly as it does for ALLOC_ODT (see that function's own note). */
+        ((uint16)(Xcp_DaqAllocatedOdtCount() + (uint16)odtCount) <=
+         (uint16)((Xcp_Ptr->config->daqList[daqListNumber].type != DAQ) ?
+                  XCP_STIM_ABSOLUTE_ODT_COUNT_MAX : XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX)))
+    {
+        /* Both writes under one exclusive area, mirroring ALLOC_ODT's own DD14 reasoning
+         * (Xcp_DTOCmdDaqAllocOdt below): raising maxOdt is what makes the standing firstPid
+         * values wrong, so a trigger must never land between the two writes and sample a list
+         * against a half-updated layout.
+         *
+         * Unlike ALLOC_ODT, no list can actually be RUNNING while this branch runs: DD107's own
+         * gate above refuses every Xcp_Restore* call once Xcp_ResumeComplete -- the only thing
+         * that ever sets RUNNING -- has run, and nothing sets RUNNING before it. So the hazard
+         * this area guards against is unreachable today, not merely unlikely. The area is taken
+         * anyway, for the same reason ALLOC_ODT's own comment gives for not narrowing its scope:
+         * this is what keeps the DD14 hazard class shut if the gate above it is ever loosened,
+         * rather than a second, silent place it could reopen. */
+        SchM_Enter_Xcp_DtoQueue();
+
+        Xcp_Ptr->config->daqList[daqListNumber].maxOdt =
+                (uint8)(Xcp_Ptr->config->daqList[daqListNumber].maxOdt + odtCount);
+
+        Xcp_DaqRecomputeFirstPids();
+
+        SchM_Exit_Xcp_DtoQueue();
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ */
+Std_ReturnType Xcp_RestoreOdtEntryCount(uint16 daqListNumber, uint8 odtNumber, uint8 entryCount)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
+        /* Raised, not assigned -- the same DD28 accumulate rule ALLOC_ODT_ENTRY itself follows
+         * (Xcp_DTOCmdDaqAllocOdtEntry below), bounded by the same per-ODT ceiling. */
+        ((uint16)((uint16)Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount +
+                  (uint16)entryCount) <= (uint16)Xcp_Ptr->general->odtEntriesCount))
+    {
+        Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount =
+                (uint8)(Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount +
+                        entryCount);
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Xcp_OdtEntryType::number (interface/Xcp_Types.h) is const, so this function copies the
+ * other four members individually rather than assigning through the struct, the same constraint
+ * Xcp_GetOdtEntry's own note above explains -- here on the write side rather than the read side.
+ * @note Final review Critical finding: WRITE_DAQ is the front door for these same four fields, and
+ * Xcp_DaqApplyOdtEntry (above) enforces four rules on `size`/`bitOffset` this setter used to skip
+ * entirely -- size != 0, size <= odtEntrySizeDaq, size % granularity == 0, and the per-ODT budget
+ * (Xcp_OdtUsedBytes + size <= Xcp_DaqOdtEntryBudget). Xcp_DaqSampleOdt
+ * (source/Xcp_DaqRuntime.c) trusts that invariant absolutely -- it writes pFrame->data[offset] with
+ * no bound of its own, and pFrame is a stack local in a function documented callable from an
+ * interrupt -- so an entry this setter accepted that WRITE_DAQ would have refused is a stack
+ * overflow at the next trigger, not merely a reporting mismatch. Reused rather than restated, so
+ * the two doors cannot drift.
+ * @note `pEntry->length == 0` is exempted from every check below rather than folded into them:
+ * Xcp_GetOdtEntry reports an unwritten entry with length 0 (and bitOffset
+ * XCP_ODT_ENTRY_BIT_OFFSET_NONE), and the mirror must accept what the accessor gave it -- WRITE_DAQ
+ * itself never has to make this exception because ERR_OUT_OF_RANGE for SIZE = 0 (1.1/1.6.4.1.1.2)
+ * is a rule on a master's own request, not on what a faithful round trip through the accessors can
+ * produce.
+ * @note This is the setter's own, per-call half of the budget rule. Xcp_ResumeComplete (below) re-
+ * checks every restored ODT's total against Xcp_DaqOdtEntryBudget a second time, immediately before
+ * anything becomes live, because Xcp_RestoreDaqListMode can enable TIMESTAMP -- which shrinks ODT
+ * 0's budget -- after entries that were individually legal at the time have already landed here.
+ */
+Std_ReturnType Xcp_RestoreOdtEntry(uint16 daqListNumber, uint8 odtNumber, uint8 odtEntryNumber,
+                                   const Xcp_OdtEntryType *pEntry)
+{
+    Std_ReturnType result = E_NOT_OK;
+    const uint8 granularity = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        (odtNumber < Xcp_Ptr->config->daqList[daqListNumber].maxOdt) &&
+        (odtEntryNumber < Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].entryCount) &&
+        ((pEntry->length == 0x00u) ||
+         (((pEntry->length <= Xcp_Ptr->general->odtEntrySizeDaq) &&
+           ((pEntry->length % granularity) == 0x00u)) &&
+          ((pEntry->bitOffset == XCP_ODT_ENTRY_BIT_OFFSET_NONE) ||
+           ((pEntry->bitOffset <= XCP_ODT_ENTRY_BIT_OFFSET_MAX) &&
+            (pEntry->length == granularity))) &&
+          ((uint16)((uint16)Xcp_OdtUsedBytes(daqListNumber, odtNumber, odtEntryNumber) +
+                    (uint16)pEntry->length) <=
+           (uint16)Xcp_DaqOdtEntryBudget(daqListNumber, odtNumber)))))
+    {
+        Xcp_OdtEntryType *p_entry =
+                &Xcp_Ptr->config->daqList[daqListNumber].odt[odtNumber].odtEntry[odtEntryNumber];
+
+        p_entry->address = pEntry->address;
+        p_entry->bitOffset = pEntry->bitOffset;
+        p_entry->addressExtension = pEntry->addressExtension;
+        p_entry->length = pEntry->length;
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Final review F4 finding: SET_DAQ_LIST_MODE (Xcp_DTOCmdDaqSetDaqListMode, below) refuses
+ * DIRECTION on a list that cannot receive, an out-of-range event channel, an unsupported
+ * prescaler, a non-zero priority on a build without prioritisation, PID_OFF outside
+ * ABSOLUTE/single-ODT/exclusive-PDU, and TIMESTAMP with no clock configured -- none of which this
+ * setter used to apply, so the back door could grant a mode the front door never would (DD105).
+ * Reused rather than restated: DIRECTION, TIMESTAMP and PID_OFF sit at the identical bit (1, 4, 5)
+ * in this parameter's GET_DAQ_LIST_MODE response layout as in SET_DAQ_LIST_MODE's own request byte
+ * (DD103's own note on the two mode tables), so the same XCP_DAQ_LIST_MODE_* constants that
+ * function tests apply here unchanged.
+ * @note Three consequences a mode granted here and never checked would otherwise leave, each
+ * silent because the list still reports itself RUNNING|RESUME (Xcp_ResumeComplete, below, sets
+ * both unconditionally): DIRECTION on a DAQ-only list makes both of Xcp_TriggerEventChannel's
+ * passes skip it on the type test, so it transmits nothing forever; an out-of-range event channel
+ * leaves it bound to a channel that never elapses, the same dead-but-reported-running outcome;
+ * PID_OFF granted to two lists sharing one RX PDU reaches Xcp_DaqPidOffListForRxPdu, whose own
+ * comment states uniqueness "is established when the bit is set, not re-derived here" -- so a
+ * stimulation frame would apply to the wrong list's addresses.
+ * @note Deliberately NOT reused here: the second half of SET_DAQ_LIST_MODE's own TIMESTAMP check,
+ * which additionally refuses when the addressed list's ODT 0 has no room (maxOdt == 0) or already
+ * holds more than the timestamp-reduced Xcp_DaqOdtEntryBudget affords (Xcp_OdtUsedBytes). That
+ * half is entry-budget arithmetic, not a mode-structural rule, and Xcp_ResumeComplete (below) is
+ * its one authoritative home: it re-derives every restored list's every ODT against
+ * Xcp_DaqOdtEntryBudget from whatever mode the list finally carries, immediately before anything
+ * becomes live, regardless of which order an integrator calls the setters in -- a second, partial
+ * copy of the identical arithmetic here would restate that rule rather than reuse it, and could
+ * only ever be as strict as (never stricter than) the one Xcp_ResumeComplete already applies.
+ */
+Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 eventChannelNumber,
+                                      uint8 prescaler, uint8 priority)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED) &&
+        (Xcp_DaqListIsValid(daqListNumber) == TRUE) &&
+        /* 1.1/1.6.4.1.1.3, mirroring Xcp_DTOCmdDaqSetDaqListMode's own DIRECTION check: only a
+         * list that can receive may be pointed at stimulation. */
+        (((mode & XCP_DAQ_LIST_MODE_DIRECTION) == 0x00u) ||
+         (Xcp_Ptr->config->daqList[daqListNumber].type == STIM) ||
+         (Xcp_Ptr->config->daqList[daqListNumber].type == DAQ_STIM)) &&
+        /* 1.1/1.6.4.1.1.3, mirroring the same function's TIMESTAMP clock check. */
+        (((mode & XCP_DAQ_LIST_MODE_TIMESTAMP) == 0x00u) ||
+         (Xcp_Ptr->general->timestampType != NO_TIME_STAMP)) &&
+        (eventChannelNumber < Xcp_Ptr->general->maxEventChannel) &&
+        (prescaler != 0x00u) &&
+        ((prescaler <= 0x01u) || (Xcp_Ptr->general->prescalerSupported == TRUE)) &&
+        /* 1.1/1.6.4.1.1.3: "If the ECU doesn't support the prioritization of DAQ lists, a DAQ
+         * list priority > 0 is not allowed" -- this module supports none, so only 0 is ever
+         * granted, the same constant refusal Xcp_DTOCmdDaqSetDaqListMode applies. */
+        (priority == 0x00u) &&
+        /* 1.1/1.1.2.1, mirroring the same function's PID_OFF check: ABSOLUTE identification, a
+         * single ODT, and a TX PDU no other list shares -- otherwise two DTOs could share one
+         * CAN-Id with nothing to tell them apart. */
+        (((mode & XCP_DAQ_LIST_MODE_PID_OFF) == 0x00u) ||
+         ((Xcp_Ptr->general->identificationFieldType == ABSOLUTE) &&
+          (Xcp_Ptr->config->daqList[daqListNumber].maxOdt == 0x01u) &&
+          (Xcp_DaqListTxPduIsExclusive(daqListNumber) == TRUE))))
+    {
+        /* RUNNING and RESUME are never taken from the caller -- Xcp_ResumeComplete below is the
+         * only thing that may set either, so an integrator cannot half-start a list by calling
+         * this alone (DD103). */
+        Xcp_DaqListRt(daqListNumber)->mode =
+                (uint8)(mode & (uint8)(~(XCP_DAQ_LIST_MODE_RUNNING | XCP_DAQ_LIST_MODE_RESUME)));
+        Xcp_DaqListRt(daqListNumber)->eventChannelNumber = eventChannelNumber;
+        Xcp_DaqListRt(daqListNumber)->prescaler = prescaler;
+        Xcp_DaqListRt(daqListNumber)->prescalerCounter = 0x00u;
+        Xcp_DaqListRt(daqListNumber)->priority = priority;
+
+        Xcp_Internal.resume_state = XCP_RESUME_RESTORING;
+        result = E_OK;
+    }
+
+    return result;
+}
+
+/**
+ * @brief see interface/Xcp.h.
+ * @note Task 1 (docs/superpowers/plans/2026-09-10-xcp-daq-resume.md) stopped at the list state --
+ * session_configuration_id, resume_state, and each restored list's own mode. Task 3 adds the rest
+ * of DD105's postcondition: XCP_CONNECTION_STATE_RESUME, the session status RESUME bit,
+ * DAQ_RUNNING (recomputed from the lists just marked, not written directly here -- see
+ * Xcp_DaqSessionStatusUpdate below), and EV_RESUME_MODE.
+ * @note Final review F2/F3 findings, both on this function's own admission gate. It used to carry
+ * neither of DD107's two clauses, though every Xcp_Restore* setter above carries both: a master
+ * that CONNECTs and allocates its own DAQ lists while the integrator's non-volatile read is still
+ * outstanding (DD100 -- this module cannot know when that memory becomes readable) would have the
+ * read's eventual call here mark THAT master's own lists RESUME|RUNNING too, and
+ * Xcp_DaqFreeSessionAllocated spares every RESUME-marked list from a DISCONNECT and stops its
+ * top-down trim at the first one it meets -- reinstating the cross-session allocation leak
+ * Xcp_DisconnectSession exists to prevent. And it used to accept allocated_daq_count == 0 as
+ * trivially valid, since a loop bounded by it then simply never runs -- entering RESUME mode
+ * (session status bit 7, below), refusing every future Xcp_Restore* (the gate this note is on),
+ * and opening the CTO dispatch with no CONNECT ever received, all for a slave transmitting
+ * nothing. DD105 already answers this: the commit must refuse a configuration the ordinary path
+ * would refuse to start, and START_STOP_SYNCH answers ERR_DAQ_CONFIG for starting an empty
+ * selection.
+ */
+Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    /* DD107's own two-clause gate, the same one every Xcp_Restore* setter above carries: this
+     * commit is just as much a start-up activity as the setters that feed it. */
+    if ((Xcp_Internal.resume_state != XCP_RESUME_ACTIVE) &&
+        (Xcp_Internal.connection_status == XCP_CONNECTION_STATE_DISCONNECTED))
+    {
+        uint16 idx;
+
+        /* DD105/F3: a commit that restores nothing is refused outright -- see this function's own
+         * note above for why it is not the harmless no-op it looks like. */
+        result = (Xcp_Internal.allocated_daq_count > 0x0000u) ? E_OK : E_NOT_OK;
+
+        /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the same configuration
+         * START_STOP_DAQ_LIST itself refuses to start (Xcp_DaqListIsConfigured, above) must not be
+         * started by this back door either (DD105) -- checked whole, over every restored list,
+         * before anything is written: a restore that stops halfway must leave a slave that resumed
+         * nothing, not one that resumed everything except the list that failed.
+         *
+         * F1: the same principle bounds each ODT's total against Xcp_DaqOdtEntryBudget, the
+         * identical per-ODT budget WRITE_DAQ enforces through Xcp_DaqApplyOdtEntry and
+         * Xcp_RestoreOdtEntry (above) now enforces on the way in. This re-check is the more robust
+         * of the two sites, not a duplicate of it: Xcp_RestoreDaqListMode can enable TIMESTAMP,
+         * which shrinks ODT 0's budget, after entries that were individually legal at the time
+         * have already landed, and deriving the budget here from whatever mode the list finally
+         * carries -- whichever order the integrator called the setters in -- is what closes that
+         * gap. excludedEntry 0xFF excludes nothing, the same idiom
+         * Xcp_DTOCmdDaqSetDaqListMode's own TIMESTAMP check (below) uses to total every entry an
+         * ODT holds. */
+        for (idx = 0x0000u; idx < Xcp_Internal.allocated_daq_count; idx++)
+        {
+            uint8_least odt_idx;
+
+            if (Xcp_DaqListIsConfigured(idx) == FALSE)
+            {
+                result = E_NOT_OK;
+            }
+
+            for (odt_idx = 0x00u; odt_idx < Xcp_Ptr->config->daqList[idx].maxOdt; odt_idx++)
+            {
+                if ((uint16)Xcp_OdtUsedBytes(idx, (uint8)odt_idx, 0xFFu) >
+                    (uint16)Xcp_DaqOdtEntryBudget(idx, (uint8)odt_idx))
+                {
+                    result = E_NOT_OK;
+                }
+            }
+        }
+
+        if (result == E_OK)
+        {
+            Std_ReturnType push_result;
+
+            Xcp_Internal.session_configuration_id = sessionConfigurationId;
+            Xcp_Internal.resume_state = XCP_RESUME_ACTIVE;
+
+            for (idx = 0x0000u; idx < Xcp_Internal.allocated_daq_count; idx++)
+            {
+                Xcp_DaqListRt(idx)->mode |= (XCP_DAQ_LIST_MODE_RESUME | XCP_DAQ_LIST_MODE_RUNNING);
+            }
+
+            /* The loop above may have just started every restored list running, so DAQ_RUNNING
+             * (1.1/1.6.1.1.3) needs recomputing across every list -- the same call, for the same
+             * reason, Xcp_DTOCmdDaqStartStopDaqList and Xcp_DTOCmdDaqClearDaqList already make
+             * after their own loops, below. */
+            Xcp_DaqSessionStatusUpdate();
+
+            /* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.1.3, session status bit 7: "1 =
+             * Slave is in RESUME mode". OR'd in, not assigned, for the same reason
+             * Xcp_CTOCmdStdConnect's own request-bit clear (source/Xcp_Std.c) is a mask rather
+             * than a zeroing assignment: session_status already carries whatever
+             * Xcp_DaqSessionStatusUpdate above just left DAQ_RUNNING at, and a plain assignment
+             * here would erase it. Xcp_DTOCmdDaqFreeDaq (below) is this bit's other writer,
+             * clearing it once an explicit FREE_DAQ takes the resumed pool this bit describes. */
+            Xcp_Internal.session_status |= XCP_SESSION_STATUS_MASK_RESUME;
+
+            /* XCP part 2 - Protocol Layer Specification 1.1/1.8.1: "With EV_RESUME_MODE the slave
+             * indicates that it is starting in RESUME mode." Only the push itself goes inside the
+             * exclusive area -- the same shape as Xcp_MainFunction's EV_STORE_DAQ push (source/
+             * Xcp.c): this function is one more producer into the shared event queue, reachable
+             * from whatever context the integrator calls it from, while Xcp_TransmitOneFrame reads
+             * read/write under this same area to pick what to send next. NULL_PTR/0x00u rather
+             * than a status byte: unlike EV_STORE_CAL/EV_STORE_DAQ/EV_CLEAR_DAQ, which report an
+             * asynchronous integrator callback's own outcome, there is nothing to report here
+             * beyond the event itself -- the same reasoning EV_CMD_PENDING (source/Xcp_Pgm.c) and
+             * EV_DAQ_OVERLOAD (source/Xcp_DaqRuntime.c) already give their own NULL_PTR/0 pushes.
+             *
+             * A failed push is still reported, though, and that part does NOT follow
+             * EV_CMD_PENDING's lead -- EV_CMD_PENDING is the only push in this codebase that skips
+             * the diagnostic, and its own comment gives a reason specific to it: it retries on
+             * every later busy poll while pending_command.active stays TRUE, so a dropped push
+             * there loses nothing permanently. EV_RESUME_MODE has no such retry -- it is one-shot,
+             * exactly as EV_STORE_CAL/EV_STORE_DAQ/EV_CLEAR_DAQ and EV_DAQ_OVERLOAD all are, every
+             * one of which reports a failed push -- so this one takes their treatment instead,
+             * below. */
+            SchM_Enter_Xcp_DtoQueue();
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_RESUME_MODE, NULL_PTR, 0x00000000u);
+            SchM_Exit_Xcp_DtoQueue();
+
+            if (push_result == E_OK)
+            {
+                Xcp_Internal.event.successful_transmission_pending = TRUE;
+            }
+            else
+            {
+                /* There is not much we can do here except reporting the error during the
+                 * development process. If this error arises, the stack should be recompiled with
+                 * a bigger event queue size (defined by XCP_EVENT_QUEUE_SIZE), or the reason for
+                 * receiving such a lot of events should be identified -- Xcp_MainFunction's own
+                 * EV_STORE_DAQ push (source/Xcp.c) reports this identically, and for the identical
+                 * reason. */
+                Xcp_ReportError(0x00u, XCP_RESUME_COMPLETE_API_ID, XCP_E_EVENT_QUEUE_FULL);
+            }
+        }
     }
 
     return result;
@@ -876,84 +1538,6 @@ uint8 Xcp_DTOCmdDaqClearDaqList(boolean *responseExpected, const PduInfoType *pP
 }
 
 /**
- * @brief reassigns every DAQ list's FIRST_PID as a prefix sum over the ODT counts.
- * @details XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4: the absolute ODT number of
- * relative ODT i in a list is FIRST_PID + i, so each list's block must be contiguous and no two
- * blocks may overlap. Assigning PIDs in ALLOC_ODT call order cannot hold that once a list may
- * receive ODTs in more than one call, so the whole set is recomputed instead. This is the same
- * rule script/source_cfg.c.jinja2 applies to a static configuration.
- *
- * Concretely, ALLOC_ODT(0, 2), ALLOC_ODT(1, 3), ALLOC_ODT(0, 1) is a legal sequence -- DD28 makes
- * the third call accumulate -- and it leaves list 0 needing three contiguous numbers when a
- * call-order scheme has already handed 2..4 to list 1. There is no way to repair that by
- * appending; the assignment has to be a function of the counts alone, which is what a prefix sum
- * over list index is. It is also order-independent, so the same set of requests in any order
- * produces the same layout.
- *
- * Bounded by Xcp_Internal.allocated_daq_count rather than by the configured pool, and that is the
- * narrower bound on purpose: a list the master has not allocated cannot have ODTs (ALLOC_ODT
- * refuses it), so including it would add nothing to the running sum, while the numbers it would
- * write past the allocated count are meaningless -- no command reports them and no DTO carries
- * them. Xcp_DaqFreeAll zeroes firstPid across the whole pool, so nothing stale survives there
- * either.
- *
- * @note `next` is a uint8, matching the field, and cannot wrap: Xcp_DTOCmdDaqAllocOdt refuses any
- * request that would take the total past XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX (0xFC), so the sum this
- * accumulates is at most 0xFC and every value written is at most 0xFC. The check is what makes
- * the arithmetic here safe, not the other way round.
- *
- * 0xFC, not 0xFB: the bound on a *usable* absolute ODT number is 0xFB, because 0xFC..0xFF are the
- * slave-to-master SERV, EV, ERR and RES codes, but a firstPid of exactly 0xFC is reachable and is
- * written. With the total at 252 and an allocated-but-empty list after the full one, that list's
- * prefix sum is 0xFC -- the state test_alloc_odt_refuses_to_exhaust_the_pid_space creates. It is
- * harmless because it is the address of a first ODT that does not exist: that list's maxOdt is 0,
- * so Xcp_TriggerEventChannel's ODT loop never runs for it and no frame can carry the value. It is
- * still observable, in the FIRST_PID byte START_STOP_DAQ_LIST mode STOP returns for that list,
- * which correctly names where its first ODT *would* begin. A master that then allocated an ODT
- * there would be refused by the same 0xFC ceiling before the number could ever reach the wire.
- */
-static void Xcp_DaqRecomputeFirstPids(void)
-{
-    uint16 daq_idx;
-    uint8 next = 0x00u;
-
-    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
-    {
-        Xcp_Ptr->config->daqList[daq_idx].firstPid = next;
-        next = (uint8)(next + Xcp_Ptr->config->daqList[daq_idx].maxOdt);
-    }
-}
-
-/**
- * @brief total ODTs currently allocated across every DAQ list the master holds.
- * @details The quantity XCP_DAQ_ABSOLUTE_ODT_COUNT_MAX bounds, and the same sum
- * Xcp_DaqRecomputeFirstPids ends on.
- * @note uint16, not the uint8 the ODT counts themselves live in, so that neither this total nor
- * the caller's total-plus-ODT_COUNT is ever narrowed back to eight bits. That narrowing is a
- * reachable defect, not a theoretical one: a pool whose odtCount is 252 admits a second request
- * for 252 on a list holding none, and 252 + 252 is 248 in a uint8 -- under the very ceiling it is
- * being compared against, so the check would pass exactly the request it exists to refuse.
- * test/alloc_odt_test.py::test_alloc_odt_ceiling_holds_where_a_uint8_total_would_wrap pins that.
- *
- * The type that matters is the one the sum is stored or cast to, not this return type on its own:
- * C's integer promotions widen both operands of the caller's addition to int, so a uint8 return
- * value alone would still compute 504 correctly there. Spelling both uint16 is what keeps the
- * result from depending on that, and on nobody later adding a cast back.
- */
-static uint16 Xcp_DaqAllocatedOdtCount(void)
-{
-    uint16 daq_idx;
-    uint16 total = 0x0000u;
-
-    for (daq_idx = 0x0000u; daq_idx < Xcp_Internal.allocated_daq_count; daq_idx++)
-    {
-        total = (uint16)(total + (uint16)Xcp_Ptr->config->daqList[daq_idx].maxOdt);
-    }
-
-    return total;
-}
-
-/**
  * @brief ALLOC_ODT_ENTRY, XCP part 2 - Protocol Layer Specification 1.1/1.6.4.3.1.4.
  * @details The refusals are ordered the same way Xcp_DTOCmdDaqAllocOdt's are: SEQUENCE, then
  * OUT_OF_RANGE -- the list, then the ODT within it -- then MEMORY_OVERFLOW, each a narrower
@@ -1217,6 +1801,25 @@ uint8 Xcp_DTOCmdDaqFreeDaq(boolean *responseExpected, const PduInfoType *pPduInf
      * FREE_DAQ therefore stops every running list rather than refusing, which Xcp_DaqFreeAll does.
      * DD28 gives FREE_DAQ "any" as its accepted-from state, so there is no ERR_SEQUENCE either. */
     Xcp_DaqFreeAll();
+
+    /* Unlike Xcp_DisconnectSession's DD106 exemption (source/Xcp_Std.c), this frees a resumed list
+     * along with every other one -- Xcp_DaqFreeAll above makes no exception for
+     * XCP_DAQ_LIST_MODE_RESUME, and must not: a master that explicitly asks to free everything is
+     * owed exactly that, not a pool it cannot reclaim with no error telling it why.
+     *
+     * The resumed pool being gone means resume_state must follow it back to XCP_RESUME_IDLE: left
+     * at XCP_RESUME_ACTIVE, DD107's own gate would go on refusing every Xcp_Restore* setter for a
+     * configuration this call just freed. */
+    Xcp_Internal.resume_state = XCP_RESUME_IDLE;
+
+    /* The session status RESUME bit (XCP_SESSION_STATUS_MASK_RESUME, source/Xcp_Internal.h) is
+     * the same fact as resume_state above, reported on the wire, and must follow it back for the
+     * identical reason: left set, GET_STATUS would go on reporting bit 7 -- "Slave is in RESUME
+     * mode" -- for a resumed pool this call just freed. This clearing is written as a second
+     * statement rather than folded into the one above only because XCP_SESSION_STATUS_MASK_RESUME
+     * did not exist yet when that line was written; the comment above once called this out as a
+     * later task's concern, which by the time this bit existed to clear, was this one. */
+    Xcp_Internal.session_status &= (uint8)(~XCP_SESSION_STATUS_MASK_RESUME);
 
     Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x00u] = XCP_PID_RESPONSE;
 
@@ -1783,14 +2386,23 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
 
     /* XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.2.4. DAQ_CONFIG_TYPE now follows the
      * configuration: a DAQ_DYNAMIC build lets the master allocate lists through 1.1/1.6.4.3.1,
-     * where a DAQ_STATIC build serves the lists the generator declared. RESUME and BIT_STIM
-     * remain unimplemented and so remain reported unsupported here -- neither is a mode bit
-     * SET_DAQ_LIST_MODE refuses, though: XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (Xcp_Internal.h) is
-     * ALTERNATING alone, RESUME is bit 7 of the GET_DAQ_LIST_MODE response layout (design doc
-     * DD102, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md), not the request
-     * SET_DAQ_LIST_MODE reads, and BIT_STIM is a DAQ_PROPERTIES capability bit reported here, not
-     * a mode bit at all. RESUME is accepted and simply never honoured -- GET_DAQ_LIST_MODE never
-     * reports it set. */
+     * where a DAQ_STATIC build serves the lists the generator declared. BIT_STIM remains
+     * unimplemented and so remains reported unsupported here.
+     *
+     * RESUME is no longer in that sentence -- design doc DD103-DD107 (docs/superpowers/specs/
+     * 2026-09-10-xcp-daq-resume-design.md) implements it, and RESUME_SUPPORTED is set
+     * unconditionally below, the same way this bit's own acceptance mask entry in
+     * Xcp_DTOCmdStdSetRequest (source/Xcp_Std.c) is not gated behind
+     * storeDaqConfigurationApiEnable: Xcp_ResumeComplete and the Xcp_Restore* setters it commits
+     * are compiled into every build and reachable only through the integrator's own calls, not
+     * through any command this handler's own build flags gate. A separate RESUME bit is still not
+     * a mode bit SET_DAQ_LIST_MODE refuses: XCP_DAQ_LIST_MODE_REQ_UNSUPPORTED (Xcp_Internal.h) is
+     * ALTERNATING alone, and 1.1 marks SET_DAQ_LIST_MODE's own would-be RESUME request bit
+     * don't-care rather than defining it, so the slave tolerates it without a refusal and without
+     * an effect of its own: GET_DAQ_LIST_MODE's RESUME bit (7 of the response layout, design doc
+     * DD102, docs/superpowers/specs/2026-09-09-xcp-daq-nv-storage-design.md) is set only by
+     * Xcp_ResumeComplete, never by that request bit. BIT_STIM is a DAQ_PROPERTIES capability bit
+     * reported here, not a mode bit at all. */
     if (Xcp_Ptr->general->daqConfigType == DAQ_DYNAMIC)
     {
         properties |= XCP_DAQ_PROPERTIES_DAQ_CONFIG_TYPE;
@@ -1800,6 +2412,10 @@ uint8 Xcp_DTOCmdDaqGetDaqProcessorInfo(boolean *responseExpected, const PduInfoT
     {
         properties |= XCP_DAQ_PROPERTIES_PRESCALER_SUPPORTED;
     }
+
+    /* RESUME_SUPPORTED (bit 2): unconditional, per the comment above this function's first `if`.
+     * 1.1/1.6.4.1.2.4: "1 = DAQ lists can be set to RESUME mode." */
+    properties |= XCP_DAQ_PROPERTIES_RESUME_SUPPORTED;
 
     /* TIMESTAMP_SUPPORTED (bit 4): NO_TIME_STAMP means protocol_layer.timestamp was absent from
      * the configuration (Task 1), the same condition GET_DAQ_RESOLUTION_INFO's TIMESTAMP_MODE /
