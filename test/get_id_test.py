@@ -336,15 +336,27 @@ def test_get_id_refuses_a_callback_length_that_is_not_a_multiple_of_the_granular
     # the wrong one -- passing or failing for a reason that has nothing to do with GET_ID.
     handle.det_report_error.reset_mock()
 
-    raw_data = _get_id(handle, 0x01)
+    # Delivered inline, not through _get_id: the command table's one dispatch site
+    # (source/Xcp.c:2161, `Xcp_PIDTable[pid](...)`) is reached only from Xcp_CanIfRxIndication, so
+    # Xcp_DTOCmdStdGetId -- and the DET it raises -- runs during this call, never during
+    # Xcp_MainFunction. Asserting that here, before Xcp_MainFunction runs at all, grounds the
+    # expected API id in the test's own action instead of in a constant copied from the
+    # implementation: the error fires during the call just made, so it must name that call. This is
+    # what lets this assertion catch a wrong API id, which asserting only after Xcp_MainFunction (as
+    # before) never could.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFA, 0x01)))
+    handle.det_report_error.assert_called_once_with(
+        ANY, ANY,
+        handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+        handle.define('XCP_E_IDENTIFICATION_NOT_GRANULAR'))
+
+    handle.lib.Xcp_MainFunction()
+    raw_data = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert raw_data[0] == 0xFF, 'still a positive response'
     assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0, \
         'a non-conforming length must be reported as unavailable, not emitted'
-    handle.det_report_error.assert_called_once_with(
-        ANY, ANY,
-        handle.define('XCP_MAIN_FUNCTION_API_ID'),
-        handle.define('XCP_E_IDENTIFICATION_NOT_GRANULAR'))
 
 
 @pytest.mark.parametrize('address_granularity, length', (('BYTE', 3), ('WORD', 4), ('DWORD', 8)))
@@ -382,12 +394,21 @@ def test_get_id_does_not_fall_back_to_the_static_identification_when_type_zeros_
     _serve(handle, b'x' * 3)   # 3 is not a multiple of WORD's 2-byte element size
     handle.det_report_error.reset_mock()
 
-    raw_data = _get_id(handle, 0x00)   # XCP_GET_ID_TYPE_ASCII -- the only type with a static fallback
+    # Same ordering argument as the refusing-a-non-granular-length test above: Xcp_DTOCmdStdGetId,
+    # and the DET it raises, run inside Xcp_CanIfRxIndication, never inside Xcp_MainFunction, so
+    # this is checked before Xcp_MainFunction runs -- grounding the expected API id in this test's
+    # own action rather than in a constant copied from the plan.
+    # XCP_GET_ID_TYPE_ASCII -- the only type with a static fallback.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFA, 0x00)))
+    handle.det_report_error.assert_called_once_with(
+        ANY, ANY,
+        handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+        handle.define('XCP_E_IDENTIFICATION_NOT_GRANULAR'))
+
+    handle.lib.Xcp_MainFunction()
+    raw_data = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert raw_data[0] == 0xFF
     assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0, \
         'a callback that claimed type 0 with a bad length must not fall back to the configured string'
-    handle.det_report_error.assert_called_once_with(
-        ANY, ANY,
-        handle.define('XCP_MAIN_FUNCTION_API_ID'),
-        handle.define('XCP_E_IDENTIFICATION_NOT_GRANULAR'))

@@ -994,6 +994,8 @@ def test_get_id_accepts_a_callback_length_that_is_a_multiple_of_the_granularity(
 
 `test/get_id_test.py` needs `from unittest.mock import ANY` added at the top: `from .parameter import *` does not re-export it. The four-argument shape above matches the existing caller at `test/asam_protocol_layer_test.py:17` — module id, instance id, api id, error id.
 
+**Correction, made during Task 5's fix round 1** (`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-5-report.md`, "Fix round 1"): both `handle.define('XCP_MAIN_FUNCTION_API_ID')` calls in the test code above name the wrong API. See the fuller correction after Step 4, where the same wrong value appears in the implementation this test code was written against.
+
 - [ ] **Step 2: Run and verify it fails**
 
 Expected: the refusing test fails — the module reports the true length and calls no DET.
@@ -1044,6 +1046,8 @@ In `source/Xcp_Std.c`, immediately after the callback block in Task 4's Step 7 (
 ```
 
 Setting `served = FALSE` here deliberately does **not** fall through to the static string for type 0: a callback that answered `E_OK` has claimed the type, and silently substituting different data for a length it got wrong would hide the defect DET has just reported. Confirm this by checking that `test_get_id_falls_back_to_the_static_identification_when_the_callback_declines_type_zero` still passes — it declines with `E_NOT_OK` and must be unaffected. If the ordering makes a type-0 `E_OK` with a bad length fall back to the string, move this block after the static-fallback block instead.
+
+**Correction, made during Task 5's fix round 1** (`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-5-report.md`, "Fix round 1"): the `Xcp_ReportError` call above, and the two `handle.define('XCP_MAIN_FUNCTION_API_ID')` calls in Step 1's test code, all name the wrong API. `Xcp_DTOCmdStdGetId` does not run inside `Xcp_MainFunction`: the command table's one dispatch site, `result = Xcp_PIDTable[pid](&response_expected, pPduInfo);`, is at `source/Xcp.c:2161`, inside `Xcp_CanIfRxIndication` (`source/Xcp.c:1807–2285`); `Xcp_MainFunction` (`source/Xcp.c:1501–1806`) never calls it. The module's convention reports the exported API in whose call chain a DET fires — `Xcp_DTOCmdStdBuildChecksum`, another command dispatched through the same table, already reports under `XCP_CAN_IF_RX_INDICATION_API_ID` (`source/Xcp_Std.c:638`) — so the correct value here is `XCP_CAN_IF_RX_INDICATION_API_ID`. `XCP_MAIN_FUNCTION_API_ID` was this plan's own unchecked assumption about where commands dispatch; both the shipped code and the two tests asserting it inherited that assumption from this code block and Step 1's, which is why the tests could not catch the error — implementation and expectation shared one wrong source. Not rewritten in place, per this repository's convention (DD102, DD105) of recording a correction rather than silently editing history.
 
 - [ ] **Step 4b: Give the generator guard its cross-reference, now that it is true**
 

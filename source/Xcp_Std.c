@@ -1371,7 +1371,7 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
                 /* 1.1/1.6.1.2.2: "Length mod AG = 0". The module cannot emit a non-conforming
                  * Length, so the type is reported unavailable and the integrator hears about it
                  * through Det -- the master has no channel for this distinction. DD112. */
-                Xcp_ReportError(0x00u, XCP_MAIN_FUNCTION_API_ID,
+                Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID,
                                 XCP_E_IDENTIFICATION_NOT_GRANULAR);
                 identification = NULL_PTR;
                 extension = 0x00u;
