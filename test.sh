@@ -1,5 +1,23 @@
 #!/bin/sh
 
+# The generator compiles its jinja2 templates by exec'ing generated Python, and CPython's compiler
+# is recursive. On this image (alpine 3.10, musl) the default 8 MB stack is not enough headroom for
+# source_cfg.c.jinja2 at its current size, and the overflow does not segfault -- it corrupts, so
+# jinja2 emits impossible states instead of failing cleanly. Observed symptoms, all from the same
+# unchanged tree: "Tried to resolve a name to a reference that was unknown to the frame",
+# "'TokenStream' object has no attribute 'bool'", "type object 'object' has no attribute 't'", and
+# a SyntaxError in the template's own generated Python. A different test failed every run.
+#
+# Measured, 600 template compilations per run, this tree, this host:
+#   alpine image, 8 MB stack   -- failed 2 of 3 runs
+#   alpine image, 64 MB stack  -- 7 of 7 clean
+#   debian/glibc, 8 MB stack   -- 4 of 4 clean
+#
+# glibc survives the same depth at the same limit, which is why this only ever bit locally and in
+# this image. The hard limit here is unlimited, so an unprivileged user can raise the soft limit;
+# doing it here rather than at the `docker run` keeps every caller -- CI and local -- on one rule.
+ulimit -s 65536
+
 result=0
 mkdir -p build
 cd build || exit 1
