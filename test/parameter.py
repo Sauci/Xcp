@@ -391,6 +391,7 @@ class DefaultConfig(dict):
                  checksum_type='XCP_CRC_32',
                  user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
                  user_cmd_function='Xcp_UserCmdFunction',
+                 get_id_function=None,
                  trailing_value=0,
                  identification='/path/to/xcp.a2l',
                  timestamp=None):
@@ -417,6 +418,7 @@ class DefaultConfig(dict):
             "checksum_type": checksum_type,
             "user_defined_checksum_function": user_defined_checksum_function,
             "user_cmd_function": user_cmd_function,
+            "get_id_function": get_id_function,
             "trailing_value": trailing_value,
             'identification': identification,
             "daq_config_type": daq_config_type

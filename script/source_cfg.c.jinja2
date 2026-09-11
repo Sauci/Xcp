@@ -1345,6 +1345,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     clearDaqConfigurationApiEnable immediately above: a dedicated boolean, not a ctoInfo bit, since
     this is not a command PID a master ever sends. #}
     {% if configuration.apis.xcp_read_stored_session_configuration_id_api_enable.enabled %}TRUE{% else %}FALSE{% endif %}, /* readStoredSessionConfigurationIdApiEnable */
+    {% if configuration.protocol_layer.get_id_function %}&{{configuration.protocol_layer.get_id_function}}{% else %}NULL_PTR{% endif %}, /* getIdentificationFunction */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

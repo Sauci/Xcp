@@ -639,6 +639,32 @@ typedef struct
     const boolean storeDaqConfigurationApiEnable; /* not part of the specification... */
     const boolean clearDaqConfigurationApiEnable; /* not part of the specification... */
     const boolean readStoredSessionConfigurationIdApiEnable; /* not part of the specification... */
+    /**
+     * @brief supplies GET_ID identification data for any identification type.
+     * @param identificationType the Requested Identification Type from the GET_ID request: 0..4 or
+     * 128..255 (XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2). 5..127 are refused before
+     * this is called.
+     * @param pIdentification set to the address the master will UPLOAD the identification from.
+     * @param pExtension set to the MTA address extension that address is reached through. 0 unless
+     * the data lives in a region the integrator's Xcp_ReadSlaveMemory* selects with a non-zero
+     * extension (DD109).
+     * @param pLength set to the identification's length in bytes. XCP part 2 - Protocol Layer
+     * Specification 1.1/1.6.1.2.2 requires "Length mod AG = 0" against the configured address
+     * granularity, so that the initial UPLOAD's element count (Length / AG) divides exactly
+     * (DD112) -- this callback must uphold that itself. Unlike the configured static string,
+     * whose length script/source_cfg.c.jinja2 checks at generation time, a length this callback
+     * returns is not validated by the module at this commit.
+     * @return E_OK with all three out-parameters set, or E_NOT_OK meaning this slave does not serve
+     * that type. E_NOT_OK is not an error: it answers Length = 0, which 1.1/1.6.1.2.2 defines as
+     * "the requested identification type is not available". For type 0 it falls back to the
+     * configured identification string instead.
+     * @note not part of the specification. NULL_PTR means only type 0 is served, from the
+     * configured identification string.
+     */
+    Std_ReturnType (*const getIdentificationFunction)(uint8 identificationType,
+                                                      const void **pIdentification,
+                                                      uint8 *pExtension,
+                                                      uint32 *pLength); /* not part of the specification... */
 } Xcp_GeneralType;
 
 /**

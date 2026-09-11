@@ -1284,8 +1284,30 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
         const void *identification = NULL_PTR;
         uint8 extension = 0x00u;
         uint32 identification_length = 0x00000000u;
+        boolean served = FALSE;
 
-        if (identification_type == XCP_GET_ID_TYPE_ASCII)
+        if (Xcp_Ptr->general->getIdentificationFunction != NULL_PTR)
+        {
+            /* Consulted for every defined type including 0, so an integrator who needs a
+             * runtime-varying type 0 can override the configured string. Declining it falls back
+             * to that string below, which is what makes a NULL_PTR callback and a callback that
+             * returns E_NOT_OK for type 0 behave identically. DD110. */
+            if (Xcp_Ptr->general->getIdentificationFunction(identification_type,
+                                                            &identification,
+                                                            &extension,
+                                                            &identification_length) == E_OK)
+            {
+                served = TRUE;
+            }
+            else
+            {
+                identification = NULL_PTR;
+                extension = 0x00u;
+                identification_length = 0x00000000u;
+            }
+        }
+
+        if ((served == FALSE) && (identification_type == XCP_GET_ID_TYPE_ASCII))
         {
             identification = (const void *)Xcp_Ptr->general->identification;
             /* DD75 (docs/superpowers/specs/2026-09-07-xcp-shared-state-defects-design.md). XCP part 2
@@ -1332,10 +1354,13 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
             }
         }
 
-        /* DD113: a declined type nulls the MTA rather than leaving an earlier SET_MTA's pointer
-         * standing for an UPLOAD that ignores Length = 0. (NULL_PTR, 0) is this module's own
-         * vocabulary for "nothing meaningful on this pair" -- Xcp_Init and Xcp_CTOCmdStdConnect
-         * both pair exactly that. */
+        /* Points the MTA at whatever identification/extension now hold, for the UPLOAD that
+         * follows this response: a served type's own address and extension (the callback's, DD109
+         * included, or the static string's with extension 0), or -- DD113 -- (NULL_PTR, 0) when
+         * nothing served this request, so a declined type nulls the MTA rather than leaving an
+         * earlier SET_MTA's pointer standing for an UPLOAD that ignores Length = 0. (NULL_PTR, 0) is
+         * this module's own vocabulary for "nothing meaningful on this pair" -- Xcp_Init and
+         * Xcp_CTOCmdStdConnect both pair exactly that. */
         Xcp_Internal.memory_transfer.address = (void *)identification;
         Xcp_Internal.memory_transfer.extension = extension;
 

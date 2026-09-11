@@ -195,3 +195,121 @@ def test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address():
     assert addresses, 'setup: UPLOAD must read memory'
     assert addresses[0] != handle.ffi.NULL, \
         'setup: UPLOAD must reach the address SET_MTA just set, or the paired test is vacuous'
+
+
+_CALLBACK_CONFIG = dict(channel_rx_pdu_ref=0x0001,
+                        get_id_function='Xcp_GetIdentificationFunction')
+
+
+def _serve(handle, payload, extension=0x00):
+    """Make the configured callback answer `payload` for every type, and keep the buffer alive.
+
+    Allocated and cast through handle.config.ffi, not the bare handle.ffi (== handle.code.ffi):
+    Xcp_GetIdentificationFunction's own extern is declared and registered on handle.config.ffi
+    (Xcp_Cfg.c is what takes &Xcp_GetIdentificationFunction, the same reason
+    Xcp_UserCmdFunction/Xcp_UserDefinedChecksumFunction are registered there rather than through
+    the generic self.code.mocked loop), so the pointer and cast that flow through its
+    const void ** out-parameter are kept on that same ffi rather than relying on code.ffi and
+    config.ffi's independently-registered types happening to agree.
+    """
+    buffer = handle.config.ffi.new('char[]', payload)
+    handle._pdu_info_keepalive.append(buffer)
+
+    def get_identification(_type, p_identification, p_extension, p_length):
+        p_identification[0] = handle.config.ffi.cast('void *', buffer)
+        p_extension[0] = extension
+        p_length[0] = len(payload)
+        return handle.define('E_OK')
+
+    handle.xcp_get_identification_function.side_effect = get_identification
+    return buffer
+
+
+@pytest.mark.parametrize('byte_order', byte_orders)
+@pytest.mark.parametrize('identification_type', (0x00, 0x01, 0x02, 0x03, 0x04, 0x80, 0xFF))
+def test_get_id_serves_every_defined_type_from_the_callback(byte_order, identification_type):
+    """DD108. Types 1-3 are strings an integrator could put in xcp.json, but type 4 is
+    "ASAM-MC2 file to upload" (1.1/1.6.1.2.2) -- a whole A2L file whose contents are not known when
+    the configuration is generated -- and 128..255 is an open user-defined range a fixed table
+    cannot enumerate. So identification data comes from a callback."""
+    handle = XcpTest(DefaultConfig(byte_order=byte_order, **_CALLBACK_CONFIG))
+    _connect(handle)
+    _serve(handle, b'abcd')
+
+    raw_data = _get_id(handle, identification_type)
+
+    assert raw_data[0] == 0xFF
+    assert u32_from_array(bytearray(raw_data[4:8]), byte_order) == 4
+    assert handle.xcp_get_identification_function.call_args[0][0] == identification_type, \
+        'the callback must be told which type was requested'
+
+
+def test_get_id_points_the_mta_at_the_callbacks_address_and_extension():
+    """DD109. DD75 fixed extension = 0 for the *static* identification, on the ground that it is
+    "plain, slave-owned descriptive data that lives entirely outside the page-switching model" --
+    an argument about Xcp_Ptr->general->identification that does not transfer to arbitrary
+    integrator data. Type 4 is the case that breaks it: an A2L file plausibly lives in memory the
+    integrator's Xcp_ReadSlaveMemory* reaches through a non-zero extension. Fixing the extension at
+    0 would advertise type 4 while only being able to serve it from extension-0 memory."""
+    handle = XcpTest(DefaultConfig(**_CALLBACK_CONFIG))
+    _connect(handle)
+    buffer = _serve(handle, b'wxyz', extension=0x07)
+
+    _get_id(handle, 0x04)
+
+    reads = []
+    handle.xcp_read_slave_memory_u8.side_effect = lambda p_address, extension, _p_buffer: \
+        reads.append((int(handle.ffi.cast('uintptr_t', p_address)), extension))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, 0x04)))
+    handle.lib.Xcp_MainFunction()
+
+    assert reads, 'UPLOAD did not read any memory'
+    assert reads[0] == (int(handle.ffi.cast('uintptr_t', buffer)), 0x07), \
+        'UPLOAD read {} -- expected the callback\'s own address and extension 7'.format(reads[0])
+
+
+def test_get_id_falls_back_to_the_static_identification_when_the_callback_declines_type_zero():
+    """DD110. The callback is consulted for every defined type including 0, and E_NOT_OK means
+    "I do not serve that type" rather than an error. For type 0 the configured string is the
+    fallback, so an integrator who only wants types 1-4 returns E_NOT_OK for 0 and still gets the
+    behaviour that shipped before this phase."""
+    handle = XcpTest(DefaultConfig(identification='/path/to/xcp.a2l', **_CALLBACK_CONFIG))
+    _connect(handle)
+    handle.xcp_get_identification_function.side_effect = None
+    handle.xcp_get_identification_function.return_value = handle.define('E_NOT_OK')
+
+    raw_data = _get_id(handle, 0x00)
+
+    assert raw_data[0] == 0xFF
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == len('/path/to/xcp.a2l')
+
+
+@pytest.mark.parametrize('identification_type', (0x01, 0x04, 0x80, 0xFF))
+def test_get_id_reports_length_zero_when_the_callback_declines_a_non_ascii_type(
+        identification_type):
+    """The other half of the fallback: only type 0 has a static string behind it, so a declined
+    type 1-4 or 128-255 is simply not available -- Length = 0, per 1.1/1.6.1.2.2. DD110."""
+    handle = XcpTest(DefaultConfig(**_CALLBACK_CONFIG))
+    _connect(handle)
+    handle.xcp_get_identification_function.side_effect = None
+    handle.xcp_get_identification_function.return_value = handle.define('E_NOT_OK')
+
+    raw_data = _get_id(handle, identification_type)
+
+    assert raw_data[0] == 0xFF
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0
+
+
+@pytest.mark.parametrize('identification_type', (0x05, 0x7F))
+def test_get_id_does_not_consult_the_callback_for_an_undefined_type(identification_type):
+    """5..127 are refused before the callback is reached: they name no identification type at all,
+    so there is nothing for an integrator to be asked about. DD110."""
+    handle = XcpTest(DefaultConfig(**_CALLBACK_CONFIG))
+    _connect(handle)
+    _serve(handle, b'abcd')
+
+    raw_data = _get_id(handle, identification_type)
+
+    assert raw_data[0:2] == (0xFE, 0x22)
+    handle.xcp_get_identification_function.assert_not_called()

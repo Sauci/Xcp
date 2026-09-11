@@ -600,6 +600,11 @@ class XcpTest(object):
                 self._guarded_callback('Xcp_UserDefinedChecksumFunction',
                                        self.xcp_user_defined_checksum_function))
         self.xcp_user_defined_checksum_function.return_value = 0
+        self.xcp_get_identification_function = MagicMock()
+        self.config.ffi.def_extern('Xcp_GetIdentificationFunction')(
+                self._guarded_callback('Xcp_GetIdentificationFunction',
+                                       self.xcp_get_identification_function))
+        self.xcp_get_identification_function.return_value = self.define('E_NOT_OK')
         for func in self.code.mocked:
             self.ffi.def_extern(func)(self._guarded_callback(func, getattr(self, convert(func))))
         self.can_if_transmit.return_value = self.define('E_OK')

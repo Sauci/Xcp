@@ -615,6 +615,21 @@
                 ],
                 "default": null
               },
+              "get_id_function": {
+                "description": "Optional integrator callback supplying GET_ID identification data for any type. XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.2 leaves which types a slave supports implementation specific; this is how it decides. Returning E_NOT_OK means the type is not served, which answers Length = 0 -- except for type 0, which falls back to the configured identification string. null means only type 0 is served, from that string alone.",
+                "OneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "Xcp_GetIdentificationFunction"
+                    ]
+                  }
+                ],
+                "default": null
+              },
               "trailing_value": {
                 "type": "integer",
                 "minimum": 0,
@@ -650,6 +665,7 @@
               "checksum_type",
               "user_defined_checksum_function",
               "user_cmd_function",
+              "get_id_function",
               "trailing_value",
               "identification"
             ]
