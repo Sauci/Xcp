@@ -145,65 +145,134 @@ def _set_mta(handle, address_bytes, extension=0x00):
 
 
 def _upload_addresses(handle, element_count):
-    """Issue UPLOAD and return the raw pointers Xcp_ReadSlaveMemory was asked to read.
+    """Issue UPLOAD and return the MTA pairs Xcp_ReadSlaveMemory* was asked to read through, as
+    (address, extension) integers.
 
-    Returns cdata pointers, not integers: the harness idiom for "is this pointer null" is a direct
-    comparison against handle.ffi.NULL (test/clear_daq_list_test.py:40), which needs no cast to an
-    integer type the cdef may not carry.
+    A pair, not an address alone: 1.1/1.6.1.2.6 defines the MTA as "32Bit address + 8Bit
+    extension", and an address can be right while its extension is stale -- DD75's defect. The
+    address is cast to uintptr_t, as test_get_id_points_the_mta_at_the_callbacks_address_and_
+    extension does, and never dereferenced: callers here point the MTA at SET_MTA's fabricated
+    0xDEADBEEF, or expect NULL. All three widths are hooked because UPLOAD reads through
+    Xcp_ReadSlaveMemoryTable[addressGranularity] (source/Xcp.c), so a WORD or DWORD configuration
+    never reaches the u8 double.
     """
-    addresses = []
-    handle.xcp_read_slave_memory_u8.side_effect = \
-        lambda p_address, _extension, _p_buffer: addresses.append(p_address)
+    reads = []
+
+    def read_slave_memory(p_address, extension, _p_buffer):
+        reads.append((int(handle.ffi.cast('uintptr_t', p_address)), extension))
+
+    handle.xcp_read_slave_memory_u8.side_effect = read_slave_memory
+    handle.xcp_read_slave_memory_u16.side_effect = read_slave_memory
+    handle.xcp_read_slave_memory_u32.side_effect = read_slave_memory
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF5, element_count)))
     handle.lib.Xcp_MainFunction()
-    return addresses
-
-
-def test_a_length_zero_get_id_does_not_leave_an_earlier_set_mta_standing():
-    """DD113. A declined GET_ID must not leave an earlier SET_MTA's pointer in place: a master that
-    ignores Length = 0 and uploads anyway would then read through a pointer the slave never set for
-    this purpose -- the defect DD75 fixed for the extension half of the same pair, arriving the
-    other way round.
-
-    Paired with its own positive control below. "This address was never read" is vacuous alone: such
-    a test passes just as happily if UPLOAD read nothing at all, or if SET_MTA never worked. The
-    control shows the same SET_MTA address IS reached when no GET_ID intervenes, so the difference
-    here is caused by GET_ID and by nothing else. test/session_teardown_test.py uses the same
-    pairing for the neighbouring DD75 case.
-    """
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
-    _connect(handle)
-    _set_mta(handle, (0xEF, 0xBE, 0xAD, 0xDE))
-
-    _get_id(handle, 0x03)   # a type 1.1/1.6.1.2.2 defines but this slave does not serve
-
-    addresses = _upload_addresses(handle, 0x01)
-
-    assert addresses, 'UPLOAD read no memory at all -- see the note below before changing this'
-    assert addresses[0] == handle.ffi.NULL, \
-        'a Length = 0 GET_ID left the earlier SET_MTA standing for the following UPLOAD'
-
-
-def test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address():
-    """The positive control for the test above: same SET_MTA, same UPLOAD, no GET_ID between them.
-    If this ever fails, the absence the test above asserts proves nothing."""
-    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
-    _connect(handle)
-    _set_mta(handle, (0xEF, 0xBE, 0xAD, 0xDE))
-
-    addresses = _upload_addresses(handle, 0x01)
-
-    assert addresses, 'setup: UPLOAD must read memory'
-    assert addresses[0] != handle.ffi.NULL, \
-        'setup: UPLOAD must reach the address SET_MTA just set, or the paired test is vacuous'
+    return reads
 
 
 _CALLBACK_CONFIG = dict(channel_rx_pdu_ref=0x0001,
                         get_id_function='Xcp_GetIdentificationFunction')
 
+# Distinct from the extension every SET_MTA below sets (7), so a pair that leaks names its source.
+_CALLBACK_EXTENSION = 0x05
 
-def _serve(handle, payload, extension=0x00):
+
+def _no_callback(_handle):
+    pass
+
+
+def _declines_after_writing(handle):
+    _serve(handle, b'abcd', extension=_CALLBACK_EXTENSION, result='E_NOT_OK')
+
+
+def _serves_a_length_the_granularity_refuses(handle):
+    _serve(handle, b'abc', extension=_CALLBACK_EXTENSION)   # 3 is not a multiple of WORD's 2
+
+
+def _serves_length_zero(handle):
+    _serve(handle, b'', extension=_CALLBACK_EXTENSION)
+
+
+# Every route by which GET_ID answers Length = 0 -- (configuration, callback behaviour, type).
+_LENGTH_ZERO_ROUTES = (
+    pytest.param(dict(channel_rx_pdu_ref=0x0001), _no_callback, 0x03,
+                 id='(i) no callback, a defined type it does not serve'),
+    pytest.param(_CALLBACK_CONFIG, _declines_after_writing, 0x01,
+                 id='(ii) callback writes its out-parameters, then E_NOT_OK'),
+    pytest.param(dict(address_granularity='WORD', **_CALLBACK_CONFIG),
+                 _serves_a_length_the_granularity_refuses, 0x01,
+                 id='(iii) callback length 3 under WORD'),
+    pytest.param(_CALLBACK_CONFIG, _serves_length_zero, 0x01,
+                 id='(iv) callback answers E_OK with length 0'),
+    pytest.param(dict(channel_rx_pdu_ref=0x0001, identification=''), _no_callback, 0x00,
+                 id='(v) empty configured identification, type 0'),
+)
+
+
+@pytest.mark.parametrize('config, callback_behaviour, identification_type', _LENGTH_ZERO_ROUTES)
+def test_a_length_zero_get_id_does_not_leave_an_earlier_set_mta_standing(config,
+                                                                        callback_behaviour,
+                                                                        identification_type):
+    """DD113. Every GET_ID that answers Length = 0 points the MTA at (NULL_PTR, 0x00u). A master
+    that ignores Length = 0 and uploads anyway then reads through a pointer the slave deliberately
+    nulled -- not an earlier SET_MTA's, which is the defect DD75 fixed for the extension half of
+    the same pair, arriving the other way round, and not whatever the route itself was holding.
+
+    One row per route to Length = 0, because they reach it differently: (i) nothing serves a
+    defined type, so nothing is assigned; (ii) the callback writes all three out-parameters and
+    then declines; (iii) the callback's length is refused as not a multiple of the granularity;
+    (iv) the callback answers E_OK with a length of 0; (v) the configured string is empty. Routes
+    (ii) to (v) all reach Length = 0 holding a live address -- the callback's own, or the empty
+    string's -- which is what (i), the only route this test used to take, could never show.
+
+    SET_MTA sets extension 7 first, and the callback writes extension 5, so a pair that leaks names
+    its source. Paired with a positive control per route below: "UPLOAD read (NULL, 0)" is vacuous
+    alone, because CONNECT itself leaves the MTA at exactly that pair, so a SET_MTA that silently
+    failed would pass every row. test/session_teardown_test.py uses the same pairing for the
+    neighbouring DD75 case.
+    """
+    handle = XcpTest(DefaultConfig(**config))
+    _connect(handle)
+    callback_behaviour(handle)
+    _set_mta(handle, (0xEF, 0xBE, 0xAD, 0xDE), extension=0x07)
+
+    raw_data = _get_id(handle, identification_type)
+
+    assert raw_data[0] == 0xFF, 'a Length = 0 answer is still a positive response'
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == 0, \
+        'every row here is a route to Length = 0'
+
+    reads = _upload_addresses(handle, 0x01)
+
+    assert reads, 'UPLOAD read no memory at all -- see the docstring before changing this'
+    assert reads[0] == (0, 0x00), \
+        'UPLOAD read through (0x{:X}, {}) after a Length = 0 GET_ID -- expected (NULL, 0)'.format(
+            *reads[0])
+
+
+@pytest.mark.parametrize('config', [pytest.param(route.values[0], id=route.id)
+                                    for route in _LENGTH_ZERO_ROUTES])
+def test_an_upload_with_no_intervening_get_id_still_reads_the_set_mta_address(config):
+    """The positive control for the test above, one row per route's configuration: the same SET_MTA
+    and the same UPLOAD, with no GET_ID between them. If a row here fails, the (NULL, 0) its route
+    asserts above proves nothing. Per route rather than once, because the configurations differ
+    where it matters: route (iii)'s WORD granularity reads through a different
+    Xcp_ReadSlaveMemory* function than the others."""
+    handle = XcpTest(DefaultConfig(**config))
+    _connect(handle)
+    _set_mta(handle, (0xEF, 0xBE, 0xAD, 0xDE), extension=0x07)
+
+    reads = _upload_addresses(handle, 0x01)
+
+    assert reads, 'setup: UPLOAD must read memory'
+    assert reads[0][0] != 0, \
+        'setup: UPLOAD must reach the address SET_MTA just set, or the paired test is vacuous'
+
+
+def _serve(handle, payload, extension=0x00, result='E_OK'):
     """Make the configured callback answer `payload` for every type, and keep the buffer alive.
+
+    `result` is what the callback returns after writing all three out-parameters. E_NOT_OK after
+    writing them is how a test shows the module takes nothing from a declined call.
 
     Allocated and cast through handle.config.ffi, not the bare handle.ffi (== handle.code.ffi):
     Xcp_GetIdentificationFunction's own extern is declared and registered on handle.config.ffi
@@ -220,7 +289,7 @@ def _serve(handle, payload, extension=0x00):
         p_identification[0] = handle.config.ffi.cast('void *', buffer)
         p_extension[0] = extension
         p_length[0] = len(payload)
-        return handle.define('E_OK')
+        return handle.define(result)
 
     handle.xcp_get_identification_function.side_effect = get_identification
     return buffer
@@ -284,6 +353,40 @@ def test_get_id_falls_back_to_the_static_identification_when_the_callback_declin
 
     assert raw_data[0] == 0xFF
     assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == len('/path/to/xcp.a2l')
+
+
+def test_get_id_takes_nothing_a_declining_callback_wrote_into_the_static_fallback():
+    """DD110 and DD75 together. E_NOT_OK promises nothing about the out-parameters, and this
+    callback writes all three before declining type 0 -- its own buffer, extension 5 and length 4.
+    The configured string is the fallback, and the response and the MTA must both be entirely its
+    own: its length, its address, and extension 0, DD75's value for plain slave-owned descriptive
+    data. Nothing the declining callback wrote may survive into either.
+
+    The decline path resets only the length (DD113), so for type 0 the fallback's own assignments
+    are all that stand between the callback's pair and the MTA. The address and the length are
+    assigned there unconditionally; this is the test that notices if the extension assignment goes.
+    SET_MTA sets extension 7 first, so a leak names its source: 5 is the callback's, 7 the earlier
+    SET_MTA's.
+    """
+    handle = XcpTest(DefaultConfig(**_CALLBACK_CONFIG))
+    _connect(handle)
+    _serve(handle, b'abcd', extension=_CALLBACK_EXTENSION, result='E_NOT_OK')
+    _set_mta(handle, (0xEF, 0xBE, 0xAD, 0xDE), extension=0x07)
+
+    raw_data = _get_id(handle, 0x00)
+
+    assert raw_data[0] == 0xFF
+    assert u32_from_array(bytearray(raw_data[4:8]), 'LITTLE_ENDIAN') == len('/path/to/xcp.a2l'), \
+        "the configured string's length, not the 4 the declining callback wrote"
+
+    reads = _upload_addresses(handle, 0x01)
+
+    identification = int(handle.ffi.cast('uintptr_t',
+                                         handle.config.lib.Xcp[0].general.identification))
+    assert reads, 'UPLOAD read no memory at all'
+    assert reads[0] == (identification, 0x00), \
+        'UPLOAD read through (0x{:X}, {}) -- expected the configured string at 0x{:X}, ' \
+        'extension 0'.format(reads[0][0], reads[0][1], identification)
 
 
 @pytest.mark.parametrize('identification_type', (0x01, 0x04, 0x80, 0xFF))
@@ -376,14 +479,14 @@ def test_get_id_accepts_a_callback_length_that_is_a_multiple_of_the_granularity(
 
 
 def test_get_id_does_not_fall_back_to_the_static_identification_when_type_zeros_callback_length_is_not_granular():
-    """The ordering hazard the runtime check above must not fall into. `served` starts TRUE for a
-    type-0 callback that answers E_OK, and the granularity check sets it back to FALSE on a
-    non-conforming length. If that check ran BEFORE the static-fallback block instead of after it,
-    the now-FALSE `served` together with identification_type == XCP_GET_ID_TYPE_ASCII is exactly
-    the condition that triggers the fallback -- so the response would silently carry the configured
-    string (a conforming, non-zero length) instead of the Length = 0 DET just reported. A callback
-    that answered E_OK has claimed type 0, and substituting different data for a length it got
-    wrong would hide the very defect DET is reporting.
+    """A type-0 callback that answered E_OK has claimed the type, so when its length is refused the
+    response is Length = 0 -- never the configured string. The hazard this pins is ordering and
+    state together: `served` is TRUE for such a callback, and served == FALSE together with
+    identification_type == XCP_GET_ID_TYPE_ASCII is exactly the static fallback's condition. A
+    granularity check that marked the refused request unserved and ran before the fallback block
+    would hand type 0 to the configured string, and the response would silently carry its
+    conforming, non-zero length instead of the Length = 0 DET just reported -- hiding the very
+    defect DET is reporting.
 
     The default configured string ('/path/to/xcp.a2l', 16 bytes) is itself WORD/DWORD-conforming,
     so if this test ever starts observing that length instead of 0, the cause is the fallback firing,

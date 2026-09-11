@@ -217,6 +217,38 @@ and DD75 cites 1.1/§1.6.1.2.3's "All ODT entries reset to address = 0, extensio
 idiom. The master is told the type is unavailable; if it uploads regardless it reads from a pointer
 the slave deliberately nulled rather than one it forgot to update.
 
+**Where the rule is enforced.** `Xcp_DTOCmdStdGetId` decides it on the Length alone, immediately
+before assigning the MTA: whenever the Length it is about to report is 0, it points the MTA at
+`(NULL_PTR, 0x00u)`, whichever route produced that 0. There are five:
+
+1. no callback, and a defined type other than 0 — nothing is ever assigned to the pair;
+2. a callback that answers `E_NOT_OK` for a type other than 0, whatever it wrote to its
+   out-parameters first — the decline path discards the length it wrote. (For type 0 the static
+   fallback overwrites all three instead, DD110.)
+3. a callback length that DD112's run-time check refuses — the check raises
+   `XCP_E_IDENTIFICATION_NOT_GRANULAR` and discards the length;
+4. a callback that answers `E_OK` with a length of 0;
+5. an empty configured identification, served for type 0.
+
+Routes 2 and 3 reset the length and nothing else: the length is what brings them under the rule,
+and the rule nulls the pair. Routes 4 and 5 reset nothing; their Length is 0 as served.
+
+**Correction, made in the final review's fix wave**
+(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): as first shipped, this
+decision's heading was false for routes 4 and 5. The code nulled the pair route by route, in the
+decline path and in the granularity check, so a callback answering `E_OK` with `*pLength = 0`, and
+an empty configured string for type 0, both reported `Length = 0` while the MTA pointed at real
+memory — the callback's buffer, or the empty string's own address — for an UPLOAD that ignored
+`Length = 0` to read through. The decision's only test took route 1, which never assigns the pair,
+so it could not tell per-route nulling from none. The rule has been enforced on the Length since
+that fix, and the test covers all five routes, each after a `SET_MTA` with extension 7 and each
+checking the `(address, extension)` pair UPLOAD reads. With the rule in place, the address and
+extension resets in routes 2 and 3 could no longer be told from their absence by any test, and were
+removed, along with the granularity check's `served = FALSE`, a store nothing read afterwards. Each
+route's length reset stayed: it is what routes 2 and 3 depend on. The static fallback's
+`extension = 0x00u` (DD75) is thereby the only thing standing between a declining callback's
+extension and the MTA for type 0, and has a test of its own.
+
 ---
 
 ## 3. What this does not change

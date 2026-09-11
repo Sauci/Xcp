@@ -1301,8 +1301,10 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
             }
             else
             {
-                identification = NULL_PTR;
-                extension = 0x00u;
+                /* E_NOT_OK promises nothing about the out-parameters, and a callback may have
+                 * written them before declining. Discarding its length is what sends a type with
+                 * no static fallback to Length = 0 below, and through Length = 0 the MTA to
+                 * (NULL_PTR, 0x00u), DD113. Type 0's fallback overwrites all three. */
                 identification_length = 0x00000000u;
             }
         }
@@ -1354,13 +1356,11 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
             }
         }
 
-        /* Deliberately after the static-fallback block above, not immediately after the callback
-         * block: served is set back to FALSE below on a non-conforming length, and served == FALSE
-         * together with identification_type == XCP_GET_ID_TYPE_ASCII is exactly what triggers that
-         * fallback. Checking here instead keeps a type-0 callback that answered E_OK from having
-         * its rejected length silently replaced by the configured string -- a callback that
-         * answered E_OK has claimed the type, and substituting different data would hide the
-         * defect Det is about to report. DD112. */
+        /* Only a callback's length is checked here; the configured string's is checked at
+         * generation time (script/source_cfg.c.jinja2). A type-0 callback that answered E_OK has
+         * claimed the type, so a length refused here is answered Length = 0 and is never replaced
+         * by the configured string -- substituting different data would hide the defect Det is
+         * about to report. DD112. */
         if (served == TRUE)
         {
             const uint8 element_size =
@@ -1369,24 +1369,32 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
             if ((identification_length % (uint32)element_size) != 0x00000000u)
             {
                 /* 1.1/1.6.1.2.2: "Length mod AG = 0". The module cannot emit a non-conforming
-                 * Length, so the type is reported unavailable and the integrator hears about it
-                 * through Det -- the master has no channel for this distinction. DD112. */
+                 * Length, so the type is reported unavailable -- Length = 0, which also nulls the
+                 * MTA below, DD113 -- and the integrator hears about it through Det; the master
+                 * has no channel for this distinction. DD112. */
                 Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID,
                                 XCP_E_IDENTIFICATION_NOT_GRANULAR);
-                identification = NULL_PTR;
-                extension = 0x00u;
                 identification_length = 0x00000000u;
-                served = FALSE;
             }
         }
 
-        /* Points the MTA at whatever identification/extension now hold, for the UPLOAD that
-         * follows this response: a served type's own address and extension (the callback's, DD109
-         * included, or the static string's with extension 0), or -- DD113 -- (NULL_PTR, 0) when
-         * nothing served this request, so a declined type nulls the MTA rather than leaving an
-         * earlier SET_MTA's pointer standing for an UPLOAD that ignores Length = 0. (NULL_PTR, 0) is
-         * this module's own vocabulary for "nothing meaningful on this pair" -- Xcp_Init and
-         * Xcp_CTOCmdStdConnect both pair exactly that. */
+        if (identification_length == 0x00000000u)
+        {
+            /* DD113: a response whose Length is 0 points the MTA at (NULL_PTR, 0x00u). Decided here,
+             * on the Length alone, so that no route to Length = 0 can skip it: a callback answering
+             * E_OK with a length of 0 and an empty configured string for type 0 both arrive with a
+             * live address, and the declined and refused callback routes above reset only the
+             * length, keeping whatever the callback wrote. A master that ignores Length = 0 and
+             * uploads anyway then reads through a pointer the slave deliberately nulled.
+             * (NULL_PTR, 0x00u) is this module's own vocabulary for "nothing meaningful on this
+             * pair" -- Xcp_Init and Xcp_CTOCmdStdConnect both pair exactly that. */
+            identification = NULL_PTR;
+            extension = 0x00u;
+        }
+
+        /* Points the MTA for the UPLOAD that follows this response: a served type's own address
+         * and extension -- the callback's, DD109 included, or the static string's with extension
+         * 0 -- or (NULL_PTR, 0x00u) whenever the Length is 0, as set just above. */
         Xcp_Internal.memory_transfer.address = (void *)identification;
         Xcp_Internal.memory_transfer.extension = extension;
 
