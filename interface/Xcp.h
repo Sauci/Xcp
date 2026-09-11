@@ -57,6 +57,8 @@ extern "C" {
 
 #include "Xcp_UserCmd.h"
 
+#include "Xcp_GetId.h"
+
 #include "Xcp_MemoryAccess.h"
 
 #include "SchM_Xcp.h"
