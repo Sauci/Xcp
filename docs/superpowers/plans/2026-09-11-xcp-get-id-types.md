@@ -960,6 +960,10 @@ def test_get_id_refuses_a_callback_length_that_is_not_a_multiple_of_the_granular
     handle = XcpTest(DefaultConfig(address_granularity=address_granularity, **_CALLBACK_CONFIG))
     _connect(handle)
     _serve(handle, b'x' * length)
+    # Everything asserted below is about GET_ID alone. Without this, a DET raised by CONNECT or by
+    # construction would be the call assert_called_once_with inspects, and the test would report on
+    # the wrong one -- passing or failing for a reason that has nothing to do with GET_ID.
+    handle.det_report_error.reset_mock()
 
     raw_data = _get_id(handle, 0x01)
 
@@ -980,6 +984,7 @@ def test_get_id_accepts_a_callback_length_that_is_a_multiple_of_the_granularity(
     handle = XcpTest(DefaultConfig(address_granularity=address_granularity, **_CALLBACK_CONFIG))
     _connect(handle)
     _serve(handle, b'x' * length)
+    handle.det_report_error.reset_mock()   # same reason as the test above
 
     raw_data = _get_id(handle, 0x01)
 
@@ -1039,6 +1044,12 @@ In `source/Xcp_Std.c`, immediately after the callback block in Task 4's Step 7 (
 ```
 
 Setting `served = FALSE` here deliberately does **not** fall through to the static string for type 0: a callback that answered `E_OK` has claimed the type, and silently substituting different data for a length it got wrong would hide the defect DET has just reported. Confirm this by checking that `test_get_id_falls_back_to_the_static_identification_when_the_callback_declines_type_zero` still passes — it declines with `E_NOT_OK` and must be unaffected. If the ordering makes a type-0 `E_OK` with a bad length fall back to the string, move this block after the static-fallback block instead.
+
+- [ ] **Step 4b: Give the generator guard its cross-reference, now that it is true**
+
+Task 3 deliberately worded `script/source_cfg.c.jinja2`'s `Length mod AG = 0` guard comment to describe only its own scope, naming no specific future check — because at that commit no run-time check existed, and claiming one would have been the defect class this branch has already shipped twice. That check now exists. Add the concrete cross-reference to the guard's comment: the configured string is validated here, and a callback-supplied length is validated in `Xcp_DTOCmdStdGetId`, which raises `XCP_E_IDENTIFICATION_NOT_GRANULAR` and answers `Length = 0`. Keep the scope sentence — it is still the reason the split exists.
+
+Read the comment as it stands before editing. Do not restore wording from any earlier draft; write what is true of the code in front of you.
 
 - [ ] **Step 5: Run the full suite and mutation-verify**
 
