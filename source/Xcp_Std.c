@@ -1385,8 +1385,8 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
              * string for type 0 arrives with its own live address, a callback answering E_OK with a
              * length of 0 arrives with whatever address it chose to write, and the declined and
              * refused callback routes above reset only the length, keeping whatever the callback
-             * wrote. A master that ignores Length = 0 and
-             * uploads anyway then reads through a pointer the slave deliberately nulled.
+             * wrote. A master that ignores Length = 0 and uploads anyway then reads through a
+             * pointer the slave deliberately nulled.
              * (NULL_PTR, 0x00u) is this module's own vocabulary for "nothing meaningful on this
              * pair" -- Xcp_Init and Xcp_CTOCmdStdConnect both pair exactly that. */
             identification = NULL_PTR;

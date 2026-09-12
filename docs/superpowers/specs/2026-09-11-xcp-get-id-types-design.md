@@ -294,9 +294,15 @@ also matches just before a final line feed. That lookahead is valid ECMA-262, bu
 validators (Go, Rust) reject lookaheads outright; `"not": {"pattern": "[^\\x20-\\x7E]"}` is
 equivalent and portable everywhere. Trigraphs remain a character-versus-byte divergence this
 decision does not close: in strict ISO C before C23, `??=` and its eight siblings are replaced before
-the string is formed, so `"/path/to/??=.a2l"` is 16 bytes under gnu11 and 14 under `-std=c99`. Both
-belong with the wider question of how every C string these templates emit is guarded — DAQ event
-channel names included, which are pasted raw and counted in Python exactly as this string once was.
+the string is formed, so `"/path/to/??=.a2l"` is 16 bytes as this project compiles it and 14 under
+`-std=c99`. Nothing here passes `-std` — `C_FLAGS` is empty in the generated `flags.make`, so the
+compiler's default GNU dialect applies, `gnu17` for the test image's GCC 8.3.0 — and trigraphs are
+off in every GNU dialect, so it is an integrator compiling the generated source in a strict ISO mode
+who gets the shorter string. Both refinements belong with the wider question of how every C string
+these templates emit is guarded. DAQ event channel names are pasted raw and counted in Python just as
+this one is, though `config/xcp.schema.json` already restricts them to printable ASCII without `"` or
+`\`; what they lack is this decision's other half, a generator-side guard for the configurations that
+never reach the schema.
 
 ---
 

@@ -1135,7 +1135,7 @@ At lines 373, 560 and 651, remove `GET_ID` identification types from the lists o
 After the `SP5-RESUME` entry, matching that entry's shape — a `#### SP5-GETID — GET_ID identification types — **complete**` heading, then paragraphs covering:
 
 - **What it built:** every identification type 1.1/§1.6.1.2.2 defines, served through `getIdentificationFunction`, with the configured string as type 0's fallback.
-- **Design:** `2026-09-11-xcp-get-id-types-design.md` (DD108–DD113).
+- **Design:** `2026-09-11-xcp-get-id-types-design.md` (DD108–DD113 as this step was written; the spec now runs to DD114, and the roadmap entry this step produced carries the wider range).
 - **What 1.1 changed and 1.0 did not have:** the response Mode byte becoming a named bit mask (`TRANSFER_MODE` bit 0, `COMPRESSED_ENCRYPTED` bit 1), plus `Length mod AG = 0` and the initial-UPLOAD element count. Record that bit positions came from the 1.1 PDF's own text layer, not its OCR sidecar, and point at §0 of the design doc for the method — this is the second time the 1.0-vs-1.1 mode-byte pattern has appeared, after `SET_REQUEST`.
 - **Two pre-existing defects it fixed:** the Mode-byte assertion that pinned an echo of the request rather than the response's bit mask, and the 21-byte default identification that violated `Length mod AG = 0` under WORD and DWORD.
 - **What it deliberately did not build:** inline transfer (DD111) and compression (XCP Part 4 absent), both reversible and both now documented rather than forgotten.
