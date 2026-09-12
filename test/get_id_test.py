@@ -154,10 +154,10 @@ def _upload_addresses(handle, element_count):
     A pair, not an address alone: 1.1/1.6.1.2.6 defines the MTA as "32Bit address + 8Bit
     extension", and an address can be right while its extension is stale -- DD75's defect. The
     address is cast to uintptr_t, as test_get_id_points_the_mta_at_the_callbacks_address_and_
-    extension does, and never dereferenced: callers here point the MTA at SET_MTA's fabricated
-    0xDEADBEEF, or expect NULL. All three widths are hooked because UPLOAD reads through
-    Xcp_ReadSlaveMemoryTable[addressGranularity] (source/Xcp.c), so a WORD or DWORD configuration
-    never reaches the u8 double.
+    extension does, and never dereferenced: callers here expect NULL, SET_MTA's fabricated
+    0xDEADBEEF, or the configured identification's own address. All three widths are hooked because
+    UPLOAD reads through Xcp_ReadSlaveMemoryTable[addressGranularity] (source/Xcp.c), so a WORD or
+    DWORD configuration never reaches the u8 double.
     """
     reads = []
 
@@ -545,7 +545,9 @@ def test_get_id_reports_a_configured_identification_needing_c_escapes_at_its_own
     there. Unescaped, C reads D:\\temp\\new1.a2l's \\t and \\n as a tab and a line feed and
     compiles its 16 characters to 14 bytes -- a Length that violates the Length mod AG = 0 the
     generator had just accepted, with no DET, because the run-time check covers only callback
-    lengths. c:\\database\\test.a2l is XCP part 2 1.1/1.6.1.2.2's own second example.
+    lengths. c:\\database\\test.a2l is XCP part 2 1.1/1.6.1.2.2's own second example, which
+    illustrates identification type 2 rather than the type 0 this string serves; it stands here
+    because a Windows path is the realistic way a backslash turns up.
 
     DWORD, the strictest granularity: every row is a multiple of 4 characters, so the generator
     accepts each one, and the Length on the wire must be that same number. The generated string's

@@ -8,7 +8,7 @@
 
 **Tech Stack:** C (AUTOSAR BSW module), Jinja2 code generation (`script/source_cfg.c.jinja2`), CFFI + pytest harness, CMake/ctest, Docker.
 
-**Spec:** `docs/superpowers/specs/2026-09-11-xcp-get-id-types-design.md` (DD108–DD113)
+**Spec:** `docs/superpowers/specs/2026-09-11-xcp-get-id-types-design.md` (DD108–DD114)
 
 ## Global Constraints
 
@@ -56,7 +56,7 @@
 ### Task 1: Name the Mode bits and repair the assertion that pinned an echo, not a bit mask
 
 **Correction, made after Task 1's implementer disproved it empirically**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): this title originally read
+(commit `afa5c8e`): this title originally read
 "repair the assertion that cannot fail." The old assertion could fail — with this test's `mode`
 pinned at 0, mutating the response byte away from 0 broke the old assertion exactly as it broke the
 new one, for the unrelated reason that the two sides then read different numbers. Its real weakness
@@ -103,7 +103,7 @@ docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --ulimit nofile=65536
 
 The new assertions pass against today's hardcoded `0x00`. That is expected — this step is not what proves them. **Mutation-verify now:** change `source/Xcp_Std.c` line 1323 from `SduDataPtr[0x01u] = 0x00u;` to `= 0x01u;` and re-run only this test. It must fail on the `TRANSFER_MODE` assertion. Then set `= 0x02u` and confirm it fails on `COMPRESSED_ENCRYPTED`. Revert both.
 
-**Correction, made after Task 1's implementer disproved it empirically** (`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): this step originally ended "Record in the commit message that the old assertion survived both mutations and the new one does not." It does not survive either mutation — this test's `mode` is pinned at 0, so a mutated response byte breaks `raw_data[1] == mode` too, for the same coincidental reason it used to pass. Commit `1a6144c` carries that since-disproven wording verbatim, because it was written before the mutation-verify step above was actually run against it; the fix landed in a follow-up commit rather than rewriting the pushed one. See the design doc's DD-adjacent correction in `2026-09-11-xcp-get-id-types-design.md` §1 for the accurate characterisation.
+**Correction, made after Task 1's implementer disproved it empirically** (commit `afa5c8e`): this step originally ended "Record in the commit message that the old assertion survived both mutations and the new one does not." It does not survive either mutation — this test's `mode` is pinned at 0, so a mutated response byte breaks `raw_data[1] == mode` too, for the same coincidental reason it used to pass. Commit `1a6144c` carries that since-disproven wording verbatim, because it was written before the mutation-verify step above was actually run against it; the fix landed in a follow-up commit rather than rewriting the pushed one. See the design doc's DD-adjacent correction in `2026-09-11-xcp-get-id-types-design.md` §1 for the accurate characterisation.
 
 - [ ] **Step 3: Add the named masks**
 
@@ -143,7 +143,7 @@ In `source/Xcp_Std.c`, replace the bare `Xcp_Internal.cto_response.pdu_info.SduD
 Do not write the value as an expression over the two masks. `0x00u` is what goes on the wire and the comment is what explains it; an expression contrived to evaluate to zero while mentioning both names is harder to read than either. The masks earn their place by being referenced from the tests and from the header's own documentation, not by appearing here.
 
 **Correction, made in the final review's fix wave**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): the last sentence above
+(commit `efafeaf`): the last sentence above
 describes something impossible. The tests cannot reference the masks at all: they live in
 `source/Xcp_Internal.h`, and the harness builds its cdef, and every `handle.define(...)` lookup,
 from `interface/Xcp.h` and the generated configuration headers, none of which includes
@@ -183,7 +183,7 @@ git push
 ```
 
 **Correction, made after Task 1's implementer disproved it empirically**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): the commit message above, as
+(commit `afa5c8e`): the commit message above, as
 actually committed at `1a6144c`, claims twice that the old assertion "passed under every possible
 implementation" and "still passed" under both mutations. Neither holds — with this test's `mode`
 pinned at 0, mutating the response byte away from 0 breaks the old assertion exactly as it breaks a
@@ -1015,7 +1015,7 @@ def test_get_id_accepts_a_callback_length_that_is_a_multiple_of_the_granularity(
 
 `test/get_id_test.py` needs `from unittest.mock import ANY` added at the top: `from .parameter import *` does not re-export it. The four-argument shape above matches the existing caller at `test/asam_protocol_layer_test.py:17` — module id, instance id, api id, error id.
 
-**Correction, made during Task 5's fix round 1** (`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-5-report.md`, "Fix round 1"): both `handle.define('XCP_MAIN_FUNCTION_API_ID')` calls in the test code above name the wrong API. See the fuller correction after Step 4, where the same wrong value appears in the implementation this test code was written against.
+**Correction, made during Task 5's fix round 1** (commit `61938ab`): both `handle.define('XCP_MAIN_FUNCTION_API_ID')` calls in the test code above name the wrong API. See the fuller correction after Step 4, where the same wrong value appears in the implementation this test code was written against.
 
 - [ ] **Step 2: Run and verify it fails**
 
@@ -1068,7 +1068,7 @@ In `source/Xcp_Std.c`, immediately after the callback block in Task 4's Step 7 (
 
 Setting `served = FALSE` here deliberately does **not** fall through to the static string for type 0: a callback that answered `E_OK` has claimed the type, and silently substituting different data for a length it got wrong would hide the defect DET has just reported. Confirm this by checking that `test_get_id_falls_back_to_the_static_identification_when_the_callback_declines_type_zero` still passes — it declines with `E_NOT_OK` and must be unaffected. If the ordering makes a type-0 `E_OK` with a bad length fall back to the string, move this block after the static-fallback block instead.
 
-**Correction, made during Task 5's fix round 1** (`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-5-report.md`, "Fix round 1"): the `Xcp_ReportError` call above, and the two `handle.define('XCP_MAIN_FUNCTION_API_ID')` calls in Step 1's test code, all name the wrong API. `Xcp_DTOCmdStdGetId` does not run inside `Xcp_MainFunction`: the command table's one dispatch site, `result = Xcp_PIDTable[pid](&response_expected, pPduInfo);`, is at `source/Xcp.c:2161`, inside `Xcp_CanIfRxIndication` (`source/Xcp.c:1807–2285`); `Xcp_MainFunction` (`source/Xcp.c:1501–1806`) never calls it. The module's convention reports the exported API in whose call chain a DET fires — `Xcp_DTOCmdStdBuildChecksum`, another command dispatched through the same table, already reports under `XCP_CAN_IF_RX_INDICATION_API_ID` (`source/Xcp_Std.c:638`) — so the correct value here is `XCP_CAN_IF_RX_INDICATION_API_ID`. `XCP_MAIN_FUNCTION_API_ID` was this plan's own unchecked assumption about where commands dispatch; both the shipped code and the two tests asserting it inherited that assumption from this code block and Step 1's, which is why the tests could not catch the error — implementation and expectation shared one wrong source. Not rewritten in place, per this repository's convention (DD102, DD105) of recording a correction rather than silently editing history.
+**Correction, made during Task 5's fix round 1** (commit `61938ab`): the `Xcp_ReportError` call above, and the two `handle.define('XCP_MAIN_FUNCTION_API_ID')` calls in Step 1's test code, all name the wrong API. `Xcp_DTOCmdStdGetId` does not run inside `Xcp_MainFunction`: the command table's one dispatch site, `result = Xcp_PIDTable[pid](&response_expected, pPduInfo);`, is at `source/Xcp.c:2161`, inside `Xcp_CanIfRxIndication` (`source/Xcp.c:1807–2285`); `Xcp_MainFunction` (`source/Xcp.c:1501–1806`) never calls it. The module's convention reports the exported API in whose call chain a DET fires — `Xcp_DTOCmdStdBuildChecksum`, another command dispatched through the same table, already reports under `XCP_CAN_IF_RX_INDICATION_API_ID` (`source/Xcp_Std.c:638`) — so the correct value here is `XCP_CAN_IF_RX_INDICATION_API_ID`. `XCP_MAIN_FUNCTION_API_ID` was this plan's own unchecked assumption about where commands dispatch; both the shipped code and the two tests asserting it inherited that assumption from this code block and Step 1's, which is why the tests could not catch the error — implementation and expectation shared one wrong source. Not rewritten in place, per this repository's convention (DD102, DD105) of recording a correction rather than silently editing history.
 
 - [ ] **Step 4b: Give the generator guard its cross-reference, now that it is true**
 
@@ -1135,13 +1135,13 @@ At lines 373, 560 and 651, remove `GET_ID` identification types from the lists o
 After the `SP5-RESUME` entry, matching that entry's shape — a `#### SP5-GETID — GET_ID identification types — **complete**` heading, then paragraphs covering:
 
 - **What it built:** every identification type 1.1/§1.6.1.2.2 defines, served through `getIdentificationFunction`, with the configured string as type 0's fallback.
-- **Design:** `2026-09-11-xcp-get-id-types-design.md` (DD108–DD113).
+- **Design:** `2026-09-11-xcp-get-id-types-design.md` (DD108–DD113 as this step was written; the spec now runs to DD114, and the roadmap entry this step produced carries the wider range).
 - **What 1.1 changed and 1.0 did not have:** the response Mode byte becoming a named bit mask (`TRANSFER_MODE` bit 0, `COMPRESSED_ENCRYPTED` bit 1), plus `Length mod AG = 0` and the initial-UPLOAD element count. Record that bit positions came from the 1.1 PDF's own text layer, not its OCR sidecar, and point at §0 of the design doc for the method — this is the second time the 1.0-vs-1.1 mode-byte pattern has appeared, after `SET_REQUEST`.
 - **Two pre-existing defects it fixed:** the Mode-byte assertion that pinned an echo of the request rather than the response's bit mask, and the 21-byte default identification that violated `Length mod AG = 0` under WORD and DWORD.
 - **What it deliberately did not build:** inline transfer (DD111) and compression (XCP Part 4 absent), both reversible and both now documented rather than forgotten.
 
 **Correction, made after Task 1's implementer disproved it empirically**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): the bullet above originally read
+(commit `afa5c8e`): the bullet above originally read
 "the Mode-byte assertion that could not fail." The old assertion could fail — it compared the
 response's Mode bit mask against the request's Requested Identification Type, two different fields,
 and pinned the correct value only because its parametrize list held a single row at mode 0. It would
@@ -1152,7 +1152,7 @@ covered. Corrected here rather than left standing, matching the same correction 
 Then check whether any *other* roadmap row is made stale by this phase before committing — §2.6 cross-cutting and the §3 defect list both mention `GET_ID`. Correct what you find; do not silently rewrite a claim that turns out to have been wrong, record the correction, as DD102 and DD105 do.
 
 **Correction, made in the final review's fix wave**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): the premise of the step above
+(commit `efafeaf`): the premise of the step above
 is false. Neither §2.6 nor the §3 defect list mentions `GET_ID` — not at this plan's baseline
 (`38eb3ff`), and not after this phase's own roadmap edits. At the baseline the roadmap named
 `GET_ID` only in §2.1's command table and in §4's SP5 residue text, and neither section mentions

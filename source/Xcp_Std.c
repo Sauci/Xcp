@@ -1381,11 +1381,12 @@ uint8 Xcp_DTOCmdStdGetId(boolean *responseExpected, const PduInfoType *pPduInfo)
         if (identification_length == 0x00000000u)
         {
             /* DD113: a response whose Length is 0 points the MTA at (NULL_PTR, 0x00u). Decided here,
-             * on the Length alone, so that no route to Length = 0 can skip it: a callback answering
-             * E_OK with a length of 0 and an empty configured string for type 0 both arrive with a
-             * live address, and the declined and refused callback routes above reset only the
-             * length, keeping whatever the callback wrote. A master that ignores Length = 0 and
-             * uploads anyway then reads through a pointer the slave deliberately nulled.
+             * on the Length alone, so that no route to Length = 0 can skip it: an empty configured
+             * string for type 0 arrives with its own live address, a callback answering E_OK with a
+             * length of 0 arrives with whatever address it chose to write, and the declined and
+             * refused callback routes above reset only the length, keeping whatever the callback
+             * wrote. A master that ignores Length = 0 and uploads anyway then reads through a
+             * pointer the slave deliberately nulled.
              * (NULL_PTR, 0x00u) is this module's own vocabulary for "nothing meaningful on this
              * pair" -- Xcp_Init and Xcp_CTOCmdStdConnect both pair exactly that. */
             identification = NULL_PTR;
