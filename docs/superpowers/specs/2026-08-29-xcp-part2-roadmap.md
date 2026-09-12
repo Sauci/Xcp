@@ -712,7 +712,7 @@ or the callback declines. A defined type the slave does not serve answers `Lengt
 1.1/§1.6.1.2.2's own way of declining; 5–127 name no identification type at all and answer
 `ERR_OUT_OF_RANGE`. See §2.1's `GET_ID` row.
 
-Design: `2026-09-11-xcp-get-id-types-design.md` (DD108–DD113).
+Design: `2026-09-11-xcp-get-id-types-design.md` (DD108–DD114).
 
 **What 1.1 changed and 1.0 did not have.** The response Mode byte becomes a named bit mask —
 `TRANSFER_MODE` at bit 0, `COMPRESSED_ENCRYPTED` at bit 1 — and 1.1 adds `Length mod AG = 0` plus

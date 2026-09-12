@@ -154,8 +154,9 @@ def _upload_addresses(handle, element_count):
     A pair, not an address alone: 1.1/1.6.1.2.6 defines the MTA as "32Bit address + 8Bit
     extension", and an address can be right while its extension is stale -- DD75's defect. The
     address is cast to uintptr_t, as test_get_id_points_the_mta_at_the_callbacks_address_and_
-    extension does, and never dereferenced: callers here point the MTA at SET_MTA's fabricated
-    0xDEADBEEF, or expect NULL. All three widths are hooked because UPLOAD reads through
+    extension does, and never dereferenced: callers here expect NULL, SET_MTA's fabricated
+    0xDEADBEEF, or the configured identification's own address. All three widths are hooked because
+    UPLOAD reads through
     Xcp_ReadSlaveMemoryTable[addressGranularity] (source/Xcp.c), so a WORD or DWORD configuration
     never reaches the u8 double.
     """

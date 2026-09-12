@@ -1265,8 +1265,13 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %}, /* userCmdFunction */
     {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
 {#- Escaped for the C literal: backslashes first, so that the backslash each escaped quote gains is
-    not itself doubled, then double quotes. Backslashes are escaped rather than refused -- XCP
-    part 2 1.1/1.6.1.2.2's own second example identification is c:\database\test.a2l. Pasted raw,
+    not itself doubled, then double quotes. Backslashes and double quotes are escaped rather than
+    refused because XCP part 2 1.1/1.6.1.2.2 calls the identification "a byte stream of plain ASCII
+    text" and both are printable ASCII: refusing them would narrow type 0, the only type this string
+    serves, below what the specification allows. A Windows path is legitimate type 0 text, and this
+    module's own default identification is a path. 1.1/1.6.1.2.2's second example,
+    c:\database\test.a2l, is not the reason: it illustrates type 2, which this module serves from
+    getIdentificationFunction and never emits here. Pasted raw,
     C would read \t, \n and the like as single escape characters: D:\temp\new1.a2l is 16
     characters but a 14-byte C string, a Length the Length mod AG = 0 guard never saw. Each escape
     written here compiles to exactly one byte. #}

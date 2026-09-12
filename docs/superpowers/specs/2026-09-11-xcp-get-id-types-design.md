@@ -69,7 +69,7 @@ identification type is covered. This is recurring defect class 1 from the roadma
 coinciding with a default).
 
 **Correction, made after Task 1's implementer disproved the original wording empirically**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/task-1-report.md`): this paragraph previously
+(commit `afa5c8e`): this paragraph previously
 claimed "The assertion passes under any implementation," which does not hold — with `mode` pinned
 at 0, mutating the response byte away from 0 breaks the old assertion too, for the unrelated
 reason that the two sides then stop reading the same number by coincidence. The assertion's real
@@ -181,7 +181,7 @@ never redone, and it makes the hardcoded `0x00` legible as two cleared flags rat
 number.
 
 **Correction, made in the final review's fix wave**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): "cited where the response
+(commit `efafeaf`): "cited where the response
 byte is built" was not true as shipped. Neither `XCP_GET_ID_MODE_TRANSFER_MODE` nor
 `XCP_GET_ID_MODE_COMPRESSED_ENCRYPTED` was referenced anywhere; the comment at the build site in
 `Xcp_DTOCmdStdGetId` named the two bits only in prose. That comment now names both macro
@@ -202,7 +202,8 @@ times:
 
 - **Generation time**, for the configured static string: `script/source_cfg.c.jinja2` raises when
   `len(identification) mod AG != 0`, matching the existing `raise()` guards around
-  `source_cfg.c.jinja2:749`. An integrator learns at build time, not on the wire.
+  `source_cfg.c.jinja2:749`. An integrator learns at build time, not on the wire. That count is
+  characters, not bytes; DD114 is what makes the two the same number.
 - **Run time**, for callback data: a returned length with `length mod AG != 0` raises DET and the
   command answers `Length = 0`. The module cannot emit a non-conforming `Length`, and reporting the
   type unavailable is the honest alternative to truncating the data or padding it with the NULs
@@ -245,7 +246,7 @@ Routes 2 and 3 reset the length and nothing else: the length is what brings them
 and the rule nulls the pair. Routes 4 and 5 reset nothing; their Length is 0 as served.
 
 **Correction, made in the final review's fix wave**
-(`.superpowers/sdd/2026-09-11-xcp-get-id-types/final-fix-report.md`): as first shipped, this
+(commit `65d8e78`): as first shipped, this
 decision's heading was false for routes 4 and 5. The code nulled the pair route by route, in the
 decline path and in the granularity check, so a callback answering `E_OK` with `*pLength = 0`, and
 an empty configured string for type 0, both reported `Length = 0` while the MTA pointed at real
@@ -259,6 +260,43 @@ removed, along with the granularity check's `served = FALSE`, a store nothing re
 route's length reset stayed: it is what routes 2 and 3 depend on. The static fallback's
 `extension = 0x00u` (DD75) is thereby the only thing standing between a declining callback's
 extension and the MTA for type 0, and has a test of its own.
+
+### DD114 — the configured identification is printable ASCII, and the generator escapes it
+
+DD112's generation-time guard counts the configured string's *characters*, while `GET_ID` reports the
+*bytes* of the compiled C string. Those are the same number only for printable ASCII pasted into a C
+literal with its escapes intact. This decision is what makes DD112's guard correct rather than
+approximately correct.
+
+- **Printable ASCII only, 0x20–0x7E**, refused by a `pattern` in `config/xcp.schema.json` *and* by a
+  guard in `script/source_cfg.c.jinja2`. Both, not either: the schema is what an integrator's build
+  validates (`generated/CMakeLists.txt`), while the test harness reaches the generator through
+  BSWCodeGen's Python API without passing the schema at all. 1.1/§1.6.1.2.2 calls the identification
+  "a byte stream of plain ASCII text". A non-ASCII character breaks the count directly — U+00E9 is
+  one character and two UTF-8 bytes — and a control character breaks more than the count: a raw line
+  feed splits the C literal, and a NUL truncates the very string `Xcp_DTOCmdStdGetId` measures by
+  scanning for one.
+- **`\` and `"` are escaped, not refused**, where the initialiser emits the string. Both are
+  printable ASCII, and refusing them would narrow type 0 — the only type this string serves — below
+  what the specification allows. A Windows path is legitimate type 0 text, and this module's own
+  default identification is a path. Each escape compiles to exactly one byte, so the count still
+  holds.
+
+**1.1/§1.6.1.2.2's second example, `c:\database\test.a2l`, is not the reason for escaping.** It
+illustrates identification type 2, which this module serves from `getIdentificationFunction` and
+never emits through the template. That example was nevertheless cited as the reason when this
+decision first shipped, in the template comment, the schema description and a schema test; those are
+corrected in the same commit as this entry.
+
+**Known refinements, tracked outside this phase.** The schema `pattern` ends in the lookahead
+`(?![\s\S])` rather than `$`, because `jsonschema` evaluates patterns with Python's `re`, whose `$`
+also matches just before a final line feed. That lookahead is valid ECMA-262, but RE2-based
+validators (Go, Rust) reject lookaheads outright; `"not": {"pattern": "[^\\x20-\\x7E]"}` is
+equivalent and portable everywhere. Trigraphs remain a character-versus-byte divergence this
+decision does not close: in strict ISO C before C23, `??=` and its eight siblings are replaced before
+the string is formed, so `"/path/to/??=.a2l"` is 16 bytes under gnu11 and 14 under `-std=c99`. Both
+belong with the wider question of how every C string these templates emit is guarded — DAQ event
+channel names included, which are pasted raw and counted in Python exactly as this string once was.
 
 ---
 
