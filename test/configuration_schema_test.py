@@ -105,11 +105,14 @@ def test_an_identification_that_is_not_printable_ascii_is_rejected(schema, ident
 ))
 def test_an_identification_with_a_backslash_a_quote_or_nothing_at_all_is_valid(schema,
                                                                                identification):
-    """The pattern's other edge. Backslash and double quote are printable ASCII and stay allowed:
-    c:\\database\\test.a2l is 1.1/1.6.1.2.2's own second example, and the generator escapes both
-    characters into the C literal rather than refusing them. The empty string stays allowed, as it
-    was before the pattern existed: it answers Length = 0 for type 0, which 1.1/1.6.1.2.2 defines
-    as not available, and the generator accepts it."""
+    """The pattern's other edge. Backslash and double quote are printable ASCII and stay allowed
+    because 1.1/1.6.1.2.2 calls the identification "a byte stream of plain ASCII text": refusing
+    them would narrow type 0 below what the specification allows, and script/source_cfg.c.jinja2
+    escapes both into the generated C literal instead. c:\\database\\test.a2l is 1.1/1.6.1.2.2's
+    second example, which illustrates type 2 rather than the type 0 this string serves; it stands
+    here because a Windows path is the realistic way both characters turn up. The empty string is
+    allowed too: it answers Length = 0 for type 0, which 1.1/1.6.1.2.2 defines as not available,
+    and the generator accepts it."""
     validate(DefaultConfig(identification=identification), schema)
 
 
