@@ -303,6 +303,7 @@
         "overload_indication": "EVENT",
         "checksum_type": "XCP_CRC_16",
         "user_defined_checksum_function": null,
+        "checksum_max_block_size": 65536,
         "user_cmd_function": null,
         "get_id_function": null,
         "trailing_value": 0,

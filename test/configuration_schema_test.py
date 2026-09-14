@@ -172,3 +172,27 @@ def test_a_static_configuration_may_not_declare_a_dynamic_pool(schema):
 
     with pytest.raises(jsonschema.ValidationError):
         validate(configuration, schema)
+
+
+def test_a_configuration_without_checksum_max_block_size_is_rejected(schema):
+    """BUILD_CHECKSUM's bound is required, not defaulted (design doc DD116,
+    docs/superpowers/specs/2026-09-14-xcp-build-checksum-d6-design.md): a default would leave both
+    the 1.1/1.1.3.3 conformance gap and the unbounded element_size * block_size multiplication in
+    source/Xcp_Std.c reachable in every build that did not opt in."""
+    configuration = DefaultConfig()
+    del configuration['configurations'][0]['protocol_layer']['checksum_max_block_size']
+    with pytest.raises(jsonschema.ValidationError):
+        validate(configuration, schema)
+
+
+def test_a_checksum_max_block_size_of_zero_is_rejected(schema):
+    """0 is not a block size -- the same reasoning programming.max_block_size's own minimum
+    records. A maximum of 0 would also reject every request, since block_size == 0 already fails."""
+    with pytest.raises(jsonschema.ValidationError):
+        validate(DefaultConfig(checksum_max_block_size=0), schema)
+
+
+def test_the_default_checksum_max_block_size_is_valid(schema):
+    """The companion to both rejections above: the value the harness and config/xcp.json actually
+    carry must be one the schema accepts, or the two rejections prove nothing."""
+    validate(DefaultConfig(), schema)

@@ -1,7 +1,14 @@
 .idea
 .pytest_cache
 *__pycache__*
-*build*
+# Build output. Deliberately three directory rules rather than a `*build*` glob: that glob
+# also matched any FILE with "build" in its name -- it silently hid a design document about
+# BUILD_CHECKSUM, and `git status` then reported a clean tree, so the refusal was invisible.
+# test/build_checksum_test.py is tracked and matches that glob too, so the rule already
+# contradicted the repository's own contents. A trailing slash still matches at any depth.
+build/
+build_agent/
+build_docker/
 doc/*
 extern/*
 !extern/CMakeLists.txt
