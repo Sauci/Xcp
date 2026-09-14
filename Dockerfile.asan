@@ -1,0 +1,47 @@
+# Local-only diagnostic image. Not built or pushed by CI, and nothing in .github/workflows refers
+# to it. It exists to run the suite under AddressSanitizer, which test/conftest.py already supports
+# through XCP_ASAN=1 but which needs a glibc toolchain with libasan -- the main image is Alpine 3.10
+# on musl, where that path cannot run.
+#
+# It is also the image behind the `debian/glibc, 8 MB stack -- 4 of 4 clean` line in test.sh's
+# header -- the only glibc data point on that transient-failure question, and not reproducible
+# without this file. Four runs is far too few to conclude glibc is safe at the ~1-in-4 failure rate
+# seen there; treat that line as a lead, not a finding.
+#
+# python:3.7-slim-bullseye, not a newer Debian: requirements.txt pins jinja2 2.11.3 and cffi 1.15.0,
+# which need Python 3.7 (jinja2 2.11 in particular breaks against markupsafe 2.1+ on newer
+# interpreters). Keeping the interpreter and the pinned dependency set identical to the Alpine image
+# means a difference in behaviour is attributable to libc and the sanitizer, not to a version skew.
+#
+#   docker build -f Dockerfile.asan -t xcp-asan:bullseye .
+#   docker run --rm -u "$(id -u):$(id -g)" --env HOME=/tmp -v "$PWD:/usr/project" -w /usr/project \
+#     --env XCP_ASAN=1 \
+#     --env LD_PRELOAD=/usr/lib/gcc/x86_64-linux-gnu/10/libasan.so \
+#     --env ASAN_OPTIONS=detect_leaks=0:abort_on_error=0:log_path=stderr \
+#     xcp-asan:bullseye sh -c '...'
+#
+# detect_leaks=0 because the harness deliberately keeps buffers alive for the C module and CPython
+# itself is not leak-clean under ASan; the target here is out-of-bounds writes, not leaks.
+FROM python:3.7-slim-bullseye
+
+ENV PROJECT_DIR=/usr/project
+
+# Debian 11's security pool no longer serves the binaries its indexes still name: apt-get update
+# succeeds, then every fetch from deb.debian.org/debian-security 404s (perl, glibc, dpkg, curl).
+# Dropping that source resolves the same packages from main, which is intact. Safe here because this
+# image is a local diagnostic, never shipped and never exposed to anything.
+#
+# build-essential alone: gcc-10 brings its own libasan, so naming libasan6 was redundant, and gdb is
+# not needed to read a sanitizer report off stderr.
+RUN sed -i '/debian-security/d' /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY ./requirements.txt requirements.txt
+RUN pip3 install --upgrade pip && pip3 install -r requirements.txt
+
+WORKDIR /usr/project
