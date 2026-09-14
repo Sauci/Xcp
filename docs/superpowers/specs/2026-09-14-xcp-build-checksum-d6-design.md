@@ -305,7 +305,7 @@ the payload that sentence describes. This is D6's shape one error code over. It 
 and the PGM group rather than checksum, so it gets its own entry instead of riding along here.
 
 **The D6 entry's citation is stale.** It points at `source/Xcp.c:2639` for the checksum-type
-mapping; that line is now inside `Xcp_TransmitOneFrame`'s CanIf re-entrancy handling, and the
+mapping; that line is now inside `Xcp_StartNextTransmission` (defined at `source/Xcp.c:2621`), and the
 mapping lives wholly in `source/Xcp_Std.c`.
 
 **`config/xcp.schema.json` writes `"OneOf"` where JSON Schema defines `oneOf`.** jsonschema
