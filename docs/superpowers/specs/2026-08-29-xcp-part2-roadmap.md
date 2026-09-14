@@ -206,13 +206,16 @@ This section previously read "absent" outright, stale since SP4 shipped; correct
 | RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | **Complete, SP5-RESUME** (`2026-09-10-xcp-daq-resume-design.md`, DD103–DD107; see that sub-project's own entry in §4). `XCP_CONNECTION_STATE_RESUME` is declared but deliberately never entered. `Xcp_ResumeComplete` briefly wrote it on every committed resume; a security fix on 2026-09-10 (DD105's own recorded correction) removed that write after finding both connection gates in `source/Xcp.c` test `!= XCP_CONNECTION_STATE_DISCONNECTED` rather than `== XCP_CONNECTION_STATE_CONNECTED`, so the write alone admitted the entire command set — `DOWNLOAD`, `SET_MTA`, `FREE_DAQ`, the programming commands included — to any node on the bus with no `CONNECT` ever received. RESUME mode needs none of it: DTO transmission was never session-gated, and `GET_STATUS` reports RESUME through session status bit 7 instead. `Xcp_ResumeComplete` still does the rest — called by the integrator once its own `Xcp_Restore*` sequence has repopulated a DAQ list from non-volatile memory this module never reads itself (DD103, the mirror of SP5-NV's own four accessors) — just not that one write. This row previously said the state is now entered, true only until the fix above; corrected here. `SET_REQUEST`'s `STORE_DAQ_REQ_RESUME` (mode bit 2) is accepted and `GET_DAQ_PROCESSOR_INFO` reports `RESUME_SUPPORTED` set — both were previously refused/clear specifically so the two facts stayed coherent (D9), and SP5-RESUME reverses both together for the identical reason. `SET_DAQ_LIST_MODE` is unaffected: it still does not reject its own RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV — 1.1 marks that bit don't-care, and the slave tolerates it without honouring it; only `Xcp_ResumeComplete` ever sets a list's own RESUME/RUNNING mode bits |
 | Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x06), the latter added in SP2a and configurable through `overload_indication`. `EV_CLEAR_DAQ` (0x01) and `EV_STORE_DAQ` (0x02) added in SP5-NV. `EV_RESUME_MODE` (0x00) added in SP5-RESUME, queued by `Xcp_ResumeComplete`. `EV_CMD_PENDING` was also listed absent here, which was already stale independent of this row's own RESUME correction — this row's own §2.6 neighbour above has read `done — shipped in SP4` since before SP5-RESUME existed. Absent: `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
-| Extended error payloads | §1.1.3.3 | **partial.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism, and it is in use: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` both attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`). `BUILD_CHECKSUM`'s own extended payload is what remains missing — see defect D6. This row previously read a blanket "absent", which overstated the gap; corrected here |
+| Extended error payloads | §1.1.3.3 | **done.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`), and `BUILD_CHECKSUM` attaches the maximum block size to its `ERR_OUT_OF_RANGE` (`source/Xcp_Std.c`, D6). One gap remains and is tracked as D17: `ERR_GENERIC`'s own implementation-specific WORD is never attached at any of its five call sites. This row previously read a blanket "absent", which overstated the gap, then "partial" while D6 was open |
 
-One structural observation for later work: the AML in §2.1 declares checksum configuration
-**per segment** — a `CHECKSUM` block carrying type, `MAX_BLOCK_SIZE` and
-`EXTERNAL_FUNCTION` inside each `Segment`. `config/xcp.json` declares it once globally under
-`protocol_layer`. Reconciling the two would change `BUILD_CHECKSUM`, so it is not folded
-into SP1; it belongs with D6.
+**Open: per-segment checksum configuration.** The AML in §2.1 declares checksum configuration
+**per segment** — a `CHECKSUM` block carrying type, `MAX_BLOCK_SIZE` and `EXTERNAL_FUNCTION`
+inside each `Segment`. `config/xcp.json` declares all three once globally under `protocol_layer`,
+and D6 deliberately kept it that way (DD115). Reconciling them needs a resolution from the MTA —
+an arbitrary address — to a segment, which this module has never had: segments are reached only
+by an index the master supplies, and `Xcp_SegmentType`'s `address`/`length` are read today only to
+report `GET_SEGMENT_INFO`. It also needs an answer to "the MTA is in no configured segment", which
+neither 1.0 nor 1.1 defines. That is a change to the configuration model and wants its own design.
 
 ---
 
@@ -221,8 +224,9 @@ into SP1; it belongs with D6.
 **Status as of 2026-09-06:** D1, D2, D3, D4, D5 and D8 were fixed in SP1; D7 fell out of the
 same dispatch rework. D9 was resolved by refusing the two modes it could not fulfil, which also
 closed a session-wide denial of service found while investigating it; the non-volatile storage
-that would let those modes be accepted is tracked as SP5-NV. D6 remains open and travels with the
-per-segment checksum reconciliation noted at the end of §2.6. D10 and D11 were found while
+that would let those modes be accepted is tracked as SP5-NV. D6 is fixed (2026-09-14) without
+the per-segment checksum reconciliation it was once bound to; that reconciliation is now
+tracked on its own at the end of §2.6. D10 and D11 were found while
 surveying SP4 and are fixed by SP4a; both are written up in §5 beside that sub-project rather
 than here, because neither is separable from the design that closes them. The entries below are
 kept as written, each with its outcome, because the reasoning is what makes the fix reviewable.
@@ -289,11 +293,24 @@ as `MAX_BLOCK_SIZE` inside a per-segment `CHECKSUM` block (§2.1). Fixing this n
 extended-error mechanism that `DOWNLOAD_NEXT` requires for its `ERR_SEQUENCE` payload
 (§1.6.2.2.1), which SP1 introduces — so this is cheapest to fix immediately after SP1.
 
-> **Open.** Belongs with the per-segment checksum reconciliation described at the end of §2.6.
+> **Fixed.** `protocol_layer.checksum_max_block_size` is a required configuration field,
+> `Xcp_DTOCmdStdBuildChecksum` enforces it, and every `ERR_OUT_OF_RANGE` it answers carries the
+> maximum as the DWORD 1.1/1.6.1.2.9 and 1.1/1.1.3.3 require. Design:
+> `2026-09-14-xcp-build-checksum-d6-design.md` (DD115–DD120).
+>
+> The entry understated the defect: there was no maximum block size anywhere, in configuration or
+> as a check, so `block_size` arrived from four wire bytes and was used unchecked in
+> `element_size * block_size`. Two paths that answered `ERR_OUT_OF_RANGE` for *configuration*
+> faults now answer `ERR_CMD_UNKNOWN` (DD118).
+>
+> Closed **without** the per-segment reconciliation this section previously bound it to — see
+> DD115. The two are separable: the payload and the missing bound are a conformance defect in one
+> handler, reachable today; the AML reconciliation is a change to the configuration model needing
+> its own design.
 
 (The checksum *type* mapping is correct: `Xcp_ChecksumType` is a zero-based internal enum,
 but `Xcp_DTOCmdStdBuildChecksum` translates it explicitly to the ASAM wire values 0x01..0x09
-and 0xFF at `source/Xcp.c:2639` before transmitting.)
+and 0xFF at `source/Xcp_Std.c` before transmitting.)
 
 **D8 — `DOWNLOAD` block transfer is gated on the slave block-mode flag.** §1.6.1.2.1 defines
 `MAX_BS` as a *master* block-mode parameter and names its packets as `DOWNLOAD_NEXT` or
@@ -356,6 +373,20 @@ hard-coded enable bits of D2, this is what makes unimplemented commands answer p
 SP1 removes `Xcp_DTODaqPacket` from the table entirely.
 
 > **Fixed.** Resolved by the same dispatch rework as D2; the table now routes 0xC0–0xFF correctly.
+
+**D17 — `ERR_GENERIC` never carries its extended payload.** 1.1/§1.1.3.3 defines two
+payload-bearing error codes. `BUILD_CHECKSUM`'s `ERR_OUT_OF_RANGE` DWORD is the one D6 closed; the
+other is `ERR_GENERIC` (0x31), which "contains an implementation specific slave device error code
+as WORD as additional information". All five sites that answer it — one in `source/Xcp_Std.c`
+(`UNLOCK`, DD76) and four in `source/Xcp_Pgm.c` — call plain `Xcp_FillErrorPacket`, so no WORD is
+ever attached. The `UNLOCK` branch's own comment cites §1.1.3.3's wording as its justification for
+*choosing* that code, then omits the payload that same sentence describes.
+
+Not folded into D6: it touches `UNLOCK` and the PGM group rather than the checksum command, and
+deciding what the WORD should contain is a design question of its own — the specification leaves
+the value implementation-specific, so this module would be defining a private error vocabulary.
+
+> **Open.** Found while designing D6 (`2026-09-14-xcp-build-checksum-d6-design.md` §6).
 
 ---
 
