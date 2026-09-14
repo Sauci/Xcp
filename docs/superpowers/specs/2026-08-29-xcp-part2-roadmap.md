@@ -295,7 +295,7 @@ extended-error mechanism that `DOWNLOAD_NEXT` requires for its `ERR_SEQUENCE` pa
 
 > **Fixed.** `protocol_layer.checksum_max_block_size` is a required configuration field,
 > `Xcp_DTOCmdStdBuildChecksum` enforces it, and every `ERR_OUT_OF_RANGE` it answers carries the
-> maximum as the DWORD 1.1/1.6.1.2.9 and 1.1/1.1.3.3 require. Design:
+> maximum as the DWORD 1.1/§1.6.1.2.9 and 1.1/§1.1.3.3 require. Design:
 > `2026-09-14-xcp-build-checksum-d6-design.md` (DD115–DD120).
 >
 > The entry understated the defect: there was no maximum block size anywhere, in configuration or

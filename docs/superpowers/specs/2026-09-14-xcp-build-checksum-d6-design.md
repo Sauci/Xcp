@@ -130,7 +130,10 @@ It stays ungated for the reason the sector guard's own comment gives: such a che
 on whether the CONFIGURATION means anything, not a decision about what to emit", and gating it
 would let a broken configuration ship silently and fail only for whoever later enables the
 command. Generation guarantees `max * element_size` fits; the runtime check guarantees
-`block_size <= max`; together they make the multiplication unreachable in overflow.
+`block_size <= max`; together they make the multiplication unreachable in overflow. The guard
+bounds that product alone: it says nothing about the address sum `MTA + element_size *
+block_size`, which a schema-legal maximum can still overflow, and MTA validity stays the
+integrator's responsibility, as it already is everywhere else in this module.
 
 **DD120 — the checksum algorithms gain known-answer tests from 1.1/§1.6.1.2.9.** 1.1 publishes
 a 32-byte test pattern and expected results per algorithm; **1.0 does not contain these tables

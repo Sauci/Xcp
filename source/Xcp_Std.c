@@ -552,14 +552,14 @@ static void Xcp_BuildChecksumFillMaxBlockSize(void)
 
     Xcp_FillErrorPacketWithData(XCP_E_ASAM_OUT_OF_RANGE,
                                 data,
-                                0x06u,
+                                sizeof(data),
                                 &Xcp_Internal.cto_response.pdu_info);
 }
 
 uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     void *upper_address;
-    uint32_least block_size;
+    uint32 block_size;
     uint8 checksum_type;
     uint32 checksum;
     uint8 element_size;
