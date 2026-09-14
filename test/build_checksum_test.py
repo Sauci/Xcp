@@ -6,6 +6,8 @@
 import crcmod
 import crcmod.predefined
 
+from jinja2.exceptions import UndefinedError
+
 from .parameter import *
 from .conftest import XcpTest
 
@@ -505,3 +507,34 @@ def test_build_checksum_does_not_advance_the_mta_when_it_refuses(byte_order):
 
     first_address = handle.xcp_read_slave_memory_u8.call_args_list[0][0][0]
     assert int(handle.ffi.cast('uint32_t', first_address)) == mta
+
+
+def test_generation_refuses_a_checksum_max_block_size_that_would_overflow():
+    """script/source_cfg.c.jinja2 refuses a bound whose product with the address granularity would
+    not fit a uint32. The runtime check in Xcp_DTOCmdStdBuildChecksum guarantees
+    block_size <= checksumMaxBlockSize; this guarantees checksumMaxBlockSize * element_size fits,
+    and together they make element_size * block_size unable to overflow. DD119.
+
+    A constraint between two configuration fields, which is why it lives here and not in
+    config/xcp.schema.json: JSON Schema cannot express it.
+
+    Ungated on xcp_build_checksum_api_enable, following the rule the sector Length mod AG guard's
+    own comment states -- a check on whether the CONFIGURATION means anything, not a decision about
+    what to emit. Gating it would let a broken configuration ship silently and fail only for
+    whoever enabled the command later.
+    """
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                              address_granularity='DWORD',
+                              checksum_max_block_size=0x40000000))
+
+
+def test_generation_accepts_the_largest_checksum_max_block_size_that_fits():
+    """The companion the rejection above needs to mean anything. `raise` is a deliberately-undefined
+    Jinja global, so EVERY guard in that template surfaces the identical "'raise' is undefined" --
+    pytest.raises(UndefinedError) alone cannot show which guard fired, or that the configuration was
+    not refused for some unrelated reason. 0x3FFFFFFF * 4 is 0xFFFFFFFC, the largest product that
+    still fits, and the same configuration generates cleanly."""
+    XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                          address_granularity='DWORD',
+                          checksum_max_block_size=0x3FFFFFFF))

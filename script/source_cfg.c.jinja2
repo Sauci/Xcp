@@ -782,6 +782,23 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
         escape that compiles to one byte, and the compiled string is what GET_ID reports. #}
 {{ raise('identification {!r} is {} bytes, which is not a multiple of the {}-byte {} address granularity; XCP part 2 1.1/1.6.1.2.2 requires Length mod AG = 0 because the initial UPLOAD element count is Length / AG'.format(configuration.protocol_layer.identification, configuration.protocol_layer.identification | length, ag_size, configuration.protocol_layer.address_granularity)) }}
 {%- endif %}
+{%- set checksum_ag_size = {'BYTE': 1, 'WORD': 2, 'DWORD': 4}[configuration.protocol_layer.address_granularity] %}
+{%- if (configuration.protocol_layer.checksum_max_block_size * checksum_ag_size) > 4294967295 %}
+    {#- XCP part 2 1.1/1.6.1.2.9 gives BUILD_CHECKSUM's Block size in address granularity units, and
+        Xcp_DTOCmdStdBuildChecksum (source/Xcp_Std.c) turns it into an address with
+        element_size * block_size. Its runtime check guarantees block_size <= checksumMaxBlockSize;
+        this guarantees the product of that maximum and the granularity fits a uint32, so the
+        multiplication cannot overflow for any request the handler accepts. A constraint between two
+        configuration fields, which config/xcp.schema.json cannot express -- hence here. DD119.
+
+        Deliberately NOT gated on apis.xcp_build_checksum_api_enable, the same asymmetry the sector
+        "Length mod AG = 0" guard above records: this asks whether the CONFIGURATION means anything,
+        not what to emit. A bound that cannot be honoured is meaningless whether or not this build
+        currently serves the command, and gating it would let it ship silently and fail for whoever
+        enables the command later. A raise is not generated output, so no byte-for-byte invariance
+        property is disturbed by it. #}
+{{ raise('checksum_max_block_size {} is in {} address granularity units, and {} * {} exceeds the uint32 that source/Xcp_Std.c computes element_size * block_size in; the largest value that fits this granularity is {} (XCP part 2 1.1/1.6.1.2.9; DD119 in docs/superpowers/specs/2026-09-14-xcp-build-checksum-d6-design.md)'.format(configuration.protocol_layer.checksum_max_block_size, configuration.protocol_layer.address_granularity, configuration.protocol_layer.checksum_max_block_size, checksum_ag_size, 4294967295 // checksum_ag_size)) }}
+{%- endif %}
 {%- set ts = configuration.protocol_layer.timestamp %}
 {%- if ts is defined and ts %}
     {#- The timestamp (XCP part 2 1.1/1.1.2.2, Diagram 10) shares ODT 0 with the identification
