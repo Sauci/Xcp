@@ -601,6 +601,12 @@
                 ],
                 "default": null
               },
+              "checksum_max_block_size": {
+                "description": "Maximum Block size BUILD_CHECKSUM accepts, in address granularity units, matching the Block size [AG] its request carries (XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.9). It is also the DWORD the negative response returns in bytes 4..7: 1.1/1.1.3.3 requires that every ERR_OUT_OF_RANGE from this command carry the maximum allowed block size. Required rather than defaulted (design doc DD116, docs/superpowers/specs/2026-09-14-xcp-build-checksum-d6-design.md), so that every build carries a real bound rather than only those that opt in. Minimum 1, not 0, for the reason programming.max_block_size's own minimum records: 0 is not a block size, and a maximum of 0 would reject every request because block_size == 0 already fails. script/source_cfg.c.jinja2 additionally refuses a value whose product with address_granularity would exceed a uint32, which this schema cannot express because it is a constraint between two fields (DD119).",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 4294967295
+              },
               "user_cmd_function": {
                 "OneOf": [
                   {
@@ -666,6 +672,7 @@
               "max_dto",
               "checksum_type",
               "user_defined_checksum_function",
+              "checksum_max_block_size",
               "user_cmd_function",
               "get_id_function",
               "trailing_value",

@@ -1262,6 +1262,7 @@ static Xcp_GeneralType Xcp_GeneralConfig{{'%02X' % loop.index0}} = {
     ({% if configuration.apis.resource_protection.programming %}0x01u{% else %}0x00u{% endif %} << 0x04u), /* protectedResource */
     {{configuration.protocol_layer.checksum_type}}, /* checksumType */
     {% if configuration.protocol_layer.user_defined_checksum_function %}&{{configuration.protocol_layer.user_defined_checksum_function}}{% else %}NULL_PTR{% endif %}, /* userDefinedChecksumFunction */
+    {{'0x%08Xu' % configuration.protocol_layer.checksum_max_block_size}}, /* checksumMaxBlockSize */
     {% if configuration.protocol_layer.user_cmd_function %}&{{configuration.protocol_layer.user_cmd_function}}{% else %}NULL_PTR{% endif %}, /* userCmdFunction */
     {{'0x%02Xu' % configuration.protocol_layer.trailing_value}}, /* trailingValue */
 {#- Escaped for the C literal: backslashes first, so that the backslash each escaped quote gains is
