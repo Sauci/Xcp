@@ -85,6 +85,14 @@ static void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddre
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
+#define Xcp_START_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
+static void Xcp_BuildChecksumFillMaxBlockSize(void);
+
+#define Xcp_STOP_SEC_CODE_FAST
+#include "Xcp_MemMap.h"
+
 /*------------------------------------------------------------------------------------------------*/
 /* local constant definitions (static const).                                                     */
 /*------------------------------------------------------------------------------------------------*/
@@ -523,6 +531,31 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
     return E_OK;
 }
 
+/* XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.9 gives BUILD_CHECKSUM a negative response
+ * of its own: bytes 2,3 a reserved WORD, bytes 4..7 the maximum block size as a DWORD. 1.1/1.1.3.3
+ * states the same requirement conditioned on the pair (BUILD_CHECKSUM, 0x22) with no trigger named,
+ * which is why every ERR_OUT_OF_RANGE this handler answers comes through here (DD117).
+ *
+ * Xcp_FillErrorPacketWithData (source/Xcp.c) writes pData flat from byte 2 and finalizes at
+ * 2 + dataLength, so the two reserved bytes are part of the payload rather than something it
+ * writes itself. */
+static void Xcp_BuildChecksumFillMaxBlockSize(void)
+{
+    uint8 data[0x06u];
+
+    data[0x00u] = 0x00u;
+    data[0x01u] = 0x00u;
+
+    Xcp_CopyFromU32WithOrder(Xcp_Ptr->general->checksumMaxBlockSize,
+                             &data[0x02u],
+                             Xcp_Ptr->general->byteOrder);
+
+    Xcp_FillErrorPacketWithData(XCP_E_ASAM_OUT_OF_RANGE,
+                                data,
+                                0x06u,
+                                &Xcp_Internal.cto_response.pdu_info);
+}
+
 uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *pPduInfo)
 {
     void *upper_address;
@@ -536,7 +569,13 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
 
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &block_size, Xcp_Ptr->general->byteOrder);
 
-    if (block_size > 0x00u)
+    /* Both conditions are request validation and belong together, ahead of any configuration
+     * resolution: a misconfigured slave receiving an oversized request answers ERR_OUT_OF_RANGE,
+     * not the ERR_CMD_UNKNOWN the configuration faults below answer. The upper bound is also what
+     * keeps element_size * block_size below -- element_size is up to 4 and block_size arrives from
+     * four wire bytes -- from overflowing; script/source_cfg.c.jinja2 refuses a configured maximum
+     * whose product with the address granularity would not fit (DD119). */
+    if ((block_size > 0x00u) && (block_size <= Xcp_Ptr->general->checksumMaxBlockSize))
     {
         element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
@@ -644,7 +683,7 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
     }
     else
     {
-        Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_BuildChecksumFillMaxBlockSize();
     }
 
     return E_OK;
