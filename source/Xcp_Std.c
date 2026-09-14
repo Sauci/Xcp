@@ -675,10 +675,10 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
                 Xcp_FinalizeResPacket(0x08u, &Xcp_Internal.cto_response.pdu_info);
             } else {
                 Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_PARAM_POINTER);
-                Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+                Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
             }
         } else {
-            Xcp_FillErrorPacket(XCP_E_ASAM_OUT_OF_RANGE, &Xcp_Internal.cto_response.pdu_info);
+            Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
         }
     }
     else

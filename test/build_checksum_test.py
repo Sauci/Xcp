@@ -241,7 +241,22 @@ def test_build_checksum_calls_the_det_with_err_param_pointer_if_checksum_functio
                                                     handle.define('XCP_E_PARAM_POINTER'))
 
 
-def test_build_checksum_returns_err_out_of_range_if_checksum_function_is_null():
+def test_build_checksum_returns_err_cmd_unknown_if_checksum_function_is_null():
+    """XCP part 2 - Protocol Layer Specification 1.1/1.7.3.1 defines ERR_OUT_OF_RANGE as "command
+    syntax valid but command parameter(s) out of range". Here the master's parameters are valid and
+    the SLAVE is misconfigured, so 0x22 misattributes the fault and its matrix action, "retry other
+    parameter", points the master at a fix that cannot exist.
+
+    ERR_CMD_UNKNOWN is "unknown command or not implemented optional command", action "display
+    error" -- terminal rather than futile, already in this command's 1.1/1.7.3.2.1 row so no
+    deviation is recorded, and already this module's answer for an unavailable BUILD_CHECKSUM (see
+    asam_error_matrix_test.py's TestBuildChecksumErrorHandling::test_returns_err_cmd_unknown, which
+    builds with xcp_build_checksum_api_enable=False and asserts exactly this). A configured-but-
+    unusable checksum function is that same unavailability, found at run time. DD118.
+
+    SduLength is asserted because 0x20 carries no payload: 1.1/1.1.3.3 attaches additional
+    information to 0x22 and 0x31 only.
+    """
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
                                    checksum_type='XCP_USER_DEFINED',
                                    user_defined_checksum_function=None))
@@ -256,10 +271,20 @@ def test_build_checksum_returns_err_out_of_range_if_checksum_function_is_null():
     handle.lib.Xcp_MainFunction()
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
-    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+    response = handle.can_if_transmit.call_args[0][1]
+
+    assert tuple(response.SduDataPtr[0:2]) == (0xFE, 0x20)
+    assert response.SduLength == 2
 
 
-def test_build_checksum_returns_err_out_of_range_if_checksum_type_is_out_of_range():
+def test_build_checksum_returns_err_cmd_unknown_if_checksum_type_is_out_of_range():
+    """The sibling condition: a configured checksum type that maps to no ASAM wire value reaches
+    Xcp_DTOCmdStdBuildChecksum's `default:` case and its 0x0A sentinel. Same reasoning as above --
+    the master's request is well formed and the slave cannot serve it. DD118.
+
+    checksum_type is passed as an int rather than one of the schema's enum strings, which is how
+    this test reaches that default case at all.
+    """
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, checksum_type=0xFF, user_defined_checksum_function=None))
 
     # CONNECT
@@ -272,7 +297,10 @@ def test_build_checksum_returns_err_out_of_range_if_checksum_type_is_out_of_rang
     handle.lib.Xcp_MainFunction()
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
-    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x22)
+    response = handle.can_if_transmit.call_args[0][1]
+
+    assert tuple(response.SduDataPtr[0:2]) == (0xFE, 0x20)
+    assert response.SduLength == 2
 
 
 # XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.9 publishes a 32-byte test pattern and the
