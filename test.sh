@@ -17,6 +17,9 @@
 # glibc survives the same depth at the same limit, which is why this only ever bit locally and in
 # this image. The hard limit here is unlimited, so an unprivileged user can raise the soft limit;
 # doing it here rather than at the `docker run` keeps every caller -- CI and local -- on one rule.
+# The findings block below qualifies that first clause: CI runs this same alpine/musl image and
+# stays clean, so musl alone does not cause this. Whether glibc MASKS it is a separate question and
+# still an open one -- the four clean debian runs above are too few to tell.
 #
 # The 256 MB run that failed hit the identical class of symptom listed above, this time "...unknown
 # to the frame ('loop')" in jinja2/idtracking.py while compiling source_cfg.c.jinja2. A 4x increase
@@ -26,6 +29,61 @@
 # source_cfg.c.jinja2 measuring 1 clean run in 9 attempts of the standard command, against a
 # clean-first-try control on the unmodified parent commit.
 ulimit -s 65536
+
+# A later investigation took four candidate causes off the table -- three ruled out outright, the
+# fourth (musl) only narrowed to "not sufficient". Two of the four are what this file presents above
+# as the story. Recorded so nobody re-tests them; each was measured rather than argued.
+#
+#   The stack limit is not the differentiator. `ulimit -s 65536` above demonstrably takes effect on
+#   a host that fails: the container starts at soft 8192 with hard unlimited, and the raise leaves
+#   soft at 65536. A note for anyone measuring this again -- `ulimit -s N` sets BOTH limits, so a
+#   SECOND raise in the same shell fails with EPERM, which is not the same as the first having
+#   failed.
+#
+#   musl is not sufficient to cause this. CI runs THIS image, through a `docker run` carrying no
+#   `--ulimit` at all (.github/workflows/test.yml), and was green on 40 of its last 40 runs, 32 of
+#   them on develop going back to 2026-09-01: fewer resources, same libc, same script. So something
+#   about this host is required. That is NOT the same as "glibc is safe", and the table above must
+#   not be read that way: its debian/glibc line is FOUR runs, and at the ~1-in-4 failure rate seen
+#   here four clean runs come up about a third of the time by chance alone. The libc question is
+#   open. The host's involvement is the part that is established.
+#
+#   Nothing writes past a Python heap allocation. Sixteen alternating runs, PYTHONMALLOC=debug
+#   against the default allocator: 1 failure in 8 for the control, 2 in 8 for the debug allocator,
+#   and ZERO guard-byte violations in any failure. The ~19% slowdown under the debug allocator
+#   confirms it was active. Guard bytes cannot see a use-after-free whose memory has already been
+#   recycled into a live object -- which is what these symptoms look like -- but they do rule out an
+#   overrun of a Python block.
+#
+#   The CFFI callbacks do not dangle. cffi's def_extern retains what it registers: after dropping
+#   every Python reference and collecting twice, the closure and the XcpTest instance it captured
+#   are both still alive and the call through C still returns correctly. Registered callbacks are
+#   therefore LEAKED -- 213 config modules each pin one instance for the whole run -- not freed. Nor
+#   does C retain a wire buffer: every SduDataPtr use in source/Xcp.c is a read within the command,
+#   and every memory_transfer.address assignment points at module- or integrator-owned memory, never
+#   at an SDU, so test/conftest.py's per-instance _pdu_info_keepalive is sufficient.
+#
+# A faster reproducer than a full run, for whoever picks this up:
+#   XCP_PYTEST_ARGS="--maxfail=1;-k;seed_key or connect or get_id"
+# is 6314 tests at ~88s an iteration, and failed 4 of the 32 runs measured across three loops. A
+# full run is ~7 minutes and fails roughly 1 in 4.
+#
+# The failures concentrate, which the "a different test failed every run" note above does not
+# capture: 5 of 7 observed failures were
+# seed_key_test.py::test_unlock_unlocks_the_requested_resource_if_the_key_is_valid, each on a
+# different parametrisation. The error is a different impossible one every time, and always a value
+# of the wrong type -- "list indices must be integers or slices, not CParser"; "'RootVisitor' object
+# has no attribute 'iter_child_nodes'"; "UnboundLocalError: local variable 'self' referenced before
+# assignment"; "tuple.__new__(X): X is not a type object"; and "'tuple' object has no attribute
+# 'group'". The template symptoms listed at the top of this file are the same class.
+#
+# What is left, and untested: one run builds 223 compiled modules (213 _cffi_xcp_cfg_* keyed on the
+# configuration, 10 _cffi_xcp_* keyed on the runtime), and every cdef() among them goes through the
+# single pycparser.CParser that cffi caches in cffi.cparser._parser_cache, beside pcpp's and PLY's
+# global state. "list indices ... not CParser" is a direct hit on that parser's own state machine.
+# 9e880ba already measured that resetting the cache per module is WORSE: 4 of 6 runs completing,
+# against 10 of 12 without. The untried direction is reducing how many distinct modules a run builds
+# at all.
 
 result=0
 mkdir -p build
