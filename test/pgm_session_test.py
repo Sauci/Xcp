@@ -981,10 +981,7 @@ def test_a_second_program_start_reports_the_session_already_active():
     Xcp_Internal is not reachable from this CFFI harness, so the state is only ever observable
     through behaviour."""
     handle = pgm_handle()
-    busy_then(handle, 0x00, busy_calls=0)
-    program_start(handle)
-    handle.lib.Xcp_MainFunction()
-    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+    open_a_session(handle)
 
     handle.can_if_transmit.reset_mock()
     program_start(handle)
