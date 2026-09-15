@@ -388,14 +388,25 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
          * records this as the third. Returning the Det id rather than reporting it here is what
          * Xcp_CanIfRxIndication already does with any non-E_OK handler result (source/Xcp.c), the
          * same path the XCP_E_PARAM_POINTER below takes -- and it does not suppress the response,
-         * which is filled and transmitted either way. */
-        if ((result == E_OK) &&
-            (Xcp_Internal.cto_response.pdu_info.SduLength > (PduLengthType)Xcp_Ptr->general->maxCto))
+         * which is filled and transmitted either way.
+         *
+         * The bound applies to whatever the callback left in the buffer, including when it also
+         * reported failure: a non-E_OK return does not unwrite the SduLength it already set, and
+         * finalizing that unchecked is the same over-long frame D18 is about. The Det id is the one
+         * thing that still depends on the return value -- a failing callback's own error id is the
+         * root cause and reporting "response too long" instead would mask it, while a callback that
+         * reported success and merely overran has no other id to report. Xcp_CanIfRxIndication
+         * reports whichever id this handler returns, so this is a choice of value, not of
+         * mechanism. Controller ruling R6, from this task's own review. */
+        if (Xcp_Internal.cto_response.pdu_info.SduLength > (PduLengthType)Xcp_Ptr->general->maxCto)
         {
             Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG,
                                        &Xcp_Internal.cto_response.pdu_info);
 
-            result = XCP_E_USER_CMD_RESPONSE_TOO_LONG;
+            if (result == E_OK)
+            {
+                result = XCP_E_USER_CMD_RESPONSE_TOO_LONG;
+            }
         }
         else
         {

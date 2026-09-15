@@ -165,3 +165,43 @@ def test_user_cmd_transmits_a_response_exactly_at_max_cto():
     assert handle.can_if_transmit.call_args[0][1].SduLength == 0x08
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8]) == (0, 1, 2, 3, 4, 5, 6, 7)
     handle.det_report_error.assert_not_called()
+
+
+def test_user_cmd_refuses_an_over_long_response_from_a_failing_callback():
+    """A callback's own failure does not exempt its buffer from the bound. It has already written
+    SduLength by the time it returns, and finalizing that unchecked put the over-long frame on the
+    wire anyway -- the defect D18 exists to prevent, one precondition further along. The wire carries
+    the refusal; Det keeps the callback's own error id, which is the root cause (controller ruling
+    R6)."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction'))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 0x09
+        for i in range(0x09):
+            p_res_err_pdu_info[0].SduDataPtr[i] = 0xAA
+        return handle.define('XCP_E_PARAM_POINTER')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:4])
+
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0006, \
+        'expected XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG'
+    # The callback's own id, not the too-long one: the module reports the root cause and the wire
+    # carries the refusal.
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_PARAM_POINTER'))

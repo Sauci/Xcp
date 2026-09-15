@@ -22,9 +22,11 @@ extern "C" {
  * @param [in] pCtoPduInfo The request as received, including the USER_CMD PID in byte 0.
  * @param [out] pResErrPduInfo The response to transmit. Write the payload into SduDataPtr and set
  * SduLength to the number of bytes written, MAX_CTO included but never exceeded: 1.1/1.1.3.3 ends a
- * packet at MAX_CTO-1, and a longer response is discarded, answered ERR_GENERIC carrying
- * XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG, and reported to Det as
- * XCP_E_USER_CMD_RESPONSE_TOO_LONG.
+ * packet at MAX_CTO-1, and a longer response is discarded and answered ERR_GENERIC carrying
+ * XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG regardless of this function's own return value --
+ * a failure return does not exempt the buffer already written from the bound. Det then gets
+ * XCP_E_USER_CMD_RESPONSE_TOO_LONG when the call itself succeeded, or this function's own error
+ * otherwise.
  * @retval E_OK : Command executed successfully
  * @retval XCP_E_* : Command failed. If the DET module is enabled, this error will be reported to the DET
  */
