@@ -126,7 +126,7 @@ knows an error packet's payload starts at byte 2.
 
 ## 4. Testing
 
-**Five assertion sites across three files change.** Every one uses the `[0:2]` slice idiom, which
+**Four assertion sites across three files change.** Every one uses the `[0:2]` slice idiom, which
 **cannot see a payload** — so none of them fails when the WORD is added. They would keep passing
 while proving nothing about it. Each therefore gains an `SduLength == 4` assertion *and* the
 expected detail value, exactly as D6's payload tests did and for the same reason.
@@ -157,20 +157,27 @@ pass a value-only assertion. The length check is what distinguishes "the WORD wa
 | File:line | Test | Expected detail |
 |:--|:--|:--|
 | `seed_key_defects_test.py:579` | `..._calc_key_fails_answers_an_error_instead_of_a_stale_positive_response` | `0x0001` |
-| `seed_key_defects_test.py:650` | `..._does_not_leave_a_stale_answer_for_whatever_reads_it_next` | `0x0001` |
 | `pgm_deferred_test.py:308` | `test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed` | `0x0003` |
-| `pgm_deferred_test.py:660` | `test_a_failing_program_reset_yields_err_generic_and_does_not_disconnect` | `0x0004` |
-| `pgm_session_test.py:553` | `test_program_prepare_answers_err_generic_on_a_non_zero_status_code` | `0x0005` |
+| `pgm_deferred_test.py:666` | `test_a_failing_program_reset_yields_err_generic_and_does_not_disconnect` | `0x0004` |
+| `pgm_session_test.py:554` | `test_program_prepare_answers_err_generic_on_a_non_zero_status_code` | `0x0005` |
 
-**`pgm_session_test.py:796` is deliberately left alone.** Its `(0xFE, 0x31)` sits inside
+**`pgm_session_test.py:802` and `seed_key_defects_test.py:650` are both deliberately left alone.**
+`pgm_session_test.py:802`'s `(0xFE, 0x31)` sits inside
 `test_a_mid_session_synch_does_not_end_the_programming_session`, whose subject is
 `Xcp_PgmAbandonPendingCommand` and DD55. The assertion exists to prove *the session never ended*,
 using a second `PROGRAM_START`'s refusal as the observable — the error code is incidental to it.
 Coupling it to this vocabulary would make an unrelated test fail the next time this design changes.
-It matched the grep; that is not a reason to amend it.
+
+`seed_key_defects_test.py:650` is left alone for the same reason. Its enclosing test is named for
+answer freshness — that each answer in its chain was computed by its own exchange rather than left
+behind by an earlier one — and all three of its loop attempts refuse identically, so they would
+carry the same WORD, which discriminates nothing that test asks. Coupling a staleness test to this
+vocabulary would make it fail whenever the codes change.
+
+Both matched the grep for `(0xFE, 0x31)`; that is not by itself a reason to amend them.
 
 **Coverage gap to close.** `0x0002` — `PROGRAM_START` refused because a session is already active —
-is exercised today only by `pgm_session_test.py:796`, the test just excluded. It needs an assertion
+is exercised today only by `pgm_session_test.py:802`, the test just excluded. It needs an assertion
 of its own rather than borrowing one, so this adds a test for that condition, asserting the code,
 the length and the detail value.
 
@@ -191,7 +198,7 @@ sibling `Xcp_CopyFromU32WithOrder` across both orders in `build_checksum_test.py
 here would test that helper a third time, not anything this defect introduces. `UNLOCK`'s request
 carries no multi-byte field either, so such a test could only observe the response encoding.
 
-The five amended sites and the new one all run under the suite's default `LITTLE_ENDIAN`.
+The four amended sites and the new one all run under the suite's default `LITTLE_ENDIAN`.
 
 ---
 
