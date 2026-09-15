@@ -45,7 +45,7 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 
 | Concern | Where |
 |:--|:--|
-| Protocol logic | seven translation units, 11798 lines: `Xcp.c` (3030, dispatch and shared machinery), `Xcp_Std.c` (1997), `Xcp_Cal.c` (303), `Xcp_Pag.c` (470), `Xcp_Daq.c` (2632), `Xcp_DaqRuntime.c` (1247), `Xcp_Pgm.c` (2119). This row read "six translation units, 5835 lines" with no `Xcp_Pgm.c` and every other count short, stale well before this branch; re-measured here with `wc -l source/*.c` |
+| Protocol logic | seven translation units, 11806 lines: `Xcp.c` (3033, dispatch and shared machinery), `Xcp_Std.c` (2002), `Xcp_Cal.c` (303), `Xcp_Pag.c` (470), `Xcp_Daq.c` (2632), `Xcp_DaqRuntime.c` (1247), `Xcp_Pgm.c` (2119). This row read "six translation units, 5835 lines" with no `Xcp_Pgm.c` and every other count short, stale well before this branch. Re-measured with `wc -l source/*.c` — twice: the first re-measurement read 11798, 3030 and 1997, taken before the same commit's own comment additions to `Xcp.c` and `Xcp_Std.c` landed, so it was stale on arrival. Measure after the edits, not before them |
 | Public API | `interface/Xcp.h`, `Xcp_Types.h`, `Xcp_Errors.h`, `XcpOnCan_Cbk.h` |
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |

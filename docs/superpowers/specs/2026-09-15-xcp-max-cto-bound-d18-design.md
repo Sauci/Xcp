@@ -255,7 +255,7 @@ while its own `description` two lines above (line 533) reads "MAX_CTO shows the 
 a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper
 limit to 255." `source/Xcp_Internal.h` comments both `cto_response` and `event`'s
 `uint8 _packet[0x100u]` buffers (lines 555 and 560) "MAX_CTO is in range 8 to 255". And
-`Xcp_CTOCmdStdConnect` (`source/Xcp_Std.c:1771`) writes
+`Xcp_CTOCmdStdConnect` (`source/Xcp_Std.c:1776`) writes
 `Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = Xcp_Ptr->general->maxCto;` — `maxCto` is
 `const uint16` (`interface/Xcp_Types.h:597`), assigned here into a single `uint8` response byte, so
 a configured `max_cto` of 256 (0x0100) would report as 0 in `CONNECT`'s own response.
