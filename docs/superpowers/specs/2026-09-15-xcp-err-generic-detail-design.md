@@ -131,6 +131,29 @@ knows an error packet's payload starts at byte 2.
 while proving nothing about it. Each therefore gains an `SduLength == 4` assertion *and* the
 expected detail value, exactly as D6's payload tests did and for the same reason.
 
+**How the length is asserted, corrected.** An earlier draft of this section said each site "gains
+an `SduLength == 4` assertion" without checking what those sites can reach. They cannot reach it:
+all three files read responses through helpers that return **decoded tuples, not `PduInfoType`** —
+`pgm_deferred_test.py`'s `transmitted()` returns `tuple(...SduDataPtr[0:8])`, `pgm_session_test.py`'s
+`send()` delegates to it, and `seed_key_defects_test.py`'s `exchange(handle, request, length=3)`
+returns a byte slice. `SduLength` appears in none of the three.
+
+Widening those helpers would touch every caller across three files, far outside this defect. So the
+length is asserted **directly at the mock**, beside the existing helper call, following the idiom
+already established at `daq_identification_field_test.py:281`:
+
+```python
+assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+```
+
+This is additive and changes no helper.
+
+**The length assertion is not optional.** `SduDataPtr` always holds a full `MAX_CTO`-sized frame
+padded with `trailingValue`, so bytes 2–3 read out of a `[0:8]` tuple are present whether or not the
+module wrote them. A module that produced the right WORD but finalised the packet at length 2 would
+pass a value-only assertion. The length check is what distinguishes "the WORD was written" from
+"the buffer happened to contain those bytes".
+
 | File:line | Test | Expected detail |
 |:--|:--|:--|
 | `seed_key_defects_test.py:579` | `..._calc_key_fails_answers_an_error_instead_of_a_stale_positive_response` | `0x0001` |
