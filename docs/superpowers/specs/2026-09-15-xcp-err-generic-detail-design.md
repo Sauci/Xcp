@@ -161,14 +161,14 @@ pass a value-only assertion. The length check is what distinguishes "the WORD wa
 | `pgm_deferred_test.py:666` | `test_a_failing_program_reset_yields_err_generic_and_does_not_disconnect` | `0x0004` |
 | `pgm_session_test.py:554` | `test_program_prepare_answers_err_generic_on_a_non_zero_status_code` | `0x0005` |
 
-**`pgm_session_test.py:802` and `seed_key_defects_test.py:650` are both deliberately left alone.**
+**`pgm_session_test.py:802` and `seed_key_defects_test.py:660` are both deliberately left alone.**
 `pgm_session_test.py:802`'s `(0xFE, 0x31)` sits inside
 `test_a_mid_session_synch_does_not_end_the_programming_session`, whose subject is
 `Xcp_PgmAbandonPendingCommand` and DD55. The assertion exists to prove *the session never ended*,
 using a second `PROGRAM_START`'s refusal as the observable — the error code is incidental to it.
 Coupling it to this vocabulary would make an unrelated test fail the next time this design changes.
 
-`seed_key_defects_test.py:650` is left alone for the same reason. Its enclosing test is named for
+`seed_key_defects_test.py:660` is left alone for the same reason. Its enclosing test is named for
 answer freshness — that each answer in its chain was computed by its own exchange rather than left
 behind by an earlier one — and all three of its loop attempts refuse identically, so they would
 carry the same WORD, which discriminates nothing that test asks. Coupling a staleness test to this
