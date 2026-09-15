@@ -141,11 +141,24 @@ The generation guard sits beside the `WRITE_DAQ_MULTIPLE` refusal in
 `BUILD_CHECKSUM`'s maximum block size occupies positions 4..7 (XCP part 2 1.1/§1.6.1.2.9,
 1.1/§1.1.3.3), so `MAX_CTO >= 8` is required.*
 
-`Xcp_DTOCmdStdUserCmd`'s flow becomes: call the callback; on `E_OK`, compare the `SduLength` it set
-against `Xcp_Ptr->general->maxCto`; if it exceeds, discard the response, report Det, and answer
-`ERR_GENERIC` carrying the detail WORD through `Xcp_FillGenericErrorPacket`. An `SduLength` equal to
-`maxCto` is legal and passes through untouched. Every other path is unchanged, including the
-callback's own non-`E_OK` return.
+`Xcp_DTOCmdStdUserCmd`'s flow becomes: call the callback; compare the `SduLength` it set against
+`Xcp_Ptr->general->maxCto`; if it exceeds, discard the response and answer `ERR_GENERIC` carrying
+the detail WORD through `Xcp_FillGenericErrorPacket`. An `SduLength` equal to `maxCto` is legal and
+passes through untouched.
+
+**Amended after Task 2's review (controller ruling R6).** This paragraph first read "on `E_OK`,
+compare", gating the check on the callback having reported success, and said every other path was
+unchanged "including the callback's own non-`E_OK` return". That left the defect reachable by the
+path it was meant to close: a callback that reports failure *has still written* `SduLength`, and
+`Xcp_FinalizeResPacket` would set exactly that length on the frame — the same over-long packet
+reaching CanIf, just behind one more precondition. The bound now applies to whatever the callback
+left in the buffer, whatever it returned.
+
+The Det id is the one thing that still depends on the return value: when the callback itself failed,
+its own error id is reported, because that is the root cause and this module would otherwise mask it
+with a symptom; when the callback reported success and merely overran, the id is
+`XCP_E_USER_CMD_RESPONSE_TOO_LONG`. `Xcp_CanIfRxIndication` reports whichever id the handler
+returns, so this is a choice of value, not of mechanism.
 
 ---
 

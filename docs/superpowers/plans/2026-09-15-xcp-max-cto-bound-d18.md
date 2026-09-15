@@ -407,13 +407,15 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
          * Xcp_CanIfRxIndication already does with any non-E_OK handler result (source/Xcp.c), the
          * same path the XCP_E_PARAM_POINTER below takes -- and it does not suppress the response,
          * which is filled and transmitted either way. */
-        if ((result == E_OK) &&
-            (Xcp_Internal.cto_response.pdu_info.SduLength > (PduLengthType)Xcp_Ptr->general->maxCto))
+        if (Xcp_Internal.cto_response.pdu_info.SduLength > (PduLengthType)Xcp_Ptr->general->maxCto)
         {
             Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG,
                                        &Xcp_Internal.cto_response.pdu_info);
 
-            result = XCP_E_USER_CMD_RESPONSE_TOO_LONG;
+            if (result == E_OK)
+            {
+                result = XCP_E_USER_CMD_RESPONSE_TOO_LONG;
+            }
         }
         else
         {
