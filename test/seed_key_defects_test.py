@@ -585,7 +585,7 @@ def test_an_unlock_whose_calc_key_fails_answers_an_error_instead_of_a_stale_posi
     # exchange(), which returns a decoded tuple and cannot see SduLength -- and it is asserted at
     # all, because SduDataPtr always holds a full MAX_CTO frame padded with trailingValue, so bytes
     # 2-3 are readable whether or not the module wrote them. Without the length check a module that
-    # produced the right WORD but finalised the packet at 2 would pass.
+    # produced the right WORD but finalized the packet at 2 would pass.
     assert handle.can_if_transmit.call_args[0][1].SduLength == 4
     assert u16_from_array(bytearray(unlock_response[2:4]), 'LITTLE_ENDIAN') == 0x0001, \
         'expected XCP_GENERIC_DETAIL_KEY_CALCULATION_FAILED'
