@@ -6,7 +6,7 @@ import pytest
 from .pgm_deferred_test import pgm_handle, program_start, program_reset, transmitted, busy_then
 from .download_test import connect
 from .free_daq_test import dynamic_handle, allocate_directly
-from .parameter import u16_to_array, u32_to_array
+from .parameter import u16_to_array, u32_to_array, u16_from_array
 
 
 def send(handle, request):
@@ -550,7 +550,11 @@ def test_program_prepare_answers_err_generic_on_a_non_zero_status_code():
     program_prepare(handle, code_size=0x0010)
     handle.lib.Xcp_MainFunction()
 
-    assert transmitted(handle)[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    response = transmitted(handle)
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0005, \
+        'expected XCP_GENERIC_DETAIL_PROGRAM_PREPARE_FAILED'
 
 
 def test_program_prepare_defers_through_the_pending_slot_and_keeps_passing_codesize():
