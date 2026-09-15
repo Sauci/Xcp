@@ -301,6 +301,19 @@ extern "C" {
  */
 #define XCP_E_IDENTIFICATION_NOT_GRANULAR (0x09u)
 
+/**
+ * @brief Xcp_UserCmdFunction set an SduLength greater than MAX_CTO.
+ * @details The response is discarded and the master is answered ERR_GENERIC carrying
+ * @ref XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.1.3.3 ends a packet's payload area at MAX_CTO-1, so a longer response has no position to
+ * occupy and cannot be transmitted.
+ * @note This error is not part of the specification. Det is where the person who can fix it sees
+ * it: the fault is in the integrator's own callback, and the master is told only that the command
+ * failed. 0x0A rather than a lower free value because XCP_E_EVENT_QUEUE_FULL already collides with
+ * AUTOSAR's XCP_E_INIT_FAILED at 0x04. DD131.
+ */
+#define XCP_E_USER_CMD_RESPONSE_TOO_LONG (0x0Au)
+
 /** @} */
 
 /**
