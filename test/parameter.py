@@ -94,7 +94,7 @@ def u32_from_array(data: bytearray, endianness: str):
 
 
 def u16_from_array(data: bytearray, endianness: str):
-    return int.from_bytes(data, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)
+    return int.from_bytes(data[:2], dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)
 
 
 def payload_to_array(payload, number_of_data_elements, element_size, byte_order):
