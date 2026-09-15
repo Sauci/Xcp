@@ -50,7 +50,7 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12574 passing, 30 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12944 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -411,7 +411,27 @@ property of every payload-bearing response — D6's eight-byte checksum DWORD an
 detail WORD both rely on it today — not of one function, and the next payload added may not be so
 comfortably inside the floor.
 
-> **Open.** Found while designing D17 (`2026-09-15-xcp-err-generic-detail-design.md` §5).
+> **Fixed.** The bound is checked where each length is chosen: `script/source_cfg.c.jinja2` refuses a
+> configuration whose own `max_cto` is below 8, and `Xcp_DTOCmdStdUserCmd` (`source/Xcp_Std.c`)
+> refuses an over-long callback response with `ERR_GENERIC` plus
+> `XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG` and a Det report. Design:
+> `2026-09-15-xcp-max-cto-bound-d18-design.md` (DD126–DD131).
+>
+> The entry understated it in one way and overstated it in another. Understated: `USER_CMD` let the
+> *integrator* set `SduLength` with no check at all, which no schema minimum could have protected —
+> that is the half this defect did not name. Overstated: the schema floor was never "comfortable".
+> `BUILD_CHECKSUM` hands the helper six bytes, not four (1.1/§1.6.1.2.9's reserved WORD at positions
+> 2,3 is part of the payload), so the largest error packet is 8 — exactly the floor, with no headroom
+> at all.
+>
+> Four findings recorded in that design's §5 rather than fixed here: `MAX_CTO mod AG = 0` and
+> `MAX_DTO mod AG = 0` (1.1/§1.6.1.1.1) are enforced only at `Xcp_Init`, so a violation reaches the
+> target instead of the build; `Xcp_CTOErrorMatrix` carries `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE`
+> in no row though 1.1 adds it to the STD rows and `GET_STATUS` already answers it;
+> `XCP_E_EVENT_QUEUE_FULL` (0x04) collides with AUTOSAR's `XCP_E_INIT_FAILED`; and a `USER_CMD`
+> reaching a build with no configured callback appears — traced through the code, not confirmed on
+> the wire — to transmit whatever the previous command left in the shared response buffer, the same
+> family as D2.
 
 ---
 

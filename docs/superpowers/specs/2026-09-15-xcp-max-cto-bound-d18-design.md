@@ -191,7 +191,7 @@ an oversight.
 
 ---
 
-## 5. Out of scope, and three findings recorded in passing
+## 5. Out of scope, and four findings recorded in passing
 
 Out of scope: `UPLOAD` and the block-transfer response (`source/Xcp.c`), already bounded by `maxCto`
 arithmetic since D1, and the central-invariant sweep across every site that sets `SduLength`.
@@ -227,3 +227,21 @@ SWS_Xcp §7.2.1 defines the latter; both are live, reported from `Xcp.c`'s event
 `Xcp_Init` respectively. A Det consumer can still separate them by API id, so the impact is
 confined to the id not being unique as AUTOSAR intends — but it is why DD131 picks 0x0A rather than
 continuing to fill low values.
+
+**Finding 4 — `USER_CMD` with no configured callback may transmit whatever the previous command
+left in the shared response buffer.** `Xcp_DTOCmdStdUserCmd`'s `userCmdFunction == NULL_PTR`
+branch (`source/Xcp_Std.c`) sets `result = XCP_E_PARAM_POINTER` and fills nothing into
+`Xcp_Internal.cto_response.pdu_info`, while `*responseExpected` was already set `TRUE`,
+unconditionally, at the top of the function. `Xcp_CanIfRxIndication` (`source/Xcp.c`) sets
+`successful_transmission_pending = response_expected` once for every dispatch outcome regardless
+of the handler's result, so the buffer is queued for transmission the same way a real response
+would be. That buffer, `Xcp_Internal.cto_response._packet`, is shared by every CTO response and is
+zero-initialised only at `Xcp_Init` (`source/Xcp.c`) — nothing clears it between commands. This is
+the same family as D2, which SP1 closed for unimplemented PIDs.
+
+**Traced through the code, not confirmed on the wire.** The existing test for this path,
+`test_user_cmd_function_calls_det_with_err_invalid_pointer_if_no_user_cmd_function_is_defined`
+(`test/user_cmd_test.py`), asserts only that Det receives `XCP_E_PARAM_POINTER`; nothing in it, or
+elsewhere in the suite, asserts what the mocked transport actually received, so nothing confirms or
+refutes the wire behaviour this finding describes. Recorded at exactly that confidence, the way
+Finding 1 above should have been from the start.

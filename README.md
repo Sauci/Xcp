@@ -346,6 +346,19 @@ Whether FREEZE may be requested at all is a module-level property, `freeze_suppo
 the master through bit 0 of `PAG_PROPERTIES` in the `GET_PAG_PROCESSOR_INFO` response. Requesting FREEZE on a slave that
 does not support it is answered with `ERR_MODE_NOT_VALID`.
 
+## User-defined commands
+`USER_CMD` (`0xF1`) is dispatched straight to `Xcp_UserCmdFunction` (`test/stub/Xcp_UserCmd.h`),
+which receives the request and builds the response itself: it writes the payload into the response
+`PduInfoType` and sets `SduLength` to what it wrote.
+
+That length is the only one in this module an integrator chooses, and it is bounded. XCP part 2
+§1.1.3.3 ends a packet's payload at `MAX_CTO-1`, so a response longer than `MAX_CTO` cannot be
+transmitted: it is **discarded rather than truncated** — a user-defined payload carries no length
+field, so a clamped response would look complete to the master — and the slave answers `ERR_GENERIC`
+carrying `XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG` (`interface/Xcp_Errors.h`), reporting
+`XCP_E_USER_CMD_RESPONSE_TOO_LONG` to Det for whoever wrote the callback. A response of exactly
+`MAX_CTO` bytes is legal and is transmitted unchanged.
+
 ## Flash programming
 The **PGM** command group is compiled out by default and is turned on by `programming.enabled` in the *JSON*
 configuration, exactly the way a declared segment turns on **PAG**. The generator then defines

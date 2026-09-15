@@ -11,7 +11,9 @@ slave derives (XCP part 2 - Protocol Layer Specification 1.1/1.6.4.1.1.4) and th
 needing one. These tests tie the two back together: a configuration this harness treats as ordinary
 must be one the schema accepts.
 
-Configurations the harness builds deliberately out of range -- max_cto=1, max_dto=5 in
+Configurations the harness builds deliberately invalid -- max_dto=5, out of the schema's own
+range, and max_cto=9/11 under WORD, 9/10 under DWORD, in range now that D18's generation guard
+refuses anything lower but still failing the address-granularity modulo relation, in
 asam_protocol_layer_test.py, which exist to exercise Xcp_Init's own runtime checks -- are not
 covered here, and should not be: they are invalid by design.
 """
