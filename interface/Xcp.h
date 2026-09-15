@@ -831,6 +831,8 @@ extern Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
  * SWS_Xcp_00856 overrides that for this module: disconnected state, but without forcing a device
  * reset. This module performs no reset itself -- an integrator wanting one performs it from within
  * this callback, which is the only place that knows what else is running on the ECU.
+ * @note A non-zero pStatusCode answers ERR_GENERIC, carrying
+ * @ref XCP_GENERIC_DETAIL_PROGRAM_RESET_FAILED as its detail WORD.
  */
 extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
 
