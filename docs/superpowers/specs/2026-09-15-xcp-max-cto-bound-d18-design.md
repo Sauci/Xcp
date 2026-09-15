@@ -191,7 +191,7 @@ an oversight.
 
 ---
 
-## 5. Out of scope, and four findings recorded in passing
+## 5. Out of scope, and five findings recorded in passing
 
 Out of scope: `UPLOAD` and the block-transfer response (`source/Xcp.c`), already bounded by `maxCto`
 arithmetic since D1, and the central-invariant sweep across every site that sets `SduLength`.
@@ -245,3 +245,36 @@ the same family as D2, which SP1 closed for unimplemented PIDs.
 elsewhere in the suite, asserts what the mocked transport actually received, so nothing confirms or
 refutes the wire behaviour this finding describes. Recorded at exactly that confidence, the way
 Finding 1 above should have been from the start.
+
+**Finding 5 — DD126's generation-time floor for `max_cto` has no matching ceiling, and the ceiling
+itself is stated three different ways.** `script/source_cfg.c.jinja2`'s new guard refuses
+`configuration.protocol_layer.max_cto < 8`; nothing in that file, and nothing anywhere else under
+`script/*.jinja2`, refuses a `max_cto` above any value. Three places disagree about what the bound
+above 8 actually is. `config/xcp.schema.json`'s `max_cto` object sets `"maximum": 256` (line 536)
+while its own `description` two lines above (line 533) reads "MAX_CTO shows the maximum length of
+a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper
+limit to 255." `source/Xcp_Internal.h` comments both `cto_response` and `event`'s
+`uint8 _packet[0x100u]` buffers (lines 555 and 560) "MAX_CTO is in range 8 to 255". And
+`Xcp_CTOCmdStdConnect` (`source/Xcp_Std.c:1771`) writes
+`Xcp_Internal.cto_response.pdu_info.SduDataPtr[0x03u] = Xcp_Ptr->general->maxCto;` — `maxCto` is
+`const uint16` (`interface/Xcp_Types.h:597`), assigned here into a single `uint8` response byte, so
+a configured `max_cto` of 256 (0x0100) would report as 0 in `CONNECT`'s own response.
+`test/parameter.py:17`'s shared `max_ctos` list — `(8, 128, 256)` — feeds this exact configuration
+into roughly two dozen test files through the `@pytest.mark.parametrize('max_cto', max_ctos)`
+pattern.
+
+**Confirmed by reading, not by running.** All of the above — both schema lines, both header
+comments, the `Connect` handler's single-byte write, `maxCto`'s declared width, and the
+`max_ctos` list's contents — were read directly from the cited files and line numbers. What was
+not run is the truncation itself, and the suite does not settle it either:
+`test/connect_test.py:182`'s `test_connect_sets_the_max_cto_byte_according_to_the_configured_value`
+is the only test that asserts `SduDataPtr[3]` — the `CONNECT` response's `MAX_CTO` byte — but its
+own `@pytest.mark.parametrize` (line 181) is `((8, 8), (16, 16), (32, 32))`, never 256.
+`test/connect_test.py:218`'s `test_connect_sets_all_remaining_bytes_to_trailing_value` is
+parametrised over the shared `max_ctos` list and so does build a `max_cto = 256` configuration, but
+it asserts only the trailing padding from byte 8 onward and never reads byte 3. No test in the
+suite builds `max_cto = 256` and asserts what `CONNECT` reports for it, so the truncation is
+inferred from the types that carry the value, not observed on a mocked wire. Nothing here is
+introduced by D18 — the schema's 256, both buffer comments' 255, the single-byte `CONNECT` write,
+and the parametrised 256 all predate this branch — it is recorded now because D18 is the change
+that added a floor beside a ceiling that was already unclear.

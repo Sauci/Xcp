@@ -410,8 +410,13 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
         }
         else
         {
-            /* Xcp_FillGenericErrorPacket finalizes the packet itself, so this must not run for the
-             * refused case: it would re-finalize at the stale length the callback set. */
+            /* This previously said a second finalize here "would re-finalize at the stale length
+             * the callback set" -- false: Xcp_FillGenericErrorPacket already finalizes at
+             * SduLength 4 (Xcp_FillErrorPacketWithData -> Xcp_FinalizeResPacket(0x02u + 2, ...)),
+             * so a trailing Xcp_FinalizeResPacket(pdu_info.SduLength, ...) in that branch would
+             * pass 4 right back and be idempotent. The if/else is structural clarity, not a
+             * correctness guard: it keeps each branch's single finalize visible at the point it
+             * happens, and no test can distinguish it from an unconditional trailing finalize. */
             Xcp_FinalizeResPacket(Xcp_Internal.cto_response.pdu_info.SduLength, &Xcp_Internal.cto_response.pdu_info);
         }
     }

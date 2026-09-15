@@ -2713,9 +2713,12 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
  * XCP_GENERIC_DETAIL_* codes in interface/Xcp_Errors.h, and design doc DD121-DD125 in
  * docs/superpowers/specs/2026-09-15-xcp-err-generic-detail-design.md.
  *
- * Shared rather than repeated at each of the five sites that answer ERR_GENERIC (DD125): one in
- * source/Xcp_Std.c and four in source/Xcp_Pgm.c. Xcp_FillErrorPacketWithData stays the single
- * place that knows an error packet's payload begins at byte 2.
+ * Shared rather than repeated at each of the six sites that answer ERR_GENERIC (DD125): two in
+ * source/Xcp_Std.c and four in source/Xcp_Pgm.c. This previously read "five sites... one in
+ * source/Xcp_Std.c", true when D17 wrote it; D18 added the USER_CMD refusal
+ * (Xcp_DTOCmdStdUserCmd), the second site in source/Xcp_Std.c, without updating the count.
+ * Xcp_FillErrorPacketWithData stays the single place that knows an error packet's payload begins
+ * at byte 2.
  *
  * The two-byte payload is inside the MAX_CTO floor the generation guard in
  * script/source_cfg.c.jinja2 enforces (D18, DD128). */

@@ -589,12 +589,14 @@ DD57 (`PROGRAM_RESET`) and DD76 (`UNLOCK`) took the same deviation for the same 
 §1.6.1.2.9's reserved WORD at positions 2,3 is part of the payload — so the largest error packet is
 8, exactly the schema floor, with no headroom at all. D18 supposed the floor was comfortable.
 
-Three findings are recorded in the design's §5 rather than fixed here: `MAX_CTO mod AG = 0` and
+Four findings are recorded in the design's §5 rather than fixed here: `MAX_CTO mod AG = 0` and
 `MAX_DTO mod AG = 0` (§1.6.1.1.1) enforced only at `Xcp_Init`, so a violation reaches the target
 rather than the build;
 `Xcp_CTOErrorMatrix` carrying `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` in no row though 1.1 adds it
-to the STD rows and `GET_STATUS` already answers it; and `XCP_E_EVENT_QUEUE_FULL` (0x04) colliding
-with AUTOSAR's `XCP_E_INIT_FAILED`.
+to the STD rows and `GET_STATUS` already answers it; `XCP_E_EVENT_QUEUE_FULL` (0x04) colliding
+with AUTOSAR's `XCP_E_INIT_FAILED`; and `USER_CMD` with no configured callback possibly
+transmitting whatever the previous command left in the shared response buffer, traced through the
+code but not confirmed on the wire.
 
 Design: `docs/superpowers/specs/2026-09-15-xcp-max-cto-bound-d18-design.md` (DD126-DD131).
 Plan: `docs/superpowers/plans/2026-09-15-xcp-max-cto-bound-d18.md`.
