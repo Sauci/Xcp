@@ -7,10 +7,16 @@ from .parameter import *
 from .conftest import XcpTest
 
 
-@pytest.mark.parametrize('max_cto, address_granularity', ((1, 'WORD'),
-                                                          (3, 'WORD'),
-                                                          (1, 'DWORD'),
-                                                          (3, 'DWORD')))
+# The values are at or above 8 and still fail the modulo: 9 % 2, 11 % 2, 9 % 4 and 10 % 4 are all
+# non-zero. Below 8 they cannot be generated at all -- an error packet carrying BUILD_CHECKSUM's
+# maximum block size needs MAX_CTO >= 8 (XCP part 2 1.1/1.6.1.2.9, D18), and
+# script/source_cfg.c.jinja2 refuses the configuration before Xcp_Init ever runs. This test's own
+# point is MAX_CTO not dividing the address granularity's element size, which these keep. Do not
+# simplify this back to 1 -- the same reason the max_dto sibling below carries.
+@pytest.mark.parametrize('max_cto, address_granularity', ((9, 'WORD'),
+                                                          (11, 'WORD'),
+                                                          (9, 'DWORD'),
+                                                          (10, 'DWORD')))
 def test_xcp_init_raises_e_init_failed_if_max_cto_parameter_does_not_fit_with_address_granularity(max_cto,
                                                                                                   address_granularity):
     handle = XcpTest(DefaultConfig(max_cto=max_cto, address_granularity=address_granularity))

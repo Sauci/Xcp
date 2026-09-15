@@ -2692,6 +2692,13 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
     pPduInfo->SduDataPtr[0x00u] = XCP_PID_ERROR;
     pPduInfo->SduDataPtr[0x01u] = errorCode;
 
+    /* This loop has no bound of its own, and Xcp_FinalizeResPacket cannot add one afterwards: its
+     * padding loop runs from startIndex to maxCto and simply does not execute when startIndex is
+     * already past it. The bound is enforced at generation instead --
+     * script/source_cfg.c.jinja2 refuses a configuration whose max_cto cannot hold the largest
+     * payload any caller here passes, which is BUILD_CHECKSUM's six bytes from position 2
+     * (XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.9, 1.1/1.1.3.3). A larger payload
+     * added later must raise that floor in the same commit. D18, DD126-DD128. */
     for (idx = 0x00u; idx < dataLength; idx++)
     {
         pPduInfo->SduDataPtr[0x02u + idx] = pData[idx];
@@ -2708,7 +2715,10 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
  *
  * Shared rather than repeated at each of the five sites that answer ERR_GENERIC (DD125): one in
  * source/Xcp_Std.c and four in source/Xcp_Pgm.c. Xcp_FillErrorPacketWithData stays the single
- * place that knows an error packet's payload begins at byte 2. */
+ * place that knows an error packet's payload begins at byte 2.
+ *
+ * The two-byte payload is inside the MAX_CTO floor the generation guard in
+ * script/source_cfg.c.jinja2 enforces (D18, DD128). */
 void Xcp_FillGenericErrorPacket(const uint16 detail, PduInfoType *pPduInfo)
 {
     uint8 data[0x02u];
