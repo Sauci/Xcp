@@ -93,6 +93,10 @@ def u32_from_array(data: bytearray, endianness: str):
     return int.from_bytes(data, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)
 
 
+def u16_from_array(data: bytearray, endianness: str):
+    return int.from_bytes(data, dict(BIG_ENDIAN='big', LITTLE_ENDIAN='little')[endianness], signed=False)
+
+
 def payload_to_array(payload, number_of_data_elements, element_size, byte_order):
     return struct.unpack('{}{}'.format('>' if byte_order == 'BIG_ENDIAN' else '<',
                                        {1: 'B', 2: 'H', 4: 'I'}[element_size] *
