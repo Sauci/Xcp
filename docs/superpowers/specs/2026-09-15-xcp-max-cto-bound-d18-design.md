@@ -162,6 +162,15 @@ identical `'raise' is undefined`, so only a paired success can show which guard 
 unchanged, which is where an off-by-one in the comparison would show; one returning less is
 untouched.
 
+**One existing test has to move above the floor.**
+`test_xcp_init_raises_e_init_failed_if_max_cto_parameter_does_not_fit_with_address_granularity`
+(`test/asam_protocol_layer_test.py`) configures `max_cto` of 1 and 3 to reach `Xcp_Init`'s modulo
+check, and DD126's guard refuses to generate those. Its parametrisation moves to values that are
+at or above 8 and still violate the relation — 9 and 11 under `WORD`, 9 and 10 under `DWORD` — which
+keeps the test's own point intact. Its `max_dto` sibling directly below already carries a comment
+explaining the identical adjustment for an unrelated generator guard, ending "Do not simplify this
+back to 1"; the `max_cto` case now needs the same note.
+
 **No test drives an over-long error payload**, and that is a consequence of DD126 rather than a
 gap: with the generation guard in place no schema-valid *or* test-fixture configuration can build a
 module whose constants exceed the bound. Stated here so the absence reads as a decision rather than
@@ -174,12 +183,24 @@ an oversight.
 Out of scope: `UPLOAD` and the block-transfer response (`source/Xcp.c`), already bounded by `maxCto`
 arithmetic since D1, and the central-invariant sweep across every site that sets `SduLength`.
 
-**Finding 1 — `MAX_CTO mod AG = 0` and `MAX_DTO mod AG = 0` are enforced nowhere.** 1.1/§1.6.1.1.1
-states both as relations that "must always be fulfilled" (read from the PDF's text layer; 1.0 has
-them too). Neither `config/xcp.schema.json` nor `script/source_cfg.c.jinja2` constrains `max_cto` or
-`max_dto` against `address_granularity`, and the combination is reachable with a schema-valid
-configuration: `max_cto: 10`, which `WRITE_DAQ_MULTIPLE` requires, violates the relation under
-`DWORD` granularity. Unlike D18 this one is not latent behind a floor.
+**Finding 1 — `MAX_CTO mod AG = 0` and `MAX_DTO mod AG = 0` are enforced at `Xcp_Init` and nowhere
+earlier.** 1.1/§1.6.1.1.1 states both as relations that "must always be fulfilled" (read from the
+PDF's text layer; 1.0 has them too).
+
+**Corrected before implementation began.** This finding first read "enforced nowhere", which is
+false: `Xcp_Init` tests `(maxCto % element_size) == 0` and `(maxDto % element_size) == 0`
+(`source/Xcp.c:1262`) and reports `XCP_E_INIT_FAILED` when either fails, with a parametrised test
+per relation in `test/asam_protocol_layer_test.py`. The search behind the original claim covered
+`config/xcp.schema.json` and `script/source_cfg.c.jinja2` and stopped there — the same
+stopped-too-early mistake as reading a table from one revision, in a different dress. It surfaced
+in this plan's own pre-flight scan, because those tests configure `max_cto` of 1 and 3 deliberately
+and the generation guard DD126 adds would have refused to build them.
+
+What survives, much narrower: neither the schema nor the generator catches the violation, so it
+reaches the target and fails there — a Det report and a module that never initialises — where the
+neighbouring `WRITE_DAQ_MULTIPLE`/`MAX_CTO >= 10` constraint in the same template is refused at
+generation. Whether an init-time refusal is the right place for it is a question, not a defect:
+AUTOSAR requires `Xcp_Init` to report `XCP_E_INIT_FAILED` for a configuration it cannot accept.
 
 **Finding 2 — `Xcp_CTOErrorMatrix` carries `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` in no row.**
 1.1 adds `0x33` to the STD rows (`CONNECT`, `GET_STATUS`, `GET_ID`, `UNLOCK`, `USER_CMD` and others,

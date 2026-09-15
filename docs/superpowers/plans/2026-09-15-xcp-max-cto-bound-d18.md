@@ -29,10 +29,16 @@ first; every decision below argues from it.
   `Xcp_BuildChecksumFillMaxBlockSize` (`source/Xcp_Std.c`) hands the helper **six** bytes — the
   reserved WORD 1.1/§1.6.1.2.9 puts at positions 2,3 plus the DWORD at 4..7 — written flat from
   position 2.
-- **Tests run in Docker only.** A host run is a false pass. Build the image once, then run:
+- **Tests run in Docker only.** A host run is a false pass. The image `xcp-test:local` is already
+  built from this branch's `Dockerfile`; do not rebuild it. The house invocation, used by every
+  prior sub-project in this repository, sets the cache variable with `cmake` and then runs
+  `./test.sh` (which prunes stale CFFI module directories and merges coverage — running `ctest`
+  directly skips both):
   ```bash
-  docker build -t xcp-test . && docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test ./test.sh
+  docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:local sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="" && cd .. && ./test.sh'
   ```
+  Narrow a run by putting a `-k` expression in the cache variable, semicolon-separated:
+  `-DXCP_PYTEST_ARGS="-k;max_cto_bound"`.
 - **`XCP_PYTEST_ARGS` is a CMake cache variable** (`CMakeLists.txt:17`) and therefore **sticky**: it
   persists in `build/` until explicitly reset. To narrow a run, configure it once inside the
   container; to go back to the full suite, reset it with `-DXCP_PYTEST_ARGS=`. The final
@@ -120,7 +126,7 @@ constants exceed the bound, which is the point of enforcing it at generation (sp
 - [ ] **Step 2: Run the tests and verify the first fails**
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="-k;max_cto_bound" && make all && LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/project/build ctest -V --no-tests=error'
+docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:local sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="-k;max_cto_bound" && cd .. && ./test.sh'
 ```
 
 Expected: `test_generation_refuses_a_max_cto_below_the_error_payload_floor` FAILS with
@@ -150,7 +156,33 @@ neighbouring guards are.
 
 Same command as Step 2. Expected: both tests in `max_cto_bound_test.py` PASS.
 
-- [ ] **Step 5: Name the guard where the arithmetic lives**
+- [ ] **Step 5: Move the init test above the floor**
+
+`test_xcp_init_raises_e_init_failed_if_max_cto_parameter_does_not_fit_with_address_granularity`
+(`test/asam_protocol_layer_test.py`) configures `max_cto` of 1 and 3 to reach `Xcp_Init`'s
+`(maxCto % element_size) == 0` check (`source/Xcp.c:1262`). The guard you just added refuses to
+generate those, so the test would now fail at `XcpTest(...)` construction instead of exercising what
+it exists to exercise. Move its parametrisation above the floor — the values must still violate the
+relation:
+
+```python
+# The values are at or above 8 and still fail the modulo: 9 % 2, 11 % 2, 9 % 4 and 10 % 4 are all
+# non-zero. Below 8 they cannot be generated at all -- an error packet carrying BUILD_CHECKSUM's
+# maximum block size needs MAX_CTO >= 8 (XCP part 2 1.1/1.6.1.2.9, D18), and
+# script/source_cfg.c.jinja2 refuses the configuration before Xcp_Init ever runs. This test's own
+# point is MAX_CTO not dividing the address granularity's element size, which these keep. Do not
+# simplify this back to 1 -- the same reason the max_dto sibling below carries.
+@pytest.mark.parametrize('max_cto, address_granularity', ((9, 'WORD'),
+                                                          (11, 'WORD'),
+                                                          (9, 'DWORD'),
+                                                          (10, 'DWORD')))
+```
+
+Leave the body of the test and its `max_dto` sibling untouched. If a moved case now fails for a
+reason other than `XCP_E_INIT_FAILED` — a different generator guard, say — report it rather than
+tuning the numbers until it passes: the controller needs to know.
+
+- [ ] **Step 6: Name the guard where the arithmetic lives**
 
 In `source/Xcp.c`, immediately above `Xcp_FillErrorPacketWithData`'s copy loop:
 
@@ -171,20 +203,20 @@ And above `Xcp_FillGenericErrorPacket`'s body, one line inside the existing comm
  * script/source_cfg.c.jinja2 enforces (D18, DD128).
 ```
 
-- [ ] **Step 6: Run the full suite with the cache cleared**
+- [ ] **Step 7: Run the full suite with the cache cleared**
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS= && cd .. && ./test.sh'
+docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:local sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="" && cd .. && ./test.sh'
 ```
 
 Expected: the whole suite passes. Comments do not change behaviour, but the guard does — a
 configuration somewhere in the fixtures may set a `max_cto` below 8, and if one does, that is the
 guard working and the fixture needs correcting, not the guard.
 
-- [ ] **Step 7: Commit and push**
+- [ ] **Step 8: Commit and push**
 
 ```bash
-git add test/max_cto_bound_test.py script/source_cfg.c.jinja2 source/Xcp.c
+git add test/max_cto_bound_test.py test/asam_protocol_layer_test.py script/source_cfg.c.jinja2 source/Xcp.c
 git commit -m "fix: refuse a MAX_CTO that cannot hold the largest error payload"
 git push
 ```
@@ -290,7 +322,7 @@ def test_user_cmd_transmits_a_response_exactly_at_max_cto():
 - [ ] **Step 2: Run the tests and verify they fail**
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="-k;user_cmd" && make all && LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/project/build ctest -V --no-tests=error'
+docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:local sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="-k;user_cmd" && cd .. && ./test.sh'
 ```
 
 Expected: `test_user_cmd_refuses_a_response_longer_than_max_cto` FAILS at the CFFI compile step with
@@ -426,7 +458,7 @@ the checksum callback's, describing an address range this function does not take
 - [ ] **Step 9: Run the full suite with the cache cleared**
 
 ```bash
-docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS= && cd .. && ./test.sh'
+docker run --rm --user "$(id -u):$(id -g)" --env HOME=/tmp --volume "$PWD:/usr/project" --workdir /usr/project xcp-test:local sh -c 'cd build && cmake .. -DXCP_ENABLE_TEST=ON -DXCP_PYTEST_ARGS="" && cd .. && ./test.sh'
 ```
 
 Expected: the whole suite passes. Record the reported test count — Task 3 updates the roadmap with
@@ -497,9 +529,9 @@ In `docs/superpowers/specs/2026-08-29-xcp-part2-roadmap.md` §3, replace D18's c
 > at all.
 >
 > Three findings recorded in that design's §5 rather than fixed here: `MAX_CTO mod AG = 0` and
-> `MAX_DTO mod AG = 0` (1.1/§1.6.1.1.1) are enforced nowhere and are reachable with a schema-valid
-> configuration; `Xcp_CTOErrorMatrix` carries `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` in no row
-> though 1.1 adds it to the STD rows and `GET_STATUS` already answers it; and
+> `MAX_DTO mod AG = 0` (1.1/§1.6.1.1.1) are enforced only at `Xcp_Init`, so a violation reaches the
+> target instead of the build; `Xcp_CTOErrorMatrix` carries `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE`
+> in no row though 1.1 adds it to the STD rows and `GET_STATUS` already answers it; and
 > `XCP_E_EVENT_QUEUE_FULL` (0x04) collides with AUTOSAR's `XCP_E_INIT_FAILED`.
 ```
 
@@ -556,7 +588,8 @@ DD57 (`PROGRAM_RESET`) and DD76 (`UNLOCK`) took the same deviation for the same 
 8, exactly the schema floor, with no headroom at all. D18 supposed the floor was comfortable.
 
 Three findings are recorded in the design's §5 rather than fixed here: `MAX_CTO mod AG = 0` and
-`MAX_DTO mod AG = 0` (§1.6.1.1.1) enforced nowhere and reachable with a schema-valid configuration;
+`MAX_DTO mod AG = 0` (§1.6.1.1.1) enforced only at `Xcp_Init`, so a violation reaches the target
+rather than the build;
 `Xcp_CTOErrorMatrix` carrying `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` in no row though 1.1 adds it
 to the STD rows and `GET_STATUS` already answers it; and `XCP_E_EVENT_QUEUE_FULL` (0x04) colliding
 with AUTOSAR's `XCP_E_INIT_FAILED`.
