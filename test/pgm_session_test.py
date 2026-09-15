@@ -552,6 +552,8 @@ def test_program_prepare_answers_err_generic_on_a_non_zero_status_code():
 
     response = transmitted(handle)
     assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    # 1.1/1.1.3.3's detail WORD. Asserted at the mock because transmitted() returns a decoded
+    # tuple; asserted at all because a full MAX_CTO frame makes bytes 2-3 readable regardless.
     assert handle.can_if_transmit.call_args[0][1].SduLength == 4
     assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0005, \
         'expected XCP_GENERIC_DETAIL_PROGRAM_PREPARE_FAILED'
