@@ -206,7 +206,7 @@ This section previously read "absent" outright, stale since SP4 shipped; correct
 | RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | **Complete, SP5-RESUME** (`2026-09-10-xcp-daq-resume-design.md`, DD103–DD107; see that sub-project's own entry in §4). `XCP_CONNECTION_STATE_RESUME` is declared but deliberately never entered. `Xcp_ResumeComplete` briefly wrote it on every committed resume; a security fix on 2026-09-10 (DD105's own recorded correction) removed that write after finding both connection gates in `source/Xcp.c` test `!= XCP_CONNECTION_STATE_DISCONNECTED` rather than `== XCP_CONNECTION_STATE_CONNECTED`, so the write alone admitted the entire command set — `DOWNLOAD`, `SET_MTA`, `FREE_DAQ`, the programming commands included — to any node on the bus with no `CONNECT` ever received. RESUME mode needs none of it: DTO transmission was never session-gated, and `GET_STATUS` reports RESUME through session status bit 7 instead. `Xcp_ResumeComplete` still does the rest — called by the integrator once its own `Xcp_Restore*` sequence has repopulated a DAQ list from non-volatile memory this module never reads itself (DD103, the mirror of SP5-NV's own four accessors) — just not that one write. This row previously said the state is now entered, true only until the fix above; corrected here. `SET_REQUEST`'s `STORE_DAQ_REQ_RESUME` (mode bit 2) is accepted and `GET_DAQ_PROCESSOR_INFO` reports `RESUME_SUPPORTED` set — both were previously refused/clear specifically so the two facts stayed coherent (D9), and SP5-RESUME reverses both together for the identical reason. `SET_DAQ_LIST_MODE` is unaffected: it still does not reject its own RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV — 1.1 marks that bit don't-care, and the slave tolerates it without honouring it; only `Xcp_ResumeComplete` ever sets a list's own RESUME/RUNNING mode bits |
 | Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x06), the latter added in SP2a and configurable through `overload_indication`. `EV_CLEAR_DAQ` (0x01) and `EV_STORE_DAQ` (0x02) added in SP5-NV. `EV_RESUME_MODE` (0x00) added in SP5-RESUME, queued by `Xcp_ResumeComplete`. `EV_CMD_PENDING` was also listed absent here, which was already stale independent of this row's own RESUME correction — this row's own §2.6 neighbour above has read `done — shipped in SP4` since before SP5-RESUME existed. Absent: `EV_SESSION_TERMINATED`, `EV_USER`, `EV_TRANSPORT` |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
-| Extended error payloads | §1.1.3.3 | **done.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`), and `BUILD_CHECKSUM` attaches the maximum block size to its `ERR_OUT_OF_RANGE` (`source/Xcp_Std.c`, D6). One gap remains and is tracked as D17: `ERR_GENERIC`'s own implementation-specific WORD is never attached at any of its five call sites. This row previously read a blanket "absent", which overstated the gap, then "partial" while D6 was open |
+| Extended error payloads | §1.1.3.3 | **done.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`), and `BUILD_CHECKSUM` attaches the maximum block size to its `ERR_OUT_OF_RANGE` (`source/Xcp_Std.c`, D6). `ERR_GENERIC` attaches its own implementation-specific WORD at all five sites (`source/Xcp.c`'s `Xcp_FillGenericErrorPacket`, D17). Both payload-bearing codes 1.1/§1.1.3.3 defines are now implemented. This row previously read a blanket "absent", which overstated the gap, then "partial" while D6 was open |
 
 **Open: per-segment checksum configuration.** The AML in §2.1 declares checksum configuration
 **per segment** — a `CHECKSUM` block carrying type, `MAX_BLOCK_SIZE` and `EXTERNAL_FUNCTION`
@@ -386,7 +386,15 @@ Not folded into D6: it touches `UNLOCK` and the PGM group rather than the checks
 deciding what the WORD should contain is a design question of its own — the specification leaves
 the value implementation-specific, so this module would be defining a private error vocabulary.
 
-> **Open.** Found while designing D6 (`2026-09-14-xcp-build-checksum-d6-design.md` §6).
+> **Fixed.** All five sites answer through `Xcp_FillGenericErrorPacket` (`source/Xcp.c`), carrying
+> one of five module-defined `XCP_GENERIC_DETAIL_*` codes (`interface/Xcp_Errors.h`). Design:
+> `2026-09-15-xcp-err-generic-detail-design.md` (DD121–DD125).
+>
+> The integrator's own `pStatusCode` is deliberately **not** forwarded (DD121): `interface/Xcp.h`
+> documents it only as zero-success/non-zero-failure and constrains nothing further, so putting it
+> on the wire would publish a value this module neither defines nor controls. What the master gains
+> is which condition fired — in particular telling a `PROGRAM_START` refused by the module's own
+> state gate from one refused by the integrator.
 
 ---
 
