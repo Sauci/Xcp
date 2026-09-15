@@ -116,17 +116,17 @@
 /*------------------------------------------------------------------------------------------------*/
 /* Detail codes for ERR_GENERIC's extended payload.                                               */
 /*                                                                                                */
-/* NOT ASAM-DEFINED. Everything above this fence is a code the specification names and numbers.    */
-/* These are not: XCP part 2 - Protocol Layer Specification 1.1/1.1.3.3 says only that an          */
-/* ERR_GENERIC packet "contains an implementation specific slave device error code as WORD as      */
-/* additional information", leaving the value to whoever writes the slave. This module is that     */
-/* implementation, and these are its values. A master decodes them against THIS header, not        */
-/* against the specification. Design doc DD121-DD124,                                              */
-/* docs/superpowers/specs/2026-09-15-xcp-err-generic-detail-design.md.                             */
+/* NOT ASAM-DEFINED. Everything above this fence is a code the specification names and numbers.   */
+/* These are not: XCP part 2 - Protocol Layer Specification 1.1/1.1.3.3 says only that an         */
+/* ERR_GENERIC packet "contains an implementation specific slave device error code as WORD as     */
+/* additional information", leaving the value to whoever writes the slave. This module is that    */
+/* implementation, and these are its values. A master decodes them against THIS header, not       */
+/* against the specification. Design doc DD121-DD124,                                             */
+/* docs/superpowers/specs/2026-09-15-xcp-err-generic-detail-design.md.                            */
 /*                                                                                                */
-/* 0x0000 is reserved and never emitted, so a zeroed or stale buffer cannot decode as a valid      */
-/* detail code (DD123, the same reasoning as protocol_layer.checksum_max_block_size's minimum      */
-/* of 1).                                                                                          */
+/* 0x0000 is reserved and never emitted, so a zeroed or stale buffer cannot decode as a valid     */
+/* detail code (DD123, the same reasoning as protocol_layer.checksum_max_block_size's minimum     */
+/* of 1).                                                                                         */
 /*------------------------------------------------------------------------------------------------*/
 
 /**
