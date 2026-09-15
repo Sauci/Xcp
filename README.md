@@ -355,9 +355,12 @@ That length is the only one in this module an integrator chooses, and it is boun
 §1.1.3.3 ends a packet's payload at `MAX_CTO-1`, so a response longer than `MAX_CTO` cannot be
 transmitted: it is **discarded rather than truncated** — a user-defined payload carries no length
 field, so a clamped response would look complete to the master — and the slave answers `ERR_GENERIC`
-carrying `XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG` (`interface/Xcp_Errors.h`), reporting
-`XCP_E_USER_CMD_RESPONSE_TOO_LONG` to Det for whoever wrote the callback. A response of exactly
-`MAX_CTO` bytes is legal and is transmitted unchanged.
+carrying `XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG` (`interface/Xcp_Errors.h`). That happens
+whatever the callback returns: a failure return does not exempt the `SduLength` it has already
+written. What Det receives does depend on it — `XCP_E_USER_CMD_RESPONSE_TOO_LONG` when the callback
+reported success and merely overran, or the callback's own error code when it failed, so a genuine
+failure is not masked by the symptom it produced. A response of exactly `MAX_CTO` bytes is legal and
+is transmitted unchanged.
 
 ## Flash programming
 The **PGM** command group is compiled out by default and is turned on by `programming.enabled` in the *JSON*

@@ -12,10 +12,12 @@ needing one. These tests tie the two back together: a configuration this harness
 must be one the schema accepts.
 
 Configurations the harness builds deliberately invalid -- max_dto=5, out of the schema's own
-range, and max_cto=9/11 under WORD, 9/10 under DWORD, in range now that D18's generation guard
-refuses anything lower but still failing the address-granularity modulo relation, in
-asam_protocol_layer_test.py, which exist to exercise Xcp_Init's own runtime checks -- are not
-covered here, and should not be: they are invalid by design.
+range, and max_cto=9/11 under WORD, 9/10 under DWORD, in range but still failing the
+address-granularity modulo relation, in asam_protocol_layer_test.py, which exist to exercise
+Xcp_Init's own runtime checks -- are not covered here, and should not be: they are invalid by
+design. This paragraph named max_cto=1 until D18 added a generation guard refusing any max_cto
+below 8: those values could no longer be built at all, so that test moved above the floor while
+keeping the modulo violation that is its point.
 """
 
 import json
