@@ -205,7 +205,8 @@ uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pP
      * command's own refusal, and the two must not be conflated again. */
     if (Xcp_Internal.pgm_state != XCP_PGM_IDLE)
     {
-        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_PROGRAMMING_ALREADY_ACTIVE,
+                                   &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {
