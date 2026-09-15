@@ -414,7 +414,9 @@ carrying `ERR_PGM_ACTIVE` in the specification's error matrix is refused with it
 `GET_SEED` and `UNLOCK` — while the commands XCP part 2 §1.6.5.1.1 requires throughout a programming sequence
 (`SET_MTA`, `UPLOAD`, `BUILD_CHECKSUM` and the **PGM** commands themselves) stay available. A second `PROGRAM_START`
 inside an open session is answered `ERR_GENERIC`, the code §1.6.5.1.1 names for a slave "not in a state which permits
-programming".
+programming". Each of these `ERR_GENERIC` responses, and `UNLOCK`'s own on a failed key calculation, carries a
+distinct implementation-specific code as that response's WORD — the `XCP_GENERIC_DETAIL_*` definitions in
+`interface/Xcp_Errors.h`, five in total.
 
 No device reset is performed by this module. §1.6.5.1.4 suggests a hardware reset "usually" happens at `PROGRAM_RESET`;
 AUTOSAR SWS_Xcp_00856 overrides that, so the slave goes to the disconnected state and nothing else. An integrator who

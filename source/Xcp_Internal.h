@@ -934,6 +934,7 @@ extern Xcp_StateType Xcp_State;
 void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo);
 void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo);
 void Xcp_FillErrorPacketWithData(const uint8 errorCode, const uint8 *pData, const uint8 dataLength, PduInfoType *pPduInfo);
+void Xcp_FillGenericErrorPacket(const uint16 detail, PduInfoType *pPduInfo);
 uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag);
 uint8_least Xcp_GetNumberOfAlignmentBytes(uint8_least alignmentByteIndex, uint8_least elementSize, uint8 maxCto);
 void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrderType endianness);

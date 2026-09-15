@@ -2700,6 +2700,24 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
     Xcp_FinalizeResPacket((PduLengthType)(0x02u + dataLength), pPduInfo);
 }
 
+/* XCP part 2 - Protocol Layer Specification 1.1/1.1.3.3 gives ERR_GENERIC an extended payload of
+ * its own: "the error packet contains an implementation specific slave device error code as WORD
+ * as additional information". The value is this module's to define -- see the fenced block of
+ * XCP_GENERIC_DETAIL_* codes in interface/Xcp_Errors.h, and design doc DD121-DD125 in
+ * docs/superpowers/specs/2026-09-15-xcp-err-generic-detail-design.md.
+ *
+ * Shared rather than repeated at each of the five sites that answer ERR_GENERIC (DD125): one in
+ * source/Xcp_Std.c and four in source/Xcp_Pgm.c. Xcp_FillErrorPacketWithData stays the single
+ * place that knows an error packet's payload begins at byte 2. */
+void Xcp_FillGenericErrorPacket(const uint16 detail, PduInfoType *pPduInfo)
+{
+    uint8 data[0x02u];
+
+    Xcp_CopyFromU16WithOrder(detail, &data[0x00u], Xcp_Ptr->general->byteOrder);
+
+    Xcp_FillErrorPacketWithData(XCP_E_ASAM_GENERIC, data, sizeof(data), pPduInfo);
+}
+
 void Xcp_BlockTransferAbort(void)
 {
     Xcp_Internal.block_transfer.requested_elements = 0x00u;

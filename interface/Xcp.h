@@ -811,7 +811,7 @@ Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId);
  * @note XCP part 2 - Protocol Layer Specification 1.1/1.6.5.1.1 permits implementation-specific
  * preconditions -- "slave device in a secure physical state, additional code downloaded" -- and
  * names ERR_GENERIC as the answer when they are unmet. A non-zero pStatusCode produces exactly
- * that.
+ * that, carrying @ref XCP_GENERIC_DETAIL_PROGRAM_START_FAILED as its detail WORD.
  */
 extern Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
 
@@ -831,6 +831,8 @@ extern Std_ReturnType Xcp_ProgramStart(uint8 *pStatusCode);
  * SWS_Xcp_00856 overrides that for this module: disconnected state, but without forcing a device
  * reset. This module performs no reset itself -- an integrator wanting one performs it from within
  * this callback, which is the only place that knows what else is running on the ECU.
+ * @note A non-zero pStatusCode answers ERR_GENERIC, carrying
+ * @ref XCP_GENERIC_DETAIL_PROGRAM_RESET_FAILED as its detail WORD.
  */
 extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
 
@@ -860,7 +862,8 @@ extern Std_ReturnType Xcp_ProgramReset(uint8 *pStatusCode);
  * session, and this callback is reached the same way whether or not one is open.
  * @note 1.1/1.6.5.2.3: "The slave device has to make sure that the target memory area is available
  * and it is in a operational state which permits the download of code." A non-zero pStatusCode
- * answers ERR_GENERIC, exactly as it does for @ref Xcp_ProgramStart.
+ * answers ERR_GENERIC, exactly as it does for @ref Xcp_ProgramStart, carrying
+ * @ref XCP_GENERIC_DETAIL_PROGRAM_PREPARE_FAILED as its detail WORD.
  */
 extern Std_ReturnType Xcp_ProgramPrepare(void *address, uint16 codeSize, uint8 *pStatusCode);
 

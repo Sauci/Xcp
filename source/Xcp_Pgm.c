@@ -205,7 +205,8 @@ uint8 Xcp_DTOCmdPgmProgramStart(boolean *responseExpected, const PduInfoType *pP
      * command's own refusal, and the two must not be conflated again. */
     if (Xcp_Internal.pgm_state != XCP_PGM_IDLE)
     {
-        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_PROGRAMMING_ALREADY_ACTIVE,
+                                   &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {
@@ -1844,7 +1845,8 @@ static void Xcp_PgmCompleteProgramStart(uint8 statusCode)
          * nothing writes the field in between, so the assignment stored a value the field already
          * held. Deleted rather than left as a comment describing a module that no longer exists,
          * the same way Xcp_PgmAbandonPendingCommand's equivalent was. */
-        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_PROGRAM_START_FAILED,
+                                   &Xcp_Internal.cto_response.pdu_info);
     }
 
     /* Publishes for both outcomes alike, matching the STORE_CAL_REQ path in Xcp_MainFunction. */
@@ -1948,7 +1950,8 @@ static void Xcp_PgmCompleteProgramReset(uint8 statusCode)
          * ERR_GENERIC, matching Xcp_PgmCompleteProgramStart's own failure path; nothing about the
          * session or the connection changes -- there is no positive response here to hang a
          * disconnect off of, and the master may simply try again. */
-        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_PROGRAM_RESET_FAILED,
+                                   &Xcp_Internal.cto_response.pdu_info);
     }
 
     /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */
@@ -1971,7 +1974,8 @@ static void Xcp_PgmCompleteProgramPrepare(uint8 statusCode)
         /* 1.1/1.6.5.2.3: "The slave device has to make sure that the target memory area is
          * available and it is in a operational state which permits the download of code. If not,
          * a ERR_GENERIC will be returned." */
-        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_PROGRAM_PREPARE_FAILED,
+                                   &Xcp_Internal.cto_response.pdu_info);
     }
 
     /* Publishes for both outcomes alike, matching Xcp_PgmCompleteProgramStart above. */

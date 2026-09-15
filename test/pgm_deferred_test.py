@@ -305,7 +305,13 @@ def test_a_failing_integrator_yields_err_generic_and_leaves_the_session_closed()
     program_start(handle)
     handle.lib.Xcp_MainFunction()
 
-    assert transmitted(handle)[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    response = transmitted(handle)
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    # 1.1/1.1.3.3's detail WORD. Asserted at the mock because transmitted() returns a decoded
+    # tuple; asserted at all because a full MAX_CTO frame makes bytes 2-3 readable regardless.
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0003, \
+        'expected XCP_GENERIC_DETAIL_PROGRAM_START_FAILED'
 
     # Confirms the ERR_GENERIC response before trying again: the transmit pipeline carries one
     # frame at a time (SWS_Xcp_00859), and an unconfirmed CTO response would leave the second
@@ -657,7 +663,11 @@ def test_a_failing_program_reset_yields_err_generic_and_does_not_disconnect():
     program_reset(handle)
     handle.lib.Xcp_MainFunction()
 
-    assert transmitted(handle)[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    response = transmitted(handle)
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0004, \
+        'expected XCP_GENERIC_DETAIL_PROGRAM_RESET_FAILED'
 
     handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF8, 0x00, 0x01)))

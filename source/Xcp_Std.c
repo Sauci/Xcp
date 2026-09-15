@@ -960,7 +960,8 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                          * anyway", and this UNLOCK branch follows that one specifically, rather than a
                          * listed code that would misattribute an internal failure to the master's own
                          * request. */
-                        Xcp_FillErrorPacket(XCP_E_ASAM_GENERIC, &Xcp_Internal.cto_response.pdu_info);
+                        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_KEY_CALCULATION_FAILED,
+                                                   &Xcp_Internal.cto_response.pdu_info);
                     }
 
                     /* Discard the key buffer, as we received a full key. */
