@@ -174,8 +174,24 @@ is exercised today only by `pgm_session_test.py:796`, the test just excluded. It
 of its own rather than borrowing one, so this adds a test for that condition, asserting the code,
 the length and the detail value.
 
-**Byte order.** At least one site is parametrized over both byte orders so the WORD's encoding is
-checked against the configured order rather than the host's.
+**Byte order: no parametrized case, and the reason is recorded rather than assumed.** An earlier
+draft of this section required "at least one site parametrized over both byte orders". That
+requirement is withdrawn after measuring what it would cost.
+
+None of the three affected files parametrizes byte order today — zero occurrences across all of
+them — and every endianness reference in the PGM files is a hardcoded `'LITTLE_ENDIAN'`, including
+`pgm_session_test.py`'s own `program_prepare()` helper and the DAQ setup sequences in
+`pgm_deferred_test.py`. Adding the axis would mean threading a configuration parameter through
+helpers that three files import from one another, or hardcoding the opposite order in one test
+while its file's conventions assume the other.
+
+That cost buys nothing this change needs. The WORD is written by `Xcp_CopyFromU16WithOrder`, the
+same call `GET_STATUS` already uses for the session configuration id, and D6 already exercises the
+sibling `Xcp_CopyFromU32WithOrder` across both orders in `build_checksum_test.py`. A byte-order case
+here would test that helper a third time, not anything this defect introduces. `UNLOCK`'s request
+carries no multi-byte field either, so such a test could only observe the response encoding.
+
+The five amended sites and the new one all run under the suite's default `LITTLE_ENDIAN`.
 
 ---
 
