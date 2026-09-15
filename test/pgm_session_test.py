@@ -966,3 +966,33 @@ def test_connect_does_not_end_a_session_it_did_not_interrupt():
 
     assert send(handle, (0xFF, 0x00))[0:2] == (0xFE, 0x10), \
         'CONNECT must be refused ERR_CMD_BUSY while a PROGRAM_START is still pending'
+
+
+def test_a_second_program_start_reports_the_session_already_active():
+    """PROGRAM_START refused by this module's own `if (pgm_state != XCP_PGM_IDLE)` gate
+    (source/Xcp_Pgm.c) carries XCP_GENERIC_DETAIL_PROGRAMMING_ALREADY_ACTIVE (0x0002), which is
+    what distinguishes it from a PROGRAM_START the INTEGRATOR refused (0x0003,
+    XCP_GENERIC_DETAIL_PROGRAM_START_FAILED). Both answer ERR_GENERIC and were previously
+    indistinguishable on the wire -- the pair most likely to send a diagnosis to the wrong side of
+    the interface. Design doc DD121, docs/superpowers/specs/2026-09-15-xcp-err-generic-detail-design.md.
+
+    A real, completed PROGRAM_START is used to reach XCP_PGM_ACTIVE rather than asserting the state
+    directly, for the reason test_program_reset_is_also_accepted_from_xcp_pgm_active gives above:
+    Xcp_Internal is not reachable from this CFFI harness, so the state is only ever observable
+    through behaviour."""
+    handle = pgm_handle()
+    busy_then(handle, 0x00, busy_calls=0)
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0002, handle.define('E_OK'))
+
+    handle.can_if_transmit.reset_mock()
+    program_start(handle)
+    handle.lib.Xcp_MainFunction()
+
+    response = transmitted(handle)
+    assert response[0:2] == (0xFE, 0x31), \
+        'a second PROGRAM_START must be refused ERR_GENERIC, got {}'.format(response)
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0002, \
+        'expected XCP_GENERIC_DETAIL_PROGRAMMING_ALREADY_ACTIVE, not the integrator-refusal code'
