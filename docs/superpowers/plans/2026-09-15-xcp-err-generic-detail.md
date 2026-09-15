@@ -47,11 +47,13 @@
 | `source/Xcp_Internal.h` | internal declarations | declare it beside its two siblings |
 | `source/Xcp_Std.c` | STD command handlers | route the `UNLOCK` site through it |
 | `source/Xcp_Pgm.c` | PGM command handlers | route four sites through it |
-| `test/seed_key_defects_test.py` | UNLOCK defect regression | two assertion sites amended |
+| `test/seed_key_defects_test.py` | UNLOCK defect regression | one assertion site amended (`:579`) |
 | `test/pgm_deferred_test.py` | deferred PGM completion | two assertion sites amended |
 | `test/pgm_session_test.py` | PGM session state | one assertion site amended, one test added |
 
 **Task 2 lands the helper unused, deliberately.** It keeps the mechanical addition separable from the five behaviour changes, so a reviewer can reject one without the other — the same shape D6 used when it landed a config field before anything read it.
+
+**`test/seed_key_defects_test.py` gets one of its two ERR_GENERIC sites amended, not both.** This row read "two assertion sites amended" when the plan was written; corrected during execution. `:650` sits inside `test_a_failed_unlock_does_not_leave_a_stale_answer_for_whatever_reads_it_next`, whose subject is freshness — that each answer in the chain was computed by its own exchange rather than left behind by an earlier one. All three of its loop attempts refuse for the same reason and would therefore carry the identical detail WORD, which discriminates nothing that test asks; and coupling a staleness test to this vocabulary would make it fail the next time these codes change. That is the reason Task 5 already gives for leaving `pgm_session_test.py:796` alone, and it applies here for the same reason.
 
 ---
 
