@@ -396,6 +396,23 @@ the value implementation-specific, so this module would be defining a private er
 > is which condition fired — in particular telling a `PROGRAM_START` refused by the module's own
 > state gate from one refused by the integrator.
 
+**D18 — No code in `source/` enforces the `MAX_CTO` bound on a response payload.**
+`Xcp_FillErrorPacketWithData`'s copy loop (`source/Xcp.c:2697`) writes `SduDataPtr[0x02u + idx]` for
+`idx < dataLength`, with nothing comparing `2 + dataLength` against `maxCto`. `Xcp_FinalizeResPacket`
+(`source/Xcp.c:2665`), which every error-packet helper calls afterward to pad the packet and set
+`SduLength`, cannot catch an oversized payload after the fact: its own loop is
+`for (idx = startIndex; idx < maxCto; idx++)`, so a `startIndex` already past `maxCto` simply skips
+the loop instead of reporting anything, and by the time it runs, `Xcp_FillErrorPacketWithData`'s
+write has already happened. Clamping `startIndex` inside `Xcp_FinalizeResPacket` would therefore
+mislabel the hazard rather than prevent it.
+
+The guarantee rests entirely on `config/xcp.schema.json`'s `max_cto` `"minimum": 8`. That is a
+property of every payload-bearing response — D6's eight-byte checksum DWORD and D17's four-byte
+detail WORD both rely on it today — not of one function, and the next payload added may not be so
+comfortably inside the floor.
+
+> **Open.** Found while designing D17 (`2026-09-15-xcp-err-generic-detail-design.md` §5).
+
 ---
 
 ## 4. Decomposition
