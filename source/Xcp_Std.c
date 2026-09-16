@@ -381,11 +381,14 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
          * transmitted; it is refused rather than clamped because a user-defined payload has no
          * length field a master could use to notice the clamp (DD129).
          *
-         * ERR_GENERIC is a deliberate deviation: 1.1/1.7.3.2.1's USER_CMD row lists ERR_CMD_BUSY,
+         * ERR_GENERIC is not listed by 1.1/1.7.3.2.1's USER_CMD row, which lists ERR_CMD_BUSY,
          * ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE and ERR_RES_TEMP_NOT_A., and each of the
          * usable ones blames the master's own request for what the slave's extension did. DD57
-         * (PROGRAM_RESET) and DD76 (UNLOCK) took the same deviation for the same reason; DD130
-         * records this as the third. Returning the Det id rather than reporting it here is what
+         * (PROGRAM_RESET) and DD76 (UNLOCK) answer off-row for the same reason. All three were
+         * called deliberate deviations until DD132: 1.1/1.7.3 anticipates an off-row code and
+         * tells the master to fall back to the code's severity, so the behaviour is inside the
+         * protocol. What it costs is only that the master gets severity-level guidance instead of
+         * this row's own Pre-Action/Action pair. Returning the Det id rather than reporting it here is what
          * Xcp_CanIfRxIndication already does with any non-E_OK handler result (source/Xcp.c), the
          * same path the XCP_E_PARAM_POINTER below takes -- and it does not suppress the response,
          * which is filled and transmitted either way.
@@ -440,8 +443,10 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
          * where the answer comes from. XCP part 2 - Protocol Layer Specification 1.0/1.4: "an
          * attempt to execute a not implemented optional command will return ERR_CMD_UNKNOWN and
          * does not have any effect". A USER_CMD whose callback the integrator never configured is
-         * that command, and Xcp_PIDTable's own 0xF1 row marks it optional -- so this needs no
-         * deviation, unlike the ERR_GENERIC one DD130 took for the over-long response above.
+         * that command, and Xcp_PIDTable's own 0xF1 row marks it optional -- so this answer is on
+         * ERR_CMD_UNKNOWN's own row, where DD130's ERR_GENERIC above is not. Neither is a
+         * departure from the specification (DD132); this one simply carries the master a specific
+         * Action rather than a severity to interpret.
          *
          * Xcp_FillErrorPacket finalizes at length 2 itself, so no trailing Xcp_FinalizeResPacket
          * belongs here. result is left at XCP_E_PARAM_POINTER: Det keeps the root cause -- the
@@ -1044,7 +1049,7 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                          * against the same 1.0 PDF), and that comment records "of the listed [codes]
                          * only ERR_SEQUENCE could be pressed into service -- a worse fit, since
                          * nothing about the request is out of sequence", the same reasoning that
-                         * rules it out here. The same deviation is kept: XCP_E_ASAM_GENERIC, matching
+                         * rules it out here. The same off-row answer is kept: XCP_E_ASAM_GENERIC, matching
                          * 1.0/1.1.3.3's own description of that code ("the error packet contains an
                          * implementation specific slave device error code"). This is NOT the same as
                          * PROGRAM_START/PROGRAM_PREPARE's own use of it (source/Xcp_Pgm.c,
