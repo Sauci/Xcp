@@ -533,7 +533,7 @@
                 "description": "MAX_CTO shows the maximum length of a CTO packet in bytes (see ECUC_Xcp_00004)\nNote: the AUTOSAR specification defines the upper limit to 255.",
                 "type": "integer",
                 "minimum": 8,
-                "maximum": 256,
+                "maximum": 255,
                 "default": 8
               },
               "max_dto": {

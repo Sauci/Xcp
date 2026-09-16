@@ -14,7 +14,14 @@ address_granularities = [pytest.param('BYTE', id='AG = BYTE'),
                          pytest.param('DWORD', id='AG = DWORD')]
 byte_orders = [pytest.param('BIG_ENDIAN', id='byte_order = BIG_ENDIAN'),
                pytest.param('LITTLE_ENDIAN', id='byte_order = LITTLE_ENDIAN')]
-max_ctos = [pytest.param(v, id='MAX_CTO = {:04X}h'.format(v)) for v in (8, 128, 256)]
+# 252, not 255. 255 is the ceiling (AUTOSAR's limit, and all CONNECT's one-byte MAX_CTO field can
+# carry), but this list crosses address_granularity in roughly two dozen files and Xcp_Init refuses
+# a configuration where MAX_CTO mod AG != 0 (XCP part 2 1.1/1.6.1.1.1) -- 255 is divisible by
+# neither 2 nor 4, so it would fail under WORD and DWORD everywhere. 252 is the largest value that
+# exercises the top of the range under every granularity. The ceiling itself is pinned separately,
+# by the generation guard's paired tests and by CONNECT's own MAX_CTO byte, which need no AG sweep.
+# Was 256, which the schema allowed until D18 Finding 5 corrected it to 255.
+max_ctos = [pytest.param(v, id='MAX_CTO = {:04X}h'.format(v)) for v in (8, 128, 252)]
 mtas = [pytest.param(v, id='MTA = {:08X}h'.format(v)) for v in (0xDEADBEEF,)]
 resources = [pytest.param(1, id='RESOURCE = CAL/PAG'),
              pytest.param(4, id='RESOURCE = DAQ'),

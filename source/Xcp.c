@@ -743,6 +743,19 @@ static const uint8 Xcp_PIDToCmdGroupTable[0x100u] = {
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
+/* 1.1/1.7.3.2.1 gives EVERY standard command an ERR_RES_TEMP_NOT_A. entry, which 1.0 has nowhere;
+ * this table was 1.0's throughout except for the GET_STATUS row DD101 corrected. All thirteen STD
+ * rows now carry XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, read from 1.1's own matrix rather than
+ * inferred -- CONNECT, DISCONNECT, GET_STATUS, SYNCH, GET_COMM_MODE_INFO, GET_ID, SET_REQUEST,
+ * GET_SEED, UNLOCK, SET_MTA, UPLOAD, SHORT_UPLOAD and BUILD_CHECKSUM. The Action 1.1 prescribes
+ * differs by row ("skip" for GET_COMM_MODE_INFO and GET_ID, "display error / repeat" elsewhere),
+ * which this table does not model; it records only which codes a row admits.
+ *
+ * Declarative, with no behavioural effect: only CMD_BUSY, CMD_SYNTAX and PGM_ACTIVE are ever
+ * tested against this table (Xcp_CanIfRxIndication, below). The reason to keep it honest is the one
+ * DD76 and DD101 both give -- a row that does not list what its handler can answer is a row that
+ * lies to whoever reads it next. D18 Finding 5's sibling, Finding 2, is what prompted the sweep;
+ * that finding's own premise was stale, and the roadmap records how. */
 static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     0x00000000u, /* 0x00 */
     0x00000000u, /* 0x01 */
@@ -1020,7 +1033,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * still pins, but only for the OFF build (see that test's own DefaultConfig). DD51 requires
      * this bit absent from all seven regardless, so this cost is the spec's choice, not a defect;
      * no ON-build test currently asserts either side of it. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* BUILD_CHECKSUM 0xF3, optional */
 #else
     /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
      * the gate off. BUILD_CHECKSUM's own enabled bit does not depend on
@@ -1030,9 +1043,9 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * test_returns_err_pgm_active pins exactly this). Unchanged from before this task, both
      * because that behaviour is real and for acceptance criterion 1's byte-for-byte constant --
      * only the ON-build's row above gains the pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* BUILD_CHECKSUM 0xF3, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* BUILD_CHECKSUM 0xF3, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* SHORT_UPLOAD 0xF4, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* SHORT_UPLOAD 0xF4, optional */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     /* DD51/1.1/1.6.5.1.1: UPLOAD is one of the seven commands that "must always be available
      * during a memory programming sequence" -- carrying PGM_ACTIVE here would make the new
@@ -1048,7 +1061,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * but only for the OFF build (see that test's own DefaultConfig). DD51 requires this bit
      * absent from all seven regardless, so this cost is the spec's choice, not a defect; no
      * ON-build test currently asserts either side of it. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* UPLOAD 0xF5, optional */
 #else
     /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
      * the gate off. UPLOAD's own enabled bit does not depend on
@@ -1058,7 +1071,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * test_returns_err_pgm_active pins exactly this). Unchanged from before this task, both
      * because that behaviour is real and for acceptance criterion 1's byte-for-byte constant --
      * only the ON-build's row above gains the pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED, /* UPLOAD 0xF5, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* UPLOAD 0xF5, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     /* DD51/1.1/1.6.5.1.1: SET_MTA is one of the seven commands that "must always be available
@@ -1086,7 +1099,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * exactly this). Unchanged from before this task, both because that behaviour is real and for
      * acceptance criterion 1's byte-for-byte constant -- only the ON-build's row above gains the
      * pgm_state==XCP_PGM_ACTIVE disjunct DD51 adds. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* SET_MTA 0xF6, optional */
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
     /* DD76: GENERIC is not in UNLOCK's own 1.7.3.2.1 row -- that row's seven codes are the seven
      * listed above, verified against the 1.0 table. It is declared here because
@@ -1097,12 +1110,12 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * PROGRAM_RESET 0xCF above declares its own -- a row that does not list what its handler can
      * answer is a row that lies to whoever reads it next. No behavioural effect: only CMD_BUSY,
      * CMD_SYNTAX and PGM_ACTIVE are ever tested against this table. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC, /* UNLOCK 0xF7, optional */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_SEED 0xF8, optional */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_REQUEST 0xF9, optional */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* GET_ID 0xFA, optional */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX, /* GET_COMM_MOD_INFO 0xFB, optional */
-    XCP_INTERNAL_ERR_CMD_SYNCH | XCP_INTERNAL_ERR_CMD_UNKNOWN, /* SYNCH 0xFC */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_SEQUENCE | XCP_INTERNAL_ERR_GENERIC | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* UNLOCK 0xF7, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* GET_SEED 0xF8, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* SET_REQUEST 0xF9, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* GET_ID 0xFA, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* GET_COMM_MOD_INFO 0xFB, optional */
+    XCP_INTERNAL_ERR_CMD_SYNCH | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* SYNCH 0xFC */
     /* DD101: RES_TEMP_NOT_ACCESSIBLE is not in GET_STATUS's 1.0/1.7.3.2.1 row at all -- 1.0 lists
      * a timeout entry for this command and no error codes whatsoever. It is 1.1 that adds
      * ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE to GET_STATUS's row (1.1/1.7.3.2.1), the answer
@@ -1112,8 +1125,8 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * whoever reads it next. No behavioural effect: only CMD_BUSY, CMD_SYNTAX and PGM_ACTIVE are
      * ever tested against this table. */
     XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* GET_STATUS 0xFD */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE, /* DISCONNECT0xFE */
-    0x00u, /* CONNECT 0xFF */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* DISCONNECT0xFE */
+    XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* CONNECT 0xFF */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED
