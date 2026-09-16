@@ -159,4 +159,13 @@
  */
 #define XCP_GENERIC_DETAIL_PROGRAM_PREPARE_FAILED (0x0005u)
 
+/**
+* @brief USER_CMD: the integrator's Xcp_UserCmdFunction returned a response whose SduLength exceeds
+* MAX_CTO. The response is discarded rather than truncated -- a user-defined payload carries no
+* length field of its own, so a clamped response would be indistinguishable from a complete one
+* (DD129). The fault is in the callback, not in the master's request, which is why this is the one
+* ERR_GENERIC 1.1/1.7.3.2.1's USER_CMD row does not list (DD130).
+ */
+#define XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG (0x0006u)
+
 #endif /* #ifndef XCP_ERRORS_H */

@@ -376,7 +376,49 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
     if (Xcp_Ptr->general->userCmdFunction != NULL_PTR) {
         result = Xcp_Ptr->general->userCmdFunction(pPduInfo, &Xcp_Internal.cto_response.pdu_info);
 
-        Xcp_FinalizeResPacket(Xcp_Internal.cto_response.pdu_info.SduLength, &Xcp_Internal.cto_response.pdu_info);
+        /* The only response length in this module that an integrator chooses. XCP part 2 - Protocol
+         * Layer Specification 1.1/1.1.3.3 ends a packet at MAX_CTO-1, so a longer one cannot be
+         * transmitted; it is refused rather than clamped because a user-defined payload has no
+         * length field a master could use to notice the clamp (DD129).
+         *
+         * ERR_GENERIC is a deliberate deviation: 1.1/1.7.3.2.1's USER_CMD row lists ERR_CMD_BUSY,
+         * ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE and ERR_RES_TEMP_NOT_A., and each of the
+         * usable ones blames the master's own request for what the slave's extension did. DD57
+         * (PROGRAM_RESET) and DD76 (UNLOCK) took the same deviation for the same reason; DD130
+         * records this as the third. Returning the Det id rather than reporting it here is what
+         * Xcp_CanIfRxIndication already does with any non-E_OK handler result (source/Xcp.c), the
+         * same path the XCP_E_PARAM_POINTER below takes -- and it does not suppress the response,
+         * which is filled and transmitted either way.
+         *
+         * The bound applies to whatever the callback left in the buffer, including when it also
+         * reported failure: a non-E_OK return does not unwrite the SduLength it already set, and
+         * finalizing that unchecked is the same over-long frame D18 is about. The Det id is the one
+         * thing that still depends on the return value -- a failing callback's own error id is the
+         * root cause and reporting "response too long" instead would mask it, while a callback that
+         * reported success and merely overran has no other id to report. Xcp_CanIfRxIndication
+         * reports whichever id this handler returns, so this is a choice of value, not of
+         * mechanism. Controller ruling R6, from this task's own review. */
+        if (Xcp_Internal.cto_response.pdu_info.SduLength > (PduLengthType)Xcp_Ptr->general->maxCto)
+        {
+            Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG,
+                                       &Xcp_Internal.cto_response.pdu_info);
+
+            if (result == E_OK)
+            {
+                result = XCP_E_USER_CMD_RESPONSE_TOO_LONG;
+            }
+        }
+        else
+        {
+            /* This previously said a second finalize here "would re-finalize at the stale length
+             * the callback set" -- false: Xcp_FillGenericErrorPacket already finalizes at
+             * SduLength 4 (Xcp_FillErrorPacketWithData -> Xcp_FinalizeResPacket(0x02u + 2, ...)),
+             * so a trailing Xcp_FinalizeResPacket(pdu_info.SduLength, ...) in that branch would
+             * pass 4 right back and be idempotent. The if/else is structural clarity, not a
+             * correctness guard: it keeps each branch's single finalize visible at the point it
+             * happens, and no test can distinguish it from an unconditional trailing finalize. */
+            Xcp_FinalizeResPacket(Xcp_Internal.cto_response.pdu_info.SduLength, &Xcp_Internal.cto_response.pdu_info);
+        }
     }
     else
     {

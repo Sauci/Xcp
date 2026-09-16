@@ -18,9 +18,20 @@ extern "C" {
 #include "ComStack_Types.h"
 
 /**
- * @brief Calculates the checksum on the provided address range.
- * @param [in] pCtoPduInfo Lower address of the data range on which the checksum is calculated
- * @param [out] pResErrPduInfo Upper address of the data range on which the checksum is calculated
+ * @brief Handles a USER_CMD request (XCP part 2 - Protocol Layer Specification 1.1/1.6.1.3.2).
+ * This previously cited 1.1/1.6.1.2.12, which names nothing: 1.1/1.6.1.2 ends at .9
+ * (BUILD_CHECKSUM), and USER_CMD is 1.6.1.3.2, "Refer to user defined command" (1.1 page 74,
+ * 1.0 page 69).
+ * @param [in] pCtoPduInfo The request as received, including the USER_CMD PID in byte 0.
+ * @param [out] pResErrPduInfo The response to transmit. Write the payload into SduDataPtr and set
+ * SduLength to the number of bytes written, MAX_CTO included but never exceeded: 1.1/1.1.3.3 ends a
+ * packet at MAX_CTO-1, and a longer response is discarded and answered ERR_GENERIC carrying
+ * XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG regardless of this function's own return value --
+ * a failure return does not exempt the buffer already written from the bound. Det then gets
+ * XCP_E_USER_CMD_RESPONSE_TOO_LONG when the call itself succeeded, or this function's own error
+ * otherwise. MAX_CTO here means the running configuration's own max_cto, not the exported
+ * XCP_MAX_CTO (Xcp_Cfg.h, generated): in a multi-configuration build that macro is a max() fold
+ * across every configuration (DD127), so honouring it is necessary and not sufficient.
  * @retval E_OK : Command executed successfully
  * @retval XCP_E_* : Command failed. If the DET module is enabled, this error will be reported to the DET
  */

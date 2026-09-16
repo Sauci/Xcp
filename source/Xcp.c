@@ -998,7 +998,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* DOWNLOAD_MAX 0xEE, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW | XCP_INTERNAL_ERR_SEQUENCE, /* DOWNLOAD_NEXT 0xEF, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* DOWNLOAD 0xF0 */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* USER_CMD 0xF1, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_GENERIC, /* USER_CMD 0xF1, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* TRANSPORT_LAYER_CMD 0xF2, optional */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     /* DD51/1.1/1.6.5.1.1: BUILD_CHECKSUM is one of the seven commands that "must always be
@@ -2692,6 +2692,13 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
     pPduInfo->SduDataPtr[0x00u] = XCP_PID_ERROR;
     pPduInfo->SduDataPtr[0x01u] = errorCode;
 
+    /* This loop has no bound of its own, and Xcp_FinalizeResPacket cannot add one afterwards: its
+     * padding loop runs from startIndex to maxCto and simply does not execute when startIndex is
+     * already past it. The bound is enforced at generation instead --
+     * script/source_cfg.c.jinja2 refuses a configuration whose max_cto cannot hold the largest
+     * payload any caller here passes, which is BUILD_CHECKSUM's six bytes from position 2
+     * (XCP part 2 - Protocol Layer Specification 1.1/1.6.1.2.9, 1.1/1.1.3.3). A larger payload
+     * added later must raise that floor in the same commit. D18, DD126-DD128. */
     for (idx = 0x00u; idx < dataLength; idx++)
     {
         pPduInfo->SduDataPtr[0x02u + idx] = pData[idx];
@@ -2706,9 +2713,15 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
  * XCP_GENERIC_DETAIL_* codes in interface/Xcp_Errors.h, and design doc DD121-DD125 in
  * docs/superpowers/specs/2026-09-15-xcp-err-generic-detail-design.md.
  *
- * Shared rather than repeated at each of the five sites that answer ERR_GENERIC (DD125): one in
- * source/Xcp_Std.c and four in source/Xcp_Pgm.c. Xcp_FillErrorPacketWithData stays the single
- * place that knows an error packet's payload begins at byte 2. */
+ * Shared rather than repeated at each of the six sites that answer ERR_GENERIC (DD125): two in
+ * source/Xcp_Std.c and four in source/Xcp_Pgm.c. This previously read "five sites... one in
+ * source/Xcp_Std.c", true when D17 wrote it; D18 added the USER_CMD refusal
+ * (Xcp_DTOCmdStdUserCmd), the second site in source/Xcp_Std.c, without updating the count.
+ * Xcp_FillErrorPacketWithData stays the single place that knows an error packet's payload begins
+ * at byte 2.
+ *
+ * The two-byte payload is inside the MAX_CTO floor the generation guard in
+ * script/source_cfg.c.jinja2 enforces (D18, DD128). */
 void Xcp_FillGenericErrorPacket(const uint16 detail, PduInfoType *pPduInfo)
 {
     uint8 data[0x02u];

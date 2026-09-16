@@ -45,12 +45,12 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 
 | Concern | Where |
 |:--|:--|
-| Protocol logic | six translation units, 5835 lines: `Xcp.c` (2097, dispatch and shared machinery), `Xcp_Std.c` (1203), `Xcp_Cal.c` (301), `Xcp_Pag.c` (470), `Xcp_Daq.c` (1341), `Xcp_DaqRuntime.c` (423) |
+| Protocol logic | seven translation units, 11806 lines: `Xcp.c` (3033, dispatch and shared machinery), `Xcp_Std.c` (2002), `Xcp_Cal.c` (303), `Xcp_Pag.c` (470), `Xcp_Daq.c` (2632), `Xcp_DaqRuntime.c` (1247), `Xcp_Pgm.c` (2119). This row read "six translation units, 5835 lines" with no `Xcp_Pgm.c` and every other count short, stale well before this branch. Re-measured with `wc -l source/*.c` — twice: the first re-measurement read 11798, 3030 and 1997, taken before the same commit's own comment additions to `Xcp.c` and `Xcp_Std.c` landed, so it was stale on arrival. Measure after the edits, not before them |
 | Public API | `interface/Xcp.h`, `Xcp_Types.h`, `Xcp_Errors.h`, `XcpOnCan_Cbk.h` |
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12574 passing, 30 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12947 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -206,7 +206,7 @@ This section previously read "absent" outright, stale since SP4 shipped; correct
 | RESUME mode | §1.6.1.1.1, §1.6.4.1.1.4 | **Complete, SP5-RESUME** (`2026-09-10-xcp-daq-resume-design.md`, DD103–DD107; see that sub-project's own entry in §4). `XCP_CONNECTION_STATE_RESUME` is declared but deliberately never entered. `Xcp_ResumeComplete` briefly wrote it on every committed resume; a security fix on 2026-09-10 (DD105's own recorded correction) removed that write after finding both connection gates in `source/Xcp.c` test `!= XCP_CONNECTION_STATE_DISCONNECTED` rather than `== XCP_CONNECTION_STATE_CONNECTED`, so the write alone admitted the entire command set — `DOWNLOAD`, `SET_MTA`, `FREE_DAQ`, the programming commands included — to any node on the bus with no `CONNECT` ever received. RESUME mode needs none of it: DTO transmission was never session-gated, and `GET_STATUS` reports RESUME through session status bit 7 instead. `Xcp_ResumeComplete` still does the rest — called by the integrator once its own `Xcp_Restore*` sequence has repopulated a DAQ list from non-volatile memory this module never reads itself (DD103, the mirror of SP5-NV's own four accessors) — just not that one write. This row previously said the state is now entered, true only until the fix above; corrected here. `SET_REQUEST`'s `STORE_DAQ_REQ_RESUME` (mode bit 2) is accepted and `GET_DAQ_PROCESSOR_INFO` reports `RESUME_SUPPORTED` set — both were previously refused/clear specifically so the two facts stayed coherent (D9), and SP5-RESUME reverses both together for the identical reason. `SET_DAQ_LIST_MODE` is unaffected: it still does not reject its own RESUME bit with `ERR_MODE_NOT_VALID`, and has not since commit `13f59c2` predating SP5-NV — 1.1 marks that bit don't-care, and the slave tolerates it without honouring it; only `Xcp_ResumeComplete` ever sets a list's own RESUME/RUNNING mode bits |
 | Event codes (EV_*) | §1.2 | `EV_STORE_CAL` (0x03) and `EV_DAQ_OVERLOAD` (0x06), the latter added in SP2a and configurable through `overload_indication`. `EV_CLEAR_DAQ` (0x01) and `EV_STORE_DAQ` (0x02) added in SP5-NV. `EV_RESUME_MODE` (0x00) added in SP5-RESUME, queued by `Xcp_ResumeComplete`. `EV_CMD_PENDING` was also listed absent here, which was already stale independent of this row's own RESUME correction — this row's own §2.6 neighbour above has read `done — shipped in SP4` since before SP5-RESUME existed. **Absent: seven of the thirteen codes 1.1/§1.2 defines** — `EV_SESSION_TERMINATED` (0x07), `EV_TIME_SYNC` (0x08), `EV_STIM_TIMEOUT` (0x09), `EV_SLEEP` (0x0A), `EV_WAKE_UP` (0x0B), `EV_USER` (0xFE) and `EV_TRANSPORT` (0xFF); §1.2 opens by making the whole table optional. This row previously listed three — 0x07, 0xFE, 0xFF — which is **exactly 1.0/§1.2's absent set**: 1.0's table ends at 0x07 and 1.1 adds 0x08–0x0B. That is the revision rule at the head of this document, missed on a cross-cutting table rather than on a command. Corrected 2026-09-15 from the 1.1 PDF's **own text layer**, deciphered by the known-plaintext method of §0 of `2026-09-11-xcp-get-id-types-design.md` and validated by decoding page footers back to their own printed numbers — not from the OCR sidecar, which garbles this table's code column. `EV_STIM_TIMEOUT` was already tracked, deferred by name out of SP3 (§4); 0x08, 0x0A and 0x0B were tracked nowhere. None of the three is only a packet: 1.1/§1.8.10 gives `EV_SLEEP`/`EV_WAKE_UP` a SLEEP mode where the slave stays CONNECTED, processes no commands and sends neither `ERR_CMD_BUSY` nor `EV_CMD_PENDING`, so shipping the two events means shipping that mode; and 1.1/§1.8.8's `EV_TIME_SYNC` reports a DWORD timestamp in `GET_DAQ_RESOLUTION_INFO` format on an externally triggered sync line, withdrawn only from a slave that has no timestamps — this module has had them since SP2b |
 | Service request codes (SERV_*) | §1.3 | absent — `SERV_RESET`, `SERV_TEXT`. Optional for a slave |
-| Extended error payloads | §1.1.3.3 | **done.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`), and `BUILD_CHECKSUM` attaches the maximum block size to its `ERR_OUT_OF_RANGE` (`source/Xcp_Std.c`, D6). `ERR_GENERIC` attaches its own implementation-specific WORD at all five sites (`source/Xcp.c`'s `Xcp_FillGenericErrorPacket`, D17). Both payload-bearing codes 1.1/§1.1.3.3 defines are now implemented. This row previously read a blanket "absent", which overstated the gap, then "partial" while D6 was open |
+| Extended error payloads | §1.1.3.3 | **done.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`), and `BUILD_CHECKSUM` attaches the maximum block size to its `ERR_OUT_OF_RANGE` (`source/Xcp_Std.c`, D6). `ERR_GENERIC` attaches its own implementation-specific WORD at all six sites (`source/Xcp.c`'s `Xcp_FillGenericErrorPacket`, D17; the sixth added by D18's `USER_CMD` refusal). Both payload-bearing codes 1.1/§1.1.3.3 defines are now implemented. This row previously read a blanket "absent", which overstated the gap, then "partial" while D6 was open, then "five sites" once D18 added a sixth without updating this count |
 
 **Open: per-segment checksum configuration.** The AML in §2.1 declares checksum configuration
 **per segment** — a `CHECKSUM` block carrying type, `MAX_BLOCK_SIZE` and `EXTERNAL_FUNCTION`
@@ -397,7 +397,8 @@ the value implementation-specific, so this module would be defining a private er
 > state gate from one refused by the integrator.
 
 **D18 — No code in `source/` enforces the `MAX_CTO` bound on a response payload.**
-`Xcp_FillErrorPacketWithData`'s copy loop (`source/Xcp.c:2697`) writes `SduDataPtr[0x02u + idx]` for
+`Xcp_FillErrorPacketWithData`'s copy loop (`source/Xcp.c:2704`, shifted from :2697 by a comment this
+branch inserted above it) writes `SduDataPtr[0x02u + idx]` for
 `idx < dataLength`, with nothing comparing `2 + dataLength` against `maxCto`. `Xcp_FinalizeResPacket`
 (`source/Xcp.c:2665`), which every error-packet helper calls afterward to pad the packet and set
 `SduLength`, cannot catch an oversized payload after the fact: its own loop is
@@ -411,7 +412,27 @@ property of every payload-bearing response — D6's eight-byte checksum DWORD an
 detail WORD both rely on it today — not of one function, and the next payload added may not be so
 comfortably inside the floor.
 
-> **Open.** Found while designing D17 (`2026-09-15-xcp-err-generic-detail-design.md` §5).
+> **Fixed.** The bound is checked where each length is chosen: `script/source_cfg.c.jinja2` refuses a
+> configuration whose own `max_cto` is below 8, and `Xcp_DTOCmdStdUserCmd` (`source/Xcp_Std.c`)
+> refuses an over-long callback response with `ERR_GENERIC` plus
+> `XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG` and a Det report. Design:
+> `2026-09-15-xcp-max-cto-bound-d18-design.md` (DD126–DD131).
+>
+> The entry understated it in one way and overstated it in another. Understated: `USER_CMD` let the
+> *integrator* set `SduLength` with no check at all, which no schema minimum could have protected —
+> that is the half this defect did not name. Overstated: the schema floor was never "comfortable".
+> `BUILD_CHECKSUM` hands the helper six bytes, not four (1.1/§1.6.1.2.9's reserved WORD at positions
+> 2,3 is part of the payload), so the largest error packet is 8 — exactly the floor, with no headroom
+> at all.
+>
+> Four findings recorded in that design's §5 rather than fixed here: `MAX_CTO mod AG = 0` and
+> `MAX_DTO mod AG = 0` (1.1/§1.6.1.1.1) are enforced only at `Xcp_Init`, so a violation reaches the
+> target instead of the build; `Xcp_CTOErrorMatrix` carries `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE`
+> in no row though 1.1 adds it to the STD rows and `GET_STATUS` already answers it;
+> `XCP_E_EVENT_QUEUE_FULL` (0x04) collides with AUTOSAR's `XCP_E_INIT_FAILED`; and a `USER_CMD`
+> reaching a build with no configured callback appears — traced through the code, not confirmed on
+> the wire — to transmit whatever the previous command left in the shared response buffer, the same
+> family as D2.
 
 ---
 

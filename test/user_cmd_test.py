@@ -95,3 +95,213 @@ def test_user_cmd_function_calls_det_with_err_invalid_pointer_if_no_user_cmd_fun
                                                     ANY,
                                                     handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
                                                     handle.define('XCP_E_PARAM_POINTER'))
+
+
+def test_user_cmd_refuses_a_response_longer_than_max_cto():
+    """The integrator's callback is the only place a response length reaches this module from
+    outside, and nothing checked it: Xcp_DTOCmdStdUserCmd finalized whatever SduLength came back, so
+    a frame longer than the 2..MAX_CTO-1 layout of XCP part 2 - Protocol Layer Specification
+    1.1/1.1.3.3 reached CanIf. Refused rather than truncated (DD129): a user-defined payload carries
+    no length field, so a clamped response is indistinguishable from a complete one."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction'))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 0x09
+        for i in range(0x09):
+            p_res_err_pdu_info[0].SduDataPtr[i] = 0xAA
+        return handle.define('E_OK')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:4])
+
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    # The length is asserted at the mock because SduDataPtr always holds a full MAX_CTO frame padded
+    # with trailingValue, so bytes 2-3 are readable whether or not the module wrote them.
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0006, \
+        'expected XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG'
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_USER_CMD_RESPONSE_TOO_LONG'))
+
+
+def test_user_cmd_transmits_a_response_exactly_at_max_cto():
+    """The boundary the refusal above must not swallow. MAX_CTO itself is a legal length -- XCP part
+    2 - Protocol Layer Specification 1.1/1.1.3.3 ends the payload area at MAX_CTO-1, so a packet
+    whose SduLength equals MAX_CTO occupies positions 0..MAX_CTO-1 exactly. An off-by-one in the
+    comparison shows here and nowhere else."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction'))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 0x08
+        for i in range(0x08):
+            p_res_err_pdu_info[0].SduDataPtr[i] = i
+        return handle.define('E_OK')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 0x08
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8]) == (0, 1, 2, 3, 4, 5, 6, 7)
+    handle.det_report_error.assert_not_called()
+
+
+def test_user_cmd_refuses_an_over_long_response_from_a_failing_callback():
+    """A callback's own failure does not exempt its buffer from the bound. It has already written
+    SduLength by the time it returns, and finalizing that unchecked put the over-long frame on the
+    wire anyway -- the defect D18 exists to prevent, one precondition further along. The wire carries
+    the refusal; Det keeps the callback's own error id, which is the root cause (controller ruling
+    R6)."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction'))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 0x09
+        for i in range(0x09):
+            p_res_err_pdu_info[0].SduDataPtr[i] = 0xAA
+        return handle.define('XCP_E_PARAM_POINTER')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:4])
+
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0006, \
+        'expected XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG'
+    # The callback's own id, not the too-long one: the module reports the root cause and the wire
+    # carries the refusal.
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_PARAM_POINTER'))
+
+
+def test_user_cmd_transmits_a_legal_length_response_from_a_failing_callback():
+    """The length check is independent of the callback's own result: it fires on SduLength alone,
+    never on the return value. A failing callback whose response still fits within maxCto must
+    reach the wire exactly as it wrote it, with the callback's own error id reported to Det --
+    not XCP_E_USER_CMD_RESPONSE_TOO_LONG, which only ever applies to an over-long one. The test
+    above this one covers a failing callback that also overran; this is the remaining cell of that
+    (result, length) space, where the callback failed but did not overrun."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction'))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 0x04
+        for i in range(0x04):
+            p_res_err_pdu_info[0].SduDataPtr[i] = 0x55
+        return handle.define('XCP_E_PARAM_POINTER')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 0x04
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:4]) == (0x55, 0x55, 0x55, 0x55)
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_PARAM_POINTER'))
+
+
+def test_user_cmd_refuses_a_response_longer_than_a_non_default_max_cto():
+    """test_user_cmd_refuses_a_response_longer_than_max_cto above only ever runs at the suite's
+    default max_cto of 8, which cannot tell a comparison against Xcp_Ptr->general->maxCto apart
+    from one hardcoded to 8. A non-default max_cto is the discriminator."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction', max_cto=16))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 17
+        for i in range(17):
+            p_res_err_pdu_info[0].SduDataPtr[i] = 0xAA
+        return handle.define('E_OK')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    response = tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:4])
+
+    assert response[0:2] == (0xFE, 0x31), 'ERR_GENERIC'
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 4
+    assert u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN') == 0x0006, \
+        'expected XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG'
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_USER_CMD_RESPONSE_TOO_LONG'))
+
+
+def test_user_cmd_transmits_a_response_exactly_at_a_non_default_max_cto():
+    """The pair to the refusal above: 16 bytes at max_cto=16 is the legal boundary and must be
+    transmitted rather than refused. Together the two pin that the comparison reads
+    Xcp_Ptr->general->maxCto rather than a constant 8."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function='Xcp_UserCmdFunction', max_cto=16))
+
+    def xcp_user_cmd_function(_p_cmd_pdu_info, p_res_err_pdu_info):
+        p_res_err_pdu_info[0].SduLength = 16
+        for i in range(16):
+            p_res_err_pdu_info[0].SduDataPtr[i] = i
+        return handle.define('E_OK')
+
+    handle.xcp_user_cmd_function.side_effect = xcp_user_cmd_function
+
+    # CONNECT
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 16
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:16]) == tuple(range(16))
+    handle.det_report_error.assert_not_called()

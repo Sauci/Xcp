@@ -854,6 +854,14 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
 {%- if configuration.apis.xcp_write_daq_multiple_api_enable.enabled and configuration.protocol_layer.max_cto < 10 %}
 {{ raise('WRITE_DAQ_MULTIPLE is enabled but MAX_CTO is {}; XCP part 2 1.1/1.6.4.1.2.1 requires MAX_CTO >= 10 because one element is 8 bytes after a 2-byte header'.format(configuration.protocol_layer.max_cto)) }}
 {%- endif %}
+{#- D18: the payloads this module attaches to an error packet are constants, so the bound between
+    them and MAX_CTO is checkable here rather than at runtime, where no configuration could ever
+    enter the branch (DD126). Each configuration's OWN max_cto, never XCP_MAX_CTO, which is a max()
+    fold over every configuration in the generated file and would prove only that the largest one
+    fits (DD127). #}
+{%- if configuration.protocol_layer.max_cto < 8 %}
+{{ raise('MAX_CTO is {}, but the largest error packet this module builds is 8 bytes: XCP part 2 1.1/1.6.1.2.9 puts the maximum block size BUILD_CHECKSUM reports at positions 4..7, inside the 2..MAX_CTO-1 payload area 1.1/1.1.3.3 defines. Xcp_FillErrorPacketWithData (source/Xcp.c) copies that payload with no bound of its own, which is defect D18; raising MAX_CTO to 8 or more is what makes it safe. A payload larger than six bytes added later must raise this floor with it -- see docs/superpowers/specs/2026-09-15-xcp-max-cto-bound-d18-design.md'.format(configuration.protocol_layer.max_cto)) }}
+{%- endif %}
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
