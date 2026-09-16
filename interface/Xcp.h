@@ -170,6 +170,19 @@ extern "C" {
 #define XCP_RESUME_COMPLETE_API_ID (0x07u)
 
 /**
+ * @brief API id of @ref Xcp_RequestServiceReset.
+ * @note Continuing this module's practice of giving each of its own slave-initiated entry points an
+ * id of its own, as XCP_RESUME_COMPLETE_API_ID does. 0x08 and 0x09 are the next free values below
+ * the 0x4x block the CanIf callbacks occupy.
+ */
+#define XCP_REQUEST_SERVICE_RESET_API_ID (0x08u)
+
+/**
+ * @brief API id of @ref Xcp_SendServiceText.
+ */
+#define XCP_SEND_SERVICE_TEXT_API_ID (0x09u)
+
+/**
  * @brief @ref Xcp_CanIfTxConfirmation API ID.
  */
 #define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
@@ -825,6 +838,19 @@ Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 e
  * DD107); nothing is changed
  */
 Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId);
+
+/**
+ * @brief Requests the master to reset this slave.
+ * @details Queues a SERV packet carrying SERV_RESET (XCP part 2 - Protocol Layer Specification
+ * 1.1/1.3), which Xcp_MainFunction transmits like any queued event. Changes no module state:
+ * 1.1/1.3 makes this a request TO the master, and a slave that reset itself on its own say-so would
+ * be doing something the code does not mean.
+ * @note 1.1/1.3: "Service request packets sent from the slave device to the master device are not
+ * acknowledged, therefore the transmission is not guaranteed." E_OK means queued, not delivered.
+ * @return E_OK when the request was queued; E_NOT_OK when the event queue is full, which also
+ * reports @ref XCP_E_EVENT_QUEUE_FULL to Det.
+ */
+Std_ReturnType Xcp_RequestServiceReset(void);
 
 #define Xcp_STOP_SEC_CODE_SLOW
 #include "Xcp_MemMap.h"

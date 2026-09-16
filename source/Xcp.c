@@ -2576,6 +2576,27 @@ Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetI
     return result;
 }
 
+Std_ReturnType Xcp_RequestServiceReset(void)
+{
+    /* DD140. Two constant bytes -- 1.1/1.1.3.5's PID at position 0 and 1.1/1.3's service request
+     * code at position 1 -- and no data, so the queue's userData stays empty and DD138's transmit
+     * branch finalizes at 2.
+     *
+     * Nothing else happens here. 1.1/1.3 calls SERV_RESET "Slave requesting to be reset": it asks
+     * the MASTER to reset this slave, and the slave acting on its own request would be answering a
+     * question nobody asked it. */
+    Std_ReturnType result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                               XCP_PID_SERV, XCP_SERV_RESET,
+                                               NULL_PTR, 0x00000000u);
+
+    if (result != E_OK)
+    {
+        Xcp_ReportError(0x00u, XCP_REQUEST_SERVICE_RESET_API_ID, XCP_E_EVENT_QUEUE_FULL);
+    }
+
+    return result;
+}
+
 static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *pPacketID, uint8 *pEventCode,
                                         const uint8 **ppUserData, uint32 *pUserDataSize) {
     Std_ReturnType result;
