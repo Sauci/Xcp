@@ -2597,6 +2597,50 @@ Std_ReturnType Xcp_RequestServiceReset(void)
     return result;
 }
 
+Std_ReturnType Xcp_SendServiceText(const uint8 *pText, uint16 length)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if (pText == NULL_PTR)
+    {
+        Xcp_ReportError(0x00u, XCP_SEND_SERVICE_TEXT_API_ID, XCP_E_PARAM_POINTER);
+    }
+    /* DD140. Four checks, one fault: the text is not a transmissible SERV_TEXT payload.
+     *
+     * The last two bounds are independent, not one restated -- maxCto may be 255 while the queue
+     * entry holds XCP_EVENT_USER_DATA_SIZE bytes (interface/Xcp_Types.h), so either can be the
+     * binding one.
+     *
+     * 1.1/1.3 makes the null terminator the end-of-packet marker, so it is VALIDATED here rather
+     * than appended: appending would write into the integrator's own buffer, and measuring the
+     * text instead of being told its length would read past whatever the caller actually owns.
+     * That is the trust D18's USER_CMD work deliberately pulled back from.
+     *
+     * Refused, never truncated. A truncated null-terminated string loses the terminator that marks
+     * where it ends, so the master cannot tell it was cut -- DD129's reasoning for the over-long
+     * USER_CMD response, applied to the one other payload an integrator chooses the length of. */
+    else if ((length == 0x0000u) ||
+             (pText[length - 0x0001u] != 0x00u) ||
+             ((uint32)((uint32)0x02u + (uint32)length) > (uint32)Xcp_Ptr->general->maxCto) ||
+             ((uint32)length > (uint32)XCP_EVENT_USER_DATA_SIZE))
+    {
+        Xcp_ReportError(0x00u, XCP_SEND_SERVICE_TEXT_API_ID, XCP_E_SERVICE_TEXT_INVALID);
+    }
+    else
+    {
+        result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                    XCP_PID_SERV, XCP_SERV_TEXT,
+                                    pText, (uint32)length);
+
+        if (result != E_OK)
+        {
+            Xcp_ReportError(0x00u, XCP_SEND_SERVICE_TEXT_API_ID, XCP_E_EVENT_QUEUE_FULL);
+        }
+    }
+
+    return result;
+}
+
 static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *pPacketID, uint8 *pEventCode,
                                         const uint8 **ppUserData, uint32 *pUserDataSize) {
     Std_ReturnType result;
