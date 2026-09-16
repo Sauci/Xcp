@@ -86,3 +86,25 @@ def test_no_command_transmits_the_response_not_written_packet(pid):
         detail = u16_from_array(bytearray(response[2:4]), 'LITTLE_ENDIAN')
         assert detail != 0x0007, \
             'PID 0x%02X returned responseExpected TRUE having written no response' % pid
+
+
+def test_a_legal_response_never_finalizes_at_length_zero():
+    """DD133 rests on 0 being an impossible length for a real response, which is what makes the
+    sentinel readable as 'nothing was written'. If a future handler finalizes a legal response at 0,
+    the guard would start refusing it -- so that change must break a test here rather than surface
+    as an unexplained ERR_GENERIC on the bus.
+
+    GET_STATUS is the probe: an ordinary positive response with a fixed layout, chosen because it
+    needs no configuration beyond a connected session."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFD, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.can_if_transmit.call_args[0][1].SduLength > 0
+    assert handle.can_if_transmit.call_args[0][1].SduDataPtr[0x00] == 0xFF, 'positive response'
