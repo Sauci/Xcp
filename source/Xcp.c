@@ -2585,9 +2585,16 @@ Std_ReturnType Xcp_RequestServiceReset(void)
      * Nothing else happens here. 1.1/1.3 calls SERV_RESET "Slave requesting to be reset": it asks
      * the MASTER to reset this slave, and the slave acting on its own request would be answering a
      * question nobody asked it. */
-    Std_ReturnType result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
-                                               XCP_PID_SERV, XCP_SERV_RESET,
-                                               NULL_PTR, 0x00000000u);
+    Std_ReturnType result;
+
+    /* Only the push goes inside, as at every other push site: Xcp_TransmitOneFrame reads the
+     * queue's read/write indices under this area, and Xcp_ReportError below is an external call
+     * that must not extend the section. */
+    SchM_Enter_Xcp_DtoQueue();
+    result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                XCP_PID_SERV, XCP_SERV_RESET,
+                                NULL_PTR, 0x00000000u);
+    SchM_Exit_Xcp_DtoQueue();
 
     if (result != E_OK)
     {
@@ -2628,9 +2635,12 @@ Std_ReturnType Xcp_SendServiceText(const uint8 *pText, uint16 length)
     }
     else
     {
+        /* As above, and for the same reason: the push alone is inside the area. */
+        SchM_Enter_Xcp_DtoQueue();
         result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
                                     XCP_PID_SERV, XCP_SERV_TEXT,
                                     pText, (uint32)length);
+        SchM_Exit_Xcp_DtoQueue();
 
         if (result != E_OK)
         {

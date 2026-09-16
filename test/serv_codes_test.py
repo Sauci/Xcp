@@ -107,3 +107,51 @@ def test_service_text_refuses_more_than_the_queue_entry_holds():
     assert handle.can_if_transmit.call_count == transmit_calls
     handle.det_report_error.assert_called_once_with(ANY, ANY, ANY,
                                                     handle.define('XCP_E_SERVICE_TEXT_INVALID'))
+
+
+def test_service_requests_reach_the_wire_in_push_order():
+    """The property DD139 claims by reusing one queue rather than adding a second: a SERV that
+    displaced another, or an event, would make the shared queue the wrong choice.
+
+    Each frame is read immediately after the Xcp_MainFunction that sent it, following the idiom
+    test/daq_transmission_test.py uses, and NOT from can_if_transmit.call_args_list afterwards. The
+    mock records the PduInfoType POINTER, and every event and service request is transmitted out of
+    the one Xcp_Internal.event.pdu_info buffer -- so a later read of call_args_list shows whatever
+    that buffer holds last, identically for every recorded call. Written the other way this test
+    reported two SERV_TEXT frames and no SERV_RESET, and the ordering it claims to check was never
+    measured at all."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert handle.lib.Xcp_RequestServiceReset() == handle.define('E_OK')
+    text = (0x41, 0x00)
+    assert handle.lib.Xcp_SendServiceText(text, len(text)) == handle.define('E_OK')
+
+    transmitted = []
+    for _ in range(2):
+        handle.lib.Xcp_MainFunction()
+        frame = handle.can_if_transmit.call_args[0][1]
+        transmitted.append((tuple(frame.SduDataPtr[0:2]), frame.SduLength))
+        handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    assert transmitted[0] == ((0xFC, 0x00), 0x02), 'SERV_RESET first, pushed first'
+    assert transmitted[1] == ((0xFC, 0x01), 0x04), 'SERV_TEXT second, carrying its two bytes'
+
+
+def test_a_full_queue_refuses_a_service_request():
+    """E_NOT_OK and XCP_E_EVENT_QUEUE_FULL, the existing path -- at 0x0C since it was moved off its
+    collision with AUTOSAR's XCP_E_INIT_FAILED at 0x04."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, event_queue_size=2))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    results = [handle.lib.Xcp_RequestServiceReset() for _ in range(4)]
+
+    assert handle.define('E_NOT_OK') in results, 'a queue of capacity 1 must fill'
+    handle.det_report_error.assert_called_with(ANY, ANY, ANY,
+                                               handle.define('XCP_E_EVENT_QUEUE_FULL'))
