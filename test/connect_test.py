@@ -178,7 +178,10 @@ def test_connect_sets_the_optional_bit_according_to_enabled_apis(optional_bit, a
     assert ((handle.can_if_transmit.call_args[0][1].SduDataPtr[2] & (0x01 << 0x07)) >> 0x07) == optional_bit
 
 
-@pytest.mark.parametrize('max_cto_byte, max_cto', ((8, 8), (16, 16), (32, 32)))
+# 255 added for D18 Finding 5: no test built a configuration at the top of the range and asserted
+# what CONNECT reports for it, so the truncation that made the schema's old 256 wrong was inferred
+# from the types carrying the value and never observed. maxCto is uint16 and this field is one byte.
+@pytest.mark.parametrize('max_cto_byte, max_cto', ((8, 8), (16, 16), (32, 32), (255, 255)))
 def test_connect_sets_the_max_cto_byte_according_to_the_configured_value(max_cto_byte, max_cto):
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, max_cto=max_cto))
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))

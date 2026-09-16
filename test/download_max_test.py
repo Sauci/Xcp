@@ -14,9 +14,14 @@ from .download_test import connect, set_mta, capture_writes
                                                          ('BYTE', 128, 127),
                                                          ('WORD', 128, 63),
                                                          ('DWORD', 128, 31),
-                                                         ('BYTE', 256, 255),
-                                                         ('WORD', 256, 127),
-                                                         ('DWORD', 256, 63)))
+                                                         # 252, not 256: D18 Finding 5 put the
+                                                         # MAX_CTO ceiling at 255, and 252 is the
+                                                         # largest value divisible by 4 and so
+                                                         # legal under every granularity. Counts
+                                                         # are max_cto / element_size - 1.
+                                                         ('BYTE', 252, 251),
+                                                         ('WORD', 252, 125),
+                                                         ('DWORD', 252, 62)))
 def test_download_max_writes_a_fixed_number_of_elements(ag, max_cto, expected_count):
     """XCP part 2 - Protocol Layer Specification 1.0/1.6.2.2.2: MAX_CTO/AG-1 elements.
 

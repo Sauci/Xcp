@@ -214,8 +214,15 @@ extern "C" {
 /**
  * @brief The stack tried to stack an event while the queue was full.
  * @note This error is not part of the specification.
+ * @note 0x0C, not the 0x04 this carried until 2026-09-16. AUTOSAR reserves 0x04 for
+ * XCP_E_INIT_FAILED (SWS_Xcp R4.3.1 section 7.2.1), which this module also defines and reports, so
+ * the two collided and only the reporting API id told them apart. This id is the module's own and
+ * AUTOSAR's is not, so this is the one that moves. D18 Finding 3; DD131 and DD135 had both already
+ * chosen higher values to avoid growing the collision rather than resolving it.
+ * @warning This is a published constant. An integrator whose Det handler switches on 0x04 for a
+ * full event queue must follow it to 0x0C.
  */
-#define XCP_E_EVENT_QUEUE_FULL (0x04u)
+#define XCP_E_EVENT_QUEUE_FULL (0x0Cu)
 
 /**
  * @brief The event channel number handed to Xcp_TriggerEventChannel does not exist.

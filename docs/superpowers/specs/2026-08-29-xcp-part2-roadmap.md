@@ -50,7 +50,7 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 13015 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 13018 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -458,6 +458,35 @@ comfortably inside the floor.
 > Seven instances in total. A sweep of all 64 command PIDs now passes, which is the evidence that no
 > command path returns "respond" having written nothing. Design:
 > `docs/superpowers/specs/2026-09-16-xcp-cto-response-invariant-design.md` (DD132-DD137).
+>
+> **The remaining three findings are closed (2026-09-16), and one of them was wrong as written.**
+>
+> *Finding 2* claimed `Xcp_CTOErrorMatrix` "carries `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` in no
+> row" and that "the table and the handler disagree". Both halves were already false when the
+> finding was drafted: DD101 put `XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE` in `GET_STATUS`'s row on
+> 2026-09-09, six days earlier, precisely so table and handler would agree. What survived was
+> narrower and real — 1.1/§1.7.3.2.1 gives **every** STD command an `ERR_RES_TEMP_NOT_A.` entry,
+> which 1.0 has nowhere, and the module had it in that one row. All thirteen STD rows now carry it,
+> read from 1.1's own matrix: `CONNECT`, `DISCONNECT`, `GET_STATUS`, `SYNCH`, `GET_COMM_MODE_INFO`,
+> `GET_ID`, `SET_REQUEST`, `GET_SEED`, `UNLOCK`, `SET_MTA`, `UPLOAD`, `SHORT_UPLOAD` and
+> `BUILD_CHECKSUM`. Declarative only: just `CMD_BUSY`, `CMD_SYNTAX` and `PGM_ACTIVE` are ever tested
+> against that table.
+>
+> *Finding 3* is fixed rather than documented. `XCP_E_EVENT_QUEUE_FULL` moves from `0x04` to `0x0C`,
+> AUTOSAR reserving `0x04` for `XCP_E_INIT_FAILED` (SWS_Xcp R4.3.1 §7.2.1) and this id being the
+> module's own. It is a published constant, so an integrator's Det handler switching on `0x04` for a
+> full event queue must follow it. DD131 and DD135 had each picked a higher value to avoid growing
+> the collision; this resolves it.
+>
+> *Finding 5* collapsed to a single fix. Of the three places stating the `MAX_CTO` ceiling, two were
+> already right — `source/Xcp_Internal.h`'s buffer comments ("8 to 255" against a `0x100`-byte
+> buffer) and `CONNECT`'s one-byte `MAX_CTO` field. Only `config/xcp.schema.json`'s `"maximum": 256`
+> was wrong, contradicting its own description two lines above. It is now 255, with a generation
+> guard paired against DD126's floor, and `test/parameter.py`'s shared `max_ctos` list moves from
+> `(8, 128, 256)` to `(8, 128, 252)` — 252 rather than 255 because that list crosses
+> `address_granularity` in roughly two dozen files and `MAX_CTO mod AG = 0` (1.1/§1.6.1.1.1) rules
+> out an odd value. `test/connect_test.py` now asserts what `CONNECT` reports at 255, which D18
+> noted no test did above 32.
 
 ---
 
