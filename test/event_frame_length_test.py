@@ -51,3 +51,39 @@ def test_an_event_packet_is_transmitted_with_its_own_length():
 
     assert tuple(frame.SduDataPtr[0:2]) == (0xFD, 0x03), 'EV_STORE_CAL'
     assert frame.SduLength == 0x02, 'the event code must actually reach the bus'
+
+
+def test_an_event_carrying_no_user_data_is_still_exactly_two_bytes():
+    """DD138 replaces Xcp_FinalizeResPacket(0x02u, ...) with a computed 2 + userDataSize. Every EV_*
+    this module sends has userDataSize 0 -- XCP part 2 - Protocol Layer Specification 1.1/1.2
+    defines event information for none of them -- so this must stay 2.
+
+    Without this pin the generalisation could regress the fix above, which gave event frames a
+    length at all, and DD141's removal of the three dead status-byte pushes could be forgotten
+    without any test objecting: leaving one in place would make this frame three bytes, carrying a
+    status byte 1.1/1.2 does not define for EV_STORE_CAL."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
+
+    return_values = (r for r in [handle.define('E_NOT_OK'), handle.define('E_NOT_OK'), handle.define('E_OK')])
+
+    def store_calibration_data_to_non_volatile_memory(p_success):
+        p_success[0] = handle.define('E_OK')
+        return next(return_values)
+
+    handle.xcp_store_calibration_data_to_non_volatile_memory.side_effect = store_calibration_data_to_non_volatile_memory
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF9, 0x01, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    frame = handle.can_if_transmit.call_args[0][1]
+    assert tuple(frame.SduDataPtr[0:2]) == (0xFD, 0x03), 'EV_STORE_CAL'
+    assert frame.SduLength == 0x02, 'no event this module sends carries information data'

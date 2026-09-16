@@ -46,12 +46,23 @@ extern "C" {
 #define XCP_PID_ERROR (0xFEu)
 #define XCP_PID_EVENT (0xFDu)
 
+/* 1.1/1.1.3.5's service request packet. The comment further down this file has named 0xFC as SERV
+ * since before anything could send one; this is the definition it described. */
+#define XCP_PID_SERV (0xFCu)
+
 /* XCP part 2 - Protocol Layer Specification 1.1/1.8.1: "With EV_RESUME_MODE the slave indicates
  * that it is starting in RESUME mode." */
 #define XCP_EVENT_RESUME_MODE (0x00u)
 #define XCP_EVENT_CLEAR_DAQ (0x01u)
 #define XCP_EVENT_STORE_DAQ (0x02u)
 #define XCP_EVENT_STORE_CAL (0x03u)
+
+/* 1.1/1.3's two service request codes. "The implementation is optional for the slave device, but
+ * mandatory for the master device", and service requests are not acknowledged, so delivery is not
+ * guaranteed -- which is why they share the event queue rather than getting a priority path of
+ * their own (DD139). */
+#define XCP_SERV_RESET (0x00u)
+#define XCP_SERV_TEXT (0x01u)
 
 #define XCP_PID_CMD_WRITE_DAQ_MULTIPLE (0xC7u)
 #define XCP_PID_CMD_PROGRAM_VERIFY (0xC8u)

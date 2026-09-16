@@ -93,7 +93,8 @@ static void Xcp_EventQueueInit(Xcp_EventQueueType *pEventQueue);
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *pPacketID, uint8 *pEventCode);
+static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *pPacketID, uint8 *pEventCode,
+                                        const uint8 **ppUserData, uint32 *pUserDataSize);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -1597,7 +1598,15 @@ void Xcp_MainFunction(void)
              * above and Xcp_ReportError below are both external calls and must not extend the
              * section. */
             SchM_Enter_Xcp_DtoQueue();
-            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, &store_calibration_status, 0x00000001u);
+            /* DD141. This pushed one byte of status that went nowhere: nothing read userData.
+             * 1.1/1.2 defines event information for no code this module sends -- EV_RESUME_MODE,
+             * EV_CLEAR_DAQ, EV_STORE_DAQ, EV_STORE_CAL, EV_CMD_PENDING and EV_DAQ_OVERLOAD are all
+             * pure two-byte notifications, and only EV_USER and EV_TRANSPORT are described as
+             * carriers. Now that DD138 transmits userData, pushing a status byte here would put
+             * content on the wire that the specification does not define for this code, so the two
+             * changes are one change. Xcp_EventQueuePush tolerates NULL_PTR at size 0
+             * (source/Xcp_Internal.h). EV_STORE_DAQ and EV_CLEAR_DAQ below carried the same. */
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_CAL, NULL_PTR, 0x00000000u);
             SchM_Exit_Xcp_DtoQueue();
 
             if (push_result == E_OK)
@@ -1680,7 +1689,7 @@ void Xcp_MainFunction(void)
              * exclusive area, and this and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are two
              * producers into the same event queue, reachable from different contexts. */
             SchM_Enter_Xcp_DtoQueue();
-            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_DAQ, &store_daq_configuration_status, 0x00000001u);
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_STORE_DAQ, NULL_PTR, 0x00000000u);
             SchM_Exit_Xcp_DtoQueue();
 
             if (push_result == E_OK)
@@ -1744,7 +1753,7 @@ void Xcp_MainFunction(void)
              * exclusive area, and this and Xcp_TriggerEventChannel's (Xcp_DaqRuntime.c) are two
              * producers into the same event queue, reachable from different contexts. */
             SchM_Enter_Xcp_DtoQueue();
-            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_CLEAR_DAQ, &clear_daq_configuration_status, 0x00000001u);
+            push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue, XCP_PID_EVENT, XCP_EVENT_CLEAR_DAQ, NULL_PTR, 0x00000000u);
             SchM_Exit_Xcp_DtoQueue();
 
             if (push_result == E_OK)
@@ -2377,6 +2386,10 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
                     {
                         uint8 event_packet_id;
+                        /* DD138's two new outputs, taken and ignored: this asks only which code is
+                         * at the head of the queue, not what it carries. */
+                        const uint8 *p_event_user_data;
+                        uint32 event_user_data_size;
                         uint8 event_code;
 
                         /* Peeked before the pop below removes it, under the same exclusive area
@@ -2389,7 +2402,8 @@ void Xcp_CanIfTxConfirmation(PduIdType txPduId, Std_ReturnType result)
                          * EV_CMD_PENDING rate a function of the other feature's event rate, which
                          * is exactly the coupling DD54 forbids. */
                         if ((Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
-                                               &event_packet_id, &event_code) == E_OK) &&
+                                               &event_packet_id, &event_code,
+                                               &p_event_user_data, &event_user_data_size) == E_OK) &&
                             (event_code == XCP_EVENT_CMD_PENDING))
                         {
                             Xcp_Internal.pending_command.event_outstanding = FALSE;
@@ -2562,12 +2576,20 @@ Std_ReturnType Xcp_EventQueuePush(Xcp_EventQueueType *pEventQueue, uint8 packetI
     return result;
 }
 
-static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *pPacketID, uint8 *pEventCode) {
+static Std_ReturnType Xcp_EventQueueGet(Xcp_EventQueueType *pEventQueue, uint8 *pPacketID, uint8 *pEventCode,
+                                        const uint8 **ppUserData, uint32 *pUserDataSize) {
     Std_ReturnType result;
 
     if (pEventQueue->read != pEventQueue->write) {
         *pPacketID = pEventQueue->queue[pEventQueue->read].packetID;
         *pEventCode = pEventQueue->queue[pEventQueue->read].eventCode;
+
+        /* DD138. A pointer into the entry, not a copy: the entry is not released until
+         * Xcp_EventQueuePop, which Xcp_CanIfTxConfirmation calls only once the frame it describes
+         * has been confirmed. Until this, userData was written by Xcp_EventQueuePush, zeroed at
+         * Xcp_Init and read NOWHERE -- the queue carried a payload it had no way to deliver. */
+        *ppUserData = &pEventQueue->queue[pEventQueue->read].userData[0x00u];
+        *pUserDataSize = pEventQueue->queue[pEventQueue->read].userDataSize;
 
         result = E_OK;
     } else {
@@ -2604,6 +2626,9 @@ static void Xcp_TransmitOneFrame(void)
     boolean transmit = FALSE;
     uint8 event_packet_id;
     uint8 event_code;
+    const uint8 *p_event_user_data = NULL_PTR;
+    uint32 event_user_data_size = 0x00000000u;
+    uint32_least event_user_data_idx;
 
     SchM_Enter_Xcp_DtoQueue();
 
@@ -2620,10 +2645,23 @@ static void Xcp_TransmitOneFrame(void)
         }
         else if (Xcp_EventQueueGet(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
                                    &event_packet_id,
-                                   &event_code) == E_OK)
+                                   &event_code,
+                                   &p_event_user_data,
+                                   &event_user_data_size) == E_OK)
         {
             Xcp_Internal.event.pdu_info.SduDataPtr[0x00u] = event_packet_id;
             Xcp_Internal.event.pdu_info.SduDataPtr[0x01u] = event_code;
+
+            /* DD138. 1.1/1.1.3.4 and 1.1/1.1.3.5 both put optional data at 2..MAX_CTO-1, for EV and
+             * SERV alike. This loop needs no bound of its own -- unlike Xcp_FillErrorPacketWithData,
+             * whose missing one was D18: Xcp_EventQueuePush refuses a userDataSize above
+             * XCP_EVENT_USER_DATA_SIZE, and Xcp_SendServiceText refuses one that will not fit
+             * maxCto, so nothing reaches the queue that cannot be laid out here. */
+            for (event_user_data_idx = 0x00000000u; event_user_data_idx < event_user_data_size; event_user_data_idx++)
+            {
+                Xcp_Internal.event.pdu_info.SduDataPtr[0x02u + event_user_data_idx] =
+                    p_event_user_data[event_user_data_idx];
+            }
 
             /* These two bytes were written and the PduInfo handed to CanIf without its length ever
              * being set: event.pdu_info.SduLength was assigned exactly once in this module, to 0 at
@@ -2643,7 +2681,13 @@ static void Xcp_TransmitOneFrame(void)
              * the whole packet. Finalized through the same helper every CTO response uses, which
              * also pads the unused bytes with the configured trailingValue rather than leaving
              * whatever the previous event left there. */
-            Xcp_FinalizeResPacket(0x02u, &Xcp_Internal.event.pdu_info);
+            /* Computed, where this was the literal 0x02u added on 2026-09-16 to fix a defect that
+             * left SduLength unset and sent every EV_* as an empty frame. That fix was right and is
+             * not revised here -- it was simply true only while every packet this module sent was
+             * two bytes, which SERV_TEXT is not.
+             * test_an_event_carrying_no_user_data_is_still_exactly_two_bytes pins the case it
+             * fixed, so this generalisation cannot quietly undo it. */
+            Xcp_FinalizeResPacket((PduLengthType)(0x02u + event_user_data_size), &Xcp_Internal.event.pdu_info);
 
             Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_EVENT;
             pdu_id = Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id;
