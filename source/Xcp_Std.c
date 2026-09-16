@@ -381,11 +381,14 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
          * transmitted; it is refused rather than clamped because a user-defined payload has no
          * length field a master could use to notice the clamp (DD129).
          *
-         * ERR_GENERIC is a deliberate deviation: 1.1/1.7.3.2.1's USER_CMD row lists ERR_CMD_BUSY,
+         * ERR_GENERIC is not listed by 1.1/1.7.3.2.1's USER_CMD row, which lists ERR_CMD_BUSY,
          * ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_OUT_OF_RANGE and ERR_RES_TEMP_NOT_A., and each of the
          * usable ones blames the master's own request for what the slave's extension did. DD57
-         * (PROGRAM_RESET) and DD76 (UNLOCK) took the same deviation for the same reason; DD130
-         * records this as the third. Returning the Det id rather than reporting it here is what
+         * (PROGRAM_RESET) and DD76 (UNLOCK) answer off-row for the same reason. All three were
+         * called deliberate deviations until DD132: 1.1/1.7.3 anticipates an off-row code and
+         * tells the master to fall back to the code's severity, so the behaviour is inside the
+         * protocol. What it costs is only that the master gets severity-level guidance instead of
+         * this row's own Pre-Action/Action pair. Returning the Det id rather than reporting it here is what
          * Xcp_CanIfRxIndication already does with any non-E_OK handler result (source/Xcp.c), the
          * same path the XCP_E_PARAM_POINTER below takes -- and it does not suppress the response,
          * which is filled and transmitted either way.
@@ -440,8 +443,10 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
          * where the answer comes from. XCP part 2 - Protocol Layer Specification 1.0/1.4: "an
          * attempt to execute a not implemented optional command will return ERR_CMD_UNKNOWN and
          * does not have any effect". A USER_CMD whose callback the integrator never configured is
-         * that command, and Xcp_PIDTable's own 0xF1 row marks it optional -- so this needs no
-         * deviation, unlike the ERR_GENERIC one DD130 took for the over-long response above.
+         * that command, and Xcp_PIDTable's own 0xF1 row marks it optional -- so this answer is on
+         * ERR_CMD_UNKNOWN's own row, where DD130's ERR_GENERIC above is not. Neither is a
+         * departure from the specification (DD132); this one simply carries the master a specific
+         * Action rather than a severity to interpret.
          *
          * Xcp_FillErrorPacket finalizes at length 2 itself, so no trailing Xcp_FinalizeResPacket
          * belongs here. result is left at XCP_E_PARAM_POINTER: Det keeps the root cause -- the
@@ -793,10 +798,24 @@ uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoType *pPd
                         pPduInfo->SduDataPtr[0x03u],
                         &Xcp_Internal.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
 
-                        //TODO: Set SduLength correctly here...
-
                     address += element_size;
                 }
+
+                /* This branch carried "//TODO: Set SduLength correctly here..." and did not set it,
+                 * so SHORT_UPLOAD went out with whatever length the PREVIOUS command's response had
+                 * left in the shared buffer -- the same defect GET_SEED carried, found together by
+                 * DD133's invariant guard on the branch that introduced it. The data still parsed,
+                 * because the master knows how many elements it asked for, so a wrong frame length
+                 * was the only symptom.
+                 *
+                 * The form matches Xcp_BlockTransferReadSlaveMemory's own finalize (source/Xcp.c)
+                 * deliberately: both lay out a PID, the alignment bytes an address granularity
+                 * above BYTE needs, and then whole elements, so both end at
+                 * (elements + 1) * element_size. Written the long way, as there, to keep the three
+                 * parts of that sum visible. */
+                Xcp_FinalizeResPacket((PduLengthType)(0x01u + (element_size - 0x01u) +
+                                                      (pPduInfo->SduDataPtr[0x01u] * element_size)),
+                                      &Xcp_Internal.cto_response.pdu_info);
             }
             else
             {
@@ -805,7 +824,18 @@ uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoType *pPd
         }
         else
         {
-            /* TODO: raise a DET error here? */
+            /* "TODO: raise a DET error here?" stood here, and the answer is now yes, from one place
+             * rather than this one. element_size == 0 means Xcp_ElementSizeForAddressGranularity
+             * did not recognise the configured addressGranularity, which Xcp_Init refuses to
+             * initialise with -- so nothing should reach this branch at all. It is deliberately
+             * left without a fill: DD133's invariant guard in Xcp_CanIfRxIndication answers
+             * ERR_GENERIC carrying XCP_GENERIC_DETAIL_RESPONSE_NOT_WRITTEN and reports
+             * XCP_E_RESPONSE_NOT_WRITTEN to Det for any handler that returns "respond" having
+             * written nothing. That is the honest answer for a module in a state its own
+             * initialisation was supposed to have made impossible, and it is the same answer
+             * wherever this happens rather than one invented per site. Before that guard existed,
+             * this branch was the D2/DD76 defect in miniature: it transmitted whatever the previous
+             * command had left in the shared buffer. */
         }
     }
     else
@@ -1019,7 +1049,7 @@ uint8 Xcp_DTOCmdStdUnlock(boolean *responseExpected, const PduInfoType *pPduInfo
                          * against the same 1.0 PDF), and that comment records "of the listed [codes]
                          * only ERR_SEQUENCE could be pressed into service -- a worse fit, since
                          * nothing about the request is out of sequence", the same reasoning that
-                         * rules it out here. The same deviation is kept: XCP_E_ASAM_GENERIC, matching
+                         * rules it out here. The same off-row answer is kept: XCP_E_ASAM_GENERIC, matching
                          * 1.0/1.1.3.3's own description of that code ("the error packet contains an
                          * implementation specific slave device error code"). This is NOT the same as
                          * PROGRAM_START/PROGRAM_PREPARE's own use of it (source/Xcp_Pgm.c,
@@ -1193,11 +1223,19 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
             Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = Xcp_Internal.seed.buffer[Xcp_Internal.seed.current_index++];
         }
 
-        /* Fill the remaining bytes with 0s. */
-        for (; idx < (Xcp_Ptr->general->maxCto); idx++)
-        {
-            Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
-        }
+        /* This branch used to pad to maxCto itself, with 0x00, and never call
+         * Xcp_FinalizeResPacket at all -- so it never set SduLength, and GET_SEED went out carrying
+         * whatever length the PREVIOUS command's response had left in the shared buffer. The seed
+         * itself still parsed, its remaining-length byte being inside the payload at position 1, so
+         * nothing on the wire looked wrong enough to notice; the frame length was simply not this
+         * command's. Found by DD133's invariant guard on the branch that introduced it, which is
+         * the fifth instance of the D2/D7/DD76/Finding-4 family and the first of this shape:
+         * the bytes were written, only the length was not.
+         *
+         * Finalizing here fixes the length and drops the hand-rolled padding, which was also the
+         * one place in this module that ignored the configured trailingValue -- a field that exists
+         * precisely so an integrator chooses what occupies the unused bytes of a frame. */
+        Xcp_FinalizeResPacket((PduLengthType)(0x02u + num_of_bytes_to_copy), &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {

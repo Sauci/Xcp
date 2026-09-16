@@ -314,6 +314,19 @@ extern "C" {
  */
 #define XCP_E_USER_CMD_RESPONSE_TOO_LONG (0x0Au)
 
+/**
+ * @brief A dispatched command left the response buffer unwritten.
+ * @details The master is answered ERR_GENERIC carrying
+ * @ref XCP_GENERIC_DETAIL_RESPONSE_NOT_WRITTEN. XCP part 2 - Protocol Layer Specification
+ * 1.1/1.1.3.3 defines that detail WORD as "an implementation specific slave device error code",
+ * which is what an unwritten response buffer is.
+ * @note This error is not part of the specification. It reports a defect in this module or a
+ * zero-length response from the integrator's Xcp_UserCmdFunction (DD136). 0x0B continues DD131's
+ * practice of not refilling low values, XCP_E_EVENT_QUEUE_FULL already colliding with AUTOSAR's
+ * XCP_E_INIT_FAILED at 0x04. DD135.
+ */
+#define XCP_E_RESPONSE_NOT_WRITTEN (0x0Bu)
+
 /** @} */
 
 /**

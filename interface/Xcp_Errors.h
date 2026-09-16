@@ -168,4 +168,13 @@
  */
 #define XCP_GENERIC_DETAIL_USER_CMD_RESPONSE_TOO_LONG (0x0006u)
 
+/**
+* @brief The dispatched command produced no response at all: Xcp_CanIfRxIndication finished with
+* response_expected TRUE while cto_response.pdu_info.SduLength was still the 0 written before
+* dispatch. The shared response buffer is zero-initialised only at Xcp_Init, so without this
+* refusal the previous command's answer would be transmitted under this command's request -- the
+* defect D2, D7, DD76 and D18's Finding 4 each produced once (DD133).
+ */
+#define XCP_GENERIC_DETAIL_RESPONSE_NOT_WRITTEN (0x0007u)
+
 #endif /* #ifndef XCP_ERRORS_H */

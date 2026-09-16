@@ -1439,7 +1439,7 @@ uint8 Xcp_DTOCmdDaqReadDaq(boolean *responseExpected, const PduInfoType *pPduInf
      * Xcp_DaqPointerIsValid()-style predicate in this file (Task 9); every call site, this one
      * included, reads Xcp_Internal.daq_pointer.valid directly, e.g. Xcp_DaqApplyOdtEntry above.
      *
-     * A deliberate deviation, not an oversight: 1.7.3.2.4's READ_DAQ row does not list
+     * Off-row and deliberate, not an oversight (DD132): 1.7.3.2.4's READ_DAQ row does not list
      * ERR_OUT_OF_RANGE at all (its rows are the t1 timeout, ERR_CMD_BUSY, ERR_PGM_ACTIVE,
      * ERR_CMD_UNKNOWN and ERR_CMD_SYNTAX), unlike every other command in this file. The only
      * listed alternative is ERR_CMD_SYNTAX, whose prescribed action is "retry other syntax" --

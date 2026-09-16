@@ -111,6 +111,11 @@ static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue);
 
 static void Xcp_TransmitOneFrame(void);
 
+/* DD134. The one place cto_response.successful_transmission_pending is set from a dispatch
+ * outcome. It had three call sites that had to agree and nothing said so; a fourth could have been
+ * added without noticing. It also carries the invariant check, which is the reason it exists. */
+static void Xcp_QueueCtoResponse(const boolean responseExpected);
+
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
@@ -1925,6 +1930,26 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
 
                         pid = pPduInfo->SduDataPtr[0x00u];
 
+                        /* DD133. The sentinel the invariant rests on. Xcp_FinalizeResPacket is the
+                         * only code that assigns this field for the CTO buffer and no legal
+                         * response finalizes at 0, so a surviving 0 below means nothing wrote a
+                         * response -- and the buffer still holds the PREVIOUS command's answer,
+                         * which is what would go out instead.
+                         *
+                         * Cleared here rather than immediately before the dispatch call so that
+                         * every path able to reach a transmission is covered: the pending-command
+                         * ERR_CMD_BUSY gate, ERR_PGM_ACTIVE, ERR_CMD_SYNTAX, ERR_ACCESS_LOCKED,
+                         * the disabled-command ERR_CMD_UNKNOWN arm and the handler itself. All of
+                         * those fill, so none should ever trip the check in Xcp_QueueCtoResponse;
+                         * the point is that they are covered by construction rather than by having
+                         * been read once.
+                         *
+                         * This does not endanger a response already queued and awaiting
+                         * TxConfirmation: a second command arriving in that window overwrites the
+                         * buffer through its own handler's fill today, so the pending response is
+                         * already lost by then. The clear adds no hazard the fill does not. */
+                        Xcp_Internal.cto_response.pdu_info.SduLength = 0x00u;
+
                         /* XCP part 1 - Overview 1.0/2.3
                          * In “DISCONNECTED” state, there’s no XCP communication. The session status,
                          * all DAQ lists and the protection status bits are reset, which means that DAQ
@@ -2057,7 +2082,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     if ((Xcp_Internal.pending_command.active == TRUE) && (pid != XCP_PID_CMD_SYNCH))
                                     {
                                         Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
-                                        Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                        Xcp_QueueCtoResponse(response_expected);
                                     }
                                     else
                                     {
@@ -2219,7 +2244,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                         Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
                                     }
 
-                                    Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                    Xcp_QueueCtoResponse(response_expected);
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
                                     }
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
@@ -2234,7 +2259,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  * the response; a disabled command must do the same, or Xcp_MainFunction
                                  * never transmits the packet it just filled. */
                                 Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
-                                Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                Xcp_QueueCtoResponse(response_expected);
                             }
                         }
 
@@ -2616,6 +2641,33 @@ static void Xcp_TransmitOneFrame(void)
             SchM_Exit_Xcp_DtoQueue();
         }
     }
+}
+
+static void Xcp_QueueCtoResponse(const boolean responseExpected)
+{
+    /* DD133/DD134. responseExpected FALSE means the command legitimately produces no response --
+     * the deferred PGM handlers, which answer later from Xcp_MainFunction -- so the buffer is not
+     * examined and the assignment below simply records it, as all three replaced sites did.
+     *
+     * responseExpected TRUE with SduLength still 0 means the invariant is broken: something was to
+     * be transmitted and nothing wrote it. ERR_GENERIC is what 1.1/1.1.3.3 provides for an
+     * implementation specific slave device error, and 1.1/1.7.3.2.1 not listing it for every
+     * command is not a departure -- 1.1/1.7.3 tells the master to fall back to the code's severity,
+     * which for ERR_GENERIC is S2 and in the matrix rows that do list it means "restart session".
+     * That is the right outcome for a slave that just failed to answer (DD132, DD135).
+     *
+     * The guard is self-satisfying: Xcp_FillGenericErrorPacket finalizes through
+     * Xcp_FinalizeResPacket like any other response, so SduLength is 4 by the time the flag is
+     * set. */
+    if ((responseExpected == TRUE) && (Xcp_Internal.cto_response.pdu_info.SduLength == 0x00u))
+    {
+        Xcp_FillGenericErrorPacket(XCP_GENERIC_DETAIL_RESPONSE_NOT_WRITTEN,
+                                   &Xcp_Internal.cto_response.pdu_info);
+
+        Xcp_ReportError(0x00u, XCP_CAN_IF_RX_INDICATION_API_ID, XCP_E_RESPONSE_NOT_WRITTEN);
+    }
+
+    Xcp_Internal.cto_response.successful_transmission_pending = responseExpected;
 }
 
 void Xcp_StartNextTransmission(void)
