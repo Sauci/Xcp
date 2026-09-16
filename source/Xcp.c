@@ -2612,6 +2612,26 @@ static void Xcp_TransmitOneFrame(void)
             Xcp_Internal.event.pdu_info.SduDataPtr[0x00u] = event_packet_id;
             Xcp_Internal.event.pdu_info.SduDataPtr[0x01u] = event_code;
 
+            /* These two bytes were written and the PduInfo handed to CanIf without its length ever
+             * being set: event.pdu_info.SduLength was assigned exactly once in this module, to 0 at
+             * Xcp_Init, so EVERY EV_* packet went out as a zero-length frame and the event code
+             * never reached the bus. EV_STORE_CAL, EV_CLEAR_DAQ, EV_STORE_DAQ, EV_DAQ_OVERLOAD,
+             * EV_RESUME_MODE and EV_CMD_PENDING alike -- the last built by SP4 precisely so a
+             * master restarts its time-out during deferred programming, which it cannot do from an
+             * empty frame.
+             *
+             * The whole suite stayed green because every event assertion in test/ read SduDataPtr
+             * and none read SduLength: the same blind spot that hid D18's Finding 4, GET_SEED's
+             * missing finalize and SHORT_UPLOAD's. Found by asking the event path the question
+             * DD133's invariant asks of the CTO path, which covers that buffer only.
+             *
+             * 1.1/1.1.3.4 lays the EV packet out as the PID at 0, the event code at 1 and optional
+             * event information over 2..MAX_CTO-1. This module sends no information data, so 2 is
+             * the whole packet. Finalized through the same helper every CTO response uses, which
+             * also pads the unused bytes with the configured trailingValue rather than leaving
+             * whatever the previous event left there. */
+            Xcp_FinalizeResPacket(0x02u, &Xcp_Internal.event.pdu_info);
+
             Xcp_Internal.ongoing_transmit_type = ONGOING_TRANSMIT_TYPE_EVENT;
             pdu_id = Xcp_Ptr->config->communicationChannel->channel_tx_pdu_ref->id;
             p_pdu_info = &Xcp_Internal.event.pdu_info;

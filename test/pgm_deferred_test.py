@@ -52,7 +52,12 @@ def program_reset(handle):
 def transmitted(handle):
     """The last frame handed to CanIf, or None if CanIf_Transmit has not been called since the
     marker was placed. Reading call_args directly would return the CONNECT response for a command
-    that transmitted nothing, which is exactly the case these tests must distinguish."""
+    that transmitted nothing, which is exactly the case these tests must distinguish.
+
+    Returns bytes only, deliberately -- but note that dropping SduLength is exactly the blind spot
+    that let every EV_* packet go out at length 0 until 2026-09-16, and D18's Finding 4, GET_SEED
+    and SHORT_UPLOAD before that. A caller checking a frame's length must reach for call_args
+    itself. See test/event_frame_length_test.py."""
     if handle.can_if_transmit.call_args is None:
         return None
     return tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:8])
