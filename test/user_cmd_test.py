@@ -97,6 +97,50 @@ def test_user_cmd_function_calls_det_with_err_invalid_pointer_if_no_user_cmd_fun
                                                     handle.define('XCP_E_PARAM_POINTER'))
 
 
+def test_user_cmd_with_no_callback_answers_err_cmd_unknown():
+    """The response buffer is shared by every CTO response and is cleared only at Xcp_Init, so a
+    handler that fills nothing leaves the previous command's answer in it -- and
+    Xcp_CanIfRxIndication queues that buffer for transmission on every dispatch outcome, the
+    handler's return value reaching only Det. Measured before the fix, this exact sequence put the
+    positive CONNECT response FF 05 C0 08 08 00 01 01 on the wire, byte for byte, in answer to
+    USER_CMD: not merely stale bytes, but a well-formed positive response carrying another
+    command's PID.
+
+    XCP part 2 - Protocol Layer Specification 1.0/1.4 prescribes the answer -- "an attempt to
+    execute a not implemented optional command will return ERR_CMD_UNKNOWN and does not have any
+    effect" -- and a USER_CMD whose callback the integrator never configured is exactly that.
+    Xcp_PIDTable's own row marks 0xF1 optional. This is the same defect family as D2, which SP1
+    closed for unimplemented PIDs; recorded as Finding 4 of the D18 design.
+
+    The neighbouring test above passes both before and after this fix, which is how the defect
+    survived: it asserts only what Det received and never looks at the wire."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, user_cmd_function=None))
+
+    # CONNECT -- loads the shared response buffer with an 8-byte positive answer.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # USER_CMD, with no callback configured.
+    handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xF1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00)))
+    handle.lib.Xcp_MainFunction()
+    handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
+
+    # The length is asserted at the mock because SduDataPtr always holds a full MAX_CTO frame
+    # padded with trailingValue, so bytes past the packet are readable whether or not the module
+    # wrote them -- without this, a replayed 8-byte response whose first two bytes happened to
+    # match would pass.
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 2
+    assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFE, 0x20), 'ERR_CMD_UNKNOWN'
+
+    # Det keeps the root cause -- the integrator left user_cmd_function unset -- while the wire
+    # carries the protocol answer. The same split D18's ruling R6 made for the over-long response.
+    handle.det_report_error.assert_called_once_with(ANY,
+                                                    ANY,
+                                                    handle.define('XCP_CAN_IF_RX_INDICATION_API_ID'),
+                                                    handle.define('XCP_E_PARAM_POINTER'))
+
+
 def test_user_cmd_refuses_a_response_longer_than_max_cto():
     """The integrator's callback is the only place a response length reaches this module from
     outside, and nothing checked it: Xcp_DTOCmdStdUserCmd finalized whatever SduLength came back, so

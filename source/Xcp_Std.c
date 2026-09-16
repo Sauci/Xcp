@@ -422,6 +422,33 @@ uint8 Xcp_DTOCmdStdUserCmd(boolean *responseExpected, const PduInfoType *pPduInf
     }
     else
     {
+        /* This branch filled nothing, and *responseExpected was already TRUE at the top of the
+         * function. Xcp_CanIfRxIndication (source/Xcp.c) sets
+         * cto_response.successful_transmission_pending from response_expected for every dispatch
+         * outcome -- the handler's return value reaches only Xcp_ReportError -- so the buffer was
+         * queued exactly as a real response would be. That buffer, cto_response._packet, is shared
+         * by every CTO response and zero-initialised only at Xcp_Init, and nothing clears it
+         * between commands: the previous command's answer went out under this command's request.
+         * Measured, not inferred -- a CONNECT followed by USER_CMD put the positive CONNECT
+         * response FF 05 C0 08 08 00 01 01 on the wire byte for byte, a well-formed positive
+         * response carrying another command's PID. Recorded as Finding 4 of the D18 design
+         * (docs/superpowers/specs/2026-09-15-xcp-max-cto-bound-d18-design.md), traced there
+         * through the code and confirmed on the wire before this fix.
+         *
+         * The dispatcher's own ERR_ACCESS_LOCKED branch (source/Xcp.c) carries the same reasoning
+         * for its own path, and D2 closed this family for unimplemented PIDs in SP1 -- which is
+         * where the answer comes from. XCP part 2 - Protocol Layer Specification 1.0/1.4: "an
+         * attempt to execute a not implemented optional command will return ERR_CMD_UNKNOWN and
+         * does not have any effect". A USER_CMD whose callback the integrator never configured is
+         * that command, and Xcp_PIDTable's own 0xF1 row marks it optional -- so this needs no
+         * deviation, unlike the ERR_GENERIC one DD130 took for the over-long response above.
+         *
+         * Xcp_FillErrorPacket finalizes at length 2 itself, so no trailing Xcp_FinalizeResPacket
+         * belongs here. result is left at XCP_E_PARAM_POINTER: Det keeps the root cause -- the
+         * unset user_cmd_function -- while the wire carries the protocol answer, the same split
+         * ruling R6 made for a failing callback above. */
+        Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
+
         result = XCP_E_PARAM_POINTER;
     }
 

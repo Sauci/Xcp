@@ -50,7 +50,7 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12947 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12948 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -433,6 +433,18 @@ comfortably inside the floor.
 > reaching a build with no configured callback appears — traced through the code, not confirmed on
 > the wire — to transmit whatever the previous command left in the shared response buffer, the same
 > family as D2.
+>
+> **That fourth finding is now confirmed and fixed (2026-09-16).** The caveat it was filed under is
+> discharged: a probe asserting what the mocked transport received put the positive `CONNECT`
+> response `FF 05 C0 08 08 00 01 01` on the wire byte for byte in answer to `USER_CMD` — not merely
+> stale bytes, as the finding supposed, but a well-formed positive response carrying another
+> command's PID. `Xcp_DTOCmdStdUserCmd`'s `NULL_PTR` branch (`source/Xcp_Std.c`) now fills
+> `ERR_CMD_UNKNOWN`, which 1.0/§1.4 prescribes for a not implemented optional command and which
+> needs no deviation; Det keeps `XCP_E_PARAM_POINTER`, naming the unset `user_cmd_function` as the
+> root cause. `test_user_cmd_with_no_callback_answers_err_cmd_unknown` (`test/user_cmd_test.py`)
+> covers it. The scope stops there: the central-invariant sweep this finding is one instance of —
+> no handler may transmit a buffer it did not write — remains unbuilt, and `Xcp_CanIfRxIndication`
+> still queues the shared buffer for every dispatch outcome regardless of the handler's result.
 
 ---
 
