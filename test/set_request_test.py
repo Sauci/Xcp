@@ -32,6 +32,9 @@ def test_set_request_activates_the_callback_function_call_until_finished():
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
     assert tuple(handle.can_if_transmit.call_args[0][1].SduDataPtr[0:2]) == (0xFD, 0x03)
+    # The length, not only the bytes: every EV_* went out at SduLength 0 until 2026-09-16, and this
+    # assertion's absence everywhere is why nothing noticed (test/event_frame_length_test.py).
+    assert handle.can_if_transmit.call_args[0][1].SduLength == 0x02
 
 
 @pytest.mark.parametrize('event_queue_size', [4, 8, 16, 32])

@@ -133,6 +133,8 @@ def test_completion_clears_the_bit_and_raises_the_matching_event_carrying_the_st
     event_frames = [call for call in handle.can_if_transmit.call_args_list
                     if tuple(call[0][1].SduDataPtr[0:3]) == (0xFD, event_pid, 0x00)]
     assert len(event_frames) > 0
+    assert all(call[0][1].SduLength == 0x02 for call in event_frames), \
+        'an event frame with no length reaches the bus empty (test/event_frame_length_test.py)'
 
     # Drains the event this completion queued and chained onto the confirmation above (D16,
     # set_request_test.py), so the GET_STATUS exchange below is not racing a still-unconfirmed

@@ -378,6 +378,7 @@ def test_resume_complete_raises_ev_resume_mode():
     frames = [c for c in handle.can_if_transmit.call_args_list
               if tuple(c[0][1].SduDataPtr[0:2]) == (0xFD, 0x00)]  # XCP_PID_EVENT, EV_RESUME_MODE
     assert len(frames) == 1, 'exactly one EV_RESUME_MODE'
+    assert frames[0][0][1].SduLength == 0x02, 'and it carries a length, not just the right bytes'
 
 
 def test_resume_complete_reports_a_full_event_queue():
