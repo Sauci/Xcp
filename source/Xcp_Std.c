@@ -793,10 +793,24 @@ uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoType *pPd
                         pPduInfo->SduDataPtr[0x03u],
                         &Xcp_Internal.cto_response.pdu_info.SduDataPtr[(idx + 0x01u) * element_size]);
 
-                        //TODO: Set SduLength correctly here...
-
                     address += element_size;
                 }
+
+                /* This branch carried "//TODO: Set SduLength correctly here..." and did not set it,
+                 * so SHORT_UPLOAD went out with whatever length the PREVIOUS command's response had
+                 * left in the shared buffer -- the same defect GET_SEED carried, found together by
+                 * DD133's invariant guard on the branch that introduced it. The data still parsed,
+                 * because the master knows how many elements it asked for, so a wrong frame length
+                 * was the only symptom.
+                 *
+                 * The form matches Xcp_BlockTransferReadSlaveMemory's own finalize (source/Xcp.c)
+                 * deliberately: both lay out a PID, the alignment bytes an address granularity
+                 * above BYTE needs, and then whole elements, so both end at
+                 * (elements + 1) * element_size. Written the long way, as there, to keep the three
+                 * parts of that sum visible. */
+                Xcp_FinalizeResPacket((PduLengthType)(0x01u + (element_size - 0x01u) +
+                                                      (pPduInfo->SduDataPtr[0x01u] * element_size)),
+                                      &Xcp_Internal.cto_response.pdu_info);
             }
             else
             {
@@ -805,7 +819,18 @@ uint8 Xcp_DTOCmdStdShortUpload(boolean *responseExpected, const PduInfoType *pPd
         }
         else
         {
-            /* TODO: raise a DET error here? */
+            /* "TODO: raise a DET error here?" stood here, and the answer is now yes, from one place
+             * rather than this one. element_size == 0 means Xcp_ElementSizeForAddressGranularity
+             * did not recognise the configured addressGranularity, which Xcp_Init refuses to
+             * initialise with -- so nothing should reach this branch at all. It is deliberately
+             * left without a fill: DD133's invariant guard in Xcp_CanIfRxIndication answers
+             * ERR_GENERIC carrying XCP_GENERIC_DETAIL_RESPONSE_NOT_WRITTEN and reports
+             * XCP_E_RESPONSE_NOT_WRITTEN to Det for any handler that returns "respond" having
+             * written nothing. That is the honest answer for a module in a state its own
+             * initialisation was supposed to have made impossible, and it is the same answer
+             * wherever this happens rather than one invented per site. Before that guard existed,
+             * this branch was the D2/DD76 defect in miniature: it transmitted whatever the previous
+             * command had left in the shared buffer. */
         }
     }
     else
@@ -1193,11 +1218,19 @@ uint8 Xcp_DTOCmdStdGetSeed(boolean *responseExpected, const PduInfoType *pPduInf
             Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = Xcp_Internal.seed.buffer[Xcp_Internal.seed.current_index++];
         }
 
-        /* Fill the remaining bytes with 0s. */
-        for (; idx < (Xcp_Ptr->general->maxCto); idx++)
-        {
-            Xcp_Internal.cto_response.pdu_info.SduDataPtr[idx] = 0x00u;
-        }
+        /* This branch used to pad to maxCto itself, with 0x00, and never call
+         * Xcp_FinalizeResPacket at all -- so it never set SduLength, and GET_SEED went out carrying
+         * whatever length the PREVIOUS command's response had left in the shared buffer. The seed
+         * itself still parsed, its remaining-length byte being inside the payload at position 1, so
+         * nothing on the wire looked wrong enough to notice; the frame length was simply not this
+         * command's. Found by DD133's invariant guard on the branch that introduced it, which is
+         * the fifth instance of the D2/D7/DD76/Finding-4 family and the first of this shape:
+         * the bytes were written, only the length was not.
+         *
+         * Finalizing here fixes the length and drops the hand-rolled padding, which was also the
+         * one place in this module that ignored the configured trailingValue -- a field that exists
+         * precisely so an integrator chooses what occupies the unused bytes of a frame. */
+        Xcp_FinalizeResPacket((PduLengthType)(0x02u + num_of_bytes_to_copy), &Xcp_Internal.cto_response.pdu_info);
     }
     else
     {
