@@ -1,8 +1,9 @@
 # The CTO response invariant — no handler transmits a buffer it did not write
 
-**Defect family:** D2 (`Xcp_PIDTable` maps every PID to a handler that answers positively) and
-Finding 4 of `2026-09-15-xcp-max-cto-bound-d18-design.md` (`USER_CMD` with no configured callback
-replays the previous command's response). Both are instances of one missing invariant. D18's §5
+**Defect family:** D2 and D7 (SP1), DD76 (`UNLOCK` retransmitting the previous `GET_SEED`
+response), and Finding 4 of `2026-09-15-xcp-max-cto-bound-d18-design.md` (`USER_CMD` with no
+configured callback replaying the previous command's response). All four are instances of one
+missing invariant. D18's §5
 named the work that would close it — "the central-invariant sweep across every site that sets
 `SduLength`" — and deferred it. This is that sub-project.
 
@@ -33,9 +34,22 @@ configuration with no `user_cmd_function` put `FF 05 C0 08 08 00 01 01` on the w
 positive response carrying another command's PID, which a master cannot distinguish from a genuine
 one except by a PID it never asked for.
 
-Two defects of this family have now been found and fixed one at a time, the second within weeks of
-the first. The module relies on every one of its 54 handlers filling the buffer by convention. Nothing enforces
-it, and nothing tells a handler's author that the obligation exists.
+**This family has produced at least four defects, fixed on three separate occasions, and the count
+was understated when this design was first drafted.** SP1 fixed it twice, as D2 and D7. DD76
+(`2026-09-07-xcp-shared-state-defects-design.md`) fixed it a third time in `UNLOCK`, whose
+`if (Xcp_CalcKey(...) == E_OK)` had no `else`: a failing key calculation wrote nothing while
+`*responseExpected` stayed `TRUE`, and the measured result was that `UNLOCK` **retransmitted the
+previous `GET_SEED` response as its own positive answer** — telling the master `0xFF` for an unlock
+that never happened and handing back seed bytes it was not answering for. DD76 names the class
+itself: "the module's own D2/D7 class, which SP1 fixed twice". `GET_DAQ_ID`'s branch in
+`source/Xcp_Std.c` still carries a comment describing the same shape. Finding 4, in `USER_CMD`, is
+the fourth.
+
+That history is the argument for this sub-project. Each instance was found by someone reading one
+handler closely, and each was fixed in that one handler alone. The module relies on every one of its
+54 handlers filling the buffer by convention; nothing enforces it, and nothing tells a handler's
+author that the obligation exists. Four instances across three occasions is not a run of bad luck,
+it is what an unenforced invariant produces.
 
 ### The sole-writer fact this design rests on
 
@@ -88,22 +102,48 @@ just failed to produce a response: its state is one the master should stop trust
 > master has to check the Severity of this ERR in the "Table of Error Codes" and decide about an
 > appropriate reaction.
 
-### DD132 — "deliberate deviation" is the wrong word, in four places
+### DD132 — "deviation" is the wrong word for an off-row error code
 
-That passage corrects a premise this project has carried since SP4. DD57 (`PROGRAM_RESET`), DD76
-(`UNLOCK`) and DD130 (`USER_CMD`) each record answering `ERR_GENERIC` where §1.7.3.2.1's row for
-that command does not list it, and each calls it "a deliberate deviation". The comment added to
-`Xcp_DTOCmdStdUserCmd` on 2026-09-16 repeats the claim.
+That passage corrects a premise this project has carried since SP4: that answering an error code
+the command's §1.7.3.2 row does not list is a departure from the specification. It is not. §1.7.3
+anticipates an off-row code and tells the master exactly what to do with one — fall back to the
+severity in the Table of Error Codes. The behaviour is inside the protocol.
 
-It overstates the cost. §1.7.3 anticipates an off-row code and tells the master exactly what to do
-with one: fall back to the severity in the Table of Error Codes. The behaviour is inside the
-protocol, not outside it. What an off-row code actually costs is narrower and worth stating
-plainly — the master gets severity-level guidance ("resolvable error", and for `ERR_GENERIC` in
-practice a session restart) instead of the specific Pre-Action/Action pair a listed code would
-carry. That is a real trade-off, and none of the four choices becomes wrong under the correct
-reading. Only the word does.
+What an off-row code actually costs is narrower and worth stating plainly: the master gets
+severity-level guidance ("resolvable error", and for `ERR_GENERIC` in practice a session restart)
+instead of the specific Pre-Action/Action pair a listed code would carry. That is a real trade-off,
+and **none of the choices made under the old reading becomes wrong under the correct one.** Only the
+word does.
 
-All four sites are corrected on this branch.
+**Where it appears, surveyed rather than recalled.** Ten sites make this claim — four comments in
+`source/` and six in dated design documents:
+
+| Site | Wording |
+|:--|:--|
+| `source/Xcp_Std.c:384` | `USER_CMD`, DD130 — "a deliberate deviation" |
+| `source/Xcp_Std.c:444` | Finding 4's comment — "needs no deviation, unlike … DD130" |
+| `source/Xcp_Std.c:1022` | "The same deviation is kept: `XCP_E_ASAM_GENERIC`" |
+| `source/Xcp_Daq.c:1442` | `READ_DAQ` — "A deliberate deviation, not an oversight" |
+| `2026-09-06-xcp-pgm-sp4a-design.md:398` | DD57 — "Two deliberate deviations" |
+| `2026-09-07-xcp-shared-state-defects-design.md:191` | DD76 — "a **recorded deviation**" |
+| `2026-09-02-xcp-daq-sp2b-design.md:366` | "The code stands as a deliberate deviation" |
+| `2026-09-07-xcp-pgm-sp4b-design.md:207` | `PROGRAM_MAX` — "answers two codes its row does not list" |
+| `2026-09-04-xcp-stim-sp3-design.md:243` | "an error code the specification does not list" |
+| `2026-09-15-xcp-max-cto-bound-d18-design.md:111` | DD130 |
+
+Four further sites use the word for something else and are correctly left alone: the MISRA deviation
+in `2026-09-11-xcp-get-id-types-design.md:188`; D10 in `2026-09-01-xcp-daq-design.md:750`, which is a
+real defect about *reacting* to an unlisted error rather than answering one; `source/Xcp.c:1092` and
+`:1106`, which describe the matrix rather than claim a deviation; and `source/Xcp_Std.c:904` and
+`:1027`, which already say "not a deviation" correctly, because those rows do list the code.
+
+**Scope on this branch: the four `source/` comments only.** They mislead a reader of the code as it
+stands today, so they are corrected here. The six design documents are dated records of what was
+believed when each sub-project ran, and this project's convention is to append a correction to such a
+record rather than silently rewrite it — "This row previously said…", "Corrected before
+implementation began". Rewriting six of them to match a finding made after they were written would
+break that convention for no gain the present tense needs. This section is the one durable record of
+the correction; anything citing those documents should read it alongside them.
 
 ## 3. The design
 
