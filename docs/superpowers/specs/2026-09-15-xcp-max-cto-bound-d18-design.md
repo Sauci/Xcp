@@ -246,6 +246,34 @@ elsewhere in the suite, asserts what the mocked transport actually received, so 
 refutes the wire behaviour this finding describes. Recorded at exactly that confidence, the way
 Finding 1 above should have been from the start.
 
+**Confirmed on the wire and fixed, 2026-09-16.** The caveat above is discharged. A probe asserting
+what the mocked transport received — CONNECT, then `USER_CMD` against a configuration with no
+`user_cmd_function` — transmitted `SduLength` 8 and the bytes `FF 05 C0 08 08 00 01 01`: the
+positive `CONNECT` response, byte for byte. The finding understated it. "Whatever the previous
+command left in the shared response buffer" reads as stale bytes; what the master actually receives
+is a well-formed positive response carrying another command's PID, which it has no way to tell from
+a real one except by the PID it did not ask for.
+
+The fix fills `ERR_CMD_UNKNOWN` in `Xcp_DTOCmdStdUserCmd`'s `NULL_PTR` branch (`source/Xcp_Std.c`).
+1.0/§1.4 prescribes it — "an attempt to execute a not implemented optional command will return
+ERR_CMD_UNKNOWN and does not have any effect" — and a `USER_CMD` whose callback the integrator never
+configured is that command, `Xcp_PIDTable`'s own 0xF1 row already marking it optional. So unlike
+DD130's `ERR_GENERIC` for the over-long response, this takes no deviation. `result` stays
+`XCP_E_PARAM_POINTER`: Det keeps the root cause, the wire carries the protocol answer — ruling R6's
+split, applied to a second branch of the same handler. `test_user_cmd_with_no_callback_answers_err_cmd_unknown`
+(`test/user_cmd_test.py`) covers it, and `Xcp_Std.c` line coverage moved 98.81% of 504 to 99.41%
+of 505.
+
+**What this fix is not.** It closes one path, not the family. `Xcp_CanIfRxIndication` still sets
+`cto_response.successful_transmission_pending` from `response_expected` for every dispatch outcome,
+with the handler's return value reaching only `Xcp_ReportError`, so the module still relies on every
+handler filling the buffer by convention rather than by construction. A sweep before the fix found
+this branch to be the only handler path that returns "respond" having written nothing — every other
+handler fills, and the PGM handlers' deferred branches set `*responseExpected = FALSE` — but that
+sweep counted fill calls per function, not per path, so it establishes that this one was broken, not
+that the rest are sound. The central invariant named as out of scope at the top of this section
+remains the work that would settle it.
+
 **Finding 5 — DD126's generation-time floor for `max_cto` has no matching ceiling, and the ceiling
 itself is stated three different ways.** `script/source_cfg.c.jinja2`'s new guard refuses
 `configuration.protocol_layer.max_cto < 8`; nothing in that file, and nothing anywhere else under
