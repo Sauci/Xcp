@@ -111,6 +111,11 @@ static Std_ReturnType Xcp_EventQueuePop(Xcp_EventQueueType *pEventQueue);
 
 static void Xcp_TransmitOneFrame(void);
 
+/* DD134. The one place cto_response.successful_transmission_pending is set from a dispatch
+ * outcome. It had three call sites that had to agree and nothing said so; a fourth could have been
+ * added without noticing. It also carries the invariant check, which is the reason it exists. */
+static void Xcp_QueueCtoResponse(const boolean responseExpected);
+
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
@@ -2057,7 +2062,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                     if ((Xcp_Internal.pending_command.active == TRUE) && (pid != XCP_PID_CMD_SYNCH))
                                     {
                                         Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
-                                        Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                        Xcp_QueueCtoResponse(response_expected);
                                     }
                                     else
                                     {
@@ -2219,7 +2224,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                         Xcp_FillErrorPacket(XCP_E_ASAM_CMD_BUSY, &Xcp_Internal.cto_response.pdu_info);
                                     }
 
-                                    Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                    Xcp_QueueCtoResponse(response_expected);
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
                                     }
 #endif /* #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON) */
@@ -2234,7 +2239,7 @@ void Xcp_CanIfRxIndication(PduIdType rxPduId, const PduInfoType *pPduInfo)
                                  * the response; a disabled command must do the same, or Xcp_MainFunction
                                  * never transmits the packet it just filled. */
                                 Xcp_FillErrorPacket(XCP_E_ASAM_CMD_UNKNOWN, &Xcp_Internal.cto_response.pdu_info);
-                                Xcp_Internal.cto_response.successful_transmission_pending = response_expected;
+                                Xcp_QueueCtoResponse(response_expected);
                             }
                         }
 
@@ -2616,6 +2621,11 @@ static void Xcp_TransmitOneFrame(void)
             SchM_Exit_Xcp_DtoQueue();
         }
     }
+}
+
+static void Xcp_QueueCtoResponse(const boolean responseExpected)
+{
+    Xcp_Internal.cto_response.successful_transmission_pending = responseExpected;
 }
 
 void Xcp_StartNextTransmission(void)
