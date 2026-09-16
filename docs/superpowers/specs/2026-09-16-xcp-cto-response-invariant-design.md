@@ -34,8 +34,11 @@ configuration with no `user_cmd_function` put `FF 05 C0 08 08 00 01 01` on the w
 positive response carrying another command's PID, which a master cannot distinguish from a genuine
 one except by a PID it never asked for.
 
-**This family has produced at least four defects, fixed on three separate occasions, and the count
-was understated when this design was first drafted.** SP1 fixed it twice, as D2 and D7. DD76
+**This family has produced seven defects, and the count kept rising as this sub-project ran.** Four
+were known when the design was drafted, after a correction from two; the invariant itself found
+three more on its first run, recorded as DD137 in §4.
+
+**The four that were known.** SP1 fixed it twice, as D2 and D7. DD76
 (`2026-09-07-xcp-shared-state-defects-design.md`) fixed it a third time in `UNLOCK`, whose
 `if (Xcp_CalcKey(...) == E_OK)` had no `else`: a failing key calculation wrote nothing while
 `*responseExpected` stayed `TRUE`, and the measured result was that `UNLOCK` **retransmitted the
@@ -229,10 +232,44 @@ added to production code to make the guard testable.
 connected session, asserting that nothing transmitted is the `RESPONSE_NOT_WRITTEN` packet. This is
 the per-path audit that the per-function sweep on the Finding 4 branch could not provide: that sweep
 counted fill calls per function, which established that `USER_CMD`'s branch was broken but not that
-the other handlers are sound. If a path does return "respond" having written nothing, this finds it,
-and it is fixed on this branch. If none does, the design records that the guard currently protects
-against the `USER_CMD` zero-length case and against future regressions, and nothing else — which is
-the honest claim and the one DD136 depends on.
+the other handlers are sound.
+
+### DD137 — what the audit actually found
+
+The guard was not idle. Its first full run failed two pre-existing tests, and both were real defects
+of a shape the per-function sweep was structurally unable to see: the response **bytes** were
+written and only the **length** was not, so those handlers never called `Xcp_FinalizeResPacket` at
+all and inherited whatever `SduLength` the previous command's response had left in the shared
+buffer.
+
+**`Xcp_DTOCmdStdGetSeed`.** Its success path wrote the PID, the remaining-length byte and the seed
+bytes, then padded to `maxCto` with a hand-rolled `0x00` loop, and returned. `GET_SEED` has
+therefore been transmitting with the previous command's frame length. The seed still parsed — its
+remaining-length byte sits inside the payload at position 1, so a master reads it correctly — which
+is why nothing caught it before. It now finalizes, and the hand-rolled padding is gone: it was also
+the one place in this module that ignored the configured `trailingValue`, a field that exists
+precisely so an integrator chooses what occupies the unused bytes of a frame.
+
+**`Xcp_DTOCmdStdShortUpload`.** Its success path carried a literal `//TODO: Set SduLength correctly
+here...` and did not. Same defect, same symptom, now finalizing in the form
+`Xcp_BlockTransferReadSlaveMemory` already uses — both lay out a PID, the alignment bytes an address
+granularity above BYTE needs, and then whole elements, so both end at `(elements + 1) * element_size`.
+
+**`Xcp_DTOCmdStdShortUpload`'s `element_size == 0` branch**, a third site, asked `/* TODO: raise a
+DET error here? */` and answered nothing. It is deliberately left without a fill. The answer to its
+question is yes, and the guard now gives it from one place rather than per site: `element_size == 0`
+means the configured address granularity is one `Xcp_ElementSizeForAddressGranularity` does not
+recognise, which `Xcp_Init` refuses to initialise with, so `ERR_GENERIC` is the honest answer for a
+module in a state its own initialisation was supposed to have made impossible.
+
+That takes the family to seven: D2, D7, DD76, Finding 4, and these three. Four were found by someone
+reading one handler closely. Three were found by the invariant, on its first run, in about seven
+minutes.
+
+**With those fixed the sweep passes on all 64 command PIDs.** That is the audit result, and it is
+what the design may now claim: no command path returns `responseExpected` TRUE having written
+nothing. The guard's remaining live path is the `USER_CMD` zero-length case of DD136, plus whatever
+a future handler gets wrong.
 
 **The sentinel's premise is pinned.** A test asserting that no legal response finalizes at length 0,
 so a future `Xcp_FinalizeResPacket(0, ...)` on a valid path breaks a test rather than silently

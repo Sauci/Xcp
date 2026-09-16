@@ -50,7 +50,7 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 12948 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 13014 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -445,6 +445,19 @@ comfortably inside the floor.
 > covers it. The scope stops there: the central-invariant sweep this finding is one instance of —
 > no handler may transmit a buffer it did not write — remains unbuilt, and `Xcp_CanIfRxIndication`
 > still queues the shared buffer for every dispatch outcome regardless of the handler's result.
+>
+> **That sweep is now built, and the family is closed by construction (2026-09-16).** D2, D7, DD76
+> (`UNLOCK` retransmitting the previous `GET_SEED` response) and Finding 4 were four instances of
+> one missing invariant. `Xcp_CanIfRxIndication` now clears `cto_response.pdu_info.SduLength` before
+> dispatch, and `Xcp_QueueCtoResponse` refuses to transmit a surviving 0, answering `ERR_GENERIC`
+> with `XCP_GENERIC_DETAIL_RESPONSE_NOT_WRITTEN` and reporting `XCP_E_RESPONSE_NOT_WRITTEN`. The
+> guard then found three more instances on its first run, all of a shape the earlier per-function
+> sweep could not see — the bytes written, the length not: `GET_SEED` and `SHORT_UPLOAD` never
+> called `Xcp_FinalizeResPacket` on their success paths and so transmitted with the previous
+> command's frame length, and `SHORT_UPLOAD`'s `element_size == 0` branch answered nothing at all.
+> Seven instances in total. A sweep of all 64 command PIDs now passes, which is the evidence that no
+> command path returns "respond" having written nothing. Design:
+> `docs/superpowers/specs/2026-09-16-xcp-cto-response-invariant-design.md` (DD132-DD137).
 
 ---
 
