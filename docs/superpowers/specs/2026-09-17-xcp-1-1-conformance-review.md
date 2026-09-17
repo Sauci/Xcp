@@ -112,6 +112,50 @@ disabled the condition cannot arise, which is why the row has two arms at all. O
 covers `ERR_RES_TEMP_NOT_A.` only, which is what PR #41 touched. The rest of §1.7.3.2.1, and
 §1.7.3.2.2–§1.7.3.2.5, are still outstanding.
 
+### 🔴 Finding R2 — `GET_ID` cites an `ERR_OUT_OF_RANGE` row that 1.1 does not have
+
+**Established from both sources, which agree.** 1.1/§1.7.3.2.1's `GET_ID` row lists exactly four
+codes: `ERR_CMD_BUSY`, `ERR_CMD_UNKNOWN`, `ERR_CMD_SYNTAX`, `ERR_RES_TEMP_NOT_A.` — plus
+`timeout t1`. **`ERR_OUT_OF_RANGE` is not among them.** Checked in the deciphered text layer (rows
+7513–7521) *and* the OCR sidecar (6396–6400) precisely because the code asserts the opposite; the
+two agree, and `SET_REQUEST` immediately below does carry `ERR_OUT_OF_RANGE` in both, which rules
+out a systematic extraction gap at that point in the table.
+
+`source/Xcp_Std.c`'s `Xcp_DTOCmdStdGetId` says, of identification types 5..127:
+
+> This is the only value range that can reach GET_ID's own **ERR_OUT_OF_RANGE row in
+> 1.1/§1.7.3.2.1**, the identification type being its only parameter. … DD110.
+
+There is no such row. `Xcp_CTOErrorMatrix[0xFA]` carries `XCP_INTERNAL_ERR_OUT_OF_RANGE` to match
+the claim.
+
+**The behaviour is defensible; the citation is not.** DD132 established that §1.7.3 anticipates a
+slave answering a code its command's row does not list — the master falls back to the code's
+severity — so answering `ERR_OUT_OF_RANGE` for an undefined identification type is a legitimate
+off-row choice, and arguably the only sensible one. What is wrong is that it is recorded as
+*compliance* rather than as a choice, which is the same class of mistake DD132 corrected in four
+other comments, in the opposite direction: those called a legitimate off-row answer a "deviation",
+this one calls an off-row answer a row.
+
+It also means `Xcp_CTOErrorMatrix[0xFA]` carries a code that no comment declares as off-row, unlike
+`UNLOCK`'s and `USER_CMD`'s `ERR_GENERIC`, which DD76 and DD130 both flag where they sit.
+
+**Proposed fix:** correct the comment to say that 1.1/§1.7.3.2.1's `GET_ID` row does not list
+`ERR_OUT_OF_RANGE`, that answering it is the off-row choice §1.7.3 provides for, and why no listed
+code fits an identification type that names nothing. Mark the matrix row the way DD76 and DD130
+mark theirs. No behaviour change, no test change.
+
+---
+
+## Non-findings worth recording, so they are not "fixed" later
+
+**`SET_MTA`, `UPLOAD` and `BUILD_CHECKSUM` omit `ERR_PGM_ACTIVE` in the programming-*enabled* build
+and carry it in the disabled one.** This looks inverted and is deliberate: 1.1/§1.6.5.1.1 requires
+`SET_MTA` to stay available *during* a programming sequence, and one matrix bit governs all four
+`ERR_PGM_ACTIVE` triggers, so carrying it would make the gate refuse the command the specification
+requires to remain reachable. `source/Xcp.c` documents this at length at the row itself, including
+the sentence "worth recording so a future reader does not 'fix' it back". This review nearly did.
+
 ---
 
 ## Slices not yet started
