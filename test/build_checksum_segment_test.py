@@ -9,6 +9,10 @@ Resolution is observable from the wire alone: 1.1/1.6.1.2.9's positive response 
 type in byte 1, so a segment declaring XCP_CRC_16 against a global XCP_ADD_11 answers 0x07 when the
 MTA is inside it and 0x01 when it is not. No test here reaches into the module."""
 
+import pytest
+
+from jinja2.exceptions import UndefinedError
+
 from .parameter import *
 from .conftest import XcpTest
 
@@ -159,3 +163,114 @@ def test_a_segment_bound_does_not_leak_to_an_address_outside_it():
 
     assert response[0] == 0xFF, 'outside the segment the global bound of 0x1000 admits 0x20'
     assert response[1] == XCP_ADD_11_ON_THE_WIRE
+
+
+def test_a_block_spanning_out_of_its_segment_uses_that_segment_configuration():
+    """DD145. The block starts inside the segment and runs past its end. The segment containing the
+    START decides for the whole of it -- 1.1/1.6.1.2.9 calls it "the memory block that is defined by
+    the MTA and Block size", and the MTA is what locates it. Pinned so the decision cannot drift
+    silently: the alternative reading, refusing a spanning block, would change behaviour in builds
+    with no per-segment overrides at all."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   checksum_type='XCP_ADD_11',
+                                   checksum_max_block_size=0x10000,
+                                   segments=[segment(address=SEGMENT_ADDRESS,
+                                                     length=0x10,
+                                                     checksum=segment_checksum('XCP_CRC_16'))]))
+    reading_zeros(handle)
+
+    # 0x40 elements from the segment's base, against a segment only 0x10 long.
+    response = build_checksum(handle, SEGMENT_ADDRESS, 0x40)
+
+    assert response[0] == 0xFF
+    assert response[1] == XCP_CRC_16_ON_THE_WIRE, "the starting segment's type covers the whole block"
+
+
+def test_overlapping_segments_resolve_to_the_first_declared():
+    """DD144. config/xcp.schema.json does not forbid overlap, and declaration order is the only
+    ordering an integrator controls, so first match is the rule and this is what makes it a promise
+    rather than an artefact of loop direction."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   checksum_type='XCP_ADD_11',
+                                   segments=[segment(name='FIRST',
+                                                     address=SEGMENT_ADDRESS,
+                                                     length=SEGMENT_LENGTH,
+                                                     checksum=segment_checksum('XCP_CRC_16')),
+                                             segment(name='SECOND',
+                                                     address=SEGMENT_ADDRESS,
+                                                     length=SEGMENT_LENGTH,
+                                                     checksum=segment_checksum('XCP_ADD_11'))]))
+    reading_zeros(handle)
+
+    response = build_checksum(handle, SEGMENT_ADDRESS, 0x04)
+
+    assert response[1] == XCP_CRC_16_ON_THE_WIRE, "FIRST is declared first, so FIRST wins"
+
+
+def test_a_segment_callback_is_used_in_place_of_the_global_one():
+    """A segment declaring XCP_USER_DEFINED with its own callback must invoke THAT callback. Asserted
+    on which mock was called rather than on the resulting checksum, since both callbacks could
+    return the same value and the test would then prove nothing."""
+    handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                                   checksum_type='XCP_ADD_11',
+                                   user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
+                                   segments=[segment(address=SEGMENT_ADDRESS,
+                                                     length=SEGMENT_LENGTH,
+                                                     checksum=segment_checksum('XCP_USER_DEFINED'))]))
+    reading_zeros(handle)
+
+    def xcp_user_defined_checksum_function(_p_lower_address, p_upper_address, p_checksum):
+        p_checksum[0] = 0x12345678
+        return p_upper_address
+
+    handle.xcp_user_defined_checksum_function.side_effect = xcp_user_defined_checksum_function
+
+    response = build_checksum(handle, SEGMENT_ADDRESS, 0x04)
+
+    assert response[1] == 0xFF, 'XCP_USER_DEFINED reports 0xFF on the wire'
+    handle.xcp_user_defined_checksum_function.assert_called_once()
+
+
+def test_generation_refuses_a_segment_user_defined_checksum_with_no_callback_anywhere():
+    """DD148. The segment declares XCP_USER_DEFINED and there is no callback on it or globally, so
+    Xcp_DTOCmdStdBuildChecksum would call NULL_PTR for any MTA inside it."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                              user_defined_checksum_function=None,
+                              segments=[segment(address=SEGMENT_ADDRESS,
+                                                checksum=segment_checksum('XCP_USER_DEFINED'))]))
+
+
+def test_generation_accepts_a_segment_user_defined_checksum_falling_back_to_the_global_callback():
+    """The companion the refusal needs. The guard is a conjunction over the fallback, not a check on
+    the segment alone: a segment declaring the type and leaving the callback global is legitimate,
+    and every guard in that template raises the identical "'raise' is undefined", so only the pair
+    identifies which one fired."""
+    XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                          user_defined_checksum_function='Xcp_UserDefinedChecksumFunction',
+                          segments=[segment(address=SEGMENT_ADDRESS,
+                                            checksum=segment_checksum('XCP_USER_DEFINED'))]))
+
+
+def test_generation_refuses_a_segment_block_size_whose_product_with_granularity_overflows():
+    """DD148, the second guard: the bound DD119 applies to protocol_layer.checksum_max_block_size
+    must not be escapable by a per-segment override. DWORD granularity, so 0x40000000 * 4 is the
+    first product exceeding uint32."""
+    with pytest.raises(UndefinedError):
+        XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                              address_granularity='DWORD',
+                              segments=[segment(address=SEGMENT_ADDRESS,
+                                                checksum=segment_checksum(
+                                                    'XCP_CRC_16',
+                                                    checksum_max_block_size=0x40000000))]))
+
+
+def test_generation_accepts_the_largest_segment_block_size_that_fits():
+    """The boundary an off-by-one would show at: 0x3FFFFFFF * 4 is the largest product within
+    uint32."""
+    XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001,
+                          address_granularity='DWORD',
+                          segments=[segment(address=SEGMENT_ADDRESS,
+                                            checksum=segment_checksum(
+                                                'XCP_CRC_16',
+                                                checksum_max_block_size=0x3FFFFFFF))]))

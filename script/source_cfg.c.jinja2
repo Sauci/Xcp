@@ -810,6 +810,21 @@ static Xcp_ConfigType Xcp_ConfigConfig{{'%02X' % loop.index0}} = {
         property is disturbed by it. #}
 {{ raise('checksum_max_block_size {} is in {} address granularity units, and {} * {} exceeds the uint32 that source/Xcp_Std.c computes element_size * block_size in; the largest value that fits this granularity is {} (XCP part 2 1.1/1.6.1.2.9; DD119 in docs/superpowers/specs/2026-09-14-xcp-build-checksum-d6-design.md)'.format(configuration.protocol_layer.checksum_max_block_size, configuration.protocol_layer.address_granularity, configuration.protocol_layer.checksum_max_block_size, ag_size, 4294967295 // ag_size)) }}
 {%- endif %}
+{#- DD148: the same two constraints, per segment. A segment's CHECKSUM block is optional and each
+    field within it falls back to protocol_layer's, so both guards are conjunctions over the
+    fallback rather than checks on the segment alone -- a segment declaring XCP_USER_DEFINED is only
+    broken when there is no callback ANYWHERE for it to reach. See
+    docs/superpowers/specs/2026-09-17-xcp-per-segment-checksum-design.md #}
+{%- for segment in configuration.segments | default([]) %}
+{%- if segment.checksum is defined %}
+{%- if segment.checksum.checksum_type == 'XCP_USER_DEFINED' and segment.checksum.user_defined_checksum_function is not defined and not configuration.protocol_layer.user_defined_checksum_function %}
+{{ raise('segment {!r} declares checksum_type XCP_USER_DEFINED but neither its own user_defined_checksum_function nor a protocol_layer one to fall back to; Xcp_DTOCmdStdBuildChecksum (source/Xcp_Std.c) would call a NULL_PTR for any MTA inside this segment -- declare a callback on the segment, or globally, or choose one of the nine computed checksum types (XCP part 2 1.1/1.6.1.2.9)'.format(segment.name)) }}
+{%- endif %}
+{%- if segment.checksum.checksum_max_block_size is defined and (segment.checksum.checksum_max_block_size * ag_size) > 4294967295 %}
+{{ raise('segment {!r} declares checksum_max_block_size {}, which is in {} address granularity units, and {} * {} exceeds the uint32 that source/Xcp_Std.c computes element_size * block_size in; the largest value that fits this granularity is {} -- the same bound DD119 applies to protocol_layer.checksum_max_block_size, which a per-segment override must not escape'.format(segment.name, segment.checksum.checksum_max_block_size, configuration.protocol_layer.address_granularity, segment.checksum.checksum_max_block_size, ag_size, 4294967295 // ag_size)) }}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
 {%- set ts = configuration.protocol_layer.timestamp %}
 {%- if ts is defined and ts %}
     {#- The timestamp (XCP part 2 1.1/1.1.2.2, Diagram 10) shares ODT 0 with the identification
