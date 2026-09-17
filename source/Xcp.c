@@ -2655,6 +2655,48 @@ Std_ReturnType Xcp_RaiseTransportEvent(const uint8 *pData, uint16 length)
     return Xcp_RaiseCarrierEvent(XCP_EVENT_TRANSPORT, XCP_RAISE_TRANSPORT_EVENT_API_ID, pData, length);
 }
 
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+
+/* DD157. The packet needs six bytes of information data, and XCP_EVENT_USER_DATA_SIZE is an
+ * overridable #ifndef (interface/Xcp_Types.h, default 16). Below six, Xcp_EventQueuePush would
+ * refuse the push and this function would report XCP_E_EVENT_QUEUE_FULL -- a lie, since the queue
+ * is not full and the entry is merely too small, sending whoever reads it to debug the wrong
+ * thing. Stated here instead, at build time, where the macro that causes it is set. */
+#if (XCP_EVENT_USER_DATA_SIZE < 0x06u)
+#error "XCP_EVENT_USER_DATA_SIZE must be at least 6 for EV_TIME_SYNC: XCP part 2 1.1/1.8.8 puts two reserved bytes and a DWORD timestamp at positions 2..7"
+#endif
+
+Std_ReturnType Xcp_RaiseTimeSyncEvent(uint32 timestamp)
+{
+    Std_ReturnType result;
+    uint8 data[0x06u];
+
+    /* 1.1/1.8.8 positions 2 and 3. Named reserved and given no value, so a defined byte beats
+     * whatever the queue entry last held. */
+    data[0x00u] = 0x00u;
+    data[0x01u] = 0x00u;
+
+    /* Transmitted as given. The caller captured it at the sync line's edge, which is the accuracy
+     * 1.1/1.8.8 exists to provide; re-reading Xcp_GetDaqTimestamp() here would discard exactly
+     * that and replace it with a later sample (DD155). */
+    Xcp_CopyFromU32WithOrder(timestamp, &data[0x02u], Xcp_Ptr->general->byteOrder);
+
+    SchM_Enter_Xcp_DtoQueue();
+    result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                XCP_PID_EVENT, XCP_EVENT_TIME_SYNC,
+                                data, (uint32)sizeof(data));
+    SchM_Exit_Xcp_DtoQueue();
+
+    if (result != E_OK)
+    {
+        Xcp_ReportError(0x00u, XCP_RAISE_TIME_SYNC_EVENT_API_ID, XCP_E_EVENT_QUEUE_FULL);
+    }
+
+    return result;
+}
+
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
+
 Std_ReturnType Xcp_TerminateSession(void)
 {
     Std_ReturnType result;
