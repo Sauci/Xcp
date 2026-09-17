@@ -65,6 +65,9 @@ extern "C" {
  * and interprets none of it. */
 /* 1.1/1.8.9. Its packet carries four information bytes -- Info Type, a reserved byte and a WORD --
  * through the userData path DD138 built, so six bytes in all. */
+/* 1.1/1.8.8. Six information bytes -- two reserved and a DWORD timestamp -- so eight in all. */
+#define XCP_EVENT_TIME_SYNC (0x08u)
+
 #define XCP_EVENT_STIM_TIMEOUT (0x09u)
 
 #define XCP_EVENT_SESSION_TERMINATED (0x07u)

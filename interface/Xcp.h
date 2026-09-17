@@ -198,6 +198,11 @@ extern "C" {
 #define XCP_TERMINATE_SESSION_API_ID (0x0Cu)
 
 /**
+ * @brief API id of @ref Xcp_RaiseTimeSyncEvent.
+ */
+#define XCP_RAISE_TIME_SYNC_EVENT_API_ID (0x0Du)
+
+/**
  * @brief @ref Xcp_CanIfTxConfirmation API ID.
  */
 #define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
@@ -950,6 +955,37 @@ Std_ReturnType Xcp_RaiseTransportEvent(const uint8 *pData, uint16 length);
  * point, and the announcement is best-effort, which 1.1/1.2 makes every event anyway.
  */
 Std_ReturnType Xcp_TerminateSession(void);
+
+#if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON)
+
+/**
+ * @brief Reports a timestamp captured on an external sync line, as EV_TIME_SYNC.
+ * @param timestamp the value captured at the sync line's edge.
+ * @details XCP part 2 - Protocol Layer Specification 1.1/1.8.8 exists for "highly accurate time
+ * synchronization with the master without relying on the GET_DAQ_CLOCK mechanism", which is why the
+ * caller supplies the value rather than this module reading the clock when it is called: the
+ * integrator can capture at the edge, often in hardware, where this module could only sample after
+ * whatever the interrupt-to-call path costs (DD155,
+ * docs/superpowers/specs/2026-09-17-xcp-time-sync-design.md).
+ * @warning The value MUST come from the same source, and be in the same units, as
+ * Xcp_GetDaqTimestamp() -- the units GET_DAQ_RESOLUTION_INFO reports to the master. This module
+ * cannot check either: a uint32 carries no evidence of where it came from, so a value from another
+ * clock, in other units, or captured at an earlier edge produces a packet that is well formed and
+ * silently wrong.
+ * @note The full 32 bits are transmitted even where the configured DAQ timestamp is one or two
+ * bytes wide. 1.1/1.8.8's table gives position 4 as a DWORD, and truncating the one packet whose
+ * purpose is precise time alignment would defeat it (DD154). A slave's DAQ frames and its
+ * EV_TIME_SYNC therefore carry timestamps of different widths, deliberately.
+ * @note Declared only when timestamps are supported, because 1.1/1.8.8 says "this event is not
+ * available if the slave does not support timestamps" -- so a call in such a build fails at the
+ * caller's own file and line rather than at link time (DD156).
+ * @note 1.1/1.2: events are not acknowledged, so E_OK means queued, not delivered.
+ * @return E_OK when queued; E_NOT_OK when the event queue is full, which also reports
+ * @ref XCP_E_EVENT_QUEUE_FULL to Det.
+ */
+Std_ReturnType Xcp_RaiseTimeSyncEvent(uint32 timestamp);
+
+#endif /* #if (XCP_DAQ_TIMESTAMP_SUPPORTED == STD_ON) */
 
 #define Xcp_STOP_SEC_CODE_SLOW
 #include "Xcp_MemMap.h"
