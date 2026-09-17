@@ -141,16 +141,29 @@ def test_service_requests_reach_the_wire_in_push_order():
     assert transmitted[1] == ((0xFC, 0x01), 0x04), 'SERV_TEXT second, carrying its two bytes'
 
 
-def test_a_full_queue_refuses_a_service_request():
+@pytest.mark.parametrize('request_kind', ('reset', 'text'))
+def test_a_full_queue_refuses_a_service_request(request_kind):
     """E_NOT_OK and XCP_E_EVENT_QUEUE_FULL, the existing path -- at 0x0C since it was moved off its
-    collision with AUTOSAR's XCP_E_INIT_FAILED at 0x04."""
+    collision with AUTOSAR's XCP_E_INIT_FAILED at 0x04.
+
+    Both entry points, because they are separate branches with separate reports: covering only the
+    reset one left Xcp_SendServiceText's queue-full Xcp_ReportError unexecuted, which is what showed
+    up as a coverage regression on the pull request rather than as a failing test. A queue-full path
+    is exactly the kind that no other test reaches by accident."""
     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001, event_queue_size=2))
 
     handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
     handle.lib.Xcp_MainFunction()
     handle.lib.Xcp_CanIfTxConfirmation(0x0001, handle.define('E_OK'))
 
-    results = [handle.lib.Xcp_RequestServiceReset() for _ in range(4)]
+    text = (0x41, 0x00)
+
+    def raise_one():
+        if request_kind == 'reset':
+            return handle.lib.Xcp_RequestServiceReset()
+        return handle.lib.Xcp_SendServiceText(text, len(text))
+
+    results = [raise_one() for _ in range(4)]
 
     assert handle.define('E_NOT_OK') in results, 'a queue of capacity 1 must fill'
     handle.det_report_error.assert_called_with(ANY, ANY, ANY,
