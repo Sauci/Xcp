@@ -170,6 +170,19 @@ extern "C" {
 #define XCP_RESUME_COMPLETE_API_ID (0x07u)
 
 /**
+ * @brief API id of @ref Xcp_RequestServiceReset.
+ * @note Continuing this module's practice of giving each of its own slave-initiated entry points an
+ * id of its own, as XCP_RESUME_COMPLETE_API_ID does. 0x08 and 0x09 are the next free values below
+ * the 0x4x block the CanIf callbacks occupy.
+ */
+#define XCP_REQUEST_SERVICE_RESET_API_ID (0x08u)
+
+/**
+ * @brief API id of @ref Xcp_SendServiceText.
+ */
+#define XCP_SEND_SERVICE_TEXT_API_ID (0x09u)
+
+/**
  * @brief @ref Xcp_CanIfTxConfirmation API ID.
  */
 #define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
@@ -223,6 +236,19 @@ extern "C" {
  * full event queue must follow it to 0x0C.
  */
 #define XCP_E_EVENT_QUEUE_FULL (0x0Cu)
+
+/**
+ * @brief The text handed to Xcp_SendServiceText cannot be transmitted as a SERV_TEXT payload.
+ * @details Reported for a zero length, for text whose last byte is not the null terminator XCP
+ * part 2 - Protocol Layer Specification 1.1/1.3 requires, and for text too long for either MAX_CTO
+ * or XCP_EVENT_USER_DATA_SIZE. The request is refused, never truncated: a truncated
+ * null-terminated string loses the terminator that marks the end of the packet, so a master cannot
+ * tell it was cut -- the reasoning DD129 applied to the USER_CMD response.
+ * @note One id for four checks, because they are one fault: the text is not a transmissible
+ * payload. A null pointer reports @ref XCP_E_PARAM_POINTER instead, the id the USER_CMD path
+ * already uses for that mistake. DD140.
+ */
+#define XCP_E_SERVICE_TEXT_INVALID (0x0Du)
 
 /**
  * @brief The event channel number handed to Xcp_TriggerEventChannel does not exist.
@@ -825,6 +851,36 @@ Std_ReturnType Xcp_RestoreDaqListMode(uint16 daqListNumber, uint8 mode, uint16 e
  * DD107); nothing is changed
  */
 Std_ReturnType Xcp_ResumeComplete(uint16 sessionConfigurationId);
+
+/**
+ * @brief Requests the master to reset this slave.
+ * @details Queues a SERV packet carrying SERV_RESET (XCP part 2 - Protocol Layer Specification
+ * 1.1/1.3), which Xcp_MainFunction transmits like any queued event. Changes no module state:
+ * 1.1/1.3 makes this a request TO the master, and a slave that reset itself on its own say-so would
+ * be doing something the code does not mean.
+ * @note 1.1/1.3: "Service request packets sent from the slave device to the master device are not
+ * acknowledged, therefore the transmission is not guaranteed." E_OK means queued, not delivered.
+ * @return E_OK when the request was queued; E_NOT_OK when the event queue is full, which also
+ * reports @ref XCP_E_EVENT_QUEUE_FULL to Det.
+ */
+Std_ReturnType Xcp_RequestServiceReset(void);
+
+/**
+ * @brief Sends plain ASCII text to the master as a SERV_TEXT service request.
+ * @param pText the text, INCLUDING its null terminator, which XCP part 2 - Protocol Layer
+ * Specification 1.1/1.3 makes the end-of-packet marker and which therefore counts toward
+ * @p length.
+ * @param length how many bytes of @p pText to send, terminator included. Must satisfy
+ * 0x02 + length <= MAX_CTO and length <= XCP_EVENT_USER_DATA_SIZE; the two are independent bounds,
+ * since MAX_CTO may be 255 while the queue entry holds 16.
+ * @details The module never writes into @p pText and never reads past @p length: the terminator is
+ * validated, not appended, and the length is given rather than measured. Taking a C string and
+ * calling strlen here would be an unbounded read over integrator-owned memory.
+ * @note 1.1/1.3: service requests are not acknowledged, so E_OK means queued, not delivered.
+ * @return E_OK when queued; E_NOT_OK on a full queue (@ref XCP_E_EVENT_QUEUE_FULL), a null pointer
+ * (@ref XCP_E_PARAM_POINTER) or an untransmittable text (@ref XCP_E_SERVICE_TEXT_INVALID).
+ */
+Std_ReturnType Xcp_SendServiceText(const uint8 *pText, uint16 length);
 
 #define Xcp_STOP_SEC_CODE_SLOW
 #include "Xcp_MemMap.h"
