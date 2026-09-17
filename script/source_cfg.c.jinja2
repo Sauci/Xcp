@@ -545,10 +545,16 @@ static const Xcp_SegmentType Xcp_SegmentConfig{{'%02X' % loop.index0}}[{{'0x%02X
         {{'0x%02Xu' % segment.pages|length}},
         &Xcp_PageConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[0x00u],
         {{'0x%02Xu' % (segment.address_mappings | default([]))|length}},
-        &Xcp_AddressMappingConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[0x00u]
+        &Xcp_AddressMappingConfig{{'%02X' % configuration_loop.index0}}Segment{{'%02X' % loop.index0}}[0x00u],
+        {#- DD146: the checksum type is emitted by NAME, exactly as protocol_layer's is further down
+            this file, because Xcp_ChecksumType's enumerators are ordinals and XCP_ADD_11 is 0 --
+            a numeric sentinel would collide with a real type. #}
+        {% if segment.checksum is defined %}{{segment.checksum.checksum_type}}{% else %}XCP_CHECKSUM_TYPE_NOT_DECLARED{% endif %},
+        {% if segment.checksum is defined and segment.checksum.checksum_max_block_size is defined %}{{'0x%08Xu' % segment.checksum.checksum_max_block_size}}{% else %}0x00000000u{% endif %},
+        {% if segment.checksum is defined and segment.checksum.user_defined_checksum_function is defined %}&{{segment.checksum.user_defined_checksum_function}}{% else %}NULL_PTR{% endif %}
     },
 {%- endfor %}
-    {0x00000000u, 0x00000000u, 0x00u, 0x00u, 0x00u, 0x00u, NULL_PTR, 0x00u, NULL_PTR} /* sentinel */
+    {0x00000000u, 0x00000000u, 0x00u, 0x00u, 0x00u, 0x00u, NULL_PTR, 0x00u, NULL_PTR, XCP_CHECKSUM_TYPE_NOT_DECLARED, 0x00000000u, NULL_PTR} /* sentinel */
 };
 
 #define Xcp_STOP_SEC_CONST_UNSPECIFIED

@@ -96,11 +96,31 @@ the range.
 
 | Field | "Not declared" sentinel | Why that value is safe |
 |:--|:--|:--|
-| `const uint8 checksumType` | `0x00u` | §1.6.1.2.9's types are `0x01`–`0x09` and `0xFF`; 0 is not one |
+| `const Xcp_ChecksumType checksumType` | `XCP_CHECKSUM_TYPE_NOT_DECLARED` | a new enumerator appended to `Xcp_ChecksumType`; see the correction below |
 | `const uint32 checksumMaxBlockSize` | `0x00000000u` | the schema's minimum is 1 (DD116), and a bound of 0 would reject every request since `block_size == 0` already fails |
 | `void *(*const userDefinedChecksumFunction)(...)` | `NULL_PTR` | already the global field's "absent" value |
 
-No presence flags, because each type already has a value that cannot mean anything else.
+No presence flags: each field has a value that cannot mean anything else.
+
+**Corrected before implementation began.** This table first gave the type field as `const uint8`
+with `0x00u` for "not declared", reasoning that §1.6.1.2.9's wire types are `0x01`–`0x09` and `0xFF`
+so 0 is not one of them. That is true of the **wire** values and false of this module's
+representation: `checksumType` is an `Xcp_ChecksumType` (`interface/Xcp_Types.h`), a C enum whose
+first enumerator `XCP_ADD_11` is **0**. A 0 sentinel would have made every segment declaring
+`XCP_ADD_11` read as declaring nothing — silently, since the fallback would then produce the global
+type, which in most configurations *is* `XCP_ADD_11`. The mistake came from reading the
+specification's table and assuming the code stored those numbers; the handler in fact `switch`es on
+the enum and assigns the wire value per case.
+
+`Xcp_ChecksumType` therefore gains `XCP_CHECKSUM_TYPE_NOT_DECLARED` as a final enumerator. Appending
+is safe: every existing enumerator keeps its ordinal, and the generator emits names rather than
+numbers (`script/source_cfg.c.jinja2` writes `{{configuration.protocol_layer.checksum_type}}`
+verbatim).
+
+This is also the strongest argument the rejected pointer-per-segment alternative had — `NULL_PTR`
+would have needed no sentinel reasoning at all. It does not reverse the decision: one appended
+enumerator is cheaper than a generated array and a pointer hop, and the other two fields needed no
+new value.
 
 The alternative — a `const Xcp_SegmentChecksumType *` per segment, `NULL_PTR` when absent — models
 the AML more literally, since its `CHECKSUM` block carries a *mandatory* type once present. It was

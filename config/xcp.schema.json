@@ -805,7 +805,40 @@
         "compression_method": {"type": "integer", "minimum": 0, "maximum": 255},
         "encryption_method": {"type": "integer", "minimum": 0, "maximum": 255},
         "pages": {"type": "array", "minItems": 1, "maxItems": 255, "items": {"$ref": "#/definitions/page"}},
-        "address_mappings": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/address_mapping"}}
+        "address_mappings": {"type": "array", "maxItems": 255, "items": {"$ref": "#/definitions/address_mapping"}},
+        "checksum": {
+          "description": "This segment's own checksum configuration, overriding protocol_layer's for a BUILD_CHECKSUM whose MTA falls inside this segment. Optional, and each field within it is optional except the type: XCP part 2 - Protocol Layer Specification 1.1/2.1's AML declares a CHECKSUM block inside each SEGMENT as an optional taggedstruct whose checksum type is mandatory once the block is present, and this mirrors that. Omitting the object entirely, or any field in it, falls back to protocol_layer -- which is what every configuration did before this existed, and why an MTA in no configured segment needs no answer the specification does not give (design doc DD143, docs/superpowers/specs/2026-09-17-xcp-per-segment-checksum-design.md). The segment containing the MTA decides for the whole block even where the block runs past that segment's end (DD145).",
+          "type": "object",
+          "properties": {
+            "checksum_type": {
+              "description": "Checksum type BUILD_CHECKSUM uses for this segment. Required once the checksum object is declared, matching the AML's own structure.",
+              "type": "string",
+              "enum": [
+                "XCP_ADD_11",
+                "XCP_ADD_12",
+                "XCP_ADD_14",
+                "XCP_ADD_22",
+                "XCP_ADD_24",
+                "XCP_ADD_44",
+                "XCP_CRC_16",
+                "XCP_CRC_16_CITT",
+                "XCP_CRC_32",
+                "XCP_USER_DEFINED"
+              ]
+            },
+            "checksum_max_block_size": {
+              "description": "Maximum block size BUILD_CHECKSUM accepts for this segment, in address granularity units. Falls back to protocol_layer.checksum_max_block_size when absent. Minimum 1 for the reason the global one records: 0 is not a block size, and a maximum of 0 would reject every request since block_size == 0 already fails. This value is also the DWORD ERR_OUT_OF_RANGE carries when a request exceeds it, because a refusal must name the bound that actually applied (DD147).",
+              "type": "integer",
+              "minimum": 1
+            },
+            "user_defined_checksum_function": {
+              "description": "Name of this segment's own checksum callback, used only when the type in force is XCP_USER_DEFINED. Falls back to protocol_layer.user_defined_checksum_function when absent; script/source_cfg.c.jinja2 refuses a segment declaring XCP_USER_DEFINED with neither its own callback nor a global one to fall back to (DD148).",
+              "type": "string"
+            }
+          },
+          "required": ["checksum_type"],
+          "additionalProperties": false
+        }
       },
       "required": ["name", "address", "length", "address_extension",
                    "compression_method", "encryption_method", "pages"],
