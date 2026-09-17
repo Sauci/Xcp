@@ -2604,6 +2604,84 @@ Std_ReturnType Xcp_RequestServiceReset(void)
     return result;
 }
 
+/* The two 1.1/1.2 carriers share every rule, so they share an implementation: only the event code
+ * differs. Split into two public functions rather than one taking a code, for the reason DD140 gave
+ * for SERV -- an integrator cannot then put an event code the specification does not define on the
+ * wire. */
+static Std_ReturnType Xcp_RaiseCarrierEvent(uint8 eventCode, uint8 apiId, const uint8 *pData, uint16 length)
+{
+    Std_ReturnType result = E_NOT_OK;
+
+    if ((pData == NULL_PTR) && (length != 0x0000u))
+    {
+        Xcp_ReportError(0x00u, apiId, XCP_E_PARAM_POINTER);
+    }
+    /* A length of 0 is legal and deliberately not grouped with the faults below: 1.1/1.1.3.4 makes
+     * an event's information data optional, where 1.1/1.3 requires SERV_TEXT's payload to be
+     * present and null terminated. Copying SERV_TEXT's bound here unexamined would have refused a
+     * bare two-byte event, which is the commonest shape an event has.
+     *
+     * The two length bounds are independent: maxCto may be 255 while the queue entry holds
+     * XCP_EVENT_USER_DATA_SIZE bytes. */
+    else if ((((uint32)0x02u + (uint32)length) > (uint32)Xcp_Ptr->general->maxCto) ||
+             ((uint32)length > (uint32)XCP_EVENT_USER_DATA_SIZE))
+    {
+        Xcp_ReportError(0x00u, apiId, XCP_E_EVENT_DATA_INVALID);
+    }
+    else
+    {
+        SchM_Enter_Xcp_DtoQueue();
+        result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                    XCP_PID_EVENT, eventCode,
+                                    pData, (uint32)length);
+        SchM_Exit_Xcp_DtoQueue();
+
+        if (result != E_OK)
+        {
+            Xcp_ReportError(0x00u, apiId, XCP_E_EVENT_QUEUE_FULL);
+        }
+    }
+
+    return result;
+}
+
+Std_ReturnType Xcp_RaiseUserEvent(const uint8 *pData, uint16 length)
+{
+    return Xcp_RaiseCarrierEvent(XCP_EVENT_USER, XCP_RAISE_USER_EVENT_API_ID, pData, length);
+}
+
+Std_ReturnType Xcp_RaiseTransportEvent(const uint8 *pData, uint16 length)
+{
+    return Xcp_RaiseCarrierEvent(XCP_EVENT_TRANSPORT, XCP_RAISE_TRANSPORT_EVENT_API_ID, pData, length);
+}
+
+Std_ReturnType Xcp_TerminateSession(void)
+{
+    Std_ReturnType result;
+
+    /* Queued BEFORE disconnecting. Xcp_DisconnectSession does not clear the event queue today, and
+     * Xcp_MainFunction does not gate event transmission on the connection state, so the order does
+     * not currently matter -- it is this way so that it keeps not mattering if either ever grows a
+     * reason to care. */
+    SchM_Enter_Xcp_DtoQueue();
+    result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                XCP_PID_EVENT, XCP_EVENT_SESSION_TERMINATED,
+                                NULL_PTR, 0x00000000u);
+    SchM_Exit_Xcp_DtoQueue();
+
+    if (result != E_OK)
+    {
+        Xcp_ReportError(0x00u, XCP_TERMINATE_SESSION_API_ID, XCP_E_EVENT_QUEUE_FULL);
+    }
+
+    /* Unconditionally, whatever the queue said. 1.1/1.2 makes the event the announcement of a
+     * decision already taken, so a full queue must not leave the session running -- that would make
+     * the return value describe the announcement while the caller reads it as the termination. */
+    Xcp_DisconnectSession();
+
+    return result;
+}
+
 Std_ReturnType Xcp_SendServiceText(const uint8 *pText, uint16 length)
 {
     Std_ReturnType result = E_NOT_OK;
