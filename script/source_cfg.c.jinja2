@@ -699,6 +699,10 @@ static const Xcp_EventChannelType Xcp_EventChannelConfig{{'%02X' % configuration
         NULL_PTR,
         0x00u
         {%- endif %}
+        {#- DD152: 0 when the channel declares no threshold, which means it never raises
+            EV_STIM_TIMEOUT. Opt-in, so every configuration written before this field existed keeps
+            its behaviour. #}
+        , {{'0x%04Xu' % (event.stim_timeout_events | default(0))}}
     },
     {%- endfor %}
 };

@@ -521,6 +521,18 @@ typedef struct
      * 1.1/1.6.4.1.2.7 permits explicitly.
      */
     const uint8 nameLength;
+
+    /**
+     * @brief how many consecutive stimulation events a STIM DAQ list on this channel may receive
+     * nothing before EV_STIM_TIMEOUT is raised for it, or 0 to never raise one.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/1.8.9 defines the event and decides none
+     * of its policy -- not the unit, not where the threshold lives, not how often to report. This
+     * module counts MISSED EVENTS rather than elapsed time, because Xcp_GetDaqTimestamp() exists
+     * only in a build with a declared clock (DD149). 0 means off, so the feature is opt-in and a
+     * configuration that declares nothing behaves exactly as it did before it existed (DD152).
+     * See docs/superpowers/specs/2026-09-17-xcp-stim-timeout-design.md
+     */
+    const uint16 stimTimeoutEvents;
 } Xcp_EventChannelType;
 
 /**
@@ -782,6 +794,16 @@ typedef struct {
      * @brief DAQ list priority. Only 0 is accepted while prioritisation is unimplemented.
      */
     uint8 priority;
+
+    /**
+     * @brief consecutive stimulation events at which no ODT of this list was refreshed.
+     * @note Reset to 0 as soon as any slot arrives fresh. EV_STIM_TIMEOUT is raised when this
+     * EQUALS the channel's stimTimeoutEvents, not when it reaches or exceeds it: the counter keeps
+     * rising afterwards and cannot equal the threshold again until a reset, so one staleness
+     * episode reports exactly once without a separate flag. It saturates at 0xFFFFu rather than
+     * wrapping, which would otherwise let a long episode report again after 65536 events (DD153).
+     */
+    uint16 stimStaleEvents;
 } Xcp_DaqListRtType;
 
 /**
@@ -829,6 +851,16 @@ typedef struct {
  */
 typedef struct {
     uint8 length;
+
+    /**
+     * @brief whether this slot has been written since it was last applied.
+     * @note Set in the receive path beside `length`, inside the same SchM_Enter_Xcp_StimBuffer()
+     * section: DD37 put the payload and its length there so no reader sees one without the other,
+     * and freshness is a third fact about the same slot. Cleared when Xcp_DaqApplyStimOdt applies
+     * it. DD35's latching is unaffected -- a stale slot is still applied, it is only now also
+     * counted (DD150).
+     */
+    boolean fresh;
 
     uint8 data[XCP_MAX_DTO];
 } Xcp_StimSlotType;
