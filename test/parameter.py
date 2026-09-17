@@ -219,7 +219,8 @@ def event(consistency='ODT',
           time_unit='TIMESTAMP_UNIT_1MS',
           type='DAQ',
           triggered_daq_list_ref=None,
-          name=None):
+          name=None,
+          stim_timeout_events=None):
     # name=None omits the key entirely rather than inventing one: protocol_layer.publish_names
     # defaults to True (DefaultConfig below), and script/source_cfg.c.jinja2 rejects a published
     # event channel with no name, so a caller testing that guard must see it fire, not see this
@@ -233,6 +234,11 @@ def event(consistency='ODT',
               if triggered_daq_list_ref is not None else ['DAQ1']}
     if name is not None:
         result["name"] = name
+    # Omitted when None, like `name` above and for the same kind of reason: absent means the channel
+    # never raises EV_STIM_TIMEOUT (DD152), so a caller testing the opt-out must see a configuration
+    # with no key at all rather than one this helper defaulted to some number.
+    if stim_timeout_events is not None:
+        result["stim_timeout_events"] = stim_timeout_events
     return result
 
 

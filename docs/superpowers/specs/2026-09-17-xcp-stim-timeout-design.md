@@ -118,6 +118,14 @@ useful fact; when one list failed, naming it is.
 This is a choice, not a requirement. A conformant slave could report per list always, or per
 channel always, or implement one Info Type and not the other.
 
+**A consequence worth stating, found by a test rather than by this reasoning.** On a channel with
+exactly **one** STIM list, "every STIM list on the channel is stale" is true whenever that list is
+stale — so such a channel reports Info Type 0 and **never** Info Type 1. Info Type 1 appears only
+where a channel drives two or more STIM lists and some of them are still being fed. That follows
+from the rule above, but it is not obvious from it, and the first draft of the tests asserted Info
+Type 1 for a single-list channel and failed. It is not a defect in either the rule or the code: a
+single-list channel genuinely has nothing more specific to say than which channel went quiet.
+
 ### DD152 — the threshold is per event channel, and absent means off
 
 Each entry in the `events` array gains an optional `stim_timeout_events`. **Absent means that

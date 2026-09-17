@@ -101,6 +101,7 @@ static void Xcp_DaqListReset(uint16 daqListNumber)
     Xcp_DaqListRt(daqListNumber)->prescaler = 0x01u;
     Xcp_DaqListRt(daqListNumber)->prescalerCounter = 0x00u;
     Xcp_DaqListRt(daqListNumber)->priority = 0x00u;
+    Xcp_DaqListRt(daqListNumber)->stimStaleEvents = 0x0000u;
 }
 
 /**
@@ -464,6 +465,7 @@ void Xcp_DaqFreeAll(void)
         SchM_Enter_Xcp_StimBuffer();
 
         Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].length = 0x00u;
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].fresh = FALSE;
 
         SchM_Exit_Xcp_StimBuffer();
     }
@@ -561,6 +563,7 @@ void Xcp_DaqFreeSessionAllocated(void)
         SchM_Enter_Xcp_StimBuffer();
 
         Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].length = 0x00u;
+        Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[slot_idx].fresh = FALSE;
 
         SchM_Exit_Xcp_StimBuffer();
     }

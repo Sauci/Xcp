@@ -37,6 +37,11 @@
             "items": {
               "type": "object",
               "properties": {
+                "stim_timeout_events": {
+                  "description": "How many consecutive stimulation events a STIM DAQ list triggered by this event channel may receive nothing before the slave raises EV_STIM_TIMEOUT for it (XCP part 2 - Protocol Layer Specification 1.1/1.8.9). Optional: a channel that omits it never raises the event, so the feature is opt-in and a configuration written before this field existed keeps its behaviour exactly (design doc DD152, docs/superpowers/specs/2026-09-17-xcp-stim-timeout-design.md). Counted in missed EVENTS rather than elapsed time, because the module's only clock is the DAQ timestamp, which exists solely in a build declaring protocol_layer.timestamp (DD149). Per event channel rather than per DAQ list because stimulation timing lives at the channel, and because DAQ lists have no static configuration entry at all under DAQ_DYNAMIC, where the master allocates them at runtime.",
+                  "type": "integer",
+                  "minimum": 1
+                },
                 "consistency": {
                   "description": "Type of consistency used by event channel (see ECUC_Xcp_00171)",
                   "type": "string",

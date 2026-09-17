@@ -63,6 +63,10 @@ extern "C" {
  * 2..MAX_CTO-1 -- the range DD138 taught the transmit branch to fill. EV_TRANSPORT's payload
  * semantics are Part 3's, which this module does not read: it carries what the integrator supplies
  * and interprets none of it. */
+/* 1.1/1.8.9. Its packet carries four information bytes -- Info Type, a reserved byte and a WORD --
+ * through the userData path DD138 built, so six bytes in all. */
+#define XCP_EVENT_STIM_TIMEOUT (0x09u)
+
 #define XCP_EVENT_SESSION_TERMINATED (0x07u)
 #define XCP_EVENT_USER (0xFEu)
 #define XCP_EVENT_TRANSPORT (0xFFu)

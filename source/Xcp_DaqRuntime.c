@@ -483,9 +483,11 @@ static Std_ReturnType Xcp_DaqSampleOdt(Xcp_DtoFrameType *pFrame, uint16 daqListN
  * BIT_STIM is a separate feature (GET_DAQ_PROCESSOR_INFO's own bit, and this module does not claim
  * it), so an entry's bit offset changes nothing about what is written here.
  */
-static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
+static boolean Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
 {
-    const Xcp_StimSlotType *p_slot =
+    /* Not const since DD150: this function consumes the slot, and clearing `fresh` is part of
+     * consuming it. Everything else it reads from the slot is still read-only in intent. */
+    Xcp_StimSlotType *p_slot =
             &Xcp_Rt[Xcp_Ptr->xcpRtRef].stimSlot[
                     Xcp_Ptr->config->daqList[daqListNumber].stimSlotBase + odtNumber];
     const uint8 element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
@@ -493,10 +495,17 @@ static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
     uint8 payload[XCP_MAX_DTO];
     uint8 length;
     uint8_least idx;
+    boolean was_fresh;
 
     SchM_Enter_Xcp_StimBuffer();
 
     length = p_slot->length;
+
+    /* DD150. Cleared as the slot is consumed, under the section that already guards it, so a frame
+     * arriving between this and the copy below is not silently counted as stale. DD35's latching is
+     * untouched: the data stays and is still applied, the slot is only no longer FRESH. */
+    was_fresh = p_slot->fresh;
+    p_slot->fresh = FALSE;
 
     /* Bounded by construction -- Xcp_DaqStoreStim refuses a frame longer than the running
      * configuration's MAX_DTO, itself no larger than the XCP_MAX_DTO both buffers are sized from
@@ -603,6 +612,11 @@ static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
             }
         }
     }
+
+    /* DD150. What the caller needs is whether this slot had been refreshed since it was last
+     * applied, which the clear above consumed. The data itself was applied either way -- DD35's
+     * latching is unchanged. */
+    return was_fresh;
 }
 
 /**
@@ -638,19 +652,69 @@ static void Xcp_DaqApplyStimOdt(uint16 daqListNumber, uint8 odtNumber)
  * ODT i is stimSlot[stimSlotBase + i], and the generator's prefix sum gives every receiving list a
  * block of maxOdt slots of its own (DD43), so the index is in range by construction.
  */
-static void Xcp_DaqApplyStim(uint16 daqListNumber)
+/* DD150. Returns whether the list was STALE -- a STIM list none of whose ODT slots had been
+ * refreshed since the previous event. pWasStim distinguishes that from "not a STIM list at all",
+ * which the two cannot be allowed to conflate: DD151's channel rule asks whether EVERY STIM list on
+ * the channel is stale, and a DAQ-only list must count as neither.
+ *
+ * A list with SOME fresh slots is not stale. The alternative -- stale unless all are fresh -- was
+ * rejected because a master stimulating a multi-ODT list sends one frame per ODT, and ordinary
+ * jitter between their arrivals would report a timeout for a master working correctly. The
+ * specification's "just partially" is expressed at the channel instead, where some lists are stale
+ * and others are not. */
+/* DD151. 1.1/1.8.9's packet: the Info Type at position 2, a reserved byte at 3, and the event
+ * channel or DAQ list number as a WORD at 4..5, in the configured byte order like every other
+ * multi-byte field. Four information bytes, so six in all -- inside XCP_EVENT_USER_DATA_SIZE and
+ * inside any legal MAX_CTO. The reserved byte is written 0x00u: 1.1/1.8.9 names it reserved and
+ * gives no value, and a defined byte beats whatever the queue entry last held. */
+static void Xcp_RaiseStimTimeout(uint8 infoType, uint16 number)
+{
+    uint8 data[0x04u];
+    Std_ReturnType push_result;
+
+    data[0x00u] = infoType;
+    data[0x01u] = 0x00u;
+
+    Xcp_CopyFromU16WithOrder(number, &data[0x02u], Xcp_Ptr->general->byteOrder);
+
+    SchM_Enter_Xcp_DtoQueue();
+    push_result = Xcp_EventQueuePush(Xcp_Rt[Xcp_Ptr->xcpRtRef].eventQueue,
+                                     XCP_PID_EVENT, XCP_EVENT_STIM_TIMEOUT,
+                                     data, 0x00000004u);
+    SchM_Exit_Xcp_DtoQueue();
+
+    if (push_result != E_OK)
+    {
+        Xcp_ReportError(0x00u, XCP_TRIGGER_EVENT_CHANNEL_API_ID, XCP_E_EVENT_QUEUE_FULL);
+    }
+}
+
+static boolean Xcp_DaqApplyStim(uint16 daqListNumber, boolean *pWasStim)
 {
     const Xcp_DaqListType *p_list = &Xcp_Ptr->config->daqList[daqListNumber];
+    boolean stale = FALSE;
+
+    *pWasStim = FALSE;
 
     if ((p_list->type == STIM) || (p_list->type == DAQ_STIM))
     {
         uint8_least odt_idx;
+        boolean any_fresh = FALSE;
+
+        *pWasStim = TRUE;
 
         for (odt_idx = 0x00u; odt_idx < p_list->maxOdt; odt_idx++)
         {
-            Xcp_DaqApplyStimOdt(daqListNumber, (uint8)odt_idx);
+            if (Xcp_DaqApplyStimOdt(daqListNumber, (uint8)odt_idx) == TRUE)
+            {
+                any_fresh = TRUE;
+            }
         }
+
+        stale = (boolean)(any_fresh == FALSE);
     }
+
+    return stale;
 }
 
 /**
@@ -983,6 +1047,13 @@ void Xcp_DaqStoreStim(const PduInfoType *pPduInfo, PduIdType rxPduId)
 
             p_slot->length = payload_length;
 
+            /* DD150. Inside this section beside the length, for the reason the comment above gives
+             * for the length itself: a reader must never see one of these three facts about a slot
+             * without the others. Cleared when Xcp_DaqApplyStimOdt applies the slot, so what this
+             * records is "written since last applied", which is exactly what a missed-event count
+             * needs. */
+            p_slot->fresh = TRUE;
+
             SchM_Exit_Xcp_StimBuffer();
 
             stored = TRUE;
@@ -1094,12 +1165,87 @@ void Xcp_TriggerEventChannel(uint16 eventChannelNumber)
          * the loop below, is a protocol one: a pure STIM list left with DIRECTION clear lands in
          * that pass, and sampling it would transmit a DAQ DTO the master was told this list could
          * never produce. See each of the two comments for the argument in full. */
-        for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
         {
-            if (Xcp_DaqListElapsedOnTrigger(&Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx],
-                                            eventChannelNumber, TRUE) == TRUE)
+            /* DD149-DD153. 1.1/1.8.9 defines EV_STIM_TIMEOUT and none of the policy behind it; all
+             * of the following is this module's, and is recorded in
+             * docs/superpowers/specs/2026-09-17-xcp-stim-timeout-design.md.
+             *
+             * The threshold is 0 for a channel that declares none, which means it never reports --
+             * so a configuration written before this existed takes the same path it always did
+             * (DD152). */
+            const uint16 stim_timeout_events =
+                    Xcp_Ptr->config->eventChannel[eventChannelNumber].stimTimeoutEvents;
+            uint16 stim_count = 0x0000u;
+            uint16 stale_count = 0x0000u;
+            uint16 reporting_count = 0x0000u;
+
+            for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
             {
-                Xcp_DaqApplyStim(daq_idx);
+                if (Xcp_DaqListElapsedOnTrigger(&Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx],
+                                                eventChannelNumber, TRUE) == TRUE)
+                {
+                    boolean was_stim = FALSE;
+                    const boolean stale = Xcp_DaqApplyStim(daq_idx, &was_stim);
+
+                    if (was_stim == TRUE)
+                    {
+                        Xcp_DaqListRtType *p_stim_rt = &Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx];
+
+                        stim_count++;
+
+                        if (stale == TRUE)
+                        {
+                            stale_count++;
+
+                            /* Saturating, not wrapping: without this a long episode would come
+                             * back round to the threshold after 65536 events and report a second
+                             * time (DD153). */
+                            if (p_stim_rt->stimStaleEvents < 0xFFFFu)
+                            {
+                                p_stim_rt->stimStaleEvents++;
+                            }
+
+                            /* EQUALS, not >=. The counter keeps rising and cannot equal the
+                             * threshold again until fresh data resets it, so one staleness episode
+                             * reports exactly once with no separate "already reported" flag. That
+                             * matters because the event queue drops pushes when full, and a report
+                             * per event would let one stalled channel crowd out every other event
+                             * this module raises. */
+                            if (p_stim_rt->stimStaleEvents == stim_timeout_events)
+                            {
+                                reporting_count++;
+                            }
+                        }
+                        else
+                        {
+                            p_stim_rt->stimStaleEvents = 0x0000u;
+                        }
+                    }
+                }
+            }
+
+            if ((stim_timeout_events != 0x0000u) && (reporting_count > 0x0000u))
+            {
+                if ((stim_count > 0x0000u) && (stale_count == stim_count))
+                {
+                    /* Every STIM list on this channel is stale, so the channel is the useful fact
+                     * and Info Type 0 carries it -- one report, not one per list (DD151). The rule
+                     * is this module's: 1.1/1.8.9 gives the two Info Types and one sentence about
+                     * what they distinguish, and never says when a slave should choose between
+                     * them. */
+                    Xcp_RaiseStimTimeout(0x00u, eventChannelNumber);
+                }
+                else
+                {
+                    for (daq_idx = 0x0000u; daq_idx < Xcp_Ptr->general->daqCount; daq_idx++)
+                    {
+                        if (Xcp_Rt[Xcp_Ptr->xcpRtRef].daqList[daq_idx].stimStaleEvents ==
+                            stim_timeout_events)
+                        {
+                            Xcp_RaiseStimTimeout(0x01u, daq_idx);
+                        }
+                    }
+                }
             }
         }
 
