@@ -2926,6 +2926,40 @@ void Xcp_FillErrorPacketWithData(const uint8 errorCode,
  *
  * The two-byte payload is inside the MAX_CTO floor the generation guard in
  * script/source_cfg.c.jinja2 enforces (D18, DD128). */
+const Xcp_SegmentType *Xcp_SegmentForAddress(const void *address, uint8 addressExtension)
+{
+    const Xcp_SegmentType *p_result = NULL_PTR;
+    const uint32 target = (uint32)address;
+    uint8_least idx;
+
+    /* DD144. Two rules the specification does not give, because it never discusses resolving an
+     * address to a segment at all:
+     *
+     * First match wins where segments overlap. config/xcp.schema.json does not forbid overlap, and
+     * declaration order is the only ordering an integrator controls, so it is the one thing they
+     * can use to choose deliberately.
+     *
+     * A zero-length segment matches nothing -- its half-open range is empty. Worth stating because
+     * the schema's minimum for a segment length is 0, so such a segment is configurable.
+     *
+     * The subtraction rather than (segment_address + length): the sum can overflow uint32 for a
+     * segment reaching the top of the address space, and would then match nothing at all. */
+    for (idx = 0x00u; (idx < Xcp_Ptr->general->maxSegment) && (p_result == NULL_PTR); idx++)
+    {
+        const Xcp_SegmentType *p_segment = &Xcp_Ptr->config->segment[idx];
+
+        if ((p_segment->addressExtension == addressExtension) &&
+            (p_segment->length > 0x00000000u) &&
+            (target >= p_segment->address) &&
+            ((target - p_segment->address) < p_segment->length))
+        {
+            p_result = p_segment;
+        }
+    }
+
+    return p_result;
+}
+
 void Xcp_FillGenericErrorPacket(const uint16 detail, PduInfoType *pPduInfo)
 {
     uint8 data[0x02u];

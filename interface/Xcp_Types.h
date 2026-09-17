@@ -300,7 +300,12 @@ typedef enum
     XCP_CRC_16,
     XCP_CRC_16_CITT,
     XCP_CRC_32,
-    XCP_USER_DEFINED
+    XCP_USER_DEFINED,
+    /* DD146: "this segment declares no checksum type of its own", used only by
+     * Xcp_SegmentType.checksumType. Appended rather than given value 0, because 0 is XCP_ADD_11 --
+     * these are enum ordinals, not 1.1/1.6.1.2.9's wire values, which the handler assigns per case.
+     * Appending keeps every existing ordinal, and the generator emits names rather than numbers. */
+    XCP_CHECKSUM_TYPE_NOT_DECLARED
 } Xcp_ChecksumType;
 
 typedef struct
@@ -562,6 +567,29 @@ typedef struct
     const Xcp_PageType *page;
     const uint8 maxMapping;
     const Xcp_AddressMappingType *addressMapping;
+
+    /**
+     * @brief this segment's own checksum type, or XCP_CHECKSUM_TYPE_NOT_DECLARED to use the global.
+     * @note XCP part 2 - Protocol Layer Specification 1.1/2.1's AML declares a CHECKSUM block
+     * inside each SEGMENT, carrying the type, MAX_BLOCK_SIZE and EXTERNAL_FUNCTION. All three are
+     * optional here and fall back to protocol_layer's, so a configuration declaring none behaves
+     * exactly as it did before these fields existed (DD143,
+     * docs/superpowers/specs/2026-09-17-xcp-per-segment-checksum-design.md).
+     */
+    const Xcp_ChecksumType checksumType;
+
+    /**
+     * @brief this segment's own maximum block size, or 0 to use the global one.
+     * @note 0 is safe as "not declared": the schema's minimum is 1 (DD116), and a bound of 0 would
+     * reject every request anyway, since block_size == 0 already fails.
+     */
+    const uint32 checksumMaxBlockSize;
+
+    /**
+     * @brief this segment's own checksum callback, or NULL_PTR to use the global one.
+     * @note Only consulted when the type in force is XCP_USER_DEFINED.
+     */
+    void *(*const userDefinedChecksumFunction)(void *lowerAddress, const void *upperAddress, uint32 *pResult);
 } Xcp_SegmentType;
 
 /**

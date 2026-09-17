@@ -50,7 +50,7 @@ An AUTOSAR-style BSW module implementing an XCP **slave** over CAN.
 | Configuration | `config/xcp.json`, validated by `config/xcp.schema.json` |
 | Code generation | `script/*.jinja2` → `Xcp_Cfg.{c,h}`, `Xcp_Rt.{c,h}` via `bsw_code_gen` |
 | Integrator callbacks | `test/stub/Xcp_{SeedKey,Checksum,MemoryAccess,UserCmd}.h` |
-| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 13028 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
+| Tests | `test/*_test.py` — pytest + CFFI compiling the real C, 13042 passing, 29 skipped. `test.sh` reports coverage as the union across compilation variants (`script/gcov_union.py`), since build-time guards make one source several structurally different programs |
 | Build | CMake; tests run inside the Alpine image built by `Dockerfile` |
 | CI | GitHub Actions → `test.sh` → ctest → codecov |
 
@@ -208,14 +208,34 @@ This section previously read "absent" outright, stale since SP4 shipped; correct
 | Service request codes (SERV_*) | §1.3 | **done (2026-09-16).** Both codes §1.3 defines: `Xcp_RequestServiceReset` queues `SERV_RESET` and `Xcp_SendServiceText` queues `SERV_TEXT`, transmitted out of the event queue, which had carried a `packetID` and a `userData` payload by design since before anything could use either. Half of that was dead — `Xcp_EventQueueGet` returned neither, so `userData` was written, zeroed at `Xcp_Init` and read nowhere, and every caller passed `XCP_PID_EVENT`. Completing the read side is what made SERV cheap. `SERV_TEXT` validates the null terminator §1.3 requires rather than appending it, and refuses rather than truncating: a truncated null-terminated string loses the marker that ends it. Design: `docs/superpowers/specs/2026-09-16-xcp-serv-codes-design.md` (DD138-DD142). Three `EV_*` callers stopped pushing a status byte in the same commit — §1.2 defines event information for no code this module sends, so transmitting it would have invented wire content |
 | Extended error payloads | §1.1.3.3 | **done.** `Xcp_FillErrorPacketWithData` (`source/Xcp.c`) is the mechanism: `DOWNLOAD_NEXT` and `PROGRAM_NEXT` attach the expected element count to their `ERR_SEQUENCE` response (`source/Xcp_Cal.c`, `source/Xcp_Pgm.c`), and `BUILD_CHECKSUM` attaches the maximum block size to its `ERR_OUT_OF_RANGE` (`source/Xcp_Std.c`, D6). `ERR_GENERIC` attaches its own implementation-specific WORD at all six sites (`source/Xcp.c`'s `Xcp_FillGenericErrorPacket`, D17; the sixth added by D18's `USER_CMD` refusal). Both payload-bearing codes 1.1/§1.1.3.3 defines are now implemented. This row previously read a blanket "absent", which overstated the gap, then "partial" while D6 was open, then "five sites" once D18 added a sixth without updating this count |
 
-**Open: per-segment checksum configuration.** The AML in §2.1 declares checksum configuration
-**per segment** — a `CHECKSUM` block carrying type, `MAX_BLOCK_SIZE` and `EXTERNAL_FUNCTION`
-inside each `Segment`. `config/xcp.json` declares all three once globally under `protocol_layer`,
-and D6 deliberately kept it that way (DD115). Reconciling them needs a resolution from the MTA —
-an arbitrary address — to a segment, which this module has never had: segments are reached only
-by an index the master supplies, and `Xcp_SegmentType`'s `address`/`length` are read today only to
-report `GET_SEGMENT_INFO`. It also needs an answer to "the MTA is in no configured segment", which
-neither 1.0 nor 1.1 defines. That is a change to the configuration model and wants its own design.
+**Per-segment checksum configuration — done (2026-09-17), and it was not what this note said it
+was.** A segment may now declare its own `checksum` block, overriding the global type, maximum block
+size and user-defined function for a `BUILD_CHECKSUM` whose MTA falls inside it. Design:
+`docs/superpowers/specs/2026-09-17-xcp-per-segment-checksum-design.md` (DD143–DD148).
+
+This note previously called the work "reconciling", which reads as a mismatch to be fixed. Nothing
+was mismatched, and the correction matters because it changes what the item was: **A2L generation is
+an explicit non-goal of this roadmap** (§5), so the module never emits the AML's `CHECKSUM` block;
+that block is an optional `taggedstruct`, and so is everything inside it; and §1.6.1.2.9 never
+mentions segments — `BUILD_CHECKSUM` works from the MTA alone, and its response carries the checksum
+type that produced the answer. A slave with one global configuration was therefore always truthfully
+describable in A2L. What the module lacked was a **capability**, not conformance.
+
+The blocker this note named dissolved once the shape was right. Per-segment values are an *override
+over the retained global*, not a replacement, so "the MTA is in no configured segment" needs no
+answer from a specification that gives none: it uses the global, which is what every build did
+before (DD143). The MTA-to-segment resolution the note called for does now exist
+(`Xcp_SegmentForAddress`, DD144) and is the module's first; `Xcp_SegmentType`'s `address`/`length`
+had until then been read only by `Xcp_DTOCmdPagGetSegmentInfo`, which this branch verified rather
+than assumed.
+
+Two rules the specification leaves open are settled and pinned by test: a block spanning out of its
+segment is checksummed with the segment it *starts* in (DD145), and overlapping segments resolve to
+the first declared (DD144). One consequence was easy to miss: `ERR_OUT_OF_RANGE`'s payload must
+carry the bound that actually applied, since naming the global bound against a segment-bounded
+refusal is confidently wrong in a way no master can detect (DD147).
+
+**§2.6 now has no open items.**
 
 ---
 

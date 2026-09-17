@@ -946,6 +946,16 @@ void Xcp_FinalizeResPacket(const PduLengthType startIndex, PduInfoType *pPduInfo
 void Xcp_FillErrorPacket(const uint8 errorCode, PduInfoType *pPduInfo);
 void Xcp_FillErrorPacketWithData(const uint8 errorCode, const uint8 *pData, const uint8 dataLength, PduInfoType *pPduInfo);
 void Xcp_FillGenericErrorPacket(const uint16 detail, PduInfoType *pPduInfo);
+
+/**
+ * @brief resolves an address to the calibration segment containing it.
+ * @return the first configured segment whose addressExtension matches and whose
+ * [address, address + length) contains @p address, or NULL_PTR when none does.
+ * @note DD144. The module's first address-to-segment lookup: Xcp_SegmentType's address and length
+ * are read in exactly one other place, Xcp_DTOCmdPagGetSegmentInfo, and only to report them.
+ * Segments are otherwise reached solely by an index the master supplies on the wire.
+ */
+const Xcp_SegmentType *Xcp_SegmentForAddress(const void *address, uint8 addressExtension);
 uint8 Xcp_ElementSizeForAddressGranularity(Xcp_AddressGranularityType ag);
 uint8_least Xcp_GetNumberOfAlignmentBytes(uint8_least alignmentByteIndex, uint8_least elementSize, uint8 maxCto);
 void Xcp_CopyFromU16WithOrder(const uint16 src, uint8 *pDest, Xcp_ByteOrderType endianness);
