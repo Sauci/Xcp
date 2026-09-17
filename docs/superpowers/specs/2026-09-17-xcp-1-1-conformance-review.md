@@ -63,6 +63,48 @@ confirmed here from 1.1 rather than 1.0.
 
 ---
 
+## Slice 6a — the STD error handling matrix (§1.7.3.2.1)
+
+### 🔴 Finding R1 — four rows of `Xcp_CTOErrorMatrix` disagree with 1.1, all introduced or missed two days ago
+
+**Established by reading 1.1/§1.7.3.2.1 from the deciphered text layer, row by row, and comparing
+against `Xcp_CTOErrorMatrix` (`source/Xcp.c`). Declarative only — the matrix drives just the
+`ERR_CMD_BUSY`, `ERR_CMD_SYNTAX` and `ERR_PGM_ACTIVE` pre-checks, so no behaviour is wrong today.**
+
+1.1 lists `ERR_RES_TEMP_NOT_A.` for every STD command **except `DISCONNECT`**, whose row is
+`timeout t1`, `ERR_CMD_BUSY`, `ERR_PGM_ACTIVE` and nothing else. `CONNECT` carries it under
+`CONNECT(NORMAL)` only; `CONNECT(USER_DEFINED)` has just `timeout t6`.
+
+| PID | Command | 1.1 lists it | Module carries it | |
+|:--|:--|:--|:--|:--|
+| 0xFE | `DISCONNECT` | **no** | **yes** | added where the specification does not list it |
+| 0xF1 | `USER_CMD` | yes | **no** | missed |
+| 0xF2 | `TRANSPORT_LAYER_CMD` | yes | **no** | missed |
+| 0xF6 | `SET_MTA` | yes | **only in one arm** | the `XCP_FLASH_PROGRAMMING_ENABLED == STD_OFF` arm (`Xcp.c:1093`) lacks it; the `STD_ON` arm (`:1103`) has it |
+
+The other two-arm rows, `BUILD_CHECKSUM` (0xF3) and `UPLOAD` (0xF5), do carry it in both arms.
+
+**Root cause, and it is the same mistake in all four.** PR #41 asserted that "1.1/§1.7.3.2.1 gives
+**every** standard command an `ERR_RES_TEMP_NOT_A.` entry". That was generalised from scanning the
+OCR sidecar by eye and seeing the code appear at the end of many rows — a sample, read as a rule.
+The change was then applied to a hand-listed set of line numbers rather than to a set derived from
+the specification, which is why two commands were missed and one preprocessor arm with them.
+
+It is worth being exact about what this costs, because the justification given for that change was
+that "a row that does not list what its handler can answer is a row that lies to whoever reads it
+next" (DD76, DD101). By that standard `DISCONNECT`'s row now lies in the other direction: it claims
+the module may answer a code for a command 1.1 does not permit it on.
+
+**Fix**: remove the bit from 0xFE, add it to 0xF1 and 0xF2, and add it to `SET_MTA`'s `STD_OFF` arm.
+Four one-line edits with no behavioural effect and no test change. Worth a small branch of its own
+rather than folding into other work, so the correction is reviewable against this table.
+
+**Not yet checked in this row:** whether each command's *other* listed codes match. This finding
+covers `ERR_RES_TEMP_NOT_A.` only, which is what PR #41 touched. The rest of §1.7.3.2.1, and
+§1.7.3.2.2–§1.7.3.2.5, are still outstanding.
+
+---
+
 ## Slices not yet started
 
 2. §1.6.1 STD commands beyond `CONNECT`
