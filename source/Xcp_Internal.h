@@ -57,6 +57,16 @@ extern "C" {
 #define XCP_EVENT_STORE_DAQ (0x02u)
 #define XCP_EVENT_STORE_CAL (0x03u)
 
+/* 1.1/1.2's remaining codes this module can reach without a new subsystem. EV_SESSION_TERMINATED
+ * announces a disconnection the slave has already decided on; EV_USER and EV_TRANSPORT are the two
+ * the table describes as carriers of optional event information data, which 1.1/1.1.3.4 puts at
+ * 2..MAX_CTO-1 -- the range DD138 taught the transmit branch to fill. EV_TRANSPORT's payload
+ * semantics are Part 3's, which this module does not read: it carries what the integrator supplies
+ * and interprets none of it. */
+#define XCP_EVENT_SESSION_TERMINATED (0x07u)
+#define XCP_EVENT_USER (0xFEu)
+#define XCP_EVENT_TRANSPORT (0xFFu)
+
 /* 1.1/1.3's two service request codes. "The implementation is optional for the slave device, but
  * mandatory for the master device", and service requests are not acknowledged, so delivery is not
  * guaranteed -- which is why they share the event queue rather than getting a priority path of

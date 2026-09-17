@@ -183,6 +183,21 @@ extern "C" {
 #define XCP_SEND_SERVICE_TEXT_API_ID (0x09u)
 
 /**
+ * @brief API id of @ref Xcp_RaiseUserEvent.
+ */
+#define XCP_RAISE_USER_EVENT_API_ID (0x0Au)
+
+/**
+ * @brief API id of @ref Xcp_RaiseTransportEvent.
+ */
+#define XCP_RAISE_TRANSPORT_EVENT_API_ID (0x0Bu)
+
+/**
+ * @brief API id of @ref Xcp_TerminateSession.
+ */
+#define XCP_TERMINATE_SESSION_API_ID (0x0Cu)
+
+/**
  * @brief @ref Xcp_CanIfTxConfirmation API ID.
  */
 #define XCP_CAN_IF_TX_CONFIRMATION_API_ID (0x40u)
@@ -249,6 +264,18 @@ extern "C" {
  * already uses for that mistake. DD140.
  */
 #define XCP_E_SERVICE_TEXT_INVALID (0x0Du)
+
+/**
+ * @brief The information data handed to Xcp_RaiseUserEvent or Xcp_RaiseTransportEvent cannot be
+ * transmitted in an event packet.
+ * @details Reported for data longer than MAX_CTO leaves room for, and for data longer than
+ * XCP_EVENT_USER_DATA_SIZE. The two are independent bounds: MAX_CTO may be 255 while the queue
+ * entry holds 16. A null pointer at a non-zero length reports @ref XCP_E_PARAM_POINTER instead.
+ * @note A length of 0 is NOT a fault here, unlike SERV_TEXT's: XCP part 2 - Protocol Layer
+ * Specification 1.1/1.1.3.4 makes an event's information data optional, where 1.1/1.3 requires
+ * SERV_TEXT's payload to be present and null terminated.
+ */
+#define XCP_E_EVENT_DATA_INVALID (0x0Eu)
 
 /**
  * @brief The event channel number handed to Xcp_TriggerEventChannel does not exist.
@@ -881,6 +908,48 @@ Std_ReturnType Xcp_RequestServiceReset(void);
  * (@ref XCP_E_PARAM_POINTER) or an untransmittable text (@ref XCP_E_SERVICE_TEXT_INVALID).
  */
 Std_ReturnType Xcp_SendServiceText(const uint8 *pText, uint16 length);
+
+/**
+ * @brief Raises EV_USER, carrying information data of the integrator's own choosing.
+ * @param pData the information data, or NULL_PTR when @p length is 0. Not copied after this call
+ * returns: Xcp_EventQueuePush copies it into the queue entry.
+ * @param length how many bytes of @p pData to send. May be 0 -- XCP part 2 - Protocol Layer
+ * Specification 1.1/1.1.3.4 makes an event's information data optional. Must satisfy
+ * 0x02 + length <= MAX_CTO and length <= XCP_EVENT_USER_DATA_SIZE, which are independent bounds.
+ * @note 1.1/1.2 describes EV_USER as "a carrier for user-defined events" and says nothing about
+ * the content, so this module does not interpret it. Events are not acknowledged, so E_OK means
+ * queued, not delivered.
+ * @return E_OK when queued; E_NOT_OK on a full queue (@ref XCP_E_EVENT_QUEUE_FULL), a null pointer
+ * at a non-zero length (@ref XCP_E_PARAM_POINTER) or untransmittable data
+ * (@ref XCP_E_EVENT_DATA_INVALID).
+ */
+Std_ReturnType Xcp_RaiseUserEvent(const uint8 *pData, uint16 length);
+
+/**
+ * @brief Raises EV_TRANSPORT, carrying transport-layer-specific information data.
+ * @param pData the information data, or NULL_PTR when @p length is 0.
+ * @param length as for @ref Xcp_RaiseUserEvent.
+ * @note 1.1/1.2 describes EV_TRANSPORT as "a carrier for Transport Layer specific events" and
+ * refers its content to Part 3, which this module does not implement and does not read. The
+ * content is therefore entirely the integrator's: this module transmits the bytes it is given.
+ * @return as for @ref Xcp_RaiseUserEvent.
+ */
+Std_ReturnType Xcp_RaiseTransportEvent(const uint8 *pData, uint16 length);
+
+/**
+ * @brief Ends the current XCP session and tells the master it did.
+ * @details Queues EV_SESSION_TERMINATED and then disconnects. One call rather than two because
+ * 1.1/1.2 defines the event as the slave indicating "that it autonomously decided to disconnect
+ * the current XCP session" -- it announces a decision already taken, so an API that only raised the
+ * event would let an integrator announce a termination it had no way to perform.
+ * @note The event is queued before the disconnection, and reaches the master afterwards:
+ * Xcp_DisconnectSession does not clear the event queue, and Xcp_MainFunction does not gate event
+ * transmission on the connection state.
+ * @return E_OK when the event was queued; E_NOT_OK when the event queue is full
+ * (@ref XCP_E_EVENT_QUEUE_FULL). The session is disconnected either way -- the termination is the
+ * point, and the announcement is best-effort, which 1.1/1.2 makes every event anyway.
+ */
+Std_ReturnType Xcp_TerminateSession(void);
 
 #define Xcp_STOP_SEC_CODE_SLOW
 #include "Xcp_MemMap.h"
