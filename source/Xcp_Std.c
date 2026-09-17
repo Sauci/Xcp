@@ -88,7 +88,7 @@ static void *Xcp_BuildChecksumCRC32(void *pLowerAddress, const void *pUpperAddre
 #define Xcp_START_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
 
-static void Xcp_BuildChecksumFillMaxBlockSize(void);
+static void Xcp_BuildChecksumFillMaxBlockSize(uint32 maxBlockSize);
 
 #define Xcp_STOP_SEC_CODE_FAST
 #include "Xcp_MemMap.h"
@@ -613,14 +613,20 @@ uint8 Xcp_DTOCmdStdTransportLayerCmd(boolean *responseExpected, const PduInfoTyp
  * Xcp_FillErrorPacketWithData (source/Xcp.c) writes pData flat from byte 2 and finalizes at
  * 2 + dataLength, so the two reserved bytes are part of the payload rather than something it
  * writes itself. */
-static void Xcp_BuildChecksumFillMaxBlockSize(void)
+/* DD147. The bound that actually applied, passed in rather than read from the global here. A slave
+ * that refuses a request against a segment's bound and then names the GLOBAL bound in
+ * ERR_OUT_OF_RANGE's payload -- the DWORD 1.1/1.1.3.3 requires that response to carry, which D6
+ * added -- tells the master a limit that does not apply to the address it asked about. That is
+ * worse than the pre-D6 state of carrying no payload at all: it is confidently wrong, and nothing
+ * on the wire lets the master notice. */
+static void Xcp_BuildChecksumFillMaxBlockSize(uint32 maxBlockSize)
 {
     uint8 data[0x06u];
 
     data[0x00u] = 0x00u;
     data[0x01u] = 0x00u;
 
-    Xcp_CopyFromU32WithOrder(Xcp_Ptr->general->checksumMaxBlockSize,
+    Xcp_CopyFromU32WithOrder(maxBlockSize,
                              &data[0x02u],
                              Xcp_Ptr->general->byteOrder);
 
@@ -639,6 +645,27 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
     uint8 element_size;
     void * (*checksum_function)(void *, const void *, uint32 *) = NULL_PTR;
 
+    /* DD143/DD145. The segment containing the MTA decides for the whole block, including where the
+     * block runs past that segment's end: 1.1/1.6.1.2.9 calls it "the memory block that is defined
+     * by the MTA and Block size", and the MTA is what locates it. Refusing a spanning block was
+     * considered and rejected -- it would change behaviour in builds with no per-segment overrides
+     * at all, which is the one thing this feature must not do.
+     *
+     * Each value falls back to the global when the segment does not declare it, and when the MTA is
+     * in no segment at all. That fallback is what every build did before these fields existed, and
+     * it is why "the MTA is in no configured segment" needs no answer from a specification that
+     * gives none -- the question DD115 deferred this whole feature over. */
+    const Xcp_SegmentType *p_segment = Xcp_SegmentForAddress(Xcp_Internal.memory_transfer.address,
+                                                             Xcp_Internal.memory_transfer.extension);
+    const Xcp_ChecksumType checksum_type_in_force =
+        ((p_segment != NULL_PTR) && (p_segment->checksumType != XCP_CHECKSUM_TYPE_NOT_DECLARED))
+            ? p_segment->checksumType
+            : Xcp_Ptr->general->checksumType;
+    const uint32 max_block_size_in_force =
+        ((p_segment != NULL_PTR) && (p_segment->checksumMaxBlockSize != 0x00000000u))
+            ? p_segment->checksumMaxBlockSize
+            : Xcp_Ptr->general->checksumMaxBlockSize;
+
     *responseExpected = TRUE;
 
     Xcp_CopyToU32WithOrder(&pPduInfo->SduDataPtr[0x04u], &block_size, Xcp_Ptr->general->byteOrder);
@@ -649,13 +676,13 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
      * keeps element_size * block_size below -- element_size is up to 4 and block_size arrives from
      * four wire bytes -- from overflowing; script/source_cfg.c.jinja2 refuses a configured maximum
      * whose product with the address granularity would not fit (DD119). */
-    if ((block_size > 0x00u) && (block_size <= Xcp_Ptr->general->checksumMaxBlockSize))
+    if ((block_size > 0x00u) && (block_size <= max_block_size_in_force))
     {
         element_size = Xcp_ElementSizeForAddressGranularity(Xcp_Ptr->general->addressGranularity);
 
         upper_address = Xcp_Internal.memory_transfer.address + (element_size * block_size);
 
-        switch (Xcp_Ptr->general->checksumType)
+        switch (checksum_type_in_force)
         {
             case XCP_ADD_11:
             {
@@ -723,7 +750,14 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
             case XCP_USER_DEFINED:
             {
                 checksum_type = 0xFFu;
-                checksum_function = Xcp_Ptr->general->userDefinedChecksumFunction;
+                /* The segment's own callback when it declares one, otherwise the global. Only
+                 * reachable when the type in force is XCP_USER_DEFINED, which may itself have come
+                 * from either place -- a segment may declare the type and leave the callback to the
+                 * global, or the reverse. */
+                checksum_function = ((p_segment != NULL_PTR) &&
+                                     (p_segment->userDefinedChecksumFunction != NULL_PTR))
+                                        ? p_segment->userDefinedChecksumFunction
+                                        : Xcp_Ptr->general->userDefinedChecksumFunction;
 
                 break;
             }
@@ -757,7 +791,7 @@ uint8 Xcp_DTOCmdStdBuildChecksum(boolean *responseExpected, const PduInfoType *p
     }
     else
     {
-        Xcp_BuildChecksumFillMaxBlockSize();
+        Xcp_BuildChecksumFillMaxBlockSize(max_block_size_in_force);
     }
 
     return E_OK;

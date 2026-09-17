@@ -133,15 +133,41 @@ def segment(name='CAL_SEG',
             compression_method=0,
             encryption_method=0,
             pages=None,
-            address_mappings=None):
-    return {"name": name,
-            "address": address,
-            "length": length,
-            "address_extension": address_extension,
-            "compression_method": compression_method,
-            "encryption_method": encryption_method,
-            "pages": list(pages) if pages is not None else [page()],
-            "address_mappings": list(address_mappings) if address_mappings is not None else []}
+            address_mappings=None,
+            checksum=None):
+    # `checksum` is omitted from the rendered configuration entirely when None, rather than rendered
+    # as null: the schema's segment object forbids additional properties and the per-segment
+    # checksum block is optional, so "absent" must mean absent (DD143).
+    rendered = {"name": name,
+                "address": address,
+                "length": length,
+                "address_extension": address_extension,
+                "compression_method": compression_method,
+                "encryption_method": encryption_method,
+                "pages": list(pages) if pages is not None else [page()],
+                "address_mappings": list(address_mappings) if address_mappings is not None else []}
+
+    if checksum is not None:
+        rendered["checksum"] = dict(checksum)
+
+    return rendered
+
+
+def segment_checksum(checksum_type='XCP_CRC_16',
+                     checksum_max_block_size=None,
+                     user_defined_checksum_function=None):
+    """A segment's own CHECKSUM block. Only checksum_type is required, mirroring XCP part 2 -
+    Protocol Layer Specification 1.1/2.1's AML, where the block is optional but its type is
+    mandatory once the block is present. Anything omitted falls back to protocol_layer's."""
+    rendered = {"checksum_type": checksum_type}
+
+    if checksum_max_block_size is not None:
+        rendered["checksum_max_block_size"] = checksum_max_block_size
+
+    if user_defined_checksum_function is not None:
+        rendered["user_defined_checksum_function"] = user_defined_checksum_function
+
+    return rendered
 
 
 def sector(start_address=0,
