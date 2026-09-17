@@ -744,13 +744,22 @@ static const uint8 Xcp_PIDToCmdGroupTable[0x100u] = {
 #define Xcp_START_SEC_CONST_UNSPECIFIED
 #include "Xcp_MemMap.h"
 
-/* 1.1/1.7.3.2.1 gives EVERY standard command an ERR_RES_TEMP_NOT_A. entry, which 1.0 has nowhere;
- * this table was 1.0's throughout except for the GET_STATUS row DD101 corrected. All thirteen STD
- * rows now carry XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, read from 1.1's own matrix rather than
- * inferred -- CONNECT, DISCONNECT, GET_STATUS, SYNCH, GET_COMM_MODE_INFO, GET_ID, SET_REQUEST,
- * GET_SEED, UNLOCK, SET_MTA, UPLOAD, SHORT_UPLOAD and BUILD_CHECKSUM. The Action 1.1 prescribes
- * differs by row ("skip" for GET_COMM_MODE_INFO and GET_ID, "display error / repeat" elsewhere),
- * which this table does not model; it records only which codes a row admits.
+/* 1.1/1.7.3.2.1 lists ERR_RES_TEMP_NOT_A. for every standard command EXCEPT DISCONNECT, whose row
+ * is timeout t1, ERR_CMD_BUSY and ERR_PGM_ACTIVE and nothing else; 1.0 has the code nowhere at all.
+ * CONNECT carries it under CONNECT(NORMAL) only -- CONNECT(USER_DEFINED) lists just timeout t6 --
+ * and this table has one row per PID, so 0xFF records the NORMAL mode's set.
+ *
+ * "Every standard command" is what this comment said until the 1.1 conformance review
+ * (docs/superpowers/specs/2026-09-17-xcp-1-1-conformance-review.md, finding R1). That was a sample
+ * read as a rule: scanning the OCR sidecar by eye showed the code at the end of many rows, and the
+ * conclusion was applied to a hand-listed set of line numbers rather than to a set derived from the
+ * specification. DISCONNECT gained a code 1.1 does not permit it, while USER_CMD,
+ * TRANSPORT_LAYER_CMD and SET_MTA's programming-disabled arm kept missing one it does. All four are
+ * corrected here, read row by row from 1.1's own text layer.
+ *
+ * The Action 1.1 prescribes differs by row ("skip" for GET_COMM_MODE_INFO and GET_ID, "display
+ * error / repeat" elsewhere), which this table does not model; it records only which codes a row
+ * admits.
  *
  * Declarative, with no behavioural effect: only CMD_BUSY, CMD_SYNTAX and PGM_ACTIVE are ever
  * tested against this table (Xcp_CanIfRxIndication, below). The reason to keep it honest is the one
@@ -1017,8 +1026,8 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* DOWNLOAD_MAX 0xEE, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW | XCP_INTERNAL_ERR_SEQUENCE, /* DOWNLOAD_NEXT 0xEF, optional */
     XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_ACCESS_DENIED | XCP_INTERNAL_ERR_ACCESS_LOCKED | XCP_INTERNAL_ERR_WRITE_PROTECTED | XCP_INTERNAL_ERR_MEMORY_OVERFLOW, /* DOWNLOAD 0xF0 */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_GENERIC, /* USER_CMD 0xF1, optional */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* TRANSPORT_LAYER_CMD 0xF2, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE | XCP_INTERNAL_ERR_GENERIC, /* USER_CMD 0xF1, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* TRANSPORT_LAYER_CMD 0xF2, optional */
 #if (XCP_FLASH_PROGRAMMING_ENABLED == STD_ON)
     /* DD51/1.1/1.6.5.1.1: BUILD_CHECKSUM is one of the seven commands that "must always be
      * available during a memory programming sequence" -- carrying PGM_ACTIVE here would make the
@@ -1090,7 +1099,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * but only for the OFF build (see that test's own DefaultConfig). DD51 requires this bit
      * absent from all seven regardless, so this cost is the spec's choice, not a defect; no
      * ON-build test currently asserts either side of it. */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE, /* SET_MTA 0xF6, optional */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_CMD_UNKNOWN | XCP_INTERNAL_ERR_CMD_SYNTAX | XCP_INTERNAL_ERR_OUT_OF_RANGE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* SET_MTA 0xF6, optional */
 #else
     /* Task 5, unlike PROGRAM_RESET's #if/#else a few hundred lines above: this row IS live with
      * the gate off. SET_MTA's own enabled bit does not depend on configuration.programming.
@@ -1126,7 +1135,7 @@ static const uint32_least Xcp_CTOErrorMatrix[0x100u] = {
      * whoever reads it next. No behavioural effect: only CMD_BUSY, CMD_SYNTAX and PGM_ACTIVE are
      * ever tested against this table. */
     XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* GET_STATUS 0xFD */
-    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE | XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* DISCONNECT0xFE */
+    XCP_INTERNAL_ERR_CMD_BUSY | XCP_INTERNAL_ERR_PGM_ACTIVE, /* DISCONNECT 0xFE */
     XCP_INTERNAL_ERR_RES_TEMP_NOT_ACCESSIBLE, /* CONNECT 0xFF */
 };
 

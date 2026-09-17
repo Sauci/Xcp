@@ -65,7 +65,7 @@ confirmed here from 1.1 rather than 1.0.
 
 ## Slice 6a — the STD error handling matrix (§1.7.3.2.1)
 
-### 🔴 Finding R1 — four rows of `Xcp_CTOErrorMatrix` disagree with 1.1, all introduced or missed two days ago
+### ✅ Finding R1 — four rows of `Xcp_CTOErrorMatrix` disagreed with 1.1 — **fixed**
 
 **Established by reading 1.1/§1.7.3.2.1 from the deciphered text layer, row by row, and comparing
 against `Xcp_CTOErrorMatrix` (`source/Xcp.c`). Declarative only — the matrix drives just the
@@ -95,9 +95,18 @@ that "a row that does not list what its handler can answer is a row that lies to
 next" (DD76, DD101). By that standard `DISCONNECT`'s row now lies in the other direction: it claims
 the module may answer a code for a command 1.1 does not permit it on.
 
-**Fix**: remove the bit from 0xFE, add it to 0xF1 and 0xF2, and add it to `SET_MTA`'s `STD_OFF` arm.
-Four one-line edits with no behavioural effect and no test change. Worth a small branch of its own
-rather than folding into other work, so the correction is reviewable against this table.
+**Fixed in this branch.** The bit is removed from 0xFE and added to 0xF1, 0xF2 and `SET_MTA`'s
+`STD_OFF` arm. Four one-line edits; 13073 passed, 29 skipped, unchanged, which is what a purely
+declarative change should do. A check now derives the expected set from 1.1 and compares every STD
+row against it, rather than trusting a reading of the table — it reports no disagreement.
+
+The comment above `Xcp_CTOErrorMatrix` asserted the false rule in prose as well, and now states what
+1.1 actually says, including that `CONNECT` carries the code under `CONNECT(NORMAL)` only while this
+table has one row per PID.
+
+**`SET_MTA`'s `STD_OFF` arm also lacks `ERR_PGM_ACTIVE`, and that is correct** — with programming
+disabled the condition cannot arise, which is why the row has two arms at all. Only the missing
+`ERR_RES_TEMP_NOT_A.` was wrong.
 
 **Not yet checked in this row:** whether each command's *other* listed codes match. This finding
 covers `ERR_RES_TEMP_NOT_A.` only, which is what PR #41 touched. The rest of §1.7.3.2.1, and
