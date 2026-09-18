@@ -145,6 +145,38 @@ It also means `Xcp_CTOErrorMatrix[0xFA]` carries a code that no comment declares
 code fits an identification type that names nothing. Mark the matrix row the way DD76 and DD130
 mark theirs. No behaviour change, no test change.
 
+### 🔴 Finding R3 — `asam_error_matrix_test.py`'s reference docstrings are 1.0's table
+
+**Established by comparing the file's own docstrings against both revisions.** Every one of its ~40
+classes documents its command's matrix row in a docstring. `TestConnectErrorHandling`'s reads:
+
+```
+CONNECT(NORMAL)       timeout t1          -          repeat ∞ times
+CONNECT(USER_DEFINED) timeout t6          wait t7    repeat ∞ times
+```
+
+That is **1.0's `CONNECT` row character for character**, including the `∞`. 1.1 adds
+`ERR_RES_TEMP_NOT_A.` to it. `TestDisconnectErrorHandling`'s docstring looks correct only because
+1.0 and 1.1 happen to agree on that single row.
+
+1.0 has `ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE` nowhere at all, so every docstring in the file that
+should carry it does not.
+
+**This is very likely the mechanism behind R1 and the matrix's long 1.0 era.** The file that exists
+to check the error matrix encodes the same obsolete reference as the matrix itself, so reading one
+against the other could only ever agree. Two copies of a stale fact are not a cross-check; they are
+one mistake stored twice. Finding R1's own root cause — a sample read as a rule — had this as its
+setting: there was no authority in the repository to check against.
+
+**Partially addressed.** The conformance check added on this branch carries its *own* reference, read
+from 1.1's text layer, and lives in this file beside the stale docstrings with a note explaining
+which is authoritative. That stops the matrix drifting again.
+
+**Not addressed:** the ~40 docstrings themselves still show 1.0's rows. Correcting them is
+mechanical and touches only comments, but it is a large diff across a 2717-line file and is better
+as its own branch than folded into a fix for R1. Until then the note beside `SPEC_STD` is what tells
+a reader which reference to trust.
+
 ---
 
 ## Non-findings worth recording, so they are not "fixed" later

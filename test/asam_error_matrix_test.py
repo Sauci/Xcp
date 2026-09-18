@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import re
 
 import pytest
 
@@ -23,6 +24,186 @@ from .conftest import XcpTest
 # fail, which is what holds the bit set across the command under test. When SP5-NV adds
 # non-volatile DAQ storage, the other two modes belong back in this tuple.
 PGM_ACTIVE_MODE_BITS = (0b00000001,)
+
+
+# ---------------------------------------------------------------------------------------------
+# Xcp_CTOErrorMatrix against 1.1/1.7.3.2.1, checked as data rather than as behaviour.
+#
+# **Every class below documents its command's matrix row in a docstring, and those docstrings are
+# 1.0's table.** 1.0 has ERR_RESOURCE_TEMPORARY_NOT_ACCESSIBLE nowhere at all; 1.1 adds it to almost
+# every STD row. TestConnectErrorHandling's docstring is 1.0's CONNECT row character for character --
+# two timeout lines and no error codes -- where 1.1 adds ERR_RES_TEMP_NOT_A. TestDisconnect's looks
+# correct only because 1.0 and 1.1 agree on that one row.
+#
+# That matters beyond tidiness: it is the likeliest reason Xcp_CTOErrorMatrix itself stayed 1.0-era
+# for months. The file that should have been the check encoded the same obsolete reference, so
+# reading one against the other could only ever agree. Conformance review finding R3,
+# docs/superpowers/specs/2026-09-17-xcp-1-1-conformance-review.md.
+#
+# The reference below is read from 1.1's own glyph-enciphered text layer, not the OCR sidecar, which
+# has been wrong about three separate tables including this one.
+# ---------------------------------------------------------------------------------------------
+
+XCP_SOURCE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          'source', 'Xcp.c')
+
+# 1.1/1.7.3.2.1, one entry per standard command. Timeouts are not error codes and are omitted.
+# CONNECT's entry is CONNECT(NORMAL)'s: 1.1 splits the two modes and this table has one row per PID.
+SPEC_STD = {
+    '0xFF': ('CONNECT', {'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xFE': ('DISCONNECT', {'CMD_BUSY', 'PGM_ACTIVE'}),
+    '0xFD': ('GET_STATUS', {'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xFC': ('SYNCH', {'CMD_SYNCH', 'CMD_UNKNOWN', 'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xFB': ('GET_COMM_MODE_INFO', {'CMD_BUSY', 'CMD_SYNTAX', 'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xFA': ('GET_ID', {'CMD_BUSY', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF9': ('SET_REQUEST', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                             'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF8': ('GET_SEED', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                          'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF7': ('UNLOCK', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                        'ACCESS_LOCKED', 'SEQUENCE', 'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF6': ('SET_MTA', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                         'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF5': ('UPLOAD', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                        'ACCESS_DENIED', 'ACCESS_LOCKED', 'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF4': ('SHORT_UPLOAD', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                              'ACCESS_DENIED', 'ACCESS_LOCKED', 'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF3': ('BUILD_CHECKSUM', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_UNKNOWN', 'CMD_SYNTAX',
+                                'OUT_OF_RANGE', 'ACCESS_DENIED', 'ACCESS_LOCKED',
+                                'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF2': ('TRANSPORT_LAYER_CMD', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                                     'RES_TEMP_NOT_ACCESSIBLE'}),
+    '0xF1': ('USER_CMD', {'CMD_BUSY', 'PGM_ACTIVE', 'CMD_SYNTAX', 'OUT_OF_RANGE',
+                          'RES_TEMP_NOT_ACCESSIBLE'}),
+}
+
+# Every place the module knowingly differs from SPEC_STD, with the reason. Keyed by (pid, arm),
+# where arm is 'ungated' or 'MACRO=ON'/'MACRO=OFF'. Value is (extra codes, absent codes, why).
+DECLARED_DEVIATIONS = {
+    ('0xF7', 'ungated'): (
+        {'GENERIC'}, set(),
+        "DD76: UNLOCK answers ERR_GENERIC when the integrator's Xcp_CalcKey cannot compute a key at "
+        "all. None of the seven codes 1.1 lists fits -- ERR_ACCESS_LOCKED, which the sibling branch "
+        "answers, means the key was WRONG. 1.1/1.7.3 provides for off-row codes (DD132)."),
+    ('0xF1', 'ungated'): (
+        {'GENERIC'}, set(),
+        "DD130: USER_CMD answers ERR_GENERIC with a detail WORD when the integrator's callback "
+        "overruns MAX_CTO. Every code 1.1 lists for this row blames the master's request for what "
+        "the slave's own extension did."),
+    ('0xFA', 'ungated'): (
+        {'OUT_OF_RANGE'}, set(),
+        "DD110, and conformance review finding R2: GET_ID answers ERR_OUT_OF_RANGE for an "
+        "identification type in 5..127, which names no type at all. 1.1/1.7.3.2.1's GET_ID row does "
+        "NOT list it -- source/Xcp_Std.c claimed it did until R2 -- so this is an off-row answer "
+        "under 1.1/1.7.3, not compliance."),
+    ('0xF6', 'XCP_FLASH_PROGRAMMING_ENABLED=ON'): (
+        set(), {'PGM_ACTIVE'},
+        "DD51: 1.1/1.6.5.1.1 requires SET_MTA to stay available DURING a programming sequence, and "
+        "one matrix bit governs all four ERR_PGM_ACTIVE triggers, so carrying it would make the "
+        "gate refuse the very command that section requires to remain reachable."),
+    ('0xF5', 'XCP_FLASH_PROGRAMMING_ENABLED=ON'): (
+        set(), {'PGM_ACTIVE'},
+        "DD51, as for SET_MTA: UPLOAD is one of the seven commands 1.1/1.6.5.1.1 requires to stay "
+        "available during a programming sequence."),
+    ('0xF3', 'XCP_FLASH_PROGRAMMING_ENABLED=ON'): (
+        set(), {'PGM_ACTIVE'},
+        "DD51, as for SET_MTA: BUILD_CHECKSUM is one of the seven commands 1.1/1.6.5.1.1 requires "
+        "to stay available during a programming sequence."),
+}
+
+
+def parse_error_matrix():
+    """Every Xcp_CTOErrorMatrix row, as {pid: {arm: {code, ...}}}.
+
+    The #if/#else arms are tracked separately and deliberately. A parser that collapses them keeps
+    whichever appears last in the file -- for Xcp_PIDTable that reports nineteen commands as
+    unimplemented, and here it would hide a difference between the two builds. Both mistakes were
+    made before being written down."""
+    with open(XCP_SOURCE) as fp:
+        source = fp.read()
+
+    start = source.index('static const uint32_least Xcp_CTOErrorMatrix[0x100u]')
+    body = source[start:source.index('};', start)]
+
+    rows, gate = {}, []
+    for line in body.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('#if'):
+            macro = re.search(r'(XCP_\w+)', stripped)
+            gate.append([macro.group(1) if macro else '?', False])
+            continue
+        if stripped.startswith('#else'):
+            if gate:
+                gate[-1][1] = True
+            continue
+        if stripped.startswith('#endif'):
+            if gate:
+                gate.pop()
+            continue
+
+        marker = re.search(r'/\* ([A-Z_0-9]+) ?(0x[0-9A-F]{2})', stripped)
+        if marker and stripped.startswith(('XCP_INTERNAL', '0x00u')):
+            arm = 'ungated' if not gate else '%s=%s' % (gate[-1][0], 'OFF' if gate[-1][1] else 'ON')
+            rows.setdefault(marker.group(2), {})[arm] = set(
+                re.findall(r'XCP_INTERNAL_ERR_([A-Z_]+)', stripped))
+    return rows
+
+
+class TestErrorMatrixConformsToSpec:
+    """Xcp_CTOErrorMatrix checked as DATA against 1.1/1.7.3.2.1, because it has no observable
+    behaviour to test. The table is read in three places and only for three of its bits
+    (ERR_CMD_BUSY, ERR_CMD_SYNTAX, ERR_PGM_ACTIVE); every other bit is written and never read, which
+    is why correcting four rows against 1.1 changed no test result -- nothing could see it.
+
+    The reference is SPEC_STD above, not the class docstrings in this file, which are 1.0's table.
+    """
+
+    def test_every_standard_command_row_matches_1_1(self):
+        """Each STD row must hold exactly what 1.1/1.7.3.2.1 lists, plus or minus only what
+        DECLARED_DEVIATIONS accounts for with a reason. An undeclared difference fails in either
+        direction."""
+        rows = parse_error_matrix()
+        problems = []
+
+        for pid, (name, expected) in sorted(SPEC_STD.items(), reverse=True):
+            arms = rows.get(pid)
+            if not arms:
+                problems.append('%s %s: no row found in Xcp_CTOErrorMatrix' % (pid, name))
+                continue
+
+            for arm, actual in sorted(arms.items()):
+                extra_ok, absent_ok, _ = DECLARED_DEVIATIONS.get((pid, arm), (set(), set(), ''))
+
+                unlisted = actual - expected - extra_ok
+                missing = expected - actual - absent_ok
+
+                if unlisted:
+                    problems.append(
+                        '%s %s [%s] carries %s, which 1.1/1.7.3.2.1 does not list for it and no '
+                        'entry in DECLARED_DEVIATIONS accounts for'
+                        % (pid, name, arm, ', '.join('ERR_' + c for c in sorted(unlisted))))
+                if missing:
+                    problems.append(
+                        '%s %s [%s] is missing %s, which 1.1/1.7.3.2.1 lists for it'
+                        % (pid, name, arm, ', '.join('ERR_' + c for c in sorted(missing))))
+
+        assert not problems, ('Xcp_CTOErrorMatrix disagrees with 1.1/1.7.3.2.1:\n  '
+                              + '\n  '.join(problems))
+
+    def test_the_parser_sees_both_arms_of_a_gated_row(self):
+        """A guard on the check above, not on the module. If parse_error_matrix collapsed the
+        preprocessor arms, the test above would still pass while checking only half of what ships.
+        SET_MTA is gated and its two arms differ by ERR_PGM_ACTIVE (DD51), so it proves they are
+        kept apart."""
+        arms = parse_error_matrix()['0xF6']
+
+        assert set(arms) == {'XCP_FLASH_PROGRAMMING_ENABLED=ON',
+                             'XCP_FLASH_PROGRAMMING_ENABLED=OFF'}, \
+            'SET_MTA is gated and both arms must be parsed, got %r' % (sorted(arms),)
+        assert (arms['XCP_FLASH_PROGRAMMING_ENABLED=ON']
+                != arms['XCP_FLASH_PROGRAMMING_ENABLED=OFF']), \
+            'the arms differ by ERR_PGM_ACTIVE (DD51); identical sets mean they were collapsed'
+
 
 
 class TestConnectErrorHandling:
