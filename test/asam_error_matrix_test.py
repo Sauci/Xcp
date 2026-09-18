@@ -149,52 +149,49 @@ def parse_error_matrix():
     return rows
 
 
-class TestErrorMatrixConformsToSpec:
-    """Xcp_CTOErrorMatrix checked as DATA against 1.1/1.7.3.2.1, because it has no observable
-    behaviour to test. The table is read in three places and only for three of its bits
-    (ERR_CMD_BUSY, ERR_CMD_SYNTAX, ERR_PGM_ACTIVE); every other bit is written and never read, which
-    is why correcting four rows against 1.1 changed no test result -- nothing could see it.
+def assert_matrix_row_matches_1_1(pid):
+    """Assert one Xcp_CTOErrorMatrix row against 1.1/1.7.3.2.1.
 
-    The reference is SPEC_STD above, not the class docstrings in this file, which are 1.0's table.
-    """
+    Called from each command's own class below, so a disagreement fails with that command's name
+    rather than as one assertion listing every row at once, and so 1.1's set sits beside the class
+    docstring that still shows 1.0's (finding R3).
 
-    def test_every_standard_command_row_matches_1_1(self):
-        """Each STD row must hold exactly what 1.1/1.7.3.2.1 lists, plus or minus only what
-        DECLARED_DEVIATIONS accounts for with a reason. An undeclared difference fails in either
-        direction."""
-        rows = parse_error_matrix()
-        problems = []
+    The matrix is checked as DATA, not behaviour, because it has none to check: it is read in three
+    places and only for three of its bits (ERR_CMD_BUSY, ERR_CMD_SYNTAX, ERR_PGM_ACTIVE). Every
+    other bit is written and never read, which is why correcting four rows against 1.1 changed no
+    test result -- nothing could see it."""
+    name, expected = SPEC_STD[pid]
+    arms = parse_error_matrix().get(pid)
 
-        for pid, (name, expected) in sorted(SPEC_STD.items(), reverse=True):
-            arms = rows.get(pid)
-            if not arms:
-                problems.append('%s %s: no row found in Xcp_CTOErrorMatrix' % (pid, name))
-                continue
+    assert arms, '%s %s: no row found in Xcp_CTOErrorMatrix' % (pid, name)
 
-            for arm, actual in sorted(arms.items()):
-                extra_ok, absent_ok, _ = DECLARED_DEVIATIONS.get((pid, arm), (set(), set(), ''))
+    problems = []
+    for arm, actual in sorted(arms.items()):
+        extra_ok, absent_ok, _ = DECLARED_DEVIATIONS.get((pid, arm), (set(), set(), ''))
 
-                unlisted = actual - expected - extra_ok
-                missing = expected - actual - absent_ok
+        unlisted = actual - expected - extra_ok
+        missing = expected - actual - absent_ok
 
-                if unlisted:
-                    problems.append(
-                        '%s %s [%s] carries %s, which 1.1/1.7.3.2.1 does not list for it and no '
-                        'entry in DECLARED_DEVIATIONS accounts for'
-                        % (pid, name, arm, ', '.join('ERR_' + c for c in sorted(unlisted))))
-                if missing:
-                    problems.append(
-                        '%s %s [%s] is missing %s, which 1.1/1.7.3.2.1 lists for it'
-                        % (pid, name, arm, ', '.join('ERR_' + c for c in sorted(missing))))
+        if unlisted:
+            problems.append(
+                '[%s] carries %s, which 1.1/1.7.3.2.1 does not list for it and no entry in '
+                'DECLARED_DEVIATIONS accounts for'
+                % (arm, ', '.join('ERR_' + c for c in sorted(unlisted))))
+        if missing:
+            problems.append('[%s] is missing %s, which 1.1/1.7.3.2.1 lists for it'
+                            % (arm, ', '.join('ERR_' + c for c in sorted(missing))))
 
-        assert not problems, ('Xcp_CTOErrorMatrix disagrees with 1.1/1.7.3.2.1:\n  '
-                              + '\n  '.join(problems))
+    assert not problems, ('%s %s disagrees with 1.1/1.7.3.2.1:\n  ' % (pid, name)
+                          + '\n  '.join(problems))
 
-    def test_the_parser_sees_both_arms_of_a_gated_row(self):
-        """A guard on the check above, not on the module. If parse_error_matrix collapsed the
-        preprocessor arms, the test above would still pass while checking only half of what ships.
-        SET_MTA is gated and its two arms differ by ERR_PGM_ACTIVE (DD51), so it proves they are
-        kept apart."""
+
+class TestErrorMatrixParser:
+    """Guards the checker itself rather than the module."""
+
+    def test_both_arms_of_a_gated_row_are_seen(self):
+        """If parse_error_matrix collapsed the preprocessor arms, every per-command assertion above
+        would still pass while checking only half of what ships. SET_MTA is gated and its two arms
+        differ by ERR_PGM_ACTIVE (DD51), so it proves they are kept apart."""
         arms = parse_error_matrix()['0xF6']
 
         assert set(arms) == {'XCP_FLASH_PROGRAMMING_ENABLED=ON',
@@ -204,6 +201,19 @@ class TestErrorMatrixConformsToSpec:
                 != arms['XCP_FLASH_PROGRAMMING_ENABLED=OFF']), \
             'the arms differ by ERR_PGM_ACTIVE (DD51); identical sets mean they were collapsed'
 
+    def test_every_standard_command_class_checks_its_own_row(self):
+        """The wiring, not the checking. Each STD class calls assert_matrix_row_matches_1_1 with a
+        PID, and nothing in the assertion itself would notice two classes passing the SAME one --
+        fifteen tests would pass while fourteen rows went unchecked. This pins one call per PID in
+        SPEC_STD, so a copy-paste that duplicates a PID or drops one fails here."""
+        with open(os.path.abspath(__file__)) as fp:
+            wired = re.findall(r"assert_matrix_row_matches_1_1\('(0x[0-9A-F]{2})'\)", fp.read())
+
+        assert sorted(wired) == sorted(SPEC_STD), \
+            'every PID in SPEC_STD needs exactly one command class checking it; wired=%r' % (
+                sorted(wired),)
+        assert len(wired) == len(set(wired)), 'a PID is checked by more than one class: %r' % (
+            sorted(p for p in wired if wired.count(p) > 1),)
 
 
 class TestConnectErrorHandling:
@@ -212,6 +222,11 @@ class TestConnectErrorHandling:
     CONNECT(NORMAL)       timeout t1          -          repeat ∞ times
     CONNECT(USER_DEFINED) timeout t6          wait t7    repeat ∞ times
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xFF] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xFF')
+
 
     # @pytest.mark.parametrize('payload', ((0xFF,),))
     # def test_connect_normal_mode_timeout_t1(self, payload):
@@ -235,6 +250,11 @@ class TestDisconnectErrorHandling:
     DISCONNECT            ERR_CMD_BUSY        wait t7         repeat ∞ times
     DISCONNECT            ERR_PGM_ACTIVE      wait t7         repeat ∞ times
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xFE] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xFE')
+
 
     # def test_disconnect_timeout_t1(self):
     #     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -277,6 +297,11 @@ class TestGetStatusErrorHandling:
     GET_STATUS            timeout t1          SYNCH           repeat 2 times
     """
 
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xFD] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xFD')
+
+
     # @pytest.mark.parametrize('payload', ((0xFF,),))
     # def test_get_status_normal_mode_timeout_t1(self, payload):
     #     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -295,6 +320,11 @@ class TestSynchErrorHandling:
     SYNCH                 ERR_CMD_SYNCH       -               -
     SYNCH                 ERR_CMD_UNKNOWN     -               restart session
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xFC] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xFC')
+
 
     # def test_synch_timeout_t1(self):
     #     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -327,6 +357,11 @@ class TestGetCommModInfoErrorHandling:
     GET_COMM_MODE_INFO    ERR_CMD_SYNTAX      -               retry other syntax
     """
 
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xFB] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xFB')
+
+
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -352,6 +387,11 @@ class TestGetIdErrorHandling:
     GET_ID                ERR_CMD_SYNTAX      -               retry other syntax
     GET_ID                ERR_OUT_OF_RANGE    -               retry other parameter
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xFA] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xFA')
+
 
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -411,6 +451,11 @@ class TestSetRequestErrorHandling:
     SET_REQUEST           ERR_CMD_SYNTAX      -               retry other syntax
     SET_REQUEST           ERR_OUT_OF_RANGE    -               retry other parameter
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF9] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF9')
+
 
     # def test_set_request_timeout_t1(self):
     #     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -491,6 +536,11 @@ class TestGetSeedErrorHandling:
     GET_SEED              ERR_OUT_OF_RANGE    -               retry other parameter
     GET_SEED              ERR_SEQUENCE        GET_SEED        repeat 2 times (not in the matrix)
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF8] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF8')
+
 
     # def test_set_request_timeout_t1(self):
     #     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -634,6 +684,11 @@ class TestUnlockErrorHandling:
     UNLOCK                ERR_ACCESS_LOCKED   -               restart session
     UNLOCK                ERR_SEQUENCE        GET_SEED        repeat 2 times
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF7] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF7')
+
 
     # def test_set_request_timeout_t1(self):
     #     handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -806,6 +861,11 @@ class TestSetMtaErrorHandling:
     SET_MTA               ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF6] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF6')
+
+
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -871,6 +931,11 @@ class TestUploadErrorHandling:
     UPLOAD                ERR_CMD_SYNTAX      -               retry other syntax
     UPLOAD                ERR_OUT_OF_RANGE    -               retry other parameter
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF5] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF5')
+
 
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -947,6 +1012,11 @@ class TestShortUploadErrorHandling:
     SHORT_UPLOAD          ERR_ACCESS_DENIED   -               display error
     SHORT_UPLOAD          ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF4] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF4')
+
 
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
@@ -1036,6 +1106,11 @@ class TestBuildChecksumErrorHandling:
     BUILD_CHECKSUM        ERR_ACCESS_LOCKED   unlock slave    repeat 2 times
     """
 
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF3] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF3')
+
+
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1121,6 +1196,11 @@ class TestTransportLayerCmdErrorHandling:
     TRANSPORT_LAYER_CMD   ERR_OUT_OF_RANGE    -               retry other parameter
     """
 
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF2] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF2')
+
+
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))
         handle.lib.Xcp_CanIfRxIndication(0x0001, handle.get_pdu_info((0xFF, 0x00)))
@@ -1192,6 +1272,11 @@ class TestUserCmdErrorHandling:
     USER_CMD              ERR_CMD_SYNTAX      -               retry other syntax
     USER_CMD              ERR_OUT_OF_RANGE    -               retry other parameter
     """
+
+    def test_matrix_row_matches_1_1(self):
+        """The docstring above is 1.0's row; 1.1's is SPEC_STD[0xF1] (finding R3)."""
+        assert_matrix_row_matches_1_1('0xF1')
+
 
     def test_returns_err_cmd_busy(self):
         handle = XcpTest(DefaultConfig(channel_rx_pdu_ref=0x0001))

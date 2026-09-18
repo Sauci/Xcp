@@ -129,13 +129,23 @@ out a systematic extraction gap at that point in the table.
 There is no such row. `Xcp_CTOErrorMatrix[0xFA]` carries `XCP_INTERNAL_ERR_OUT_OF_RANGE` to match
 the claim.
 
-**The behaviour is defensible; the citation is not.** DD132 established that §1.7.3 anticipates a
-slave answering a code its command's row does not list — the master falls back to the code's
-severity — so answering `ERR_OUT_OF_RANGE` for an undefined identification type is a legitimate
-off-row choice, and arguably the only sensible one. What is wrong is that it is recorded as
-*compliance* rather than as a choice, which is the same class of mistake DD132 corrected in four
-other comments, in the opposite direction: those called a legitimate off-row answer a "deviation",
-this one calls an off-row answer a row.
+**Sharpened after the per-command restructuring: 1.1 *removed* this code from the row.** 1.0's
+`GET_ID` row does list `ERR_OUT_OF_RANGE` — verified directly — and 1.1's does not.
+`TestGetIdErrorHandling`'s docstring in `asam_error_matrix_test.py` lists it too, because that
+docstring is 1.0's (finding R3). So the module carries 1.0's row, its test documents 1.0's row, and
+the code comment cites **1.1**/§1.7.3.2.1 for content only 1.0 has.
+
+That makes this an instance of the revision rule at the head of the roadmap — "1.0 and 1.1 are not
+the same document, and the difference is usually in one byte or one row" — which that document
+records as having cost three pull requests the one time it was missed before. It is not a
+mis-citation; it is 1.0 content filed under 1.1's number, which is how such a thing survives review.
+
+**The behaviour is still defensible.** DD132 established that §1.7.3 anticipates a slave answering a
+code its command's row does not list — the master falls back to the code's severity — so answering
+`ERR_OUT_OF_RANGE` for an identification type in 5..127 remains a legitimate off-row choice under
+1.1, and arguably the only sensible one. Nothing about what reaches the wire needs to change. What
+is wrong is that it is recorded as *compliance under 1.1* when 1.1 is precisely the revision that
+withdrew it.
 
 It also means `Xcp_CTOErrorMatrix[0xFA]` carries a code that no comment declares as off-row, unlike
 `UNLOCK`'s and `USER_CMD`'s `ERR_GENERIC`, which DD76 and DD130 both flag where they sit.
